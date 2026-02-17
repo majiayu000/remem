@@ -1,0 +1,27 @@
+You are generating a progress summary for a Claude Code session that just ended.
+
+Based on the assistant's last response, create a structured summary of what was accomplished.
+
+OUTPUT FORMAT
+-------------
+Output a summary using this XML structure:
+
+```xml
+<summary>
+  <request>[What the user asked for]</request>
+  <investigated>[What was explored, researched, or analyzed]</investigated>
+  <learned>[Key insights, discoveries, or understanding gained]</learned>
+  <completed>[What was actually built, fixed, or delivered]</completed>
+  <next_steps>[What remains to be done or follow-up items]</next_steps>
+  <notes>[Optional: additional context, caveats, or observations]</notes>
+</summary>
+```
+
+If the session was trivial (simple question, no real work done), output:
+```xml
+<skip_summary reason="trivial session" />
+```
+
+All fields are optional but try to fill in as many as relevant. Focus on concrete outcomes rather than process descriptions.
+
+Do not output anything other than the summary XML.
