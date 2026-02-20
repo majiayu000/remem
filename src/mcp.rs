@@ -33,6 +33,8 @@ struct SearchParams {
     r#type: Option<String>,
     #[schemars(description = "Result offset for pagination")]
     offset: Option<i64>,
+    #[schemars(description = "Include stale observations (default true, stale ranked lower)")]
+    include_stale: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -75,6 +77,7 @@ struct SearchResult {
     subtitle: Option<String>,
     created_at: String,
     project: Option<String>,
+    status: String,
 }
 
 #[tool_router]
@@ -82,7 +85,7 @@ impl MemoryServer {
     /// Search memory index. Returns IDs with titles. Use get_observations for full details.
     #[tool(description = "Search past observations by keyword/project/type. Returns compact results (id, type, title, subtitle). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue.")]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
-        let conn = db::open_db_readonly().map_err(|e| e.to_string())?;
+        let conn = db::open_db().map_err(|e| e.to_string())?;
         let results = search::search(
             &conn,
             params.query.as_deref(),
@@ -90,6 +93,7 @@ impl MemoryServer {
             params.r#type.as_deref(),
             params.limit.unwrap_or(20),
             params.offset.unwrap_or(0),
+            params.include_stale.unwrap_or(true),
         )
         .map_err(|e| e.to_string())?;
 
@@ -102,6 +106,7 @@ impl MemoryServer {
                 subtitle: o.subtitle,
                 created_at: o.created_at,
                 project: o.project,
+                status: o.status,
             })
             .collect();
 
@@ -111,12 +116,12 @@ impl MemoryServer {
     /// Get timeline context around an observation
     #[tool(description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point.")]
     fn timeline(&self, Parameters(params): Parameters<TimelineParams>) -> Result<String, String> {
-        let conn = db::open_db_readonly().map_err(|e| e.to_string())?;
+        let conn = db::open_db().map_err(|e| e.to_string())?;
 
         let anchor_id = if let Some(id) = params.anchor {
             id
         } else if let Some(q) = &params.query {
-            let results = search::search(&conn, Some(q), params.project.as_deref(), None, 1, 0)
+            let results = search::search(&conn, Some(q), params.project.as_deref(), None, 1, 0, true)
                 .map_err(|e| e.to_string())?;
             results
                 .first()
@@ -141,8 +146,11 @@ impl MemoryServer {
     /// Get full observation details by IDs
     #[tool(description = "Fetch complete observation details (narrative, facts, concepts, files_read, files_modified) by IDs. Use after search() to get full context. This is the second step in the search → get_observations workflow.")]
     fn get_observations(&self, Parameters(params): Parameters<GetObservationsParams>) -> Result<String, String> {
-        let conn = db::open_db_readonly().map_err(|e| e.to_string())?;
+        let conn = db::open_db().map_err(|e| e.to_string())?;
         let results = db::get_observations_by_ids(&conn, &params.ids).map_err(|e| e.to_string())?;
+        if !params.ids.is_empty() {
+            let _ = db::update_last_accessed(&conn, &params.ids);
+        }
         serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
     }
 
@@ -193,7 +201,8 @@ impl ServerHandler for MemoryServer {
                  ## Tips\n\
                  - The context index is usually sufficient — only fetch details when needed\n\
                  - bugfix and decision types often contain critical context worth fetching\n\
-                 - Search supports project filter to scope results"
+                 - Search supports project filter to scope results\n\
+                 - Observations with status=\"stale\" may be outdated. Prefer active observations when available."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

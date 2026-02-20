@@ -24,7 +24,7 @@ fn load_config() -> ContextConfig {
     };
 
     let types_str = get(
-        "CLAUDE_MEM_CONTEXT_OBSERVATION_TYPES",
+        "REMEM_CONTEXT_OBSERVATION_TYPES",
         "bugfix,feature,refactor,discovery,decision,change",
     );
     let observation_types: Vec<String> = types_str
@@ -34,29 +34,24 @@ fn load_config() -> ContextConfig {
         .collect();
 
     ContextConfig {
-        total_observation_count: get("CLAUDE_MEM_CONTEXT_OBSERVATIONS", "50")
+        total_observation_count: get("REMEM_CONTEXT_OBSERVATIONS", "50")
             .parse()
             .unwrap_or(50),
-        full_observation_count: get("CLAUDE_MEM_CONTEXT_FULL_COUNT", "5")
-            .parse()
-            .unwrap_or(5),
-        session_count: get("CLAUDE_MEM_CONTEXT_SESSION_COUNT", "10")
+        full_observation_count: get("REMEM_CONTEXT_FULL_COUNT", "10")
             .parse()
             .unwrap_or(10),
-        show_read_tokens: get("CLAUDE_MEM_CONTEXT_SHOW_READ_TOKENS", "true") == "true",
-        show_work_tokens: get("CLAUDE_MEM_CONTEXT_SHOW_WORK_TOKENS", "true") == "true",
+        session_count: get("REMEM_CONTEXT_SESSION_COUNT", "10")
+            .parse()
+            .unwrap_or(10),
+        show_read_tokens: get("REMEM_CONTEXT_SHOW_READ_TOKENS", "true") == "true",
+        show_work_tokens: get("REMEM_CONTEXT_SHOW_WORK_TOKENS", "true") == "true",
         observation_types,
-        show_last_summary: get("CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY", "true") == "true",
-        full_observation_field: get("CLAUDE_MEM_CONTEXT_FULL_FIELD", "narrative"),
+        show_last_summary: get("REMEM_CONTEXT_SHOW_LAST_SUMMARY", "true") == "true",
+        full_observation_field: get("REMEM_CONTEXT_FULL_FIELD", "narrative"),
     }
 }
 
-fn project_from_cwd(cwd: &str) -> String {
-    std::path::Path::new(cwd)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| cwd.to_string())
-}
+use crate::db::project_from_cwd;
 
 fn format_header_datetime() -> String {
     Local::now().format("%Y-%m-%d %-I:%M%P %Z").to_string()
@@ -147,7 +142,7 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
     let config = load_config();
     let project = project_from_cwd(cwd);
 
-    let conn = match db::open_db_readonly() {
+    let conn = match db::open_db() {
         Ok(c) => c,
         Err(_) => {
             crate::log::info("context", &format!("no DB, empty state for project={}", project));
@@ -158,7 +153,7 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
     };
 
     let type_refs: Vec<&str> = config.observation_types.iter().map(|s| s.as_str()).collect();
-    let observations = db::query_observations(
+    let raw_observations = db::query_observations(
         &conn,
         &project,
         &type_refs,
@@ -171,12 +166,21 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
         config.session_count + SUMMARY_LOOKAHEAD,
     )?;
 
-    if observations.is_empty() && summaries.is_empty() {
+    if raw_observations.is_empty() && summaries.is_empty() {
         crate::log::info("context", &format!("no data for project={}", project));
         render_empty_state(&project, use_colors);
         timer.done("empty (no data)");
         return Ok(());
     }
+
+    // Partition active vs stale, limit stale to 20% of active count (min 3)
+    let (active_obs, stale_obs): (Vec<_>, Vec<_>) = raw_observations
+        .into_iter()
+        .partition(|o| o.status != "stale");
+    let stale_limit = (active_obs.len() / 5).max(3).min(stale_obs.len());
+    let mut observations = active_obs;
+    observations.extend(stale_obs.into_iter().take(stale_limit));
+    observations.sort_by(|a, b| b.created_at_epoch.cmp(&a.created_at_epoch));
 
     let economics = calculate_token_economics(&observations);
 
@@ -202,14 +206,7 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
 
     // Context Index
     output.push_str(
-        "**Context Index:** This compact index is usually sufficient. Only fetch details when needed.\n\n\
-         **On-demand retrieval** (MCP remem tools):\n\
-         - `search(query)` → find relevant observation IDs by keyword\n\
-         - `get_observations(ids)` → fetch full narrative, facts, concepts, files\n\
-         - `timeline(query)` → chronological context around a change\n\n\
-         **When to fetch:** user asks about past work, you need implementation details, \
-         debugging a previously-fixed issue, or looking for architecture decisions.\n\
-         **Trust this index** over re-reading code for past decisions and learnings.\n\n",
+        "**提示：** 修改已知项目代码前，先用 remem search 工具查询相关记忆，避免重复探索。\n\n",
     );
 
     // Economics
@@ -227,12 +224,26 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
         ));
     }
 
-    // Build timeline
-    let full_ids: HashSet<i64> = observations
-        .iter()
-        .take(config.full_observation_count as usize)
-        .map(|o| o.id)
-        .collect();
+    // Build timeline — high-value types get priority for full display
+    const HIGH_VALUE_TYPES: &[&str] = &["bugfix", "decision", "feature"];
+    let full_ids: HashSet<i64> = {
+        let limit = config.full_observation_count as usize;
+        let mut selected: Vec<i64> = observations
+            .iter()
+            .filter(|o| HIGH_VALUE_TYPES.contains(&o.r#type.as_str()) && o.status == "active")
+            .take(limit)
+            .map(|o| o.id)
+            .collect();
+        for obs in observations.iter() {
+            if selected.len() >= limit {
+                break;
+            }
+            if !selected.contains(&obs.id) && obs.status == "active" {
+                selected.push(obs.id);
+            }
+        }
+        selected.into_iter().collect()
+    };
 
     // Display summaries (skip most recent for timeline, show it separately)
     let display_summaries: Vec<&SessionSummary> = if summaries.len() > 1 {
@@ -264,11 +275,18 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
     // Render timeline grouped by day and session
     render_timeline(&mut output, &timeline, &full_ids, &config, cwd);
 
-    // Most recent summary
+    // Most recent summaries (up to 3)
     if config.show_last_summary {
-        if let Some(latest) = summaries.first() {
+        let recent_summaries: Vec<&SessionSummary> =
+            summaries.iter().take(3).collect();
+        if !recent_summaries.is_empty() {
             output.push_str("\n---\n\n");
-            render_summary_fields(&mut output, latest);
+            for (i, summary) in recent_summaries.iter().enumerate() {
+                if i > 0 {
+                    output.push_str("---\n\n");
+                }
+                render_summary_fields(&mut output, summary);
+            }
         }
     }
 
@@ -375,9 +393,21 @@ fn render_table_row(
     };
     let icon = type_emoji(&obs.r#type);
     let title = obs.title.as_deref().unwrap_or("-");
+    let title_display = match obs.subtitle.as_deref() {
+        Some(sub) if !sub.is_empty() => format!("{} — {}", title, sub),
+        _ => title.to_string(),
+    };
+    let title_display = if obs.status == "stale" {
+        format!("~~{}~~", title_display)
+    } else {
+        title_display
+    };
     let read_tokens = calc_observation_tokens(obs);
 
-    let mut row = format!("| #{} | {} | {} | {} |", obs.id, time_display, icon, title);
+    let mut row = format!(
+        "| #{} | {} | {} | {} |",
+        obs.id, time_display, icon, title_display
+    );
     if config.show_read_tokens {
         row.push_str(&format!(" ~{} |", read_tokens));
     }
@@ -409,13 +439,20 @@ fn render_full_observation(
     };
     let icon = type_emoji(&obs.r#type);
     let title = obs.title.as_deref().unwrap_or("-");
+    let stale_marker = if obs.status == "stale" { " [stale]" } else { "" };
     let read_tokens = calc_observation_tokens(obs);
     let dt = obs.discovery_tokens.unwrap_or(0);
 
     output.push_str(&format!(
-        "\n**#{}** {} {} **{}**\n\n",
-        obs.id, time_display, icon, title
+        "\n**#{}** {} {} **{}**{}\n",
+        obs.id, time_display, icon, title, stale_marker
     ));
+    if let Some(sub) = obs.subtitle.as_deref() {
+        if !sub.is_empty() {
+            output.push_str(&format!("_{}_\n", sub));
+        }
+    }
+    output.push('\n');
 
     let detail = if config.full_observation_field == "facts" {
         obs.facts.as_deref().unwrap_or("")
@@ -438,10 +475,9 @@ fn render_full_observation(
 fn render_summary_fields(output: &mut String, summary: &SessionSummary) {
     let fields = [
         ("Request", &summary.request),
-        ("Investigated", &summary.investigated),
-        ("Learned", &summary.learned),
         ("Completed", &summary.completed),
-        ("Next Steps", &summary.next_steps),
+        ("Decisions", &summary.decisions),
+        ("Learned", &summary.learned),
     ];
     for (label, value) in &fields {
         if let Some(v) = value {

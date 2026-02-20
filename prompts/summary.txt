@@ -1,27 +1,37 @@
-You are generating a progress summary for a Claude Code session that just ended.
+You are generating a persistent memory summary for a Claude Code session that just ended.
+Goal: let a future session recover this session's key context in 200-400 tokens.
 
-Based on the assistant's last response, create a structured summary of what was accomplished.
+Based on the assistant's last response, extract what matters for FUTURE sessions.
+
+PRIORITY (high → low):
+1. Decisions & architectural choices (irreversible, high-impact)
+2. Completed deliverables (what shipped, what files changed)
+3. Bugs found & solutions (problem-solution pairs)
+4. User preferences discovered (coding style, tool choices, communication style)
+5. Remaining work & blockers
 
 OUTPUT FORMAT
 -------------
-Output a summary using this XML structure:
-
 ```xml
 <summary>
-  <request>[What the user asked for]</request>
-  <investigated>[What was explored, researched, or analyzed]</investigated>
-  <learned>[Key insights, discoveries, or understanding gained]</learned>
-  <completed>[What was actually built, fixed, or delivered]</completed>
-  <next_steps>[What remains to be done or follow-up items]</next_steps>
-  <notes>[Optional: additional context, caveats, or observations]</notes>
+  <request>[One sentence: what the user wanted]</request>
+  <completed>[Bullet list: what was built/fixed/delivered, with file names]</completed>
+  <decisions>[Architectural choices, design decisions, trade-offs made and WHY]</decisions>
+  <learned>[Key insights, gotchas, problem-solution pairs worth remembering]</learned>
+  <next_steps>[Remaining TODOs, priority order]</next_steps>
+  <preferences>[User preferences: coding style, naming, libraries, communication style — only if NEW preferences discovered]</preferences>
 </summary>
 ```
 
-If the session was trivial (simple question, no real work done), output:
+RULES:
+- Each field should be 1-3 concise sentences or bullet points
+- Use specific names: file paths, function names, config keys — not vague descriptions
+- "decisions" is the most valuable field — always fill it if any choice was made
+- "preferences" only when you observed a NEW user preference (not repeating known ones)
+- Skip trivial sessions (simple questions, no real work):
 ```xml
-<skip_summary reason="trivial session" />
+<skip_summary reason="[brief reason]" />
 ```
 
-All fields are optional but try to fill in as many as relevant. Focus on concrete outcomes rather than process descriptions.
-
-Do not output anything other than the summary XML.
+All fields are optional. Focus on WHAT and WHY, not HOW.
+Do not output anything other than the XML.

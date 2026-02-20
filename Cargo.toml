@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "Persistent memory for Claude Code — single binary, zero subprocesses"
 
-[features]
-default = []
-sdk = ["dep:anthropic-agent-sdk", "dep:futures"]
-
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -21,8 +17,6 @@ rmcp = { version = "0.15", features = ["server", "transport-io", "macros"] }
 reqwest = { version = "0.12", features = ["json"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-anthropic-agent-sdk = { version = "=0.2.75", optional = true }
-futures = { version = "0.3", optional = true }
 
 [profile.release]
 opt-level = "z"

@@ -7,7 +7,6 @@ use crate::observe;
 const SUMMARY_PROMPT: &str = include_str!("../prompts/summary.txt");
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct SummarizeInput {
     session_id: Option<String>,
     cwd: Option<String>,
@@ -15,12 +14,7 @@ struct SummarizeInput {
     last_assistant_message: Option<String>,
 }
 
-fn project_from_cwd(cwd: &str) -> String {
-    std::path::Path::new(cwd)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| cwd.to_string())
-}
+use crate::db::project_from_cwd;
 
 fn extract_last_assistant_message(transcript_path: &str) -> Option<String> {
     let content = std::fs::read_to_string(transcript_path).ok()?;
@@ -51,15 +45,14 @@ fn extract_last_assistant_message(transcript_path: &str) -> Option<String> {
 
 pub struct ParsedSummary {
     pub request: Option<String>,
-    pub investigated: Option<String>,
-    pub learned: Option<String>,
     pub completed: Option<String>,
+    pub decisions: Option<String>,
+    pub learned: Option<String>,
     pub next_steps: Option<String>,
-    pub notes: Option<String>,
+    pub preferences: Option<String>,
 }
 
 pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
-    // Check for skip
     if text.contains("<skip_summary") {
         return None;
     }
@@ -70,37 +63,95 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
 
     Some(ParsedSummary {
         request: observe::extract_field(content, "request"),
-        investigated: observe::extract_field(content, "investigated"),
-        learned: observe::extract_field(content, "learned"),
         completed: observe::extract_field(content, "completed"),
+        decisions: observe::extract_field(content, "decisions"),
+        learned: observe::extract_field(content, "learned"),
         next_steps: observe::extract_field(content, "next_steps"),
-        notes: observe::extract_field(content, "notes"),
+        preferences: observe::extract_field(content, "preferences"),
     })
 }
 
+/// Stop hook entry: read stdin, spawn background worker, return immediately.
+/// Only processes sessions where remem actually captured tool observations.
 pub async fn summarize() -> Result<()> {
-    let timer = crate::log::Timer::start("summarize", "");
     let input = std::io::read_to_string(std::io::stdin())?;
+
+    // Quick validation
+    let hook: SummarizeInput = serde_json::from_str(&input)?;
+    let Some(session_id) = &hook.session_id else {
+        return Ok(());
+    };
+    if let Some(msg) = &hook.last_assistant_message {
+        if msg.contains("<skip_summary") || msg.len() < 50 {
+            return Ok(());
+        }
+    }
+
+    // Gate: only summarize sessions where remem captured observations
+    let conn = db::open_db()?;
+    let pending = db::count_pending(&conn, session_id)?;
+    if pending == 0 {
+        crate::log::info("summarize", &format!(
+            "session={} has 0 pending observations, skipping", session_id
+        ));
+        return Ok(());
+    }
+    crate::log::info("summarize", &format!(
+        "session={} has {} pending, dispatching worker", session_id, pending
+    ));
+
+    // Spawn background worker — Stop hook returns immediately
+    let exe = std::env::current_exe()?;
+    let mut child = std::process::Command::new(&exe)
+        .arg("summarize-worker")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(input.as_bytes())?;
+        // stdin dropped here → pipe closed → worker gets EOF
+    }
+
+    // Child handle dropped — process continues in background (std::process does NOT kill on drop)
+    crate::log::info("summarize", "dispatched to background worker");
+    Ok(())
+}
+
+/// Background worker: does the actual AI calls. Runs detached from Claude Code.
+pub async fn summarize_worker() -> Result<()> {
+    let timer = crate::log::Timer::start("summarize-worker", "");
+    let input = std::io::read_to_string(std::io::stdin())?;
+    crate::log::debug("summarize-worker", &format!("input: {}", crate::db::truncate_str(&input, 500)));
+
     let hook: SummarizeInput = serde_json::from_str(&input)?;
 
-    let session_id = hook
-        .session_id
-        .ok_or_else(|| anyhow::anyhow!("missing session_id"))?;
+    let Some(session_id) = hook.session_id else {
+        timer.done("skipped (no session_id)");
+        return Ok(());
+    };
     let cwd = hook.cwd.as_deref().unwrap_or(".");
     let project = project_from_cwd(cwd);
 
-    crate::log::info("summarize", &format!("project={} session={}", project, session_id));
+    crate::log::info("summarize-worker", &format!("project={} session={}", project, session_id));
 
-    // Flush pending observation queue before summarizing
+    // Flush pending observation queue
     match observe::flush_pending(&session_id, &project).await {
         Ok(n) => {
             if n > 0 {
-                crate::log::info("summarize", &format!("flushed {} observations from queue", n));
+                crate::log::info("summarize-worker", &format!("flushed {} observations", n));
             }
         }
         Err(e) => {
-            crate::log::warn("summarize", &format!("flush failed (continuing): {}", e));
+            crate::log::warn("summarize-worker", &format!("flush failed (continuing): {}", e));
         }
+    }
+
+    // Trigger compression if needed (after flush, independent of summary success)
+    if let Err(e) = maybe_compress(&project).await {
+        crate::log::warn("summarize-worker", &format!("compress failed: {}", e));
     }
 
     // Get last assistant message
@@ -114,16 +165,20 @@ pub async fn summarize() -> Result<()> {
         .unwrap_or_default();
 
     if assistant_msg.is_empty() {
-        crate::log::warn("summarize", "no assistant message, skipping");
         timer.done("no message");
         return Ok(());
     }
 
-    crate::log::info("summarize", &format!("message len={}B", assistant_msg.len()));
+    if assistant_msg.contains("<skip_summary") || assistant_msg.len() < 50 {
+        timer.done("skipped (trivial)");
+        return Ok(());
+    }
+
+    crate::log::info("summarize-worker", &format!("message len={}B", assistant_msg.len()));
 
     // Truncate if too long
     let msg = if assistant_msg.len() > 12000 {
-        assistant_msg[..12000].to_string()
+        crate::db::truncate_str(&assistant_msg, 12000).to_string()
     } else {
         assistant_msg
     };
@@ -134,12 +189,19 @@ pub async fn summarize() -> Result<()> {
     );
 
     let ai_start = std::time::Instant::now();
-    let response = observe::call_anthropic(SUMMARY_PROMPT, &user_message).await?;
+    let response = match observe::call_anthropic(SUMMARY_PROMPT, &user_message).await {
+        Ok(r) => r,
+        Err(e) => {
+            crate::log::warn("summarize-worker", &format!("AI call failed: {}", e));
+            timer.done(&format!("AI error: {}", e));
+            return Ok(());
+        }
+    };
     let ai_ms = ai_start.elapsed().as_millis();
-    crate::log::info("summarize", &format!("AI response {}ms {}B", ai_ms, response.len()));
+    crate::log::info("summarize-worker", &format!("AI response {}ms {}B", ai_ms, response.len()));
 
     let Some(summary) = parse_summary(&response) else {
-        crate::log::info("summarize", "session skipped (trivial)");
+        crate::log::info("summarize-worker", "session skipped by AI (trivial)");
         timer.done("skipped");
         return Ok(());
     };
@@ -153,16 +215,118 @@ pub async fn summarize() -> Result<()> {
         &memory_session_id,
         &project,
         summary.request.as_deref(),
-        summary.investigated.as_deref(),
-        summary.learned.as_deref(),
         summary.completed.as_deref(),
+        summary.decisions.as_deref(),
+        summary.learned.as_deref(),
         summary.next_steps.as_deref(),
-        summary.notes.as_deref(),
+        summary.preferences.as_deref(),
         None,
         usage,
     )?;
 
     let request_preview = summary.request.as_deref().unwrap_or("-");
     timer.done(&format!("~{}tok request=\"{}\"", usage, request_preview));
+    Ok(())
+}
+
+// --- Long-term memory compression ---
+
+const COMPRESS_PROMPT: &str = include_str!("../prompts/compress.txt");
+const COMPRESS_THRESHOLD: i64 = 100;
+const KEEP_RECENT: i64 = 50;
+const COMPRESS_BATCH: i64 = 30;
+
+/// Compress old observations when count exceeds threshold.
+/// Runs at the end of summarize_worker, in background.
+async fn maybe_compress(project: &str) -> Result<()> {
+    let conn = db::open_db()?;
+    let total = db::count_active_observations(&conn, project)?;
+
+    if total <= COMPRESS_THRESHOLD {
+        return Ok(());
+    }
+
+    crate::log::info(
+        "compress",
+        &format!("project={} has {} observations (threshold={}), compressing", project, total, COMPRESS_THRESHOLD),
+    );
+
+    let old_obs = db::get_oldest_observations(&conn, project, KEEP_RECENT, COMPRESS_BATCH)?;
+    if old_obs.is_empty() {
+        return Ok(());
+    }
+
+    let timer = crate::log::Timer::start("compress", &format!("{} observations", old_obs.len()));
+
+    // Build input for AI
+    let mut events = String::from("<old_observations>\n");
+    for obs in &old_obs {
+        events.push_str(&format!(
+            "<observation type=\"{}\">\n<title>{}</title>\n<subtitle>{}</subtitle>\n<narrative>{}</narrative>\n</observation>\n",
+            obs.r#type,
+            obs.title.as_deref().unwrap_or(""),
+            obs.subtitle.as_deref().unwrap_or(""),
+            obs.narrative.as_deref().unwrap_or(""),
+        ));
+    }
+    events.push_str("</old_observations>");
+
+    let response = match observe::call_anthropic(COMPRESS_PROMPT, &events).await {
+        Ok(r) => r,
+        Err(e) => {
+            crate::log::warn("compress", &format!("AI call failed: {}", e));
+            timer.done(&format!("AI error: {}", e));
+            return Ok(());
+        }
+    };
+
+    let compressed = observe::parse_observations(&response);
+
+    // Store compressed observations (if any)
+    if !compressed.is_empty() {
+        let memory_session_id = format!("compressed-{}", chrono::Utc::now().timestamp());
+        let usage = response.len() as i64 / 4;
+
+        for obs in &compressed {
+            let facts_json = if obs.facts.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&obs.facts)?)
+            };
+            let concepts_json = if obs.concepts.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&obs.concepts)?)
+            };
+
+            db::insert_observation(
+                &conn,
+                &memory_session_id,
+                project,
+                &obs.obs_type,
+                obs.title.as_deref(),
+                obs.subtitle.as_deref(),
+                obs.narrative.as_deref(),
+                facts_json.as_deref(),
+                concepts_json.as_deref(),
+                None,
+                None,
+                None,
+                usage / compressed.len().max(1) as i64,
+            )?;
+        }
+    }
+
+    // Mark old observations as compressed
+    let ids: Vec<i64> = old_obs.iter().map(|o| o.id).collect();
+    let marked = db::mark_observations_compressed(&conn, &ids)?;
+
+    timer.done(&format!(
+        "{} old → {} compressed, {} marked",
+        old_obs.len(),
+        compressed.len(),
+        marked
+    ));
+
     Ok(())
 }

@@ -1,6 +1,7 @@
 mod ai;
 mod context;
 mod db;
+mod install;
 mod log;
 mod mcp;
 mod observe;
@@ -35,8 +36,10 @@ enum Commands {
     SessionInit,
     /// Extract observations from PostToolUse hook (stdin JSON)
     Observe,
-    /// Generate session summary from Stop hook (stdin JSON)
+    /// Stop hook dispatcher: spawn background worker, return immediately
     Summarize,
+    /// Background worker: actual summarization (called by Summarize, not by hooks)
+    SummarizeWorker,
     /// Flush pending observation queue (batch process with one AI call)
     Flush {
         /// Session ID
@@ -48,6 +51,10 @@ enum Commands {
     },
     /// Run MCP server (stdio transport, long-running)
     Mcp,
+    /// Install hooks + MCP to ~/.claude/settings.json
+    Install,
+    /// Uninstall hooks + MCP from ~/.claude/settings.json
+    Uninstall,
 }
 
 #[tokio::main]
@@ -73,11 +80,20 @@ async fn main() -> Result<()> {
         Commands::Summarize => {
             summarize::summarize().await?;
         }
+        Commands::SummarizeWorker => {
+            summarize::summarize_worker().await?;
+        }
         Commands::Flush { session_id, project } => {
             observe::flush_pending(&session_id, &project).await?;
         }
         Commands::Mcp => {
             mcp::run_mcp_server().await?;
+        }
+        Commands::Install => {
+            install::install()?;
+        }
+        Commands::Uninstall => {
+            install::uninstall()?;
         }
     }
 

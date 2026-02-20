@@ -22,7 +22,6 @@ const SKIP_TOOLS: &[&str] = &[
 const MAX_RESPONSE_SIZE: usize = 4000;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct HookInput {
     session_id: Option<String>,
     cwd: Option<String>,
@@ -31,12 +30,7 @@ struct HookInput {
     tool_response: Option<serde_json::Value>,
 }
 
-fn project_from_cwd(cwd: &str) -> String {
-    std::path::Path::new(cwd)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| cwd.to_string())
-}
+use crate::db::project_from_cwd;
 
 pub async fn call_anthropic(system: &str, user_message: &str) -> Result<String> {
     crate::ai::call_ai(system, user_message).await
@@ -131,6 +125,7 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
 pub async fn session_init() -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
     let input = std::io::read_to_string(std::io::stdin())?;
+    crate::log::debug("session-init", &format!("raw input: {}", crate::db::truncate_str(&input, 500)));
     let hook: HookInput = serde_json::from_str(&input)?;
 
     let session_id = hook
@@ -178,7 +173,7 @@ pub async fn observe() -> Result<()> {
         .as_ref()
         .map(|v| {
             let s = serde_json::to_string(v).unwrap_or_default();
-            if s.len() > MAX_RESPONSE_SIZE { s[..MAX_RESPONSE_SIZE].to_string() } else { s }
+            if s.len() > MAX_RESPONSE_SIZE { crate::db::truncate_str(&s, MAX_RESPONSE_SIZE).to_string() } else { s }
         });
 
     let conn = db::open_db()?;
@@ -196,6 +191,28 @@ pub async fn observe() -> Result<()> {
     crate::log::info("observe", &format!("QUEUED tool={} project={} pending={}", tool_name, project, count));
 
     Ok(())
+}
+
+/// Build existing memory context for delta deduplication.
+/// Returns formatted XML block, or empty string if no recent memories.
+fn build_existing_context(conn: &rusqlite::Connection, project: &str) -> Result<String> {
+    let all_types: &[&str] = &["bugfix", "feature", "refactor", "change", "discovery", "decision"];
+    let recent = db::query_observations(conn, project, all_types, 10)?;
+    if recent.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut buf = String::from("<existing_memories>\n");
+    for obs in &recent {
+        buf.push_str(&format!(
+            "<memory type=\"{}\">{}{}</memory>\n",
+            obs.r#type,
+            obs.title.as_deref().map(|t| format!(" title=\"{}\"", t)).unwrap_or_default(),
+            obs.subtitle.as_deref().map(|s| format!(" — {}", s)).unwrap_or_default(),
+        ));
+    }
+    buf.push_str("</existing_memories>\n");
+    Ok(buf)
 }
 
 /// Flush pending queue: batch all queued items into one AI call.
@@ -228,9 +245,18 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
         ));
     }
 
+    // Delta: include recent existing memories so AI skips duplicates
+    let existing_context = match build_existing_context(&conn, project) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            crate::log::warn("flush", &format!("existing context failed (continuing): {}", e));
+            String::new()
+        }
+    };
+
     let user_message = format!(
-        "<session_events>\n{}</session_events>",
-        events
+        "{}<session_events>\n{}</session_events>",
+        existing_context, events
     );
 
     // Choose prompt based on event count
@@ -238,7 +264,14 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
 
     // Single AI call for all events
     let ai_start = std::time::Instant::now();
-    let response = call_anthropic(prompt, &user_message).await?;
+    let response = match call_anthropic(prompt, &user_message).await {
+        Ok(r) => r,
+        Err(e) => {
+            crate::log::warn("flush", &format!("AI call failed: {}", e));
+            timer.done(&format!("AI error: {}", e));
+            return Err(e);
+        }
+    };
     let ai_ms = ai_start.elapsed().as_millis();
     crate::log::info("flush", &format!("AI response {}ms {}B", ai_ms, response.len()));
 
@@ -265,7 +298,7 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
         let files_modified_json = if obs.files_modified.is_empty() { None }
             else { Some(serde_json::to_string(&obs.files_modified)?) };
 
-        db::insert_observation(
+        let obs_id = db::insert_observation(
             &conn,
             &memory_session_id,
             project,
@@ -280,6 +313,13 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
             None,
             usage / observations.len().max(1) as i64,
         )?;
+
+        if !obs.files_modified.is_empty() {
+            let stale_count = db::mark_stale_by_files(&conn, obs_id, project, &obs.files_modified)?;
+            if stale_count > 0 {
+                crate::log::info("flush", &format!("marked {} stale (file overlap)", stale_count));
+            }
+        }
     }
 
     // Clear processed items

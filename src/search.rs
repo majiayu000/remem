@@ -10,10 +10,11 @@ pub fn search(
     obs_type: Option<&str>,
     limit: i64,
     offset: i64,
+    include_stale: bool,
 ) -> Result<Vec<Observation>> {
     match query {
         Some(q) if !q.is_empty() => {
-            db::search_observations_fts(conn, q, project, obs_type, limit, offset)
+            db::search_observations_fts(conn, q, project, obs_type, limit, offset, include_stale)
         }
         _ => {
             // No query — return recent observations filtered by project/type
