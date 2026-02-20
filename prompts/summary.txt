@@ -23,6 +23,16 @@ OUTPUT FORMAT
 </summary>
 ```
 
+INCREMENTAL UPDATE
+------------------
+You may receive <existing_summary> showing the PREVIOUS summary for this same session.
+When present:
+- MERGE new information into the existing summary, do not start from scratch
+- KEEP all existing decisions, completed items, and preferences unless contradicted
+- ADD new completions, decisions, insights from the latest response
+- UPDATE request if scope expanded; APPEND to next_steps if new TODOs emerged
+- The result should be a single comprehensive summary covering the ENTIRE session
+
 RULES:
 - Each field should be 1-3 concise sentences or bullet points
 - Use specific names: file paths, function names, config keys — not vague descriptions

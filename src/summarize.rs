@@ -183,9 +183,26 @@ pub async fn summarize_worker() -> Result<()> {
         assistant_msg
     };
 
+    // Build user message with optional existing summary context
+    let conn_for_summary = db::open_db()?;
+    let memory_sid = db::upsert_session(&conn_for_summary, &session_id, &project, None)?;
+    let existing_ctx = match db::get_summary_by_session(&conn_for_summary, &memory_sid, &project)? {
+        Some(prev) => {
+            let mut parts = Vec::new();
+            if let Some(r) = &prev.request { parts.push(format!("<request>{}</request>", r)); }
+            if let Some(c) = &prev.completed { parts.push(format!("<completed>{}</completed>", c)); }
+            if let Some(d) = &prev.decisions { parts.push(format!("<decisions>{}</decisions>", d)); }
+            if let Some(l) = &prev.learned { parts.push(format!("<learned>{}</learned>", l)); }
+            if let Some(n) = &prev.next_steps { parts.push(format!("<next_steps>{}</next_steps>", n)); }
+            if let Some(p) = &prev.preferences { parts.push(format!("<preferences>{}</preferences>", p)); }
+            format!("<existing_summary>\n{}\n</existing_summary>\n\n", parts.join("\n"))
+        }
+        None => String::new(),
+    };
+
     let user_message = format!(
-        "Here is the assistant's last response from the session:\n\n{}",
-        msg
+        "{}Here is the assistant's last response from the session:\n\n{}",
+        existing_ctx, msg
     );
 
     let ai_start = std::time::Instant::now();
@@ -206,13 +223,16 @@ pub async fn summarize_worker() -> Result<()> {
         return Ok(());
     };
 
-    let conn = db::open_db()?;
-    let memory_session_id = db::upsert_session(&conn, &session_id, &project, None)?;
+    // Delete previous summary for this session (replaced by the new merged one)
+    let deleted = db::delete_summaries_by_session(&conn_for_summary, &memory_sid, &project)?;
+    if deleted > 0 {
+        crate::log::info("summarize-worker", &format!("replaced {} old summary(s)", deleted));
+    }
 
     let usage = response.len() as i64 / 4;
     db::insert_summary(
-        &conn,
-        &memory_session_id,
+        &conn_for_summary,
+        &memory_sid,
         &project,
         summary.request.as_deref(),
         summary.completed.as_deref(),

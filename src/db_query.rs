@@ -145,6 +145,59 @@ pub fn query_summaries(
     collect_rows(rows)
 }
 
+/// Get the latest summary for a given memory_session_id + project.
+pub fn get_summary_by_session(
+    conn: &Connection,
+    memory_session_id: &str,
+    project: &str,
+) -> Result<Option<SessionSummary>> {
+    let mut stmt = conn.prepare(
+        &format!(
+            "SELECT id, memory_session_id, request, completed, decisions, learned, \
+             next_steps, preferences, created_at, created_at_epoch \
+             FROM session_summaries \
+             WHERE memory_session_id = ?1 AND project = ?2 AND {} \
+             ORDER BY created_at_epoch DESC LIMIT 1",
+            EPOCH_SECS_ONLY
+        ),
+    )?;
+
+    let mut rows = stmt.query_map(params![memory_session_id, project], |row| {
+        Ok(SessionSummary {
+            id: row.get(0)?,
+            memory_session_id: row.get(1)?,
+            request: row.get(2)?,
+            completed: row.get(3)?,
+            decisions: row.get(4)?,
+            learned: row.get(5)?,
+            next_steps: row.get(6)?,
+            preferences: row.get(7)?,
+            created_at: row.get(8)?,
+            created_at_epoch: row.get(9)?,
+            project: Some(project.to_string()),
+        })
+    })?;
+
+    match rows.next() {
+        Some(Ok(s)) => Ok(Some(s)),
+        Some(Err(e)) => Err(e.into()),
+        None => Ok(None),
+    }
+}
+
+/// Delete summaries for a given memory_session_id + project.
+pub fn delete_summaries_by_session(
+    conn: &Connection,
+    memory_session_id: &str,
+    project: &str,
+) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM session_summaries WHERE memory_session_id = ?1 AND project = ?2",
+        params![memory_session_id, project],
+    )?;
+    Ok(count)
+}
+
 pub fn search_observations_fts(
     conn: &Connection,
     query: &str,
