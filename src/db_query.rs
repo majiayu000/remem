@@ -53,6 +53,10 @@ fn map_observation_row_with_project(project: &str) -> impl Fn(&rusqlite::Row) ->
     }
 }
 
+/// 旧版 claude-mem 用毫秒 epoch，remem 用秒 epoch。
+/// 秒级 epoch 当前 ~1.7×10⁹，毫秒级 ~1.7×10¹²。以 10¹⁰ 为分界线排除旧数据。
+const EPOCH_SECS_ONLY: &str = "created_at_epoch < 10000000000";
+
 const OBS_COLS: &str = "id, memory_session_id, type, title, subtitle, narrative, \
     facts, concepts, files_read, files_modified, discovery_tokens, \
     created_at, created_at_epoch, status, last_accessed_epoch";
@@ -92,9 +96,9 @@ pub fn query_observations(
     let placeholders: Vec<String> = types.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
     let sql = format!(
         "SELECT {} FROM observations \
-         WHERE project = ?1 AND type IN ({}) \
+         WHERE project = ?1 AND {} AND type IN ({}) \
          ORDER BY created_at_epoch DESC LIMIT ?{}",
-        OBS_COLS, placeholders.join(", "), types.len() + 2
+        OBS_COLS, EPOCH_SECS_ONLY, placeholders.join(", "), types.len() + 2
     );
 
     let mut stmt = conn.prepare(&sql)?;
@@ -116,11 +120,11 @@ pub fn query_summaries(
     limit: i64,
 ) -> Result<Vec<SessionSummary>> {
     let mut stmt = conn.prepare(
-        "SELECT id, memory_session_id, request, completed, decisions, learned, \
+        &format!("SELECT id, memory_session_id, request, completed, decisions, learned, \
          next_steps, preferences, created_at, created_at_epoch \
          FROM session_summaries \
-         WHERE project = ?1 \
-         ORDER BY created_at_epoch DESC LIMIT ?2",
+         WHERE project = ?1 AND {} \
+         ORDER BY created_at_epoch DESC LIMIT ?2", EPOCH_SECS_ONLY),
     )?;
 
     let rows = stmt.query_map(params![project, limit], |row| {
@@ -150,7 +154,10 @@ pub fn search_observations_fts(
     offset: i64,
     include_stale: bool,
 ) -> Result<Vec<Observation>> {
-    let mut conditions = vec!["observations_fts MATCH ?1".to_string()];
+    let mut conditions = vec![
+        "observations_fts MATCH ?1".to_string(),
+        format!("o.{}", EPOCH_SECS_ONLY),
+    ];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     param_values.push(Box::new(query.to_string()));
 
@@ -203,9 +210,9 @@ pub fn get_observations_by_ids(
 
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "SELECT {} FROM observations WHERE id IN ({}) \
+        "SELECT {} FROM observations WHERE id IN ({}) AND {} \
          ORDER BY created_at_epoch DESC",
-        OBS_COLS_WITH_PROJECT, placeholders.join(", ")
+        OBS_COLS_WITH_PROJECT, placeholders.join(", "), EPOCH_SECS_ONLY
     );
 
     let mut stmt = conn.prepare(&sql)?;
@@ -219,7 +226,10 @@ pub fn get_observations_by_ids(
 /// Count active observations for a project.
 pub fn count_active_observations(conn: &Connection, project: &str) -> Result<i64> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM observations WHERE project = ?1 AND status IN ('active', 'stale')",
+        &format!(
+            "SELECT COUNT(*) FROM observations WHERE project = ?1 AND {} AND status IN ('active', 'stale')",
+            EPOCH_SECS_ONLY
+        ),
         params![project],
         |row| row.get(0),
     )?;
@@ -242,9 +252,9 @@ pub fn get_oldest_observations(
 
     let sql = format!(
         "SELECT {} FROM observations \
-         WHERE project = ?1 AND status IN ('active', 'stale') \
+         WHERE project = ?1 AND {} AND status IN ('active', 'stale') \
          ORDER BY created_at_epoch ASC LIMIT ?2",
-        OBS_COLS
+        OBS_COLS, EPOCH_SECS_ONLY
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project, take], map_observation_row_with_project(project))?;
@@ -269,15 +279,15 @@ pub fn get_timeline_around(
 
     let before_sql = format!(
         "SELECT {} FROM observations \
-         WHERE created_at_epoch < ?1{} \
+         WHERE {} AND created_at_epoch < ?1{} \
          ORDER BY created_at_epoch DESC LIMIT ?2",
-        OBS_COLS_WITH_PROJECT, project_filter
+        OBS_COLS_WITH_PROJECT, EPOCH_SECS_ONLY, project_filter
     );
     let after_sql = format!(
         "SELECT {} FROM observations \
-         WHERE created_at_epoch > ?1{} \
+         WHERE {} AND created_at_epoch > ?1{} \
          ORDER BY created_at_epoch ASC LIMIT ?2",
-        OBS_COLS_WITH_PROJECT, project_filter
+        OBS_COLS_WITH_PROJECT, EPOCH_SECS_ONLY, project_filter
     );
 
     let mut result = Vec::new();
