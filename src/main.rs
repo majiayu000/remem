@@ -1,6 +1,7 @@
 mod ai;
 mod context;
 mod db;
+mod db_query;
 mod install;
 mod log;
 mod mcp;
