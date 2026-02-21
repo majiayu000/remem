@@ -4,6 +4,7 @@ pub use crate::db_query::*;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
@@ -52,12 +53,7 @@ pub struct SessionSummary {
     pub project: Option<String>,
 }
 
-/// Extract project name from cwd using last 2 path components to reduce collision risk.
-/// e.g. "/Users/foo/code/my-app" → "code/my-app"
-///      "/Users/foo/my-app"      → "foo/my-app"
-///      "my-app"                 → "my-app"
-pub fn project_from_cwd(cwd: &str) -> String {
-    let path = std::path::Path::new(cwd);
+fn project_label_from_path(path: &std::path::Path) -> String {
     let components: Vec<&std::ffi::OsStr> = path
         .components()
         .filter_map(|c| match c {
@@ -66,7 +62,7 @@ pub fn project_from_cwd(cwd: &str) -> String {
         })
         .collect();
     match components.len() {
-        0 => cwd.to_string(),
+        0 => path.to_string_lossy().to_string(),
         1 => components[0].to_string_lossy().to_string(),
         n => format!(
             "{}/{}",
@@ -74,6 +70,30 @@ pub fn project_from_cwd(cwd: &str) -> String {
             components[n - 1].to_string_lossy()
         ),
     }
+}
+
+fn canonical_project_path(cwd: &str) -> PathBuf {
+    let path = std::path::Path::new(cwd);
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+    std::fs::canonicalize(&abs).unwrap_or(abs)
+}
+
+/// Build a stable project key from cwd.
+/// Format: "<last2>@<hash12>", where hash is derived from canonical absolute path.
+/// Example: "tools/remem@b7f8a1d44c2e"
+pub fn project_from_cwd(cwd: &str) -> String {
+    let canonical = canonical_project_path(cwd);
+    let label = project_label_from_path(&canonical);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical.to_string_lossy().hash(&mut hasher);
+    let suffix = hasher.finish() & 0x0000_FFFF_FFFF_FFFF;
+    format!("{label}@{suffix:012x}")
 }
 
 pub fn db_path() -> PathBuf {
@@ -88,7 +108,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -149,11 +169,11 @@ fn ensure_core_schema(conn: &Connection) -> Result<()> {
             memory_session_id TEXT NOT NULL,
             project TEXT,
             request TEXT,
-            investigated TEXT,
-            learned TEXT,
             completed TEXT,
+            decisions TEXT,
+            learned TEXT,
             next_steps TEXT,
-            notes TEXT,
+            preferences TEXT,
             prompt_number INTEGER,
             created_at TEXT,
             created_at_epoch INTEGER,
@@ -258,6 +278,71 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_ai_usage_project_created
            ON ai_usage_events(project, created_at_epoch DESC);",
     )?;
+    migrate_session_summaries_v4(conn)?;
+    Ok(())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn migrate_session_summaries_v4(conn: &Connection) -> Result<()> {
+    let has_investigated = column_exists(conn, "session_summaries", "investigated")?;
+    let has_notes = column_exists(conn, "session_summaries", "notes")?;
+    if !has_investigated && !has_notes {
+        return Ok(());
+    }
+
+    let completed_expr = if has_investigated {
+        "COALESCE(completed, investigated)"
+    } else {
+        "completed"
+    };
+    let preferences_expr = if has_notes {
+        "COALESCE(preferences, notes)"
+    } else {
+        "preferences"
+    };
+
+    let sql = format!(
+        "BEGIN IMMEDIATE;
+         DROP TABLE IF EXISTS session_summaries_v4;
+         CREATE TABLE session_summaries_v4 (
+             id INTEGER PRIMARY KEY,
+             memory_session_id TEXT NOT NULL,
+             project TEXT,
+             request TEXT,
+             completed TEXT,
+             decisions TEXT,
+             learned TEXT,
+             next_steps TEXT,
+             preferences TEXT,
+             prompt_number INTEGER,
+             created_at TEXT,
+             created_at_epoch INTEGER,
+             discovery_tokens INTEGER DEFAULT 0
+         );
+         INSERT INTO session_summaries_v4
+             (id, memory_session_id, project, request, completed, decisions, learned,
+              next_steps, preferences, prompt_number, created_at, created_at_epoch, discovery_tokens)
+         SELECT id, memory_session_id, project, request, {completed_expr}, decisions, learned,
+                next_steps, {preferences_expr}, prompt_number, created_at, created_at_epoch, discovery_tokens
+         FROM session_summaries;
+         DROP TABLE session_summaries;
+         ALTER TABLE session_summaries_v4 RENAME TO session_summaries;
+         CREATE INDEX IF NOT EXISTS idx_session_summaries_project_created
+           ON session_summaries(project, created_at_epoch DESC);
+         COMMIT;"
+    );
+    conn.execute_batch(&sql)?;
     Ok(())
 }
 
@@ -297,20 +382,6 @@ pub fn is_duplicate_message(conn: &Connection, project: &str, message_hash: &str
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
         Err(e) => Err(e.into()),
     }
-}
-
-/// 记录本次 summarize 的时间和 message hash。
-pub fn record_summarize(conn: &Connection, project: &str, message_hash: &str) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "INSERT INTO summarize_cooldown (project, last_summarize_epoch, last_message_hash)
-         VALUES (?1, ?2, ?3)
-         ON CONFLICT(project) DO UPDATE SET
-           last_summarize_epoch = ?2,
-           last_message_hash = ?3",
-        params![project, now, message_hash],
-    )?;
-    Ok(())
 }
 
 /// Try to acquire a short-lived summarize lock for one project.
@@ -443,9 +514,12 @@ pub fn cleanup_duplicate_summaries(conn: &Connection) -> Result<usize> {
 /// 清理已处理但残留的 pending observations（超过 1 小时未处理的）。
 pub fn cleanup_stale_pending(conn: &Connection) -> Result<usize> {
     let cutoff = chrono::Utc::now().timestamp() - 3600;
+    let now = chrono::Utc::now().timestamp();
     let count = conn.execute(
-        "DELETE FROM pending_observations WHERE created_at_epoch < ?1",
-        params![cutoff],
+        "DELETE FROM pending_observations
+         WHERE created_at_epoch < ?1
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?2)",
+        params![cutoff, now],
     )?;
     Ok(count)
 }
@@ -461,6 +535,7 @@ pub fn cleanup_expired_compressed(conn: &Connection, ttl_days: i64) -> Result<us
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PendingObservation {
     pub id: i64,
     pub session_id: String,
@@ -549,25 +624,6 @@ pub fn release_pending_claims(conn: &Connection, lease_owner: &str) -> Result<us
         params![lease_owner],
     )?;
     Ok(count)
-}
-
-pub fn delete_pending(conn: &Connection, ids: &[i64]) -> Result<()> {
-    if ids.is_empty() {
-        return Ok(());
-    }
-    let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
-    let sql = format!(
-        "DELETE FROM pending_observations WHERE id IN ({})",
-        placeholders.join(", ")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
-    stmt.execute(refs.as_slice())?;
-    Ok(())
 }
 
 pub fn delete_pending_claimed(conn: &Connection, lease_owner: &str, ids: &[i64]) -> Result<usize> {
@@ -894,47 +950,6 @@ pub fn insert_observation(
     Ok(conn.last_insert_rowid())
 }
 
-pub fn insert_summary(
-    conn: &Connection,
-    memory_session_id: &str,
-    project: &str,
-    request: Option<&str>,
-    completed: Option<&str>,
-    decisions: Option<&str>,
-    learned: Option<&str>,
-    next_steps: Option<&str>,
-    preferences: Option<&str>,
-    prompt_number: Option<i64>,
-    discovery_tokens: i64,
-) -> Result<i64> {
-    let now = chrono::Utc::now();
-    let created_at = now.to_rfc3339();
-    let created_at_epoch = now.timestamp();
-
-    conn.execute(
-        "INSERT INTO session_summaries \
-         (memory_session_id, project, request, completed, decisions, learned, \
-          next_steps, preferences, prompt_number, \
-          created_at, created_at_epoch, discovery_tokens) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
-            memory_session_id,
-            project,
-            request,
-            completed,
-            decisions,
-            learned,
-            next_steps,
-            preferences,
-            prompt_number,
-            created_at,
-            created_at_epoch,
-            discovery_tokens
-        ],
-    )?;
-    Ok(conn.last_insert_rowid())
-}
-
 pub fn mark_stale_by_files(
     conn: &Connection,
     new_obs_id: i64,
@@ -1105,6 +1120,74 @@ mod tests {
         Ok(())
     }
 
+    fn setup_legacy_summary_schema(conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE session_summaries (
+                id INTEGER PRIMARY KEY,
+                memory_session_id TEXT NOT NULL,
+                project TEXT,
+                request TEXT,
+                investigated TEXT,
+                learned TEXT,
+                completed TEXT,
+                next_steps TEXT,
+                notes TEXT,
+                prompt_number INTEGER,
+                created_at TEXT,
+                created_at_epoch INTEGER,
+                discovery_tokens INTEGER DEFAULT 0,
+                decisions TEXT,
+                preferences TEXT
+            );",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn migrate_legacy_summary_columns_to_v4_shape() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_legacy_summary_schema(&conn)?;
+        conn.execute(
+            "INSERT INTO session_summaries
+             (memory_session_id, project, request, investigated, learned, next_steps, notes,
+              created_at, created_at_epoch, discovery_tokens, decisions, preferences)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+            params![
+                "mem-legacy",
+                "proj",
+                "req",
+                "legacy-completed",
+                "learned",
+                "next",
+                "legacy-pref",
+                "2026-01-01T00:00:00Z",
+                1_i64,
+                5_i64,
+                "decision"
+            ],
+        )?;
+
+        migrate_session_summaries_v4(&conn)?;
+
+        assert!(!column_exists(&conn, "session_summaries", "investigated")?);
+        assert!(!column_exists(&conn, "session_summaries", "notes")?);
+
+        let completed: String = conn.query_row(
+            "SELECT completed FROM session_summaries WHERE memory_session_id = 'mem-legacy'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(completed, "legacy-completed");
+
+        let preferences: String = conn.query_row(
+            "SELECT preferences FROM session_summaries WHERE memory_session_id = 'mem-legacy'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(preferences, "legacy-pref");
+        Ok(())
+    }
+
     #[test]
     fn finalize_summarize_replaces_in_single_commit() -> Result<()> {
         let mut conn = Connection::open_in_memory()?;
@@ -1174,6 +1257,63 @@ mod tests {
         assert_eq!(released, 1);
         let c = claim_pending(&conn, "s1", 5, "owner-c", 60)?;
         assert_eq!(c.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_stale_pending_preserves_active_leases() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_pending_schema(&conn)?;
+        let now = chrono::Utc::now().timestamp();
+        let old = now - 7200;
+
+        // Stale + unleased: should be deleted.
+        conn.execute(
+            "INSERT INTO pending_observations
+             (session_id, project, tool_name, created_at_epoch, lease_owner, lease_expires_epoch)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)",
+            params!["s1", "p1", "Edit", old],
+        )?;
+
+        // Stale + lease expired: should be deleted.
+        conn.execute(
+            "INSERT INTO pending_observations
+             (session_id, project, tool_name, created_at_epoch, lease_owner, lease_expires_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["s1", "p1", "Bash", old, "owner-expired", now - 10],
+        )?;
+
+        // Stale + active lease: should be preserved.
+        conn.execute(
+            "INSERT INTO pending_observations
+             (session_id, project, tool_name, created_at_epoch, lease_owner, lease_expires_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["s1", "p1", "Write", old, "owner-active", now + 600],
+        )?;
+
+        // Fresh row: should be preserved.
+        conn.execute(
+            "INSERT INTO pending_observations
+             (session_id, project, tool_name, created_at_epoch, lease_owner, lease_expires_epoch)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)",
+            params!["s1", "p1", "NotebookEdit", now],
+        )?;
+
+        let deleted = cleanup_stale_pending(&conn)?;
+        assert_eq!(deleted, 2);
+
+        let remaining: i64 =
+            conn.query_row("SELECT COUNT(*) FROM pending_observations", [], |r| {
+                r.get(0)
+            })?;
+        assert_eq!(remaining, 2);
+
+        let active_leased: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE lease_owner = 'owner-active'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(active_leased, 1);
         Ok(())
     }
 

@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::db::{self, Observation};
+use crate::memory_format::OBSERVATION_TYPES;
 
 pub fn search(
     conn: &Connection,
@@ -18,10 +19,7 @@ pub fn search(
         }
         _ => {
             // No query — return recent observations filtered by project/type
-            let types: Vec<&str> = obs_type.map_or_else(
-                || vec!["bugfix", "feature", "refactor", "discovery", "decision", "change"],
-                |t| vec![t],
-            );
+            let types: Vec<&str> = obs_type.map_or_else(|| OBSERVATION_TYPES.to_vec(), |t| vec![t]);
             let proj = project.unwrap_or("");
             if proj.is_empty() {
                 Ok(vec![])

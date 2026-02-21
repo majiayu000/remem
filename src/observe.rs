@@ -2,17 +2,9 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::db;
+use crate::memory_format::{self, xml_escape_attr, xml_escape_text, OBSERVATION_TYPES};
 
 const OBSERVATION_PROMPT: &str = include_str!("../prompts/observation.txt");
-
-const VALID_TYPES: &[&str] = &[
-    "bugfix",
-    "feature",
-    "refactor",
-    "change",
-    "discovery",
-    "decision",
-];
 
 /// Tools that produce meaningful observations (modify state)
 const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash"];
@@ -91,115 +83,11 @@ struct HookInput {
 
 use crate::db::project_from_cwd;
 
-pub async fn call_anthropic(
-    system: &str,
-    user_message: &str,
-    project: &str,
-    operation: &str,
-) -> Result<String> {
-    crate::ai::call_ai(
-        system,
-        user_message,
-        crate::ai::UsageContext {
-            project: Some(project),
-            operation,
-        },
-    )
-    .await
-}
-
-pub struct ParsedObservation {
-    pub obs_type: String,
-    pub title: Option<String>,
-    pub subtitle: Option<String>,
-    pub facts: Vec<String>,
-    pub narrative: Option<String>,
-    pub concepts: Vec<String>,
-    pub files_read: Vec<String>,
-    pub files_modified: Vec<String>,
-}
-
-pub fn extract_field(content: &str, field: &str) -> Option<String> {
-    let open = format!("<{}>", field);
-    let close = format!("</{}>", field);
-    let start = content.find(&open)? + open.len();
-    let end = content.find(&close)?;
-    if start >= end {
-        return None;
-    }
-    let val = content[start..end].trim().to_string();
-    if val.is_empty() {
-        None
-    } else {
-        Some(val)
-    }
-}
-
-fn extract_array(content: &str, array_name: &str, element_name: &str) -> Vec<String> {
-    let open = format!("<{}>", array_name);
-    let close = format!("</{}>", array_name);
-    let Some(start) = content.find(&open) else {
-        return vec![];
-    };
-    let Some(end) = content.find(&close) else {
-        return vec![];
-    };
-    let inner = &content[start + open.len()..end];
-
-    let elem_open = format!("<{}>", element_name);
-    let elem_close = format!("</{}>", element_name);
-    let mut results = Vec::new();
-    let mut pos = 0;
-    while let Some(s) = inner[pos..].find(&elem_open) {
-        let val_start = pos + s + elem_open.len();
-        if let Some(e) = inner[val_start..].find(&elem_close) {
-            let val = inner[val_start..val_start + e].trim().to_string();
-            if !val.is_empty() {
-                results.push(val);
-            }
-            pos = val_start + e + elem_close.len();
-        } else {
-            break;
-        }
-    }
-    results
-}
-
-pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
-    let mut observations = Vec::new();
-    let mut pos = 0;
-    while let Some(start) = text[pos..].find("<observation>") {
-        let obs_start = pos + start + "<observation>".len();
-        if let Some(end) = text[obs_start..].find("</observation>") {
-            let content = &text[obs_start..obs_start + end];
-
-            let raw_type = extract_field(content, "type").unwrap_or_default();
-            let obs_type = if VALID_TYPES.contains(&raw_type.as_str()) {
-                raw_type
-            } else {
-                "discovery".to_string()
-            };
-
-            let mut concepts = extract_array(content, "concepts", "concept");
-            concepts.retain(|c| c != &obs_type);
-
-            observations.push(ParsedObservation {
-                obs_type,
-                title: extract_field(content, "title"),
-                subtitle: extract_field(content, "subtitle"),
-                facts: extract_array(content, "facts", "fact"),
-                narrative: extract_field(content, "narrative"),
-                concepts,
-                files_read: extract_array(content, "files_read", "file"),
-                files_modified: extract_array(content, "files_modified", "file"),
-            });
-
-            pos = obs_start + end + "</observation>".len();
-        } else {
-            break;
-        }
-    }
-    observations
+pub fn should_skip_bash_command(cmd: &str) -> bool {
+    let cmd_trimmed = cmd.trim();
+    BASH_SKIP_PREFIXES
+        .iter()
+        .any(|prefix| cmd_trimmed.starts_with(prefix))
 }
 
 pub async fn session_init() -> Result<()> {
@@ -265,14 +153,10 @@ pub async fn observe() -> Result<()> {
     // Filter out routine Bash commands (read-only/build operations)
     if tool_name == "Bash" {
         if let Some(cmd) = hook.tool_input.as_ref().and_then(|v| v["command"].as_str()) {
-            let cmd_trimmed = cmd.trim();
-            if BASH_SKIP_PREFIXES
-                .iter()
-                .any(|prefix| cmd_trimmed.starts_with(prefix))
-            {
+            if should_skip_bash_command(cmd) {
                 crate::log::info(
                     "observe",
-                    &format!("SKIP bash cmd={}", db::truncate_str(cmd_trimmed, 60)),
+                    &format!("SKIP bash cmd={}", db::truncate_str(cmd.trim(), 60)),
                 );
                 return Ok(());
             }
@@ -318,15 +202,7 @@ pub async fn observe() -> Result<()> {
 /// Build existing memory context for delta deduplication.
 /// Returns formatted XML block, or empty string if no recent memories.
 fn build_existing_context(conn: &rusqlite::Connection, project: &str) -> Result<String> {
-    let all_types: &[&str] = &[
-        "bugfix",
-        "feature",
-        "refactor",
-        "change",
-        "discovery",
-        "decision",
-    ];
-    let recent = db::query_observations(conn, project, all_types, 10)?;
+    let recent = db::query_observations(conn, project, OBSERVATION_TYPES, 10)?;
     if recent.is_empty() {
         return Ok(String::new());
     }
@@ -335,14 +211,14 @@ fn build_existing_context(conn: &rusqlite::Connection, project: &str) -> Result<
     for obs in &recent {
         buf.push_str(&format!(
             "<memory type=\"{}\">{}{}</memory>\n",
-            obs.r#type,
+            xml_escape_attr(&obs.r#type),
             obs.title
                 .as_deref()
-                .map(|t| format!(" title=\"{}\"", t))
+                .map(|t| format!(" title=\"{}\"", xml_escape_attr(t)))
                 .unwrap_or_default(),
             obs.subtitle
                 .as_deref()
-                .map(|s| format!(" — {}", s))
+                .map(|s| format!(" — {}", xml_escape_text(s)))
                 .unwrap_or_default(),
         ));
     }
@@ -388,10 +264,10 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
              <outcome>{}</outcome>\n\
              </event>\n",
             i + 1,
-            p.tool_name,
-            p.cwd.as_deref().unwrap_or("."),
-            p.tool_input.as_deref().unwrap_or(""),
-            p.tool_response.as_deref().unwrap_or(""),
+            xml_escape_text(&p.tool_name),
+            xml_escape_text(p.cwd.as_deref().unwrap_or(".")),
+            xml_escape_text(p.tool_input.as_deref().unwrap_or("")),
+            xml_escape_text(p.tool_response.as_deref().unwrap_or("")),
         ));
     }
 
@@ -414,7 +290,16 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
 
     // Single AI call for all events
     let ai_start = std::time::Instant::now();
-    let response = match call_anthropic(OBSERVATION_PROMPT, &user_message, project, "flush").await {
+    let response = match crate::ai::call_ai(
+        OBSERVATION_PROMPT,
+        &user_message,
+        crate::ai::UsageContext {
+            project: Some(project),
+            operation: "flush",
+        },
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             if let Err(release_err) = db::release_pending_claims(&conn, &lease_owner) {
@@ -432,7 +317,7 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
     );
 
     // Parse and store observations
-    let observations = parse_observations(&response);
+    let observations = memory_format::parse_observations(&response);
     if observations.is_empty() {
         crate::log::info("flush", "no observations extracted from batch");
         let ids: Vec<i64> = pending.iter().map(|p| p.id).collect();

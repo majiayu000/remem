@@ -1,0 +1,11 @@
+pub mod ai;
+pub mod context;
+pub mod db;
+pub mod db_query;
+pub mod install;
+pub mod log;
+pub mod mcp;
+pub mod memory_format;
+pub mod observe;
+pub mod search;
+pub mod summarize;

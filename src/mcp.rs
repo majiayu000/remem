@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
+use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -83,7 +83,9 @@ struct SearchResult {
 #[tool_router]
 impl MemoryServer {
     /// Search memory index. Returns IDs with titles. Use get_observations for full details.
-    #[tool(description = "Search past observations by keyword/project/type. Returns compact results (id, type, title, subtitle). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue.")]
+    #[tool(
+        description = "Search past observations by keyword/project/type. Returns compact results (id, type, title, subtitle). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
+    )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let conn = db::open_db().map_err(|e| e.to_string())?;
         let results = search::search(
@@ -114,15 +116,18 @@ impl MemoryServer {
     }
 
     /// Get timeline context around an observation
-    #[tool(description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point.")]
+    #[tool(
+        description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point."
+    )]
     fn timeline(&self, Parameters(params): Parameters<TimelineParams>) -> Result<String, String> {
         let conn = db::open_db().map_err(|e| e.to_string())?;
 
         let anchor_id = if let Some(id) = params.anchor {
             id
         } else if let Some(q) = &params.query {
-            let results = search::search(&conn, Some(q), params.project.as_deref(), None, 1, 0, true)
-                .map_err(|e| e.to_string())?;
+            let results =
+                search::search(&conn, Some(q), params.project.as_deref(), None, 1, 0, true)
+                    .map_err(|e| e.to_string())?;
             results
                 .first()
                 .map(|o| o.id)
@@ -144,19 +149,31 @@ impl MemoryServer {
     }
 
     /// Get full observation details by IDs
-    #[tool(description = "Fetch complete observation details (narrative, facts, concepts, files_read, files_modified) by IDs. Use after search() to get full context. This is the second step in the search → get_observations workflow.")]
-    fn get_observations(&self, Parameters(params): Parameters<GetObservationsParams>) -> Result<String, String> {
+    #[tool(
+        description = "Fetch complete observation details (narrative, facts, concepts, files_read, files_modified) by IDs. Use after search() to get full context. This is the second step in the search → get_observations workflow."
+    )]
+    fn get_observations(
+        &self,
+        Parameters(params): Parameters<GetObservationsParams>,
+    ) -> Result<String, String> {
         let conn = db::open_db().map_err(|e| e.to_string())?;
-        let results = db::get_observations_by_ids(&conn, &params.ids).map_err(|e| e.to_string())?;
-        if !params.ids.is_empty() {
-            let _ = db::update_last_accessed(&conn, &params.ids);
+        let results = db::get_observations_by_ids(&conn, &params.ids, params.project.as_deref())
+            .map_err(|e| e.to_string())?;
+        let accessed_ids: Vec<i64> = results.iter().map(|o| o.id).collect();
+        if !accessed_ids.is_empty() {
+            let _ = db::update_last_accessed(&conn, &accessed_ids);
         }
         serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
     }
 
     /// Manually save a memory/observation
-    #[tool(description = "Manually save an important observation, decision, or learning to persistent memory. Use when you discover something worth remembering for future sessions (architecture decisions, gotchas, user preferences).")]
-    fn save_memory(&self, Parameters(params): Parameters<SaveMemoryParams>) -> Result<String, String> {
+    #[tool(
+        description = "Manually save an important observation, decision, or learning to persistent memory. Use when you discover something worth remembering for future sessions (architecture decisions, gotchas, user preferences)."
+    )]
+    fn save_memory(
+        &self,
+        Parameters(params): Parameters<SaveMemoryParams>,
+    ) -> Result<String, String> {
         let conn = db::open_db().map_err(|e| e.to_string())?;
         let project = params.project.as_deref().unwrap_or("manual");
 

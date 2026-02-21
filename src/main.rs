@@ -1,17 +1,7 @@
-mod ai;
-mod context;
-mod db;
-mod db_query;
-mod install;
-mod log;
-mod mcp;
-mod observe;
-mod search;
-mod summarize;
-
 use anyhow::Result;
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
+use remem::{context, db, install, mcp, observe, summarize};
 
 #[derive(Parser)]
 #[command(name = "remem", about = "Persistent memory for Claude Code")]

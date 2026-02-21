@@ -251,12 +251,12 @@ remem cleanup    # 一键清理所有垃圾数据
 
 ## 项目识别
 
-项目名从工作目录提取最后两级路径，防止同名目录碰撞：
+项目 key 由两部分组成：`最后两级路径 + canonical 绝对路径哈希`，兼顾可读性和唯一性：
 
 ```
-/Users/foo/code/my-app       → code/my-app
-/Users/foo/personal/my-app   → personal/my-app   （不同项目）
-/Users/foo/Desktop/code/AI/tools/remem → tools/remem
+/Users/foo/code/my-app       → code/my-app@9c1e2f3a4b5c
+/Users/foo/personal/my-app   → personal/my-app@7a8b9c0d1e2f
+/Users/foo/Desktop/code/AI/tools/remem → tools/remem@b7f8a1d44c2e
 ```
 
 ## 环境变量
@@ -341,7 +341,7 @@ observations_fts (title, subtitle, narrative, facts, concepts)  -- FTS5, 自动�
 - **队列批处理**: PostToolUse 只入队（<1ms），Stop 时一次 AI 调用处理 ≤15 事件
 - **决策优先**: summary 字段按 decisions > completed > learned 排序，架构知识最有价值
 - **Schema 版本控制**: `PRAGMA user_version` 跳过重复 migration，减少每次 hook 的 DB 开销
-- **两级项目名**: `parent/dirname` 防止 `/work/api` 和 `/personal/api` 碰撞
+- **稳定项目 key**: `parent/dirname@hash12`，在可读前缀上追加 canonical 路径哈希，彻底避免同名目录碰撞
 
 ## License
 

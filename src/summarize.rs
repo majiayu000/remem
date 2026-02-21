@@ -4,6 +4,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::db;
+use crate::memory_format;
 use crate::observe;
 
 const SUMMARY_PROMPT: &str = include_str!("../prompts/summary.txt");
@@ -71,17 +72,17 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
         return None;
     }
 
-    let start = text.find("<summary>")?;
-    let end = text.find("</summary>")?;
-    let content = &text[start + "<summary>".len()..end];
+    let start = text.find("<summary>")? + "<summary>".len();
+    let end = start + text[start..].find("</summary>")?;
+    let content = &text[start..end];
 
     Some(ParsedSummary {
-        request: observe::extract_field(content, "request"),
-        completed: observe::extract_field(content, "completed"),
-        decisions: observe::extract_field(content, "decisions"),
-        learned: observe::extract_field(content, "learned"),
-        next_steps: observe::extract_field(content, "next_steps"),
-        preferences: observe::extract_field(content, "preferences"),
+        request: memory_format::extract_field(content, "request"),
+        completed: memory_format::extract_field(content, "completed"),
+        decisions: memory_format::extract_field(content, "decisions"),
+        learned: memory_format::extract_field(content, "learned"),
+        next_steps: memory_format::extract_field(content, "next_steps"),
+        preferences: memory_format::extract_field(content, "preferences"),
     })
 }
 
@@ -175,6 +176,24 @@ pub async fn summarize() -> Result<()> {
 /// Max total runtime for a single worker invocation (seconds).
 /// Guards against hangs in AI calls or DB operations.
 const WORKER_TIMEOUT_SECS: u64 = 180;
+/// Reserve enough time for summary AI call + DB write path.
+const SUMMARY_RESERVED_SECS: u64 = 95;
+/// Extra guard band to reduce chance of hitting the global timeout edge.
+const MAINTENANCE_MARGIN_SECS: u64 = 10;
+/// Best-effort stale flush timeout (single session).
+const STALE_FLUSH_TIMEOUT_SECS: u64 = 45;
+/// Max stale sessions to auto-flush in one worker run.
+const STALE_FLUSH_MAX_SESSIONS: usize = 1;
+/// Best-effort compression timeout.
+const COMPRESS_TIMEOUT_SECS: u64 = 40;
+
+fn remaining_worker_secs(started_at: &std::time::Instant) -> u64 {
+    WORKER_TIMEOUT_SECS.saturating_sub(started_at.elapsed().as_secs())
+}
+
+fn has_worker_budget(remaining_secs: u64, task_timeout_secs: u64) -> bool {
+    remaining_secs >= SUMMARY_RESERVED_SECS + task_timeout_secs + MAINTENANCE_MARGIN_SECS
+}
 
 /// Background worker: does the actual AI calls. Runs detached from Claude Code.
 pub async fn summarize_worker() -> Result<()> {
@@ -197,6 +216,7 @@ pub async fn summarize_worker() -> Result<()> {
 }
 
 async fn summarize_worker_inner() -> Result<()> {
+    let worker_started_at = std::time::Instant::now();
     let timer = crate::log::Timer::start("summarize-worker", "");
     let input = std::io::read_to_string(std::io::stdin())?;
     crate::log::debug(
@@ -235,29 +255,71 @@ async fn summarize_worker_inner() -> Result<()> {
 
     // Flush stale pending from other sessions in same project (>10 min old).
     // This runs in the background worker where AI calls are safe.
-    {
+    let remaining_before_stale_flush = remaining_worker_secs(&worker_started_at);
+    if has_worker_budget(remaining_before_stale_flush, STALE_FLUSH_TIMEOUT_SECS) {
         let conn = db::open_db()?;
         match db::get_stale_pending_sessions(&conn, &project, 600) {
             Ok(stale_sessions) => {
-                for sid in &stale_sessions {
-                    if *sid == session_id {
-                        continue;
+                let candidates: Vec<&String> = stale_sessions
+                    .iter()
+                    .filter(|sid| sid.as_str() != session_id.as_str())
+                    .collect();
+                let mut processed = 0usize;
+
+                for sid in candidates.iter().take(STALE_FLUSH_MAX_SESSIONS) {
+                    let remaining = remaining_worker_secs(&worker_started_at);
+                    if !has_worker_budget(remaining, STALE_FLUSH_TIMEOUT_SECS) {
+                        crate::log::info(
+                            "summarize-worker",
+                            &format!(
+                                "skip stale flush: remaining={}s not enough budget",
+                                remaining
+                            ),
+                        );
+                        break;
                     }
-                    match observe::flush_pending(sid, &project).await {
-                        Ok(n) if n > 0 => {
+
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(STALE_FLUSH_TIMEOUT_SECS),
+                        observe::flush_pending(sid.as_str(), &project),
+                    )
+                    .await
+                    {
+                        Ok(Ok(n)) if n > 0 => {
                             crate::log::info(
                                 "summarize-worker",
                                 &format!("auto-flushed {} stale pending from session={}", n, sid),
                             );
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             crate::log::warn(
                                 "summarize-worker",
                                 &format!("stale flush failed session={}: {}", sid, e),
                             );
                         }
+                        Err(_) => {
+                            crate::log::warn(
+                                "summarize-worker",
+                                &format!(
+                                    "stale flush timed out after {}s session={}",
+                                    STALE_FLUSH_TIMEOUT_SECS, sid
+                                ),
+                            );
+                        }
                         _ => {}
                     }
+                    processed += 1;
+                }
+
+                if candidates.len() > processed {
+                    crate::log::info(
+                        "summarize-worker",
+                        &format!(
+                            "stale flush deferred: processed {}/{} sessions this run",
+                            processed,
+                            candidates.len()
+                        ),
+                    );
                 }
             }
             Err(e) => {
@@ -267,11 +329,44 @@ async fn summarize_worker_inner() -> Result<()> {
                 );
             }
         }
+    } else {
+        crate::log::info(
+            "summarize-worker",
+            &format!(
+                "skip stale flush: remaining={}s not enough budget",
+                remaining_before_stale_flush
+            ),
+        );
     }
 
     // Trigger compression if needed (after flush, independent of summary success)
-    if let Err(e) = maybe_compress(&project).await {
-        crate::log::warn("summarize-worker", &format!("compress failed: {}", e));
+    let remaining_before_compress = remaining_worker_secs(&worker_started_at);
+    if has_worker_budget(remaining_before_compress, COMPRESS_TIMEOUT_SECS) {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(COMPRESS_TIMEOUT_SECS),
+            maybe_compress(&project),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                crate::log::warn("summarize-worker", &format!("compress failed: {}", e));
+            }
+            Err(_) => {
+                crate::log::warn(
+                    "summarize-worker",
+                    &format!("compress timed out after {}s", COMPRESS_TIMEOUT_SECS),
+                );
+            }
+        }
+    } else {
+        crate::log::info(
+            "summarize-worker",
+            &format!(
+                "skip compress: remaining={}s not enough budget",
+                remaining_before_compress
+            ),
+        );
     }
 
     // Get last assistant message
@@ -332,22 +427,40 @@ async fn summarize_worker_inner() -> Result<()> {
         Some(prev) => {
             let mut parts = Vec::new();
             if let Some(r) = &prev.request {
-                parts.push(format!("<request>{}</request>", r));
+                parts.push(format!(
+                    "<request>{}</request>",
+                    memory_format::xml_escape_text(r)
+                ));
             }
             if let Some(c) = &prev.completed {
-                parts.push(format!("<completed>{}</completed>", c));
+                parts.push(format!(
+                    "<completed>{}</completed>",
+                    memory_format::xml_escape_text(c)
+                ));
             }
             if let Some(d) = &prev.decisions {
-                parts.push(format!("<decisions>{}</decisions>", d));
+                parts.push(format!(
+                    "<decisions>{}</decisions>",
+                    memory_format::xml_escape_text(d)
+                ));
             }
             if let Some(l) = &prev.learned {
-                parts.push(format!("<learned>{}</learned>", l));
+                parts.push(format!(
+                    "<learned>{}</learned>",
+                    memory_format::xml_escape_text(l)
+                ));
             }
             if let Some(n) = &prev.next_steps {
-                parts.push(format!("<next_steps>{}</next_steps>", n));
+                parts.push(format!(
+                    "<next_steps>{}</next_steps>",
+                    memory_format::xml_escape_text(n)
+                ));
             }
             if let Some(p) = &prev.preferences {
-                parts.push(format!("<preferences>{}</preferences>", p));
+                parts.push(format!(
+                    "<preferences>{}</preferences>",
+                    memory_format::xml_escape_text(p)
+                ));
             }
             format!(
                 "<existing_summary>\n{}\n</existing_summary>\n\n",
@@ -373,21 +486,29 @@ async fn summarize_worker_inner() -> Result<()> {
     }
 
     let ai_start = std::time::Instant::now();
-    let response =
-        match observe::call_anthropic(SUMMARY_PROMPT, &user_message, &project, "summarize").await {
-            Ok(r) => r,
-            Err(e) => {
-                if let Err(release_err) = db::release_summarize_lock(&conn_for_summary, &project) {
-                    crate::log::warn(
-                        "summarize-worker",
-                        &format!("release lock failed: {}", release_err),
-                    );
-                }
-                crate::log::warn("summarize-worker", &format!("AI call failed: {}", e));
-                timer.done(&format!("AI error: {}", e));
-                return Ok(());
+    let response = match crate::ai::call_ai(
+        SUMMARY_PROMPT,
+        &user_message,
+        crate::ai::UsageContext {
+            project: Some(&project),
+            operation: "summarize",
+        },
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            if let Err(release_err) = db::release_summarize_lock(&conn_for_summary, &project) {
+                crate::log::warn(
+                    "summarize-worker",
+                    &format!("release lock failed: {}", release_err),
+                );
             }
-        };
+            crate::log::warn("summarize-worker", &format!("AI call failed: {}", e));
+            timer.done(&format!("AI error: {}", e));
+            return Ok(());
+        }
+    };
     let ai_ms = ai_start.elapsed().as_millis();
     crate::log::info(
         "summarize-worker",
@@ -488,25 +609,33 @@ async fn maybe_compress(project: &str) -> Result<()> {
     for obs in &old_obs {
         events.push_str(&format!(
             "<observation type=\"{}\">\n<title>{}</title>\n<subtitle>{}</subtitle>\n<narrative>{}</narrative>\n</observation>\n",
-            obs.r#type,
-            obs.title.as_deref().unwrap_or(""),
-            obs.subtitle.as_deref().unwrap_or(""),
-            obs.narrative.as_deref().unwrap_or(""),
+            memory_format::xml_escape_attr(&obs.r#type),
+            memory_format::xml_escape_text(obs.title.as_deref().unwrap_or("")),
+            memory_format::xml_escape_text(obs.subtitle.as_deref().unwrap_or("")),
+            memory_format::xml_escape_text(obs.narrative.as_deref().unwrap_or("")),
         ));
     }
     events.push_str("</old_observations>");
 
-    let response =
-        match observe::call_anthropic(COMPRESS_PROMPT, &events, project, "compress").await {
-            Ok(r) => r,
-            Err(e) => {
-                crate::log::warn("compress", &format!("AI call failed: {}", e));
-                timer.done(&format!("AI error: {}", e));
-                return Ok(());
-            }
-        };
+    let response = match crate::ai::call_ai(
+        COMPRESS_PROMPT,
+        &events,
+        crate::ai::UsageContext {
+            project: Some(project),
+            operation: "compress",
+        },
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            crate::log::warn("compress", &format!("AI call failed: {}", e));
+            timer.done(&format!("AI error: {}", e));
+            return Ok(());
+        }
+    };
 
-    let compressed = observe::parse_observations(&response);
+    let compressed = memory_format::parse_observations(&response);
 
     // Store compressed observations (if any)
     if !compressed.is_empty() {
@@ -555,4 +684,28 @@ async fn maybe_compress(project: &str) -> Result<()> {
     ));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maintenance_budget_gate_is_strict() {
+        let min_for_stale =
+            SUMMARY_RESERVED_SECS + STALE_FLUSH_TIMEOUT_SECS + MAINTENANCE_MARGIN_SECS;
+        assert!(has_worker_budget(min_for_stale, STALE_FLUSH_TIMEOUT_SECS));
+        assert!(!has_worker_budget(
+            min_for_stale.saturating_sub(1),
+            STALE_FLUSH_TIMEOUT_SECS
+        ));
+
+        let min_for_compress =
+            SUMMARY_RESERVED_SECS + COMPRESS_TIMEOUT_SECS + MAINTENANCE_MARGIN_SECS;
+        assert!(has_worker_budget(min_for_compress, COMPRESS_TIMEOUT_SECS));
+        assert!(!has_worker_budget(
+            min_for_compress.saturating_sub(1),
+            COMPRESS_TIMEOUT_SECS
+        ));
+    }
 }

@@ -3,6 +3,7 @@ use chrono::{Local, TimeZone};
 use std::collections::HashSet;
 
 use crate::db::{self, Observation, SessionSummary};
+use crate::memory_format::OBSERVATION_TYPES;
 
 const CHARS_PER_TOKEN: usize = 4;
 const SUMMARY_LOOKAHEAD: i64 = 1;
@@ -23,10 +24,8 @@ fn load_config() -> ContextConfig {
         std::env::var(key).unwrap_or_else(|_| default.to_string())
     };
 
-    let types_str = get(
-        "REMEM_CONTEXT_OBSERVATION_TYPES",
-        "bugfix,feature,refactor,discovery,decision,change",
-    );
+    let default_types = OBSERVATION_TYPES.join(",");
+    let types_str = get("REMEM_CONTEXT_OBSERVATION_TYPES", &default_types);
     let observation_types: Vec<String> = types_str
         .split(',')
         .map(|s| s.trim().to_string())
@@ -37,9 +36,7 @@ fn load_config() -> ContextConfig {
         total_observation_count: get("REMEM_CONTEXT_OBSERVATIONS", "50")
             .parse()
             .unwrap_or(50),
-        full_observation_count: get("REMEM_CONTEXT_FULL_COUNT", "10")
-            .parse()
-            .unwrap_or(10),
+        full_observation_count: get("REMEM_CONTEXT_FULL_COUNT", "10").parse().unwrap_or(10),
         session_count: get("REMEM_CONTEXT_SESSION_COUNT", "10")
             .parse()
             .unwrap_or(10),
@@ -118,7 +115,11 @@ struct SummaryTimelineItem {
 }
 
 fn epoch_to_secs(epoch: i64) -> i64 {
-    if epoch > 9_999_999_999 { epoch / 1000 } else { epoch }
+    if epoch > 9_999_999_999 {
+        epoch / 1000
+    } else {
+        epoch
+    }
 }
 
 fn format_epoch_time(epoch: i64) -> String {
@@ -145,26 +146,25 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
     let conn = match db::open_db() {
         Ok(c) => c,
         Err(_) => {
-            crate::log::info("context", &format!("no DB, empty state for project={}", project));
+            crate::log::info(
+                "context",
+                &format!("no DB, empty state for project={}", project),
+            );
             render_empty_state(&project, use_colors);
             timer.done("empty (no DB)");
             return Ok(());
         }
     };
 
-    let type_refs: Vec<&str> = config.observation_types.iter().map(|s| s.as_str()).collect();
-    let raw_observations = db::query_observations(
-        &conn,
-        &project,
-        &type_refs,
-        config.total_observation_count,
-    )?;
+    let type_refs: Vec<&str> = config
+        .observation_types
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+    let raw_observations =
+        db::query_observations(&conn, &project, &type_refs, config.total_observation_count)?;
 
-    let summaries = db::query_summaries(
-        &conn,
-        &project,
-        config.session_count + SUMMARY_LOOKAHEAD,
-    )?;
+    let summaries = db::query_summaries(&conn, &project, config.session_count + SUMMARY_LOOKAHEAD)?;
 
     if raw_observations.is_empty() && summaries.is_empty() {
         crate::log::info("context", &format!("no data for project={}", project));
@@ -247,7 +247,10 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
 
     // Display summaries (skip most recent for timeline, show it separately)
     let display_summaries: Vec<&SessionSummary> = if summaries.len() > 1 {
-        summaries[1..].iter().take(config.session_count as usize).collect()
+        summaries[1..]
+            .iter()
+            .take(config.session_count as usize)
+            .collect()
     } else {
         vec![]
     };
@@ -277,8 +280,7 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
 
     // Most recent summaries (up to 3)
     if config.show_last_summary {
-        let recent_summaries: Vec<&SessionSummary> =
-            summaries.iter().take(3).collect();
+        let recent_summaries: Vec<&SessionSummary> = summaries.iter().take(3).collect();
         if !recent_summaries.is_empty() {
             output.push_str("\n---\n\n");
             for (i, summary) in recent_summaries.iter().enumerate() {
@@ -439,7 +441,11 @@ fn render_full_observation(
     };
     let icon = type_emoji(&obs.r#type);
     let title = obs.title.as_deref().unwrap_or("-");
-    let stale_marker = if obs.status == "stale" { " [stale]" } else { "" };
+    let stale_marker = if obs.status == "stale" {
+        " [stale]"
+    } else {
+        ""
+    };
     let read_tokens = calc_observation_tokens(obs);
     let dt = obs.discovery_tokens.unwrap_or(0);
 

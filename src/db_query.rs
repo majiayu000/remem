@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use anyhow::Result;
+use rusqlite::{params, Connection};
 
 use crate::db::Observation;
 use crate::db::SessionSummary;
@@ -24,13 +24,17 @@ fn map_observation_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
         created_at: row.get(11)?,
         created_at_epoch: row.get(12)?,
         project: row.get(13)?,
-        status: row.get::<_, Option<String>>(14)?.unwrap_or_else(|| "active".to_string()),
+        status: row
+            .get::<_, Option<String>>(14)?
+            .unwrap_or_else(|| "active".to_string()),
         last_accessed_epoch: row.get(15)?,
     })
 }
 
 /// Same mapper but with project injected (for queries without project in SELECT).
-fn map_observation_row_with_project(project: &str) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Observation> + '_ {
+fn map_observation_row_with_project(
+    project: &str,
+) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Observation> + '_ {
     move |row: &rusqlite::Row| {
         Ok(Observation {
             id: row.get(0)?,
@@ -47,7 +51,9 @@ fn map_observation_row_with_project(project: &str) -> impl Fn(&rusqlite::Row) ->
             created_at: row.get(11)?,
             created_at_epoch: row.get(12)?,
             project: Some(project.to_string()),
-            status: row.get::<_, Option<String>>(13)?.unwrap_or_else(|| "active".to_string()),
+            status: row
+                .get::<_, Option<String>>(13)?
+                .unwrap_or_else(|| "active".to_string()),
             last_accessed_epoch: row.get(14)?,
         })
     }
@@ -65,22 +71,14 @@ const OBS_COLS_WITH_PROJECT: &str = "id, memory_session_id, type, title, subtitl
     facts, concepts, files_read, files_modified, discovery_tokens, \
     created_at, created_at_epoch, project, status, last_accessed_epoch";
 
-fn collect_rows<T>(rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>>) -> Result<Vec<T>> {
+fn collect_rows<T>(
+    rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>>,
+) -> Result<Vec<T>> {
     let mut result = Vec::new();
     for row in rows {
         result.push(row?);
     }
     Ok(result)
-}
-
-pub fn open_db_readonly() -> Result<Connection> {
-    let path = crate::db::db_path();
-    let conn = Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("Failed to open database (readonly): {}", path.display()))?;
-    Ok(conn)
 }
 
 pub fn query_observations(
@@ -93,12 +91,19 @@ pub fn query_observations(
         return Ok(vec![]);
     }
 
-    let placeholders: Vec<String> = types.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
+    let placeholders: Vec<String> = types
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 2))
+        .collect();
     let sql = format!(
         "SELECT {} FROM observations \
          WHERE project = ?1 AND {} AND type IN ({}) \
          ORDER BY created_at_epoch DESC LIMIT ?{}",
-        OBS_COLS, EPOCH_SECS_ONLY, placeholders.join(", "), types.len() + 2
+        OBS_COLS,
+        EPOCH_SECS_ONLY,
+        placeholders.join(", "),
+        types.len() + 2
     );
 
     let mut stmt = conn.prepare(&sql)?;
@@ -119,13 +124,14 @@ pub fn query_summaries(
     project: &str,
     limit: i64,
 ) -> Result<Vec<SessionSummary>> {
-    let mut stmt = conn.prepare(
-        &format!("SELECT id, memory_session_id, request, completed, decisions, learned, \
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, memory_session_id, request, completed, decisions, learned, \
          next_steps, preferences, created_at, created_at_epoch \
          FROM session_summaries \
          WHERE project = ?1 AND {} \
-         ORDER BY created_at_epoch DESC LIMIT ?2", EPOCH_SECS_ONLY),
-    )?;
+         ORDER BY created_at_epoch DESC LIMIT ?2",
+        EPOCH_SECS_ONLY
+    ))?;
 
     let rows = stmt.query_map(params![project, limit], |row| {
         Ok(SessionSummary {
@@ -151,16 +157,14 @@ pub fn get_summary_by_session(
     memory_session_id: &str,
     project: &str,
 ) -> Result<Option<SessionSummary>> {
-    let mut stmt = conn.prepare(
-        &format!(
-            "SELECT id, memory_session_id, request, completed, decisions, learned, \
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, memory_session_id, request, completed, decisions, learned, \
              next_steps, preferences, created_at, created_at_epoch \
              FROM session_summaries \
              WHERE memory_session_id = ?1 AND project = ?2 AND {} \
              ORDER BY created_at_epoch DESC LIMIT 1",
-            EPOCH_SECS_ONLY
-        ),
-    )?;
+        EPOCH_SECS_ONLY
+    ))?;
 
     let mut rows = stmt.query_map(params![memory_session_id, project], |row| {
         Ok(SessionSummary {
@@ -183,19 +187,6 @@ pub fn get_summary_by_session(
         Some(Err(e)) => Err(e.into()),
         None => Ok(None),
     }
-}
-
-/// Delete summaries for a given memory_session_id + project.
-pub fn delete_summaries_by_session(
-    conn: &Connection,
-    memory_session_id: &str,
-    project: &str,
-) -> Result<usize> {
-    let count = conn.execute(
-        "DELETE FROM session_summaries WHERE memory_session_id = ?1 AND project = ?2",
-        params![memory_session_id, project],
-    )?;
-    Ok(count)
 }
 
 pub fn search_observations_fts(
@@ -240,11 +231,18 @@ pub fn search_observations_fts(
          JOIN observations_fts ON observations_fts.rowid = o.id \
          WHERE {} \
          ORDER BY (\
-           rank * (1.0 + 0.5 * (strftime('%s','now') - o.created_at_epoch) / 2592000.0) \
-           + CASE WHEN o.status = 'stale' THEN 1000.0 ELSE 0.0 END\
-         ) \
+           ((-rank) / (\
+             1.0 + 0.5 * (CASE \
+               WHEN (strftime('%s','now') - o.created_at_epoch) > 0 \
+                 THEN (strftime('%s','now') - o.created_at_epoch) \
+               ELSE 0 \
+             END) / 2592000.0\
+           )) * CASE WHEN o.status = 'stale' THEN 0.25 ELSE 1.0 END\
+         ) DESC \
          LIMIT ?{} OFFSET ?{}",
-        conditions.join(" AND "), idx, idx + 1
+        conditions.join(" AND "),
+        idx,
+        idx + 1
     );
 
     let mut stmt = conn.prepare(&sql)?;
@@ -256,21 +254,35 @@ pub fn search_observations_fts(
 pub fn get_observations_by_ids(
     conn: &Connection,
     ids: &[i64],
+    project: Option<&str>,
 ) -> Result<Vec<Observation>> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
 
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
+    let mut conditions = vec![
+        format!("id IN ({})", placeholders.join(", ")),
+        EPOCH_SECS_ONLY.to_string(),
+    ];
+    if project.is_some() {
+        conditions.push(format!("project = ?{}", ids.len() + 1));
+    }
     let sql = format!(
-        "SELECT {} FROM observations WHERE id IN ({}) AND {} \
+        "SELECT {} FROM observations WHERE {} \
          ORDER BY created_at_epoch DESC",
-        OBS_COLS_WITH_PROJECT, placeholders.join(", "), EPOCH_SECS_ONLY
+        OBS_COLS_WITH_PROJECT,
+        conditions.join(" AND ")
     );
 
     let mut stmt = conn.prepare(&sql)?;
-    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-        ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    if let Some(p) = project {
+        param_values.push(Box::new(p.to_string()));
+    }
     let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
     let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
     collect_rows(rows)
@@ -310,7 +322,10 @@ pub fn get_oldest_observations(
         OBS_COLS, EPOCH_SECS_ONLY
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![project, take], map_observation_row_with_project(project))?;
+    let rows = stmt.query_map(
+        params![project, take],
+        map_observation_row_with_project(project),
+    )?;
     collect_rows(rows)
 }
 
@@ -325,10 +340,15 @@ pub fn get_timeline_around(
         "SELECT {} FROM observations WHERE id = ?1",
         OBS_COLS_WITH_PROJECT
     );
-    let anchor: Observation = conn.query_row(&anchor_sql, params![anchor_id], map_observation_row)?;
+    let anchor: Observation =
+        conn.query_row(&anchor_sql, params![anchor_id], map_observation_row)?;
     let epoch = anchor.created_at_epoch;
 
-    let project_filter = if project.is_some() { " AND project = ?3" } else { "" };
+    let project_filter = if project.is_some() {
+        " AND project = ?3"
+    } else {
+        ""
+    };
 
     let before_sql = format!(
         "SELECT {} FROM observations \
@@ -347,14 +367,13 @@ pub fn get_timeline_around(
 
     for (sql, depth) in [(&before_sql, depth_before), (&after_sql, depth_after)] {
         let mut stmt = conn.prepare(sql)?;
-        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-            Box::new(epoch),
-            Box::new(depth),
-        ];
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(epoch), Box::new(depth)];
         if let Some(p) = project {
             params_vec.push(Box::new(p.to_string()));
         }
-        let refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
         let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
         for row in rows {
             result.push(row?);
