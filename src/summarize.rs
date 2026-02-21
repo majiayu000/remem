@@ -109,9 +109,13 @@ pub async fn summarize() -> Result<()> {
     // Gate 1: 最小 pending 数量（过滤短命 session 和无操作 session）
     let pending = db::count_pending(&conn, session_id)?;
     if pending < MIN_PENDING_FOR_SUMMARIZE {
-        crate::log::info("summarize", &format!(
-            "session={} has {} pending (min={}), skipping", session_id, pending, MIN_PENDING_FOR_SUMMARIZE
-        ));
+        crate::log::info(
+            "summarize",
+            &format!(
+                "session={} has {} pending (min={}), skipping",
+                session_id, pending, MIN_PENDING_FOR_SUMMARIZE
+            ),
+        );
         return Ok(());
     }
 
@@ -120,9 +124,13 @@ pub async fn summarize() -> Result<()> {
 
     // Gate 2: 项目冷却期
     if db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)? {
-        crate::log::info("summarize", &format!(
-            "project={} on cooldown ({}s), skipping", project, SUMMARIZE_COOLDOWN_SECS
-        ));
+        crate::log::info(
+            "summarize",
+            &format!(
+                "project={} on cooldown ({}s), skipping",
+                project, SUMMARIZE_COOLDOWN_SECS
+            ),
+        );
         return Ok(());
     }
 
@@ -130,16 +138,21 @@ pub async fn summarize() -> Result<()> {
     if let Some(msg) = &hook.last_assistant_message {
         let msg_hash = hash_message(msg);
         if db::is_duplicate_message(&conn, &project, &msg_hash)? {
-            crate::log::info("summarize", &format!(
-                "project={} duplicate message hash, skipping", project
-            ));
+            crate::log::info(
+                "summarize",
+                &format!("project={} duplicate message hash, skipping", project),
+            );
             return Ok(());
         }
     }
 
-    crate::log::info("summarize", &format!(
-        "session={} project={} pending={}, dispatching worker", session_id, project, pending
-    ));
+    crate::log::info(
+        "summarize",
+        &format!(
+            "session={} project={} pending={}, dispatching worker",
+            session_id, project, pending
+        ),
+    );
 
     // Spawn background worker — Stop hook returns immediately
     let exe = std::env::current_exe()?;
@@ -174,9 +187,10 @@ pub async fn summarize_worker() -> Result<()> {
     match result {
         Ok(inner) => inner,
         Err(_) => {
-            crate::log::warn("summarize-worker", &format!(
-                "worker timed out after {}s", WORKER_TIMEOUT_SECS
-            ));
+            crate::log::warn(
+                "summarize-worker",
+                &format!("worker timed out after {}s", WORKER_TIMEOUT_SECS),
+            );
             Ok(())
         }
     }
@@ -185,7 +199,10 @@ pub async fn summarize_worker() -> Result<()> {
 async fn summarize_worker_inner() -> Result<()> {
     let timer = crate::log::Timer::start("summarize-worker", "");
     let input = std::io::read_to_string(std::io::stdin())?;
-    crate::log::debug("summarize-worker", &format!("input: {}", crate::db::truncate_str(&input, 500)));
+    crate::log::debug(
+        "summarize-worker",
+        &format!("input: {}", crate::db::truncate_str(&input, 500)),
+    );
 
     let hook: SummarizeInput = serde_json::from_str(&input)?;
 
@@ -196,7 +213,10 @@ async fn summarize_worker_inner() -> Result<()> {
     let cwd = hook.cwd.as_deref().unwrap_or(".");
     let project = project_from_cwd(cwd);
 
-    crate::log::info("summarize-worker", &format!("project={} session={}", project, session_id));
+    crate::log::info(
+        "summarize-worker",
+        &format!("project={} session={}", project, session_id),
+    );
 
     // Flush pending observation queue (current session)
     match observe::flush_pending(&session_id, &project).await {
@@ -206,7 +226,10 @@ async fn summarize_worker_inner() -> Result<()> {
             }
         }
         Err(e) => {
-            crate::log::warn("summarize-worker", &format!("flush failed (continuing): {}", e));
+            crate::log::warn(
+                "summarize-worker",
+                &format!("flush failed (continuing): {}", e),
+            );
         }
     }
 
@@ -222,21 +245,26 @@ async fn summarize_worker_inner() -> Result<()> {
                     }
                     match observe::flush_pending(sid, &project).await {
                         Ok(n) if n > 0 => {
-                            crate::log::info("summarize-worker", &format!(
-                                "auto-flushed {} stale pending from session={}", n, sid
-                            ));
+                            crate::log::info(
+                                "summarize-worker",
+                                &format!("auto-flushed {} stale pending from session={}", n, sid),
+                            );
                         }
                         Err(e) => {
-                            crate::log::warn("summarize-worker", &format!(
-                                "stale flush failed session={}: {}", sid, e
-                            ));
+                            crate::log::warn(
+                                "summarize-worker",
+                                &format!("stale flush failed session={}: {}", sid, e),
+                            );
                         }
                         _ => {}
                     }
                 }
             }
             Err(e) => {
-                crate::log::warn("summarize-worker", &format!("stale pending query failed: {}", e));
+                crate::log::warn(
+                    "summarize-worker",
+                    &format!("stale pending query failed: {}", e),
+                );
             }
         }
     }
@@ -266,7 +294,10 @@ async fn summarize_worker_inner() -> Result<()> {
         return Ok(());
     }
 
-    crate::log::info("summarize-worker", &format!("message len={}B", assistant_msg.len()));
+    crate::log::info(
+        "summarize-worker",
+        &format!("message len={}B", assistant_msg.len()),
+    );
 
     // Truncate if too long
     let msg = if assistant_msg.len() > 12000 {
@@ -276,11 +307,12 @@ async fn summarize_worker_inner() -> Result<()> {
     };
 
     // Gate: worker 端再次检查冷却期（防止多个 worker 并行）
-    let conn_for_summary = db::open_db()?;
+    let mut conn_for_summary = db::open_db()?;
     if db::is_summarize_on_cooldown(&conn_for_summary, &project, SUMMARIZE_COOLDOWN_SECS)? {
-        crate::log::info("summarize-worker", &format!(
-            "project={} on cooldown, skipping AI call", project
-        ));
+        crate::log::info(
+            "summarize-worker",
+            &format!("project={} on cooldown, skipping AI call", project),
+        );
         timer.done("skipped (cooldown)");
         return Ok(());
     }
@@ -288,26 +320,39 @@ async fn summarize_worker_inner() -> Result<()> {
     // Gate: message hash 去重（worker 端双重检查）
     let msg_hash = hash_message(&msg);
     if db::is_duplicate_message(&conn_for_summary, &project, &msg_hash)? {
-        crate::log::info("summarize-worker", &format!(
-            "project={} duplicate message, skipping AI call", project
-        ));
+        crate::log::info(
+            "summarize-worker",
+            &format!("project={} duplicate message, skipping AI call", project),
+        );
         timer.done("skipped (duplicate message)");
         return Ok(());
     }
-
-    // 提前记录冷却期（防止并行 worker 同时通过 gate）
-    db::record_summarize(&conn_for_summary, &project, &msg_hash)?;
     let memory_sid = db::upsert_session(&conn_for_summary, &session_id, &project, None)?;
     let existing_ctx = match db::get_summary_by_session(&conn_for_summary, &memory_sid, &project)? {
         Some(prev) => {
             let mut parts = Vec::new();
-            if let Some(r) = &prev.request { parts.push(format!("<request>{}</request>", r)); }
-            if let Some(c) = &prev.completed { parts.push(format!("<completed>{}</completed>", c)); }
-            if let Some(d) = &prev.decisions { parts.push(format!("<decisions>{}</decisions>", d)); }
-            if let Some(l) = &prev.learned { parts.push(format!("<learned>{}</learned>", l)); }
-            if let Some(n) = &prev.next_steps { parts.push(format!("<next_steps>{}</next_steps>", n)); }
-            if let Some(p) = &prev.preferences { parts.push(format!("<preferences>{}</preferences>", p)); }
-            format!("<existing_summary>\n{}\n</existing_summary>\n\n", parts.join("\n"))
+            if let Some(r) = &prev.request {
+                parts.push(format!("<request>{}</request>", r));
+            }
+            if let Some(c) = &prev.completed {
+                parts.push(format!("<completed>{}</completed>", c));
+            }
+            if let Some(d) = &prev.decisions {
+                parts.push(format!("<decisions>{}</decisions>", d));
+            }
+            if let Some(l) = &prev.learned {
+                parts.push(format!("<learned>{}</learned>", l));
+            }
+            if let Some(n) = &prev.next_steps {
+                parts.push(format!("<next_steps>{}</next_steps>", n));
+            }
+            if let Some(p) = &prev.preferences {
+                parts.push(format!("<preferences>{}</preferences>", p));
+            }
+            format!(
+                "<existing_summary>\n{}\n</existing_summary>\n\n",
+                parts.join("\n")
+            )
         }
         None => String::new(),
     };
@@ -317,35 +362,57 @@ async fn summarize_worker_inner() -> Result<()> {
         existing_ctx, msg
     );
 
+    if !db::try_acquire_summarize_lock(&mut conn_for_summary, &project, WORKER_TIMEOUT_SECS as i64)?
+    {
+        crate::log::info(
+            "summarize-worker",
+            &format!("project={} summarize lock held, skipping", project),
+        );
+        timer.done("skipped (in-progress)");
+        return Ok(());
+    }
+
     let ai_start = std::time::Instant::now();
-    let response = match observe::call_anthropic(SUMMARY_PROMPT, &user_message).await {
-        Ok(r) => r,
-        Err(e) => {
-            crate::log::warn("summarize-worker", &format!("AI call failed: {}", e));
-            timer.done(&format!("AI error: {}", e));
-            return Ok(());
-        }
-    };
+    let response =
+        match observe::call_anthropic(SUMMARY_PROMPT, &user_message, &project, "summarize").await {
+            Ok(r) => r,
+            Err(e) => {
+                if let Err(release_err) = db::release_summarize_lock(&conn_for_summary, &project) {
+                    crate::log::warn(
+                        "summarize-worker",
+                        &format!("release lock failed: {}", release_err),
+                    );
+                }
+                crate::log::warn("summarize-worker", &format!("AI call failed: {}", e));
+                timer.done(&format!("AI error: {}", e));
+                return Ok(());
+            }
+        };
     let ai_ms = ai_start.elapsed().as_millis();
-    crate::log::info("summarize-worker", &format!("AI response {}ms {}B", ai_ms, response.len()));
+    crate::log::info(
+        "summarize-worker",
+        &format!("AI response {}ms {}B", ai_ms, response.len()),
+    );
 
     let Some(summary) = parse_summary(&response) else {
+        if let Err(release_err) = db::release_summarize_lock(&conn_for_summary, &project) {
+            crate::log::warn(
+                "summarize-worker",
+                &format!("release lock failed: {}", release_err),
+            );
+        }
         crate::log::info("summarize-worker", "session skipped by AI (trivial)");
         timer.done("skipped");
         return Ok(());
     };
 
-    // Delete previous summary for this session (replaced by the new merged one)
-    let deleted = db::delete_summaries_by_session(&conn_for_summary, &memory_sid, &project)?;
-    if deleted > 0 {
-        crate::log::info("summarize-worker", &format!("replaced {} old summary(s)", deleted));
-    }
-
+    // Atomic replace: old summary removal + new summary insert + cooldown/hash update
     let usage = response.len() as i64 / 4;
-    db::insert_summary(
-        &conn_for_summary,
+    let deleted = match db::finalize_summarize(
+        &mut conn_for_summary,
         &memory_sid,
         &project,
+        &msg_hash,
         summary.request.as_deref(),
         summary.completed.as_deref(),
         summary.decisions.as_deref(),
@@ -354,7 +421,30 @@ async fn summarize_worker_inner() -> Result<()> {
         summary.preferences.as_deref(),
         None,
         usage,
-    )?;
+    ) {
+        Ok(d) => d,
+        Err(e) => {
+            if let Err(release_err) = db::release_summarize_lock(&conn_for_summary, &project) {
+                crate::log::warn(
+                    "summarize-worker",
+                    &format!("release lock failed: {}", release_err),
+                );
+            }
+            return Err(e);
+        }
+    };
+    if let Err(release_err) = db::release_summarize_lock(&conn_for_summary, &project) {
+        crate::log::warn(
+            "summarize-worker",
+            &format!("release lock failed: {}", release_err),
+        );
+    }
+    if deleted > 0 {
+        crate::log::info(
+            "summarize-worker",
+            &format!("replaced {} old summary(s)", deleted),
+        );
+    }
 
     let request_preview = summary.request.as_deref().unwrap_or("-");
     timer.done(&format!("~{}tok request=\"{}\"", usage, request_preview));
@@ -380,7 +470,10 @@ async fn maybe_compress(project: &str) -> Result<()> {
 
     crate::log::info(
         "compress",
-        &format!("project={} has {} observations (threshold={}), compressing", project, total, COMPRESS_THRESHOLD),
+        &format!(
+            "project={} has {} observations (threshold={}), compressing",
+            project, total, COMPRESS_THRESHOLD
+        ),
     );
 
     let old_obs = db::get_oldest_observations(&conn, project, KEEP_RECENT, COMPRESS_BATCH)?;
@@ -403,14 +496,15 @@ async fn maybe_compress(project: &str) -> Result<()> {
     }
     events.push_str("</old_observations>");
 
-    let response = match observe::call_anthropic(COMPRESS_PROMPT, &events).await {
-        Ok(r) => r,
-        Err(e) => {
-            crate::log::warn("compress", &format!("AI call failed: {}", e));
-            timer.done(&format!("AI error: {}", e));
-            return Ok(());
-        }
-    };
+    let response =
+        match observe::call_anthropic(COMPRESS_PROMPT, &events, project, "compress").await {
+            Ok(r) => r,
+            Err(e) => {
+                crate::log::warn("compress", &format!("AI call failed: {}", e));
+                timer.done(&format!("AI error: {}", e));
+                return Ok(());
+            }
+        };
 
     let compressed = observe::parse_observations(&response);
 

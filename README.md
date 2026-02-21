@@ -278,6 +278,15 @@ remem cleanup    # 一键清理所有垃圾数据
 | `REMEM_CONTEXT_SHOW_WORK_TOKENS` | `true` | 显示工作 token 统计 |
 | `REMEM_CONTEXT_SHOW_LAST_SUMMARY` | `true` | 显示最近 session summary |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI 路径 |
+| `REMEM_LOG_MAX_BYTES` | `10485760` | 日志单文件上限（字节），超过后自动轮转 |
+| `REMEM_PRICE_INPUT_PER_MTOK` | 模型默认 | 覆盖所有模型 input 单价（USD/百万 token） |
+| `REMEM_PRICE_OUTPUT_PER_MTOK` | 模型默认 | 覆盖所有模型 output 单价（USD/百万 token） |
+| `REMEM_PRICE_HAIKU_INPUT_PER_MTOK` | `0.8` | Haiku input 单价（USD/百万 token） |
+| `REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK` | `4.0` | Haiku output 单价（USD/百万 token） |
+| `REMEM_PRICE_SONNET_INPUT_PER_MTOK` | `3.0` | Sonnet input 单价（USD/百万 token） |
+| `REMEM_PRICE_SONNET_OUTPUT_PER_MTOK` | `15.0` | Sonnet output 单价（USD/百万 token） |
+| `REMEM_PRICE_OPUS_INPUT_PER_MTOK` | `15.0` | Opus input 单价（USD/百万 token） |
+| `REMEM_PRICE_OPUS_OUTPUT_PER_MTOK` | `75.0` | Opus output 单价（USD/百万 token） |
 
 ## 命令
 
@@ -288,13 +297,17 @@ remem context --cwd . [--color]        # 手动生成上下文（调试用）
 remem mcp                              # 启动 MCP server
 remem flush --session-id <id> --project <name>  # 手动 flush
 remem cleanup                          # 清理垃圾数据
+remem usage --days 7 --limit 20        # 统计 token 与额外支出（每次 + 每天）
+remem usage --today --limit 50         # 仅统计今天（本地时区）
+remem usage --days 30 --csv /tmp/remem-usage.csv  # 导出 CSV
 ```
 
 ## 数据库 Schema
 
 ```sql
 -- 工具事件队列
-pending_observations (session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch)
+pending_observations (session_id, project, tool_name, tool_input, tool_response, cwd,
+                      created_at_epoch, lease_owner, lease_expires_epoch)
 
 -- 结构化记忆
 observations (memory_session_id, project, type, title, subtitle, narrative, facts, concepts,
@@ -309,6 +322,10 @@ sdk_sessions (content_session_id → memory_session_id, project, prompt_counter)
 
 -- 速率限制
 summarize_cooldown (project, last_summarize_epoch, last_message_hash)
+
+-- AI 调用统计
+ai_usage_events (created_at_epoch, project, operation, executor, model,
+                 input_tokens, output_tokens, total_tokens, estimated_cost_usd)
 
 -- 全文索引
 observations_fts (title, subtitle, narrative, facts, concepts)  -- FTS5, 自动同步

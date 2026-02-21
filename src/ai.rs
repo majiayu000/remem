@@ -4,6 +4,17 @@ use tokio::process::Command;
 /// AI call timeout (seconds)
 const AI_TIMEOUT_SECS: u64 = 90;
 
+pub struct UsageContext<'a> {
+    pub project: Option<&'a str>,
+    pub operation: &'a str,
+}
+
+struct AiCallResult {
+    text: String,
+    executor: &'static str,
+    model: String,
+}
+
 fn get_model_raw() -> String {
     std::env::var("REMEM_MODEL").unwrap_or_else(|_| "haiku".to_string())
 }
@@ -23,8 +34,78 @@ fn get_claude_path() -> String {
     std::env::var("REMEM_CLAUDE_PATH").unwrap_or_else(|_| "claude".to_string())
 }
 
+fn estimate_tokens(text: &str) -> i64 {
+    ((text.len() + 3) / 4) as i64
+}
+
+fn parse_env_f64(key: &str) -> Option<f64> {
+    std::env::var(key).ok()?.trim().parse::<f64>().ok()
+}
+
+fn pricing_for_model(model: &str) -> (f64, f64) {
+    if let (Some(input), Some(output)) = (
+        parse_env_f64("REMEM_PRICE_INPUT_PER_MTOK"),
+        parse_env_f64("REMEM_PRICE_OUTPUT_PER_MTOK"),
+    ) {
+        return (input, output);
+    }
+
+    let m = model.to_lowercase();
+    let (input_default, output_default, prefix) = if m.contains("opus") {
+        (15.0, 75.0, "OPUS")
+    } else if m.contains("sonnet") {
+        (3.0, 15.0, "SONNET")
+    } else if m.contains("haiku") {
+        (0.8, 4.0, "HAIKU")
+    } else {
+        (0.0, 0.0, "UNKNOWN")
+    };
+
+    let input =
+        parse_env_f64(&format!("REMEM_PRICE_{}_INPUT_PER_MTOK", prefix)).unwrap_or(input_default);
+    let output =
+        parse_env_f64(&format!("REMEM_PRICE_{}_OUTPUT_PER_MTOK", prefix)).unwrap_or(output_default);
+    (input, output)
+}
+
+fn estimate_cost_usd(model: &str, input_tokens: i64, output_tokens: i64) -> f64 {
+    let (input_per_mtok, output_per_mtok) = pricing_for_model(model);
+    (input_tokens as f64 / 1_000_000.0) * input_per_mtok
+        + (output_tokens as f64 / 1_000_000.0) * output_per_mtok
+}
+
+fn record_usage(
+    ctx: UsageContext<'_>,
+    result: &AiCallResult,
+    input_tokens: i64,
+    output_tokens: i64,
+) {
+    let operation = if ctx.operation.trim().is_empty() {
+        "unknown"
+    } else {
+        ctx.operation
+    };
+    let cost = estimate_cost_usd(&result.model, input_tokens, output_tokens);
+    match crate::db::open_db().and_then(|conn| {
+        crate::db::record_ai_usage(
+            &conn,
+            ctx.project,
+            operation,
+            result.executor,
+            Some(&result.model),
+            input_tokens,
+            output_tokens,
+            cost,
+        )?;
+        Ok(())
+    }) {
+        Ok(_) => {}
+        Err(e) => crate::log::warn("ai", &format!("usage record failed: {}", e)),
+    }
+}
+
 /// AI call with timeout. HTTP first (fast, ~2-5s), CLI fallback (slow, ~30-60s).
-pub async fn call_ai(system: &str, user_message: &str) -> Result<String> {
+pub async fn call_ai(system: &str, user_message: &str, ctx: UsageContext<'_>) -> Result<String> {
     let result = match std::env::var("REMEM_EXECUTOR").ok().as_deref() {
         Some("http") => call_http(system, user_message).await,
         Some("cli") => call_cli(system, user_message).await,
@@ -36,7 +117,10 @@ pub async fn call_ai(system: &str, user_message: &str) -> Result<String> {
                 match call_http(system, user_message).await {
                     Ok(text) => Ok(text),
                     Err(http_err) => {
-                        crate::log::warn("ai", &format!("HTTP failed, falling back to CLI: {}", http_err));
+                        crate::log::warn(
+                            "ai",
+                            &format!("HTTP failed, falling back to CLI: {}", http_err),
+                        );
                         call_cli(system, user_message).await
                     }
                 }
@@ -46,19 +130,26 @@ pub async fn call_ai(system: &str, user_message: &str) -> Result<String> {
         }
     };
 
-    result
+    let result = result?;
+    let input_tokens = estimate_tokens(system) + estimate_tokens(user_message);
+    let output_tokens = estimate_tokens(&result.text);
+    record_usage(ctx, &result, input_tokens, output_tokens);
+    Ok(result.text)
 }
 
-async fn call_cli(system: &str, user_message: &str) -> Result<String> {
+async fn call_cli(system: &str, user_message: &str) -> Result<AiCallResult> {
     let model = get_model_raw();
     let claude = get_claude_path();
 
     let mut child = Command::new(&claude)
         .args([
             "-p",
-            "--system-prompt", system,
-            "--model", &model,
-            "--output-format", "text",
+            "--system-prompt",
+            system,
+            "--model",
+            &model,
+            "--output-format",
+            "text",
             "--no-session-persistence",
         ])
         .env_remove("CLAUDECODE")
@@ -92,10 +183,14 @@ async fn call_cli(system: &str, user_message: &str) -> Result<String> {
         anyhow::bail!("claude CLI returned empty response");
     }
 
-    Ok(text)
+    Ok(AiCallResult {
+        text,
+        executor: "cli",
+        model,
+    })
 }
 
-async fn call_http(system: &str, user_message: &str) -> Result<String> {
+async fn call_http(system: &str, user_message: &str) -> Result<AiCallResult> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
         .context("ANTHROPIC_API_KEY not set")?;
@@ -138,5 +233,9 @@ async fn call_http(system: &str, user_message: &str) -> Result<String> {
         .unwrap_or("")
         .to_string();
 
-    Ok(text)
+    Ok(AiCallResult {
+        text,
+        executor: "http",
+        model: model.to_string(),
+    })
 }

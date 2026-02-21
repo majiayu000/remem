@@ -2,7 +2,7 @@
 pub use crate::db_query::*;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -88,7 +88,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -196,8 +196,10 @@ fn ensure_pending_table(conn: &Connection) -> Result<()> {
             tool_input TEXT,
             tool_response TEXT,
             cwd TEXT,
-            created_at_epoch INTEGER NOT NULL
-        )"
+            created_at_epoch INTEGER NOT NULL,
+            lease_owner TEXT,
+            lease_expires_epoch INTEGER
+        )",
     )?;
     Ok(())
 }
@@ -208,6 +210,8 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
         "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER",
         "ALTER TABLE session_summaries ADD COLUMN decisions TEXT",
         "ALTER TABLE session_summaries ADD COLUMN preferences TEXT",
+        "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT",
+        "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER",
     ] {
         if let Err(e) = conn.execute_batch(sql) {
             if !e.to_string().contains("duplicate column") {
@@ -219,12 +223,40 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status);
          CREATE INDEX IF NOT EXISTS idx_observations_project_status
            ON observations(project, status, created_at_epoch DESC);
+         CREATE INDEX IF NOT EXISTS idx_pending_session_lease
+           ON pending_observations(session_id, lease_expires_epoch, id);
+         CREATE INDEX IF NOT EXISTS idx_pending_project_lease
+           ON pending_observations(project, lease_expires_epoch, created_at_epoch);
 
          CREATE TABLE IF NOT EXISTS summarize_cooldown (
              project TEXT PRIMARY KEY,
              last_summarize_epoch INTEGER NOT NULL,
              last_message_hash TEXT
-         );"
+         );
+
+         CREATE TABLE IF NOT EXISTS summarize_locks (
+             project TEXT PRIMARY KEY,
+             lock_epoch INTEGER NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS ai_usage_events (
+             id INTEGER PRIMARY KEY,
+             created_at TEXT NOT NULL,
+             created_at_epoch INTEGER NOT NULL,
+             project TEXT,
+             operation TEXT NOT NULL,
+             executor TEXT NOT NULL,
+             model TEXT,
+             input_tokens INTEGER NOT NULL,
+             output_tokens INTEGER NOT NULL,
+             total_tokens INTEGER NOT NULL,
+             estimated_cost_usd REAL NOT NULL
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_ai_usage_created
+           ON ai_usage_events(created_at_epoch DESC);
+         CREATE INDEX IF NOT EXISTS idx_ai_usage_project_created
+           ON ai_usage_events(project, created_at_epoch DESC);",
     )?;
     Ok(())
 }
@@ -232,7 +264,11 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
 // --- Summarize rate limiting ---
 
 /// 检查项目是否在冷却期内。返回 true = 应该跳过。
-pub fn is_summarize_on_cooldown(conn: &Connection, project: &str, cooldown_secs: i64) -> Result<bool> {
+pub fn is_summarize_on_cooldown(
+    conn: &Connection,
+    project: &str,
+    cooldown_secs: i64,
+) -> Result<bool> {
     let now = chrono::Utc::now().timestamp();
     let result: rusqlite::Result<i64> = conn.query_row(
         "SELECT last_summarize_epoch FROM summarize_cooldown WHERE project = ?1",
@@ -275,6 +311,104 @@ pub fn record_summarize(conn: &Connection, project: &str, message_hash: &str) ->
         params![project, now, message_hash],
     )?;
     Ok(())
+}
+
+/// Try to acquire a short-lived summarize lock for one project.
+/// Returns false when another worker currently owns a non-expired lock.
+pub fn try_acquire_summarize_lock(
+    conn: &mut Connection,
+    project: &str,
+    lock_secs: i64,
+) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let lock_secs = lock_secs.max(1);
+    let tx = conn.transaction()?;
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT lock_epoch FROM summarize_locks WHERE project = ?1",
+            params![project],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(epoch) = existing {
+        if now - epoch < lock_secs {
+            tx.rollback()?;
+            return Ok(false);
+        }
+    }
+    tx.execute(
+        "INSERT INTO summarize_locks (project, lock_epoch)
+         VALUES (?1, ?2)
+         ON CONFLICT(project) DO UPDATE SET lock_epoch = ?2",
+        params![project, now],
+    )?;
+    tx.commit()?;
+    Ok(true)
+}
+
+pub fn release_summarize_lock(conn: &Connection, project: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM summarize_locks WHERE project = ?1",
+        params![project],
+    )?;
+    Ok(())
+}
+
+/// 原子替换 summary + 更新 summarize 冷却/去重 gate。
+/// 返回值为被替换掉的旧 summary 条数。
+pub fn finalize_summarize(
+    conn: &mut Connection,
+    memory_session_id: &str,
+    project: &str,
+    message_hash: &str,
+    request: Option<&str>,
+    completed: Option<&str>,
+    decisions: Option<&str>,
+    learned: Option<&str>,
+    next_steps: Option<&str>,
+    preferences: Option<&str>,
+    prompt_number: Option<i64>,
+    discovery_tokens: i64,
+) -> Result<usize> {
+    let now = chrono::Utc::now();
+    let created_at = now.to_rfc3339();
+    let created_at_epoch = now.timestamp();
+
+    let tx = conn.transaction()?;
+    let deleted = tx.execute(
+        "DELETE FROM session_summaries WHERE memory_session_id = ?1 AND project = ?2",
+        params![memory_session_id, project],
+    )?;
+    tx.execute(
+        "INSERT INTO session_summaries \
+         (memory_session_id, project, request, completed, decisions, learned, \
+          next_steps, preferences, prompt_number, created_at, created_at_epoch, discovery_tokens) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            memory_session_id,
+            project,
+            request,
+            completed,
+            decisions,
+            learned,
+            next_steps,
+            preferences,
+            prompt_number,
+            created_at,
+            created_at_epoch,
+            discovery_tokens
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO summarize_cooldown (project, last_summarize_epoch, last_message_hash)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(project) DO UPDATE SET
+           last_summarize_epoch = ?2,
+           last_message_hash = ?3",
+        params![project, created_at_epoch, message_hash],
+    )?;
+    tx.commit()?;
+    Ok(deleted)
 }
 
 // --- 数据清理 ---
@@ -350,19 +484,45 @@ pub fn enqueue_pending(
     let epoch = chrono::Utc::now().timestamp();
     conn.execute(
         "INSERT INTO pending_observations \
-         (session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch, lease_owner, lease_expires_epoch) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL)",
         params![session_id, project, tool_name, tool_input, tool_response, cwd, epoch],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
-pub fn dequeue_pending(conn: &Connection, session_id: &str, limit: usize) -> Result<Vec<PendingObservation>> {
+/// Claim a pending batch for processing with a short lease.
+/// Claimed rows must be either deleted on success or released on failure.
+pub fn claim_pending(
+    conn: &Connection,
+    session_id: &str,
+    limit: usize,
+    lease_owner: &str,
+    lease_secs: i64,
+) -> Result<Vec<PendingObservation>> {
+    let now = chrono::Utc::now().timestamp();
+    let lease_expires = now + lease_secs.max(1);
+    conn.execute(
+        "UPDATE pending_observations
+         SET lease_owner = ?1, lease_expires_epoch = ?2
+         WHERE id IN (
+             SELECT id FROM pending_observations
+             WHERE session_id = ?3
+               AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?4)
+             ORDER BY id ASC
+             LIMIT ?5
+         )
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?4)",
+        params![lease_owner, lease_expires, session_id, now, limit as i64],
+    )?;
+
     let mut stmt = conn.prepare(
         "SELECT id, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch \
-         FROM pending_observations WHERE session_id = ?1 ORDER BY id ASC LIMIT ?2"
+         FROM pending_observations
+         WHERE session_id = ?1 AND lease_owner = ?2
+         ORDER BY id ASC"
     )?;
-    let rows = stmt.query_map(params![session_id, limit as i64], |row| {
+    let rows = stmt.query_map(params![session_id, lease_owner], |row| {
         Ok(PendingObservation {
             id: row.get(0)?,
             session_id: row.get(1)?,
@@ -381,28 +541,69 @@ pub fn dequeue_pending(conn: &Connection, session_id: &str, limit: usize) -> Res
     Ok(result)
 }
 
+pub fn release_pending_claims(conn: &Connection, lease_owner: &str) -> Result<usize> {
+    let count = conn.execute(
+        "UPDATE pending_observations
+         SET lease_owner = NULL, lease_expires_epoch = NULL
+         WHERE lease_owner = ?1",
+        params![lease_owner],
+    )?;
+    Ok(count)
+}
+
 pub fn delete_pending(conn: &Connection, ids: &[i64]) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
-    let sql = format!("DELETE FROM pending_observations WHERE id IN ({})", placeholders.join(", "));
+    let sql = format!(
+        "DELETE FROM pending_observations WHERE id IN ({})",
+        placeholders.join(", ")
+    );
     let mut stmt = conn.prepare(&sql)?;
-    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-        ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
     let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
     stmt.execute(refs.as_slice())?;
     Ok(())
 }
 
+pub fn delete_pending_claimed(conn: &Connection, lease_owner: &str, ids: &[i64]) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let placeholders: Vec<String> = (2..=ids.len() + 1).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "DELETE FROM pending_observations WHERE lease_owner = ?1 AND id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(lease_owner.to_string()));
+    for id in ids {
+        param_values.push(Box::new(*id));
+    }
+    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let count = stmt.execute(refs.as_slice())?;
+    Ok(count)
+}
+
 /// Get distinct session IDs with stale pending observations (older than age_secs).
-pub fn get_stale_pending_sessions(conn: &Connection, project: &str, age_secs: i64) -> Result<Vec<String>> {
+pub fn get_stale_pending_sessions(
+    conn: &Connection,
+    project: &str,
+    age_secs: i64,
+) -> Result<Vec<String>> {
     let cutoff = chrono::Utc::now().timestamp() - age_secs;
+    let now = chrono::Utc::now().timestamp();
     let mut stmt = conn.prepare(
         "SELECT DISTINCT session_id FROM pending_observations \
-         WHERE project = ?1 AND created_at_epoch < ?2"
+         WHERE project = ?1 AND created_at_epoch < ?2 \
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)",
     )?;
-    let rows = stmt.query_map(params![project, cutoff], |row| row.get(0))?;
+    let rows = stmt.query_map(params![project, cutoff, now], |row| row.get(0))?;
     let mut result = Vec::new();
     for row in rows {
         result.push(row?);
@@ -411,12 +612,241 @@ pub fn get_stale_pending_sessions(conn: &Connection, project: &str, age_secs: i6
 }
 
 pub fn count_pending(conn: &Connection, session_id: &str) -> Result<i64> {
+    let now = chrono::Utc::now().timestamp();
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pending_observations WHERE session_id = ?1",
-        params![session_id],
+        "SELECT COUNT(*) FROM pending_observations
+         WHERE session_id = ?1
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?2)",
+        params![session_id, now],
         |row| row.get(0),
     )?;
     Ok(count)
+}
+
+#[derive(Debug, Clone)]
+pub struct AiUsageEvent {
+    pub created_at: String,
+    pub project: Option<String>,
+    pub operation: String,
+    pub executor: String,
+    pub model: Option<String>,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DailyAiUsage {
+    pub day: String,
+    pub calls: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AiUsageTotals {
+    pub calls: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+pub fn record_ai_usage(
+    conn: &Connection,
+    project: Option<&str>,
+    operation: &str,
+    executor: &str,
+    model: Option<&str>,
+    input_tokens: i64,
+    output_tokens: i64,
+    estimated_cost_usd: f64,
+) -> Result<i64> {
+    let now = chrono::Utc::now();
+    let created_at = now.to_rfc3339();
+    let created_at_epoch = now.timestamp();
+    let total_tokens = input_tokens + output_tokens;
+    conn.execute(
+        "INSERT INTO ai_usage_events
+         (created_at, created_at_epoch, project, operation, executor, model,
+          input_tokens, output_tokens, total_tokens, estimated_cost_usd)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            created_at,
+            created_at_epoch,
+            project,
+            operation,
+            executor,
+            model,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            estimated_cost_usd
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn usage_cutoff_epoch(days: i64) -> i64 {
+    chrono::Utc::now().timestamp() - days.max(1) * 86400
+}
+
+pub fn query_ai_usage_events_since(
+    conn: &Connection,
+    from_epoch: i64,
+    limit: i64,
+    project: Option<&str>,
+) -> Result<Vec<AiUsageEvent>> {
+    let mut conditions = vec!["created_at_epoch >= ?1".to_string()];
+    let mut params_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params_values.push(Box::new(from_epoch));
+
+    let mut idx = 2;
+    if let Some(p) = project {
+        conditions.push(format!("project = ?{idx}"));
+        params_values.push(Box::new(p.to_string()));
+        idx += 1;
+    }
+    params_values.push(Box::new(limit.max(1)));
+    let sql = format!(
+        "SELECT created_at, project, operation, executor, model,
+                input_tokens, output_tokens, total_tokens, estimated_cost_usd
+         FROM ai_usage_events
+         WHERE {}
+         ORDER BY created_at_epoch DESC
+         LIMIT ?{}",
+        conditions.join(" AND "),
+        idx
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params_values.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok(AiUsageEvent {
+            created_at: row.get(0)?,
+            project: row.get(1)?,
+            operation: row.get(2)?,
+            executor: row.get(3)?,
+            model: row.get(4)?,
+            input_tokens: row.get(5)?,
+            output_tokens: row.get(6)?,
+            total_tokens: row.get(7)?,
+            estimated_cost_usd: row.get(8)?,
+        })
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+pub fn query_ai_usage_events(
+    conn: &Connection,
+    days: i64,
+    limit: i64,
+    project: Option<&str>,
+) -> Result<Vec<AiUsageEvent>> {
+    query_ai_usage_events_since(conn, usage_cutoff_epoch(days), limit, project)
+}
+
+pub fn query_ai_usage_daily_since(
+    conn: &Connection,
+    from_epoch: i64,
+    project: Option<&str>,
+) -> Result<Vec<DailyAiUsage>> {
+    let mut conditions = vec!["created_at_epoch >= ?1".to_string()];
+    let mut params_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params_values.push(Box::new(from_epoch));
+
+    if let Some(p) = project {
+        conditions.push("project = ?2".to_string());
+        params_values.push(Box::new(p.to_string()));
+    }
+    let sql = format!(
+        "SELECT date(created_at_epoch, 'unixepoch', 'localtime') AS day,
+                COUNT(*) AS calls,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd
+         FROM ai_usage_events
+         WHERE {}
+         GROUP BY day
+         ORDER BY day DESC",
+        conditions.join(" AND ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params_values.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok(DailyAiUsage {
+            day: row.get(0)?,
+            calls: row.get(1)?,
+            input_tokens: row.get(2)?,
+            output_tokens: row.get(3)?,
+            total_tokens: row.get(4)?,
+            estimated_cost_usd: row.get(5)?,
+        })
+    })?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
+pub fn query_ai_usage_daily(
+    conn: &Connection,
+    days: i64,
+    project: Option<&str>,
+) -> Result<Vec<DailyAiUsage>> {
+    query_ai_usage_daily_since(conn, usage_cutoff_epoch(days), project)
+}
+
+pub fn query_ai_usage_totals_since(
+    conn: &Connection,
+    from_epoch: i64,
+    project: Option<&str>,
+) -> Result<AiUsageTotals> {
+    let mut conditions = vec!["created_at_epoch >= ?1".to_string()];
+    let mut params_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    params_values.push(Box::new(from_epoch));
+
+    if let Some(p) = project {
+        conditions.push("project = ?2".to_string());
+        params_values.push(Box::new(p.to_string()));
+    }
+    let sql = format!(
+        "SELECT COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(estimated_cost_usd), 0.0)
+         FROM ai_usage_events
+         WHERE {}",
+        conditions.join(" AND ")
+    );
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params_values.iter().map(|b| b.as_ref()).collect();
+    let totals = conn.query_row(&sql, refs.as_slice(), |row| {
+        Ok(AiUsageTotals {
+            calls: row.get(0)?,
+            input_tokens: row.get(1)?,
+            output_tokens: row.get(2)?,
+            total_tokens: row.get(3)?,
+            estimated_cost_usd: row.get(4)?,
+        })
+    })?;
+    Ok(totals)
+}
+
+pub fn query_ai_usage_totals(
+    conn: &Connection,
+    days: i64,
+    project: Option<&str>,
+) -> Result<AiUsageTotals> {
+    query_ai_usage_totals_since(conn, usage_cutoff_epoch(days), project)
 }
 
 pub fn insert_observation(
@@ -445,9 +875,20 @@ pub fn insert_observation(
           created_at, created_at_epoch, discovery_tokens) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
-            memory_session_id, project, obs_type, title, subtitle, narrative,
-            facts, concepts, files_read, files_modified, prompt_number,
-            created_at, created_at_epoch, discovery_tokens
+            memory_session_id,
+            project,
+            obs_type,
+            title,
+            subtitle,
+            narrative,
+            facts,
+            concepts,
+            files_read,
+            files_modified,
+            prompt_number,
+            created_at,
+            created_at_epoch,
+            discovery_tokens
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -477,9 +918,18 @@ pub fn insert_summary(
           created_at, created_at_epoch, discovery_tokens) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
-            memory_session_id, project, request, completed, decisions, learned,
-            next_steps, preferences, prompt_number,
-            created_at, created_at_epoch, discovery_tokens
+            memory_session_id,
+            project,
+            request,
+            completed,
+            decisions,
+            learned,
+            next_steps,
+            preferences,
+            prompt_number,
+            created_at,
+            created_at_epoch,
+            discovery_tokens
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -520,8 +970,10 @@ pub fn mark_observations_compressed(conn: &Connection, ids: &[i64]) -> Result<us
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-        ids.iter().map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>).collect();
+    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
     let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
     let count = stmt.execute(refs.as_slice())?;
     Ok(count)
@@ -567,8 +1019,12 @@ pub fn upsert_session(
          ON CONFLICT(content_session_id) DO UPDATE SET \
          prompt_counter = prompt_counter + 1",
         params![
-            content_session_id, memory_session_id, project, user_prompt,
-            started_at, started_at_epoch
+            content_session_id,
+            memory_session_id,
+            project,
+            user_prompt,
+            started_at,
+            started_at_epoch
         ],
     )?;
 
@@ -580,3 +1036,254 @@ pub fn upsert_session(
     Ok(mid)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use rusqlite::Connection;
+
+    fn setup_summary_schema(conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE session_summaries (
+                id INTEGER PRIMARY KEY,
+                memory_session_id TEXT NOT NULL,
+                project TEXT,
+                request TEXT,
+                completed TEXT,
+                decisions TEXT,
+                learned TEXT,
+                next_steps TEXT,
+                preferences TEXT,
+                prompt_number INTEGER,
+                created_at TEXT,
+                created_at_epoch INTEGER,
+                discovery_tokens INTEGER DEFAULT 0
+            );
+            CREATE TABLE summarize_cooldown (
+                project TEXT PRIMARY KEY,
+                last_summarize_epoch INTEGER NOT NULL,
+                last_message_hash TEXT
+            );",
+        )?;
+        Ok(())
+    }
+
+    fn setup_pending_schema(conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE pending_observations (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                tool_input TEXT,
+                tool_response TEXT,
+                cwd TEXT,
+                created_at_epoch INTEGER NOT NULL,
+                lease_owner TEXT,
+                lease_expires_epoch INTEGER
+            );",
+        )?;
+        Ok(())
+    }
+
+    fn setup_usage_schema(conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE ai_usage_events (
+                id INTEGER PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                created_at_epoch INTEGER NOT NULL,
+                project TEXT,
+                operation TEXT NOT NULL,
+                executor TEXT NOT NULL,
+                model TEXT,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL,
+                estimated_cost_usd REAL NOT NULL
+            );",
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_summarize_replaces_in_single_commit() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_summary_schema(&conn)?;
+        conn.execute(
+            "INSERT INTO session_summaries (memory_session_id, project, request, created_at, created_at_epoch, discovery_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["mem-1", "proj", "old", "2026-01-01T00:00:00Z", 1_i64, 10_i64],
+        )?;
+
+        let deleted = finalize_summarize(
+            &mut conn,
+            "mem-1",
+            "proj",
+            "hash-1",
+            Some("new"),
+            Some("done"),
+            Some("decision"),
+            Some("learned"),
+            Some("next"),
+            Some("pref"),
+            None,
+            99,
+        )?;
+        assert_eq!(deleted, 1);
+
+        let req: String = conn.query_row(
+            "SELECT request FROM session_summaries WHERE memory_session_id = ?1 AND project = ?2",
+            params!["mem-1", "proj"],
+            |r| r.get(0),
+        )?;
+        assert_eq!(req, "new");
+
+        let hash: String = conn.query_row(
+            "SELECT last_message_hash FROM summarize_cooldown WHERE project = ?1",
+            params!["proj"],
+            |r| r.get(0),
+        )?;
+        assert_eq!(hash, "hash-1");
+        Ok(())
+    }
+
+    #[test]
+    fn claim_release_pending_works() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_pending_schema(&conn)?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO pending_observations
+             (session_id, project, tool_name, created_at_epoch, lease_owner, lease_expires_epoch)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)",
+            params!["s1", "p1", "Edit", now],
+        )?;
+        conn.execute(
+            "INSERT INTO pending_observations
+             (session_id, project, tool_name, created_at_epoch, lease_owner, lease_expires_epoch)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)",
+            params!["s1", "p1", "Bash", now],
+        )?;
+
+        let a = claim_pending(&conn, "s1", 1, "owner-a", 60)?;
+        assert_eq!(a.len(), 1);
+        let b = claim_pending(&conn, "s1", 5, "owner-b", 60)?;
+        assert_eq!(b.len(), 1);
+
+        let released = release_pending_claims(&conn, "owner-a")?;
+        assert_eq!(released, 1);
+        let c = claim_pending(&conn, "s1", 5, "owner-c", 60)?;
+        assert_eq!(c.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn ai_usage_queries_aggregate() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_usage_schema(&conn)?;
+        record_ai_usage(
+            &conn,
+            Some("p"),
+            "flush",
+            "cli",
+            Some("haiku"),
+            100,
+            200,
+            0.01,
+        )?;
+        record_ai_usage(
+            &conn,
+            Some("p"),
+            "summarize",
+            "cli",
+            Some("haiku"),
+            50,
+            50,
+            0.005,
+        )?;
+
+        let totals = query_ai_usage_totals(&conn, 7, Some("p"))?;
+        assert_eq!(totals.calls, 2);
+        assert_eq!(totals.input_tokens, 150);
+        assert_eq!(totals.output_tokens, 250);
+        assert_eq!(totals.total_tokens, 400);
+
+        let daily = query_ai_usage_daily(&conn, 7, Some("p"))?;
+        assert_eq!(daily.len(), 1);
+        assert_eq!(daily[0].calls, 2);
+
+        let events = query_ai_usage_events(&conn, 7, 10, Some("p"))?;
+        assert_eq!(events.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn ai_usage_since_filters_old_rows() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_usage_schema(&conn)?;
+        let now = chrono::Utc::now().timestamp();
+        let old_epoch = now - 3 * 86400;
+        let new_epoch = now - 300;
+        let old_created = chrono::Utc
+            .timestamp_opt(old_epoch, 0)
+            .single()
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+        let new_created = chrono::Utc
+            .timestamp_opt(new_epoch, 0)
+            .single()
+            .unwrap_or_else(chrono::Utc::now)
+            .to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO ai_usage_events
+             (created_at, created_at_epoch, project, operation, executor, model,
+              input_tokens, output_tokens, total_tokens, estimated_cost_usd)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                old_created,
+                old_epoch,
+                "p",
+                "flush",
+                "cli",
+                "haiku",
+                10_i64,
+                20_i64,
+                30_i64,
+                0.001_f64
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO ai_usage_events
+             (created_at, created_at_epoch, project, operation, executor, model,
+              input_tokens, output_tokens, total_tokens, estimated_cost_usd)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                new_created,
+                new_epoch,
+                "p",
+                "summarize",
+                "cli",
+                "haiku",
+                50_i64,
+                60_i64,
+                110_i64,
+                0.002_f64
+            ],
+        )?;
+
+        let from_epoch = now - 3600;
+        let totals = query_ai_usage_totals_since(&conn, from_epoch, Some("p"))?;
+        assert_eq!(totals.calls, 1);
+        assert_eq!(totals.total_tokens, 110);
+
+        let daily = query_ai_usage_daily_since(&conn, from_epoch, Some("p"))?;
+        assert_eq!(daily.len(), 1);
+        assert_eq!(daily[0].total_tokens, 110);
+
+        let events = query_ai_usage_events_since(&conn, from_epoch, 10, Some("p"))?;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].operation, "summarize");
+        Ok(())
+    }
+}
