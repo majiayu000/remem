@@ -198,7 +198,7 @@ async fn summarize_worker_inner() -> Result<()> {
 
     crate::log::info("summarize-worker", &format!("project={} session={}", project, session_id));
 
-    // Flush pending observation queue
+    // Flush pending observation queue (current session)
     match observe::flush_pending(&session_id, &project).await {
         Ok(n) => {
             if n > 0 {
@@ -207,6 +207,37 @@ async fn summarize_worker_inner() -> Result<()> {
         }
         Err(e) => {
             crate::log::warn("summarize-worker", &format!("flush failed (continuing): {}", e));
+        }
+    }
+
+    // Flush stale pending from other sessions in same project (>10 min old).
+    // This runs in the background worker where AI calls are safe.
+    {
+        let conn = db::open_db()?;
+        match db::get_stale_pending_sessions(&conn, &project, 600) {
+            Ok(stale_sessions) => {
+                for sid in &stale_sessions {
+                    if *sid == session_id {
+                        continue;
+                    }
+                    match observe::flush_pending(sid, &project).await {
+                        Ok(n) if n > 0 => {
+                            crate::log::info("summarize-worker", &format!(
+                                "auto-flushed {} stale pending from session={}", n, sid
+                            ));
+                        }
+                        Err(e) => {
+                            crate::log::warn("summarize-worker", &format!(
+                                "stale flush failed session={}: {}", sid, e
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                crate::log::warn("summarize-worker", &format!("stale pending query failed: {}", e));
+            }
         }
     }
 

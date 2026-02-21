@@ -136,9 +136,6 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
     observations
 }
 
-/// Stale pending threshold: flush pending from sessions older than this (seconds)
-const STALE_PENDING_AGE_SECS: i64 = 600;
-
 pub async fn session_init() -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
     let input = std::io::read_to_string(std::io::stdin())?;
@@ -156,31 +153,11 @@ pub async fn session_init() -> Result<()> {
     let conn = db::open_db()?;
     db::upsert_session(&conn, &session_id, &project, None)?;
 
-    // Auto-flush stale pending from other sessions (prevents queue leak)
-    match db::get_stale_pending_sessions(&conn, &project, STALE_PENDING_AGE_SECS) {
-        Ok(stale_sessions) => {
-            for sid in &stale_sessions {
-                if *sid == session_id {
-                    continue;
-                }
-                match flush_pending(sid, &project).await {
-                    Ok(n) if n > 0 => {
-                        crate::log::info("session-init", &format!(
-                            "auto-flushed {} stale pending from session={}", n, sid
-                        ));
-                    }
-                    Err(e) => {
-                        crate::log::warn("session-init", &format!(
-                            "stale flush failed for session={}: {}", sid, e
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Err(e) => {
-            crate::log::warn("session-init", &format!("stale pending query failed: {}", e));
-        }
+    // Lightweight cleanup only — no AI calls in hook context.
+    // Stale flush (with AI) is handled by summarize_worker instead.
+    let stale = db::cleanup_stale_pending(&conn)?;
+    if stale > 0 {
+        crate::log::info("session-init", &format!("cleaned {} stale pending (>1h)", stale));
     }
 
     timer.done(&format!("project={}", project));
