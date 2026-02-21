@@ -81,10 +81,6 @@ pub fn warn(component: &str, msg: &str) {
     write_log("WARN", component, msg);
 }
 
-pub fn error(component: &str, msg: &str) {
-    write_log("ERROR", component, msg);
-}
-
 pub struct Timer {
     component: String,
     start: std::time::Instant,
@@ -102,10 +98,5 @@ impl Timer {
     pub fn done(self, msg: &str) {
         let ms = self.start.elapsed().as_millis();
         info(&self.component, &format!("DONE {}ms {}", ms, msg));
-    }
-
-    pub fn done_with_error(self, err: &str) {
-        let ms = self.start.elapsed().as_millis();
-        error(&self.component, &format!("FAIL {}ms {}", ms, err));
     }
 }

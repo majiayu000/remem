@@ -35,8 +35,7 @@ fn read_settings() -> Result<Value> {
     if path.exists() {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("读取 {} 失败", path.display()))?;
-        serde_json::from_str(&content)
-            .with_context(|| format!("解析 {} 失败", path.display()))
+        serde_json::from_str(&content).with_context(|| format!("解析 {} 失败", path.display()))
     } else {
         Ok(json!({}))
     }
@@ -48,8 +47,7 @@ fn write_settings(settings: &Value) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let content = serde_json::to_string_pretty(settings)?;
-    std::fs::write(&path, content)
-        .with_context(|| format!("写入 {} 失败", path.display()))
+    std::fs::write(&path, content).with_context(|| format!("写入 {} 失败", path.display()))
 }
 
 fn build_hooks(bin: &str) -> Value {
@@ -110,14 +108,21 @@ fn remove_remem_hooks(settings: &mut Value, bin: &str) {
 }
 
 fn remove_remem_mcp(settings: &mut Value, bin: &str) {
-    if let Some(servers) = settings.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+    if let Some(servers) = settings
+        .get_mut("mcpServers")
+        .and_then(|s| s.as_object_mut())
+    {
         let keys: Vec<String> = servers.keys().cloned().collect();
         for key in keys {
             if key == "remem" {
                 servers.remove(&key);
                 continue;
             }
-            if let Some(cmd) = servers.get(&key).and_then(|v| v.get("command")).and_then(|c| c.as_str()) {
+            if let Some(cmd) = servers
+                .get(&key)
+                .and_then(|v| v.get("command"))
+                .and_then(|c| c.as_str())
+            {
                 if cmd.contains(bin) || cmd.contains("remem") {
                     servers.remove(&key);
                 }
@@ -141,15 +146,13 @@ pub fn install() -> Result<()> {
 
     // 添加 hooks
     let new_hooks = build_hooks(&bin);
-    let obj = settings.as_object_mut().context("settings.json 根节点不是 Object")?;
-    let hooks = obj
-        .entry("hooks")
-        .or_insert_with(|| json!({}));
+    let obj = settings
+        .as_object_mut()
+        .context("settings.json 根节点不是 Object")?;
+    let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
     if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
         for (event_type, entries) in new {
-            let arr = existing
-                .entry(event_type)
-                .or_insert_with(|| json!([]));
+            let arr = existing.entry(event_type).or_insert_with(|| json!([]));
             if let (Some(arr), Some(new_entries)) = (arr.as_array_mut(), entries.as_array()) {
                 for entry in new_entries {
                     arr.push(entry.clone());
@@ -159,10 +162,10 @@ pub fn install() -> Result<()> {
     }
 
     // 添加 MCP server
-    let obj = settings.as_object_mut().context("settings.json 根节点不是 Object")?;
-    let mcp_servers = obj
-        .entry("mcpServers")
-        .or_insert_with(|| json!({}));
+    let obj = settings
+        .as_object_mut()
+        .context("settings.json 根节点不是 Object")?;
+    let mcp_servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
     if let Some(servers) = mcp_servers.as_object_mut() {
         servers.insert("remem".to_string(), build_mcp_server(&bin));
     }
@@ -183,7 +186,10 @@ pub fn install() -> Result<()> {
     if old_path.exists() {
         eprintln!();
         eprintln!("检测到旧版 hooks.json: {}", old_path.display());
-        eprintln!("Claude Code 不读取此文件，可以安全删除: rm {}", old_path.display());
+        eprintln!(
+            "Claude Code 不读取此文件，可以安全删除: rm {}",
+            old_path.display()
+        );
     }
 
     Ok(())
