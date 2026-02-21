@@ -192,9 +192,99 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status);
          CREATE INDEX IF NOT EXISTS idx_observations_project_status
-           ON observations(project, status, created_at_epoch DESC);"
+           ON observations(project, status, created_at_epoch DESC);
+
+         CREATE TABLE IF NOT EXISTS summarize_cooldown (
+             project TEXT PRIMARY KEY,
+             last_summarize_epoch INTEGER NOT NULL,
+             last_message_hash TEXT
+         );"
     )?;
     Ok(())
+}
+
+// --- Summarize rate limiting ---
+
+/// 检查项目是否在冷却期内。返回 true = 应该跳过。
+pub fn is_summarize_on_cooldown(conn: &Connection, project: &str, cooldown_secs: i64) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let result: Option<i64> = conn.query_row(
+        "SELECT last_summarize_epoch FROM summarize_cooldown WHERE project = ?1",
+        params![project],
+        |row| row.get(0),
+    ).ok();
+
+    match result {
+        Some(last_epoch) => Ok(now - last_epoch < cooldown_secs),
+        None => Ok(false),
+    }
+}
+
+/// 检查 message hash 是否与上次相同。返回 true = 重复消息，应该跳过。
+pub fn is_duplicate_message(conn: &Connection, project: &str, message_hash: &str) -> Result<bool> {
+    let result: Option<String> = conn.query_row(
+        "SELECT last_message_hash FROM summarize_cooldown WHERE project = ?1",
+        params![project],
+        |row| row.get(0),
+    ).ok().flatten();
+
+    match result {
+        Some(prev_hash) => Ok(prev_hash == message_hash),
+        None => Ok(false),
+    }
+}
+
+/// 记录本次 summarize 的时间和 message hash。
+pub fn record_summarize(conn: &Connection, project: &str, message_hash: &str) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO summarize_cooldown (project, last_summarize_epoch, last_message_hash)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(project) DO UPDATE SET
+           last_summarize_epoch = ?2,
+           last_message_hash = ?3",
+        params![project, now, message_hash],
+    )?;
+    Ok(())
+}
+
+// --- 数据清理 ---
+
+/// 删除无对应 observation 的旧版 mem-* summary。
+pub fn cleanup_orphan_summaries(conn: &Connection) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM session_summaries
+         WHERE memory_session_id LIKE 'mem-%'
+           AND memory_session_id NOT IN (
+             SELECT DISTINCT memory_session_id FROM observations
+           )",
+        [],
+    )?;
+    Ok(count)
+}
+
+/// 删除同 session 的重复 summary，只保留最新的一条。
+pub fn cleanup_duplicate_summaries(conn: &Connection) -> Result<usize> {
+    let count = conn.execute(
+        "DELETE FROM session_summaries
+         WHERE id NOT IN (
+           SELECT MAX(id)
+           FROM session_summaries
+           GROUP BY memory_session_id, project
+         )",
+        [],
+    )?;
+    Ok(count)
+}
+
+/// 清理已处理但残留的 pending observations（超过 1 小时未处理的）。
+pub fn cleanup_stale_pending(conn: &Connection) -> Result<usize> {
+    let cutoff = chrono::Utc::now().timestamp() - 3600;
+    let count = conn.execute(
+        "DELETE FROM pending_observations WHERE created_at_epoch < ?1",
+        params![cutoff],
+    )?;
+    Ok(count)
 }
 
 #[derive(Debug)]

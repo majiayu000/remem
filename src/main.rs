@@ -56,6 +56,8 @@ enum Commands {
     Install,
     /// Uninstall hooks + MCP from ~/.claude/settings.json
     Uninstall,
+    /// 清理旧数据：删除孤立 summary、重复 summary、过期 pending
+    Cleanup,
 }
 
 #[tokio::main]
@@ -95,6 +97,16 @@ async fn main() -> Result<()> {
         }
         Commands::Uninstall => {
             install::uninstall()?;
+        }
+        Commands::Cleanup => {
+            let conn = db::open_db()?;
+            let orphans = db::cleanup_orphan_summaries(&conn)?;
+            let dupes = db::cleanup_duplicate_summaries(&conn)?;
+            let stale = db::cleanup_stale_pending(&conn)?;
+            println!("清理完成:");
+            println!("  孤立 summary (无对应 observation): {} 条", orphans);
+            println!("  重复 summary (同 session 多条): {} 条", dupes);
+            println!("  过期 pending (超 1 小时): {} 条", stale);
         }
     }
 

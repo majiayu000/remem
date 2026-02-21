@@ -1,10 +1,24 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::db;
 use crate::observe;
 
 const SUMMARY_PROMPT: &str = include_str!("../prompts/summary.txt");
+
+/// 同项目 summarize 冷却期（秒）
+const SUMMARIZE_COOLDOWN_SECS: i64 = 300;
+
+/// 触发 summarize 的最小 pending 数量
+const MIN_PENDING_FOR_SUMMARIZE: i64 = 3;
+
+fn hash_message(msg: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    msg.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
 
 #[derive(Debug, Deserialize)]
 struct SummarizeInput {
@@ -72,7 +86,10 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
 }
 
 /// Stop hook entry: read stdin, spawn background worker, return immediately.
-/// Only processes sessions where remem actually captured tool observations.
+/// 多层 gate 防止 token 浪费：
+/// 1. pending >= MIN_PENDING_FOR_SUMMARIZE（过滤短命 session）
+/// 2. 项目冷却期（同项目 5 分钟内不重复 summarize）
+/// 3. message hash 去重（相同 assistant message 不重复处理）
 pub async fn summarize() -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
 
@@ -87,17 +104,41 @@ pub async fn summarize() -> Result<()> {
         }
     }
 
-    // Gate: only summarize sessions where remem captured observations
     let conn = db::open_db()?;
+
+    // Gate 1: 最小 pending 数量（过滤短命 session 和无操作 session）
     let pending = db::count_pending(&conn, session_id)?;
-    if pending == 0 {
+    if pending < MIN_PENDING_FOR_SUMMARIZE {
         crate::log::info("summarize", &format!(
-            "session={} has 0 pending observations, skipping", session_id
+            "session={} has {} pending (min={}), skipping", session_id, pending, MIN_PENDING_FOR_SUMMARIZE
         ));
         return Ok(());
     }
+
+    let cwd = hook.cwd.as_deref().unwrap_or(".");
+    let project = db::project_from_cwd(cwd);
+
+    // Gate 2: 项目冷却期
+    if db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)? {
+        crate::log::info("summarize", &format!(
+            "project={} on cooldown ({}s), skipping", project, SUMMARIZE_COOLDOWN_SECS
+        ));
+        return Ok(());
+    }
+
+    // Gate 3: message hash 去重
+    if let Some(msg) = &hook.last_assistant_message {
+        let msg_hash = hash_message(msg);
+        if db::is_duplicate_message(&conn, &project, &msg_hash)? {
+            crate::log::info("summarize", &format!(
+                "project={} duplicate message hash, skipping", project
+            ));
+            return Ok(());
+        }
+    }
+
     crate::log::info("summarize", &format!(
-        "session={} has {} pending, dispatching worker", session_id, pending
+        "session={} project={} pending={}, dispatching worker", session_id, project, pending
     ));
 
     // Spawn background worker — Stop hook returns immediately
@@ -112,10 +153,8 @@ pub async fn summarize() -> Result<()> {
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
         stdin.write_all(input.as_bytes())?;
-        // stdin dropped here → pipe closed → worker gets EOF
     }
 
-    // Child handle dropped — process continues in background (std::process does NOT kill on drop)
     crate::log::info("summarize", "dispatched to background worker");
     Ok(())
 }
@@ -183,8 +222,28 @@ pub async fn summarize_worker() -> Result<()> {
         assistant_msg
     };
 
-    // Build user message with optional existing summary context
+    // Gate: worker 端再次检查冷却期（防止多个 worker 并行）
     let conn_for_summary = db::open_db()?;
+    if db::is_summarize_on_cooldown(&conn_for_summary, &project, SUMMARIZE_COOLDOWN_SECS)? {
+        crate::log::info("summarize-worker", &format!(
+            "project={} on cooldown, skipping AI call", project
+        ));
+        timer.done("skipped (cooldown)");
+        return Ok(());
+    }
+
+    // Gate: message hash 去重（worker 端双重检查）
+    let msg_hash = hash_message(&msg);
+    if db::is_duplicate_message(&conn_for_summary, &project, &msg_hash)? {
+        crate::log::info("summarize-worker", &format!(
+            "project={} duplicate message, skipping AI call", project
+        ));
+        timer.done("skipped (duplicate message)");
+        return Ok(());
+    }
+
+    // 提前记录冷却期（防止并行 worker 同时通过 gate）
+    db::record_summarize(&conn_for_summary, &project, &msg_hash)?;
     let memory_sid = db::upsert_session(&conn_for_summary, &session_id, &project, None)?;
     let existing_ctx = match db::get_summary_by_session(&conn_for_summary, &memory_sid, &project)? {
         Some(prev) => {
