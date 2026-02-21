@@ -4,7 +4,6 @@ use serde::Deserialize;
 use crate::db;
 
 const OBSERVATION_PROMPT: &str = include_str!("../prompts/observation.txt");
-const BATCH_PROMPT: &str = include_str!("../prompts/observation_batch.txt");
 
 const VALID_TYPES: &[&str] = &["bugfix", "feature", "refactor", "change", "discovery", "decision"];
 
@@ -18,8 +17,23 @@ const SKIP_TOOLS: &[&str] = &[
     "EnterPlanMode", "ExitPlanMode",
 ];
 
+/// Bash command prefixes to skip (routine/read-only operations, not worth recording)
+const BASH_SKIP_PREFIXES: &[&str] = &[
+    "git status", "git log", "git diff", "git branch", "git stash list",
+    "git remote", "git fetch", "git show",
+    "ls", "pwd", "echo ", "which ", "type ", "whereis ",
+    "cat ", "head ", "tail ", "wc ", "file ",
+    "npm install", "npm ci", "yarn install", "pnpm install",
+    "cargo build", "cargo check", "cargo clippy", "cargo fmt",
+    "cd ", "pushd ", "popd",
+    "lsof ", "ps ", "top", "htop", "df ", "du ",
+];
+
 /// Max tool_response size stored in queue (save DB space)
 const MAX_RESPONSE_SIZE: usize = 4000;
+
+/// Max events per flush batch (prevents oversized AI input)
+const FLUSH_BATCH_SIZE: usize = 15;
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
@@ -122,6 +136,9 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
     observations
 }
 
+/// Stale pending threshold: flush pending from sessions older than this (seconds)
+const STALE_PENDING_AGE_SECS: i64 = 600;
+
 pub async fn session_init() -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
     let input = std::io::read_to_string(std::io::stdin())?;
@@ -138,6 +155,33 @@ pub async fn session_init() -> Result<()> {
 
     let conn = db::open_db()?;
     db::upsert_session(&conn, &session_id, &project, None)?;
+
+    // Auto-flush stale pending from other sessions (prevents queue leak)
+    match db::get_stale_pending_sessions(&conn, &project, STALE_PENDING_AGE_SECS) {
+        Ok(stale_sessions) => {
+            for sid in &stale_sessions {
+                if *sid == session_id {
+                    continue;
+                }
+                match flush_pending(sid, &project).await {
+                    Ok(n) if n > 0 => {
+                        crate::log::info("session-init", &format!(
+                            "auto-flushed {} stale pending from session={}", n, sid
+                        ));
+                    }
+                    Err(e) => {
+                        crate::log::warn("session-init", &format!(
+                            "stale flush failed for session={}: {}", sid, e
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => {
+            crate::log::warn("session-init", &format!("stale pending query failed: {}", e));
+        }
+    }
 
     timer.done(&format!("project={}", project));
     Ok(())
@@ -164,6 +208,17 @@ pub async fn observe() -> Result<()> {
     if !ACTION_TOOLS.contains(&tool_name) {
         crate::log::info("observe", &format!("SKIP tool={} (read-only)", tool_name));
         return Ok(());
+    }
+
+    // Filter out routine Bash commands (read-only/build operations)
+    if tool_name == "Bash" {
+        if let Some(cmd) = hook.tool_input.as_ref().and_then(|v| v["command"].as_str()) {
+            let cmd_trimmed = cmd.trim();
+            if BASH_SKIP_PREFIXES.iter().any(|prefix| cmd_trimmed.starts_with(prefix)) {
+                crate::log::info("observe", &format!("SKIP bash cmd={}", db::truncate_str(cmd_trimmed, 60)));
+                return Ok(());
+            }
+        }
     }
 
     let tool_input_str = hook.tool_input
@@ -218,7 +273,7 @@ fn build_existing_context(conn: &rusqlite::Connection, project: &str) -> Result<
 /// Flush pending queue: batch all queued items into one AI call.
 pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
     let conn = db::open_db()?;
-    let pending = db::dequeue_pending(&conn, session_id)?;
+    let pending = db::dequeue_pending(&conn, session_id, FLUSH_BATCH_SIZE)?;
 
     if pending.is_empty() {
         crate::log::info("flush", "no pending observations");
@@ -259,12 +314,9 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
         existing_context, events
     );
 
-    // Choose prompt based on event count
-    let prompt = if pending.len() == 1 { OBSERVATION_PROMPT } else { BATCH_PROMPT };
-
     // Single AI call for all events
     let ai_start = std::time::Instant::now();
-    let response = match call_anthropic(prompt, &user_message).await {
+    let response = match call_anthropic(OBSERVATION_PROMPT, &user_message).await {
         Ok(r) => r,
         Err(e) => {
             crate::log::warn("flush", &format!("AI call failed: {}", e));

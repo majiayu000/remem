@@ -103,10 +103,12 @@ async fn main() -> Result<()> {
             let orphans = db::cleanup_orphan_summaries(&conn)?;
             let dupes = db::cleanup_duplicate_summaries(&conn)?;
             let stale = db::cleanup_stale_pending(&conn)?;
+            let expired = db::cleanup_expired_compressed(&conn, 90)?;
             println!("清理完成:");
             println!("  孤立 summary (无对应 observation): {} 条", orphans);
             println!("  重复 summary (同 session 多条): {} 条", dupes);
             println!("  过期 pending (超 1 小时): {} 条", stale);
+            println!("  过期 compressed (超 90 天): {} 条", expired);
         }
     }
 

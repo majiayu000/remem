@@ -159,8 +159,30 @@ pub async fn summarize() -> Result<()> {
     Ok(())
 }
 
+/// Max total runtime for a single worker invocation (seconds).
+/// Guards against hangs in AI calls or DB operations.
+const WORKER_TIMEOUT_SECS: u64 = 180;
+
 /// Background worker: does the actual AI calls. Runs detached from Claude Code.
 pub async fn summarize_worker() -> Result<()> {
+    // Global timeout: kill entire worker if it hangs
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(WORKER_TIMEOUT_SECS),
+        summarize_worker_inner(),
+    )
+    .await;
+    match result {
+        Ok(inner) => inner,
+        Err(_) => {
+            crate::log::warn("summarize-worker", &format!(
+                "worker timed out after {}s", WORKER_TIMEOUT_SECS
+            ));
+            Ok(())
+        }
+    }
+}
+
+async fn summarize_worker_inner() -> Result<()> {
     let timer = crate::log::Timer::start("summarize-worker", "");
     let input = std::io::read_to_string(std::io::stdin())?;
     crate::log::debug("summarize-worker", &format!("input: {}", crate::db::truncate_str(&input, 500)));

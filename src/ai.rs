@@ -4,8 +4,19 @@ use tokio::process::Command;
 /// AI call timeout (seconds)
 const AI_TIMEOUT_SECS: u64 = 90;
 
-fn get_model() -> String {
+fn get_model_raw() -> String {
     std::env::var("REMEM_MODEL").unwrap_or_else(|_| "haiku".to_string())
+}
+
+/// Map short model names to full Anthropic API model IDs.
+/// CLI handles short names itself; HTTP API needs the full ID.
+fn resolve_model_for_api(short: &str) -> &str {
+    match short {
+        "haiku" => "claude-haiku-4-5-20251001",
+        "sonnet" => "claude-sonnet-4-5-20250514",
+        "opus" => "claude-opus-4-20250514",
+        _ => short,
+    }
 }
 
 fn get_claude_path() -> String {
@@ -39,7 +50,7 @@ pub async fn call_ai(system: &str, user_message: &str) -> Result<String> {
 }
 
 async fn call_cli(system: &str, user_message: &str) -> Result<String> {
-    let model = get_model();
+    let model = get_model_raw();
     let claude = get_claude_path();
 
     let mut child = Command::new(&claude)
@@ -88,7 +99,8 @@ async fn call_http(system: &str, user_message: &str) -> Result<String> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
         .context("ANTHROPIC_API_KEY not set")?;
-    let model = get_model();
+    let raw = get_model_raw();
+    let model = resolve_model_for_api(&raw);
     let base_url = std::env::var("ANTHROPIC_BASE_URL")
         .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
 

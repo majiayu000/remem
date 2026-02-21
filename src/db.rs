@@ -52,11 +52,28 @@ pub struct SessionSummary {
     pub project: Option<String>,
 }
 
+/// Extract project name from cwd using last 2 path components to reduce collision risk.
+/// e.g. "/Users/foo/code/my-app" → "code/my-app"
+///      "/Users/foo/my-app"      → "foo/my-app"
+///      "my-app"                 → "my-app"
 pub fn project_from_cwd(cwd: &str) -> String {
-    std::path::Path::new(cwd)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| cwd.to_string())
+    let path = std::path::Path::new(cwd);
+    let components: Vec<&std::ffi::OsStr> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    match components.len() {
+        0 => cwd.to_string(),
+        1 => components[0].to_string_lossy().to_string(),
+        n => format!(
+            "{}/{}",
+            components[n - 2].to_string_lossy(),
+            components[n - 1].to_string_lossy()
+        ),
+    }
 }
 
 pub fn db_path() -> PathBuf {
@@ -70,6 +87,9 @@ pub fn db_path() -> PathBuf {
     data_dir.join("remem.db")
 }
 
+/// Current schema version — bump when adding migrations.
+const SCHEMA_VERSION: i64 = 2;
+
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
     if let Some(parent) = path.parent() {
@@ -78,9 +98,15 @@ pub fn open_db() -> Result<Connection> {
     let conn = Connection::open(&path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-    ensure_core_schema(&conn)?;
-    ensure_pending_table(&conn)?;
-    ensure_schema_migrations(&conn)?;
+
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version < SCHEMA_VERSION {
+        ensure_core_schema(&conn)?;
+        ensure_pending_table(&conn)?;
+        ensure_schema_migrations(&conn)?;
+        conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))?;
+    }
+
     Ok(conn)
 }
 
@@ -208,29 +234,32 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
 /// 检查项目是否在冷却期内。返回 true = 应该跳过。
 pub fn is_summarize_on_cooldown(conn: &Connection, project: &str, cooldown_secs: i64) -> Result<bool> {
     let now = chrono::Utc::now().timestamp();
-    let result: Option<i64> = conn.query_row(
+    let result: rusqlite::Result<i64> = conn.query_row(
         "SELECT last_summarize_epoch FROM summarize_cooldown WHERE project = ?1",
         params![project],
         |row| row.get(0),
-    ).ok();
+    );
 
     match result {
-        Some(last_epoch) => Ok(now - last_epoch < cooldown_secs),
-        None => Ok(false),
+        Ok(last_epoch) => Ok(now - last_epoch < cooldown_secs),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(e) => Err(e.into()),
     }
 }
 
 /// 检查 message hash 是否与上次相同。返回 true = 重复消息，应该跳过。
 pub fn is_duplicate_message(conn: &Connection, project: &str, message_hash: &str) -> Result<bool> {
-    let result: Option<String> = conn.query_row(
+    let result: rusqlite::Result<Option<String>> = conn.query_row(
         "SELECT last_message_hash FROM summarize_cooldown WHERE project = ?1",
         params![project],
         |row| row.get(0),
-    ).ok().flatten();
+    );
 
     match result {
-        Some(prev_hash) => Ok(prev_hash == message_hash),
-        None => Ok(false),
+        Ok(Some(prev_hash)) => Ok(prev_hash == message_hash),
+        Ok(None) => Ok(false),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -287,6 +316,16 @@ pub fn cleanup_stale_pending(conn: &Connection) -> Result<usize> {
     Ok(count)
 }
 
+/// 清理已压缩超过 ttl_days 天的旧 observations。
+pub fn cleanup_expired_compressed(conn: &Connection, ttl_days: i64) -> Result<usize> {
+    let cutoff = chrono::Utc::now().timestamp() - (ttl_days * 86400);
+    let count = conn.execute(
+        "DELETE FROM observations WHERE status = 'compressed' AND created_at_epoch < ?1",
+        params![cutoff],
+    )?;
+    Ok(count)
+}
+
 #[derive(Debug)]
 pub struct PendingObservation {
     pub id: i64,
@@ -318,12 +357,12 @@ pub fn enqueue_pending(
     Ok(conn.last_insert_rowid())
 }
 
-pub fn dequeue_pending(conn: &Connection, session_id: &str) -> Result<Vec<PendingObservation>> {
+pub fn dequeue_pending(conn: &Connection, session_id: &str, limit: usize) -> Result<Vec<PendingObservation>> {
     let mut stmt = conn.prepare(
         "SELECT id, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch \
-         FROM pending_observations WHERE session_id = ?1 ORDER BY id ASC"
+         FROM pending_observations WHERE session_id = ?1 ORDER BY id ASC LIMIT ?2"
     )?;
-    let rows = stmt.query_map(params![session_id], |row| {
+    let rows = stmt.query_map(params![session_id, limit as i64], |row| {
         Ok(PendingObservation {
             id: row.get(0)?,
             session_id: row.get(1)?,
@@ -354,6 +393,21 @@ pub fn delete_pending(conn: &Connection, ids: &[i64]) -> Result<()> {
     let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
     stmt.execute(refs.as_slice())?;
     Ok(())
+}
+
+/// Get distinct session IDs with stale pending observations (older than age_secs).
+pub fn get_stale_pending_sessions(conn: &Connection, project: &str, age_secs: i64) -> Result<Vec<String>> {
+    let cutoff = chrono::Utc::now().timestamp() - age_secs;
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT session_id FROM pending_observations \
+         WHERE project = ?1 AND created_at_epoch < ?2"
+    )?;
+    let rows = stmt.query_map(params![project, cutoff], |row| row.get(0))?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
 }
 
 pub fn count_pending(conn: &Connection, session_id: &str) -> Result<i64> {
