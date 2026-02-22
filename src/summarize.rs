@@ -36,10 +36,15 @@ fn extract_last_assistant_message(transcript_path: &str) -> Option<String> {
     let mut last_assistant = None;
 
     for line in content.lines().rev() {
-        let val: serde_json::Value = serde_json::from_str(line).ok()?;
+        let val: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue, // skip malformed lines instead of aborting
+        };
         if val["type"].as_str() == Some("assistant") {
-            let text_parts: Vec<&str> = val["message"]["content"]
-                .as_array()?
+            let Some(content_arr) = val["message"]["content"].as_array() else {
+                continue;
+            };
+            let text_parts: Vec<&str> = content_arr
                 .iter()
                 .filter_map(|c| {
                     if c["type"].as_str() == Some("text") {
@@ -157,11 +162,16 @@ pub async fn summarize() -> Result<()> {
 
     // Spawn background worker — Stop hook returns immediately
     let exe = std::env::current_exe()?;
+    let stderr_file = crate::log::open_log_append();
+    let stderr_cfg = match stderr_file {
+        Some(f) => std::process::Stdio::from(f),
+        None => std::process::Stdio::null(),
+    };
     let mut child = std::process::Command::new(&exe)
         .arg("summarize-worker")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(stderr_cfg)
         .spawn()?;
 
     if let Some(mut stdin) = child.stdin.take() {

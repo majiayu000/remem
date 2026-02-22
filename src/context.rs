@@ -145,10 +145,10 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
 
     let conn = match db::open_db() {
         Ok(c) => c,
-        Err(_) => {
-            crate::log::info(
+        Err(e) => {
+            crate::log::warn(
                 "context",
-                &format!("no DB, empty state for project={}", project),
+                &format!("open_db failed for project={}: {}", project, e),
             );
             render_empty_state(&project, use_colors);
             timer.done("empty (no DB)");

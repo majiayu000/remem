@@ -4,6 +4,7 @@ use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 use crate::db;
 use crate::search;
@@ -11,13 +12,24 @@ use crate::search;
 #[derive(Clone)]
 pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
+    conn: Arc<Mutex<rusqlite::Connection>>,
 }
 
 impl MemoryServer {
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Result<Self> {
+        let conn = db::open_db()?;
+        Ok(Self {
             tool_router: Self::tool_router(),
-        }
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    fn with_conn<F, T>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
+    {
+        let conn = self.conn.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        f(&conn)
     }
 }
 
@@ -87,32 +99,36 @@ impl MemoryServer {
         description = "Search past observations by keyword/project/type. Returns compact results (id, type, title, subtitle). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
-        let conn = db::open_db().map_err(|e| e.to_string())?;
-        let results = search::search(
-            &conn,
-            params.query.as_deref(),
-            params.project.as_deref(),
-            params.r#type.as_deref(),
-            params.limit.unwrap_or(20),
-            params.offset.unwrap_or(0),
-            params.include_stale.unwrap_or(true),
-        )
-        .map_err(|e| e.to_string())?;
+        self.with_conn(|conn| {
+            let results = search::search(
+                conn,
+                params.query.as_deref(),
+                params.project.as_deref(),
+                params.r#type.as_deref(),
+                params.limit.unwrap_or(20),
+                params.offset.unwrap_or(0),
+                params.include_stale.unwrap_or(true),
+            )
+            .map_err(|e| {
+                crate::log::warn("mcp", &format!("search failed: {}", e));
+                e.to_string()
+            })?;
 
-        let search_results: Vec<SearchResult> = results
-            .into_iter()
-            .map(|o| SearchResult {
-                id: o.id,
-                r#type: o.r#type,
-                title: o.title,
-                subtitle: o.subtitle,
-                created_at: o.created_at,
-                project: o.project,
-                status: o.status,
-            })
-            .collect();
+            let search_results: Vec<SearchResult> = results
+                .into_iter()
+                .map(|o| SearchResult {
+                    id: o.id,
+                    r#type: o.r#type,
+                    title: o.title,
+                    subtitle: o.subtitle,
+                    created_at: o.created_at,
+                    project: o.project,
+                    status: o.status,
+                })
+                .collect();
 
-        serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
+            serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
+        })
     }
 
     /// Get timeline context around an observation
@@ -120,32 +136,38 @@ impl MemoryServer {
         description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point."
     )]
     fn timeline(&self, Parameters(params): Parameters<TimelineParams>) -> Result<String, String> {
-        let conn = db::open_db().map_err(|e| e.to_string())?;
+        self.with_conn(|conn| {
+            let anchor_id = if let Some(id) = params.anchor {
+                id
+            } else if let Some(q) = &params.query {
+                let results =
+                    search::search(conn, Some(q), params.project.as_deref(), None, 1, 0, true)
+                        .map_err(|e| {
+                            crate::log::warn("mcp", &format!("timeline search failed: {}", e));
+                            e.to_string()
+                        })?;
+                results
+                    .first()
+                    .map(|o| o.id)
+                    .ok_or_else(|| "No results for query".to_string())?
+            } else {
+                return Err("anchor or query required".to_string());
+            };
 
-        let anchor_id = if let Some(id) = params.anchor {
-            id
-        } else if let Some(q) = &params.query {
-            let results =
-                search::search(&conn, Some(q), params.project.as_deref(), None, 1, 0, true)
-                    .map_err(|e| e.to_string())?;
-            results
-                .first()
-                .map(|o| o.id)
-                .ok_or_else(|| "No results for query".to_string())?
-        } else {
-            return Err("anchor or query required".to_string());
-        };
+            let results = db::get_timeline_around(
+                conn,
+                anchor_id,
+                params.depth_before.unwrap_or(5),
+                params.depth_after.unwrap_or(5),
+                params.project.as_deref(),
+            )
+            .map_err(|e| {
+                crate::log::warn("mcp", &format!("timeline failed: {}", e));
+                e.to_string()
+            })?;
 
-        let results = db::get_timeline_around(
-            &conn,
-            anchor_id,
-            params.depth_before.unwrap_or(5),
-            params.depth_after.unwrap_or(5),
-            params.project.as_deref(),
-        )
-        .map_err(|e| e.to_string())?;
-
-        serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+        })
     }
 
     /// Get full observation details by IDs
@@ -156,14 +178,24 @@ impl MemoryServer {
         &self,
         Parameters(params): Parameters<GetObservationsParams>,
     ) -> Result<String, String> {
-        let conn = db::open_db().map_err(|e| e.to_string())?;
-        let results = db::get_observations_by_ids(&conn, &params.ids, params.project.as_deref())
-            .map_err(|e| e.to_string())?;
-        let accessed_ids: Vec<i64> = results.iter().map(|o| o.id).collect();
-        if !accessed_ids.is_empty() {
-            let _ = db::update_last_accessed(&conn, &accessed_ids);
-        }
-        serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+        self.with_conn(|conn| {
+            let results =
+                db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("get_observations failed: {}", e));
+                        e.to_string()
+                    })?;
+            let accessed_ids: Vec<i64> = results.iter().map(|o| o.id).collect();
+            if !accessed_ids.is_empty() {
+                if let Err(e) = db::update_last_accessed(conn, &accessed_ids) {
+                    crate::log::warn(
+                        "mcp",
+                        &format!("update_last_accessed failed: {}", e),
+                    );
+                }
+            }
+            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+        })
     }
 
     /// Manually save a memory/observation
@@ -174,27 +206,31 @@ impl MemoryServer {
         &self,
         Parameters(params): Parameters<SaveMemoryParams>,
     ) -> Result<String, String> {
-        let conn = db::open_db().map_err(|e| e.to_string())?;
-        let project = params.project.as_deref().unwrap_or("manual");
+        self.with_conn(|conn| {
+            let project = params.project.as_deref().unwrap_or("manual");
 
-        let id = db::insert_observation(
-            &conn,
-            "manual",
-            project,
-            "discovery",
-            params.title.as_deref(),
-            None,
-            Some(&params.text),
-            None,
-            None,
-            None,
-            None,
-            None,
-            0,
-        )
-        .map_err(|e| e.to_string())?;
+            let id = db::insert_observation(
+                conn,
+                "manual",
+                project,
+                "discovery",
+                params.title.as_deref(),
+                None,
+                Some(&params.text),
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+            )
+            .map_err(|e| {
+                crate::log::warn("mcp", &format!("save_memory failed: {}", e));
+                e.to_string()
+            })?;
 
-        Ok(format!("{{\"id\": {}, \"status\": \"saved\"}}", id))
+            Ok(format!("{{\"id\": {}, \"status\": \"saved\"}}", id))
+        })
     }
 }
 
@@ -229,13 +265,8 @@ impl ServerHandler for MemoryServer {
 }
 
 pub async fn run_mcp_server() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .init();
-
-    let server = MemoryServer::new();
+    crate::log::info("mcp", "server started");
+    let server = MemoryServer::new()?;
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())

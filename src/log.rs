@@ -35,7 +35,11 @@ fn rotate_if_needed(path: &std::path::Path, max_bytes: u64) {
     for i in (1..=LOG_ROTATION_KEEP).rev() {
         let dst = rotated_log_path(path, i);
         if i == LOG_ROTATION_KEEP {
-            let _ = std::fs::remove_file(&dst);
+            if let Err(e) = std::fs::remove_file(&dst) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("[remem] log rotate: remove {:?} failed: {}", dst, e);
+                }
+            }
         }
         let src = if i == 1 {
             path.to_path_buf()
@@ -43,7 +47,9 @@ fn rotate_if_needed(path: &std::path::Path, max_bytes: u64) {
             rotated_log_path(path, i - 1)
         };
         if src.exists() {
-            let _ = std::fs::rename(&src, &dst);
+            if let Err(e) = std::fs::rename(&src, &dst) {
+                eprintln!("[remem] log rotate: rename {:?} → {:?} failed: {}", src, dst, e);
+            }
         }
     }
 }
@@ -54,15 +60,47 @@ fn write_log(level: &str, component: &str, msg: &str) {
     eprintln!("{}", line);
     if let Some(path) = log_path() {
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("[remem] log dir create failed: {}", e);
+                return;
+            }
         }
         rotate_if_needed(&path, log_max_bytes());
-        if let Ok(mut f) = std::fs::OpenOptions::new()
+        match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
         {
-            let _ = writeln!(f, "{}", line);
+            Ok(mut f) => {
+                if let Err(e) = writeln!(f, "{}", line) {
+                    eprintln!("[remem] log write failed: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("[remem] log open failed: {}", e);
+            }
+        }
+    }
+}
+
+/// Open log file in append mode for use as a child process stderr.
+pub fn open_log_append() -> Option<std::fs::File> {
+    let path = log_path()?;
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[remem] log dir create failed: {}", e);
+            return None;
+        }
+    }
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        Ok(f) => Some(f),
+        Err(e) => {
+            eprintln!("[remem] open log for child stderr failed: {}", e);
+            None
         }
     }
 }

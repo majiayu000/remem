@@ -163,12 +163,17 @@ pub async fn observe() -> Result<()> {
         }
     }
 
-    let tool_input_str = hook
-        .tool_input
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_default());
+    let tool_input_str = hook.tool_input.as_ref().map(|v| {
+        serde_json::to_string(v).unwrap_or_else(|e| {
+            crate::log::warn("observe", &format!("tool_input serialize failed: {}", e));
+            "{}".to_string()
+        })
+    });
     let tool_response_str = hook.tool_response.as_ref().map(|v| {
-        let s = serde_json::to_string(v).unwrap_or_default();
+        let s = serde_json::to_string(v).unwrap_or_else(|e| {
+            crate::log::warn("observe", &format!("tool_response serialize failed: {}", e));
+            "{}".to_string()
+        });
         if s.len() > MAX_RESPONSE_SIZE {
             crate::db::truncate_str(&s, MAX_RESPONSE_SIZE).to_string()
         } else {

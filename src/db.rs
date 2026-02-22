@@ -81,7 +81,13 @@ fn canonical_project_path(cwd: &str) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     };
-    std::fs::canonicalize(&abs).unwrap_or(abs)
+    std::fs::canonicalize(&abs).unwrap_or_else(|e| {
+        crate::log::warn(
+            "db",
+            &format!("canonicalize {:?} failed (using abs): {}", abs, e),
+        );
+        abs
+    })
 }
 
 /// Build a stable project key from cwd.
@@ -225,18 +231,17 @@ fn ensure_pending_table(conn: &Connection) -> Result<()> {
 }
 
 fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
-    for sql in &[
-        "ALTER TABLE observations ADD COLUMN status TEXT DEFAULT 'active'",
-        "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER",
-        "ALTER TABLE session_summaries ADD COLUMN decisions TEXT",
-        "ALTER TABLE session_summaries ADD COLUMN preferences TEXT",
-        "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT",
-        "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER",
-    ] {
-        if let Err(e) = conn.execute_batch(sql) {
-            if !e.to_string().contains("duplicate column") {
-                return Err(e.into());
-            }
+    let migrations: &[(&str, &str, &str)] = &[
+        ("observations", "status", "ALTER TABLE observations ADD COLUMN status TEXT DEFAULT 'active'"),
+        ("observations", "last_accessed_epoch", "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER"),
+        ("session_summaries", "decisions", "ALTER TABLE session_summaries ADD COLUMN decisions TEXT"),
+        ("session_summaries", "preferences", "ALTER TABLE session_summaries ADD COLUMN preferences TEXT"),
+        ("pending_observations", "lease_owner", "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT"),
+        ("pending_observations", "lease_expires_epoch", "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER"),
+    ];
+    for (table, col, sql) in migrations {
+        if !column_exists(conn, table, col)? {
+            conn.execute_batch(sql)?;
         }
     }
     conn.execute_batch(

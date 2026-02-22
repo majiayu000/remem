@@ -221,7 +221,10 @@ async fn call_http(system: &str, user_message: &str) -> Result<AiCallResult> {
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
+        let text = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<body read error: {}>", e));
         anyhow::bail!("Anthropic API error {}: {}", status, text);
     }
 
