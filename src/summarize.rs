@@ -169,6 +169,7 @@ pub async fn summarize() -> Result<()> {
     };
     let mut child = std::process::Command::new(&exe)
         .arg("summarize-worker")
+        .env("REMEM_STDERR_TO_LOG", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg)

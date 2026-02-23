@@ -57,7 +57,10 @@ fn rotate_if_needed(path: &std::path::Path, max_bytes: u64) {
 fn write_log(level: &str, component: &str, msg: &str) {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("[{}] [{}] [{}] {}", now, level, component, msg);
-    eprintln!("{}", line);
+    // Skip eprintln when stderr is already redirected to log file (worker subprocess)
+    if std::env::var_os("REMEM_STDERR_TO_LOG").is_none() {
+        eprintln!("{}", line);
+    }
     if let Some(path) = log_path() {
         if let Some(parent) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
