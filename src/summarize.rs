@@ -14,6 +14,10 @@ const SUMMARIZE_COOLDOWN_SECS: i64 = 300;
 
 /// 触发 summarize 的最小 pending 数量
 const MIN_PENDING_FOR_SUMMARIZE: i64 = 3;
+/// 对于 pending < MIN 的轻量会话，等待超过该阈值后也会强制 flush。
+const MIN_PENDING_FORCE_FLUSH_AGE_SECS: i64 = 180;
+/// Stop hook stdin read timeout. Some runners may keep stdin open on edge cases.
+const SUMMARIZE_STDIN_TIMEOUT_MS: u64 = 3000;
 
 fn hash_message(msg: &str) -> String {
     let mut hasher = DefaultHasher::new();
@@ -91,16 +95,57 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
     })
 }
 
+fn read_stdin_with_timeout(timeout_ms: u64) -> Result<Option<String>> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (tx, rx) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let input = std::io::read_to_string(std::io::stdin());
+        let _ = tx.send(input);
+    });
+
+    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+        Ok(Ok(input)) => {
+            if input.trim().is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(input))
+            }
+        }
+        Ok(Err(e)) => Err(e.into()),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            crate::log::warn(
+                "summarize",
+                &format!("stdin read timed out after {}ms, skipping", timeout_ms),
+            );
+            Ok(None)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            crate::log::warn("summarize", "stdin reader disconnected, skipping");
+            Ok(None)
+        }
+    }
+}
+
 /// Stop hook entry: read stdin, spawn background worker, return immediately.
 /// 多层 gate 防止 token 浪费：
-/// 1. pending >= MIN_PENDING_FOR_SUMMARIZE（过滤短命 session）
+/// 1. pending >= MIN_PENDING_FOR_SUMMARIZE，或 pending 低于阈值但已等待足够久
 /// 2. 项目冷却期（同项目 5 分钟内不重复 summarize）
 /// 3. message hash 去重（相同 assistant message 不重复处理）
 pub async fn summarize() -> Result<()> {
-    let input = std::io::read_to_string(std::io::stdin())?;
+    let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
+        return Ok(());
+    };
 
     // Quick validation
-    let hook: SummarizeInput = serde_json::from_str(&input)?;
+    let hook: SummarizeInput = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(e) => {
+            crate::log::warn("summarize", &format!("invalid hook payload, skipping: {}", e));
+            return Ok(());
+        }
+    };
     let Some(session_id) = &hook.session_id else {
         return Ok(());
     };
@@ -115,14 +160,32 @@ pub async fn summarize() -> Result<()> {
     // Gate 1: 最小 pending 数量（过滤短命 session 和无操作 session）
     let pending = db::count_pending(&conn, session_id)?;
     if pending < MIN_PENDING_FOR_SUMMARIZE {
+        let oldest_age = db::oldest_pending_age_secs(&conn, session_id)?.unwrap_or(0);
+        if oldest_age < MIN_PENDING_FORCE_FLUSH_AGE_SECS {
+            crate::log::info(
+                "summarize",
+                &format!(
+                    "session={} has {} pending (min={}), oldest={}s (<{}s), skipping",
+                    session_id,
+                    pending,
+                    MIN_PENDING_FOR_SUMMARIZE,
+                    oldest_age,
+                    MIN_PENDING_FORCE_FLUSH_AGE_SECS
+                ),
+            );
+            return Ok(());
+        }
         crate::log::info(
             "summarize",
             &format!(
-                "session={} has {} pending (min={}), skipping",
-                session_id, pending, MIN_PENDING_FOR_SUMMARIZE
+                "session={} has {} pending (<min={}), oldest={}s (>= {}s), force flush",
+                session_id,
+                pending,
+                MIN_PENDING_FOR_SUMMARIZE,
+                oldest_age,
+                MIN_PENDING_FORCE_FLUSH_AGE_SECS
             ),
         );
-        return Ok(());
     }
 
     let cwd = hook.cwd.as_deref().unwrap_or(".");
@@ -193,8 +256,10 @@ const SUMMARY_RESERVED_SECS: u64 = 95;
 const MAINTENANCE_MARGIN_SECS: u64 = 10;
 /// Best-effort stale flush timeout (single session).
 const STALE_FLUSH_TIMEOUT_SECS: u64 = 45;
+/// Pending older than this threshold can be auto-flushed from sibling sessions.
+const STALE_PENDING_AGE_SECS: i64 = 300;
 /// Max stale sessions to auto-flush in one worker run.
-const STALE_FLUSH_MAX_SESSIONS: usize = 1;
+const STALE_FLUSH_MAX_SESSIONS: usize = 3;
 /// Best-effort compression timeout.
 const COMPRESS_TIMEOUT_SECS: u64 = 40;
 
@@ -264,12 +329,12 @@ async fn summarize_worker_inner() -> Result<()> {
         }
     }
 
-    // Flush stale pending from other sessions in same project (>10 min old).
+    // Flush stale pending from other sessions in same project (age-gated).
     // This runs in the background worker where AI calls are safe.
     let remaining_before_stale_flush = remaining_worker_secs(&worker_started_at);
     if has_worker_budget(remaining_before_stale_flush, STALE_FLUSH_TIMEOUT_SECS) {
         let conn = db::open_db()?;
-        match db::get_stale_pending_sessions(&conn, &project, 600) {
+        match db::get_stale_pending_sessions(&conn, &project, STALE_PENDING_AGE_SECS) {
             Ok(stale_sessions) => {
                 let candidates: Vec<&String> = stale_sessions
                     .iter()
