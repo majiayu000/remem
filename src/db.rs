@@ -232,12 +232,36 @@ fn ensure_pending_table(conn: &Connection) -> Result<()> {
 
 fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
     let migrations: &[(&str, &str, &str)] = &[
-        ("observations", "status", "ALTER TABLE observations ADD COLUMN status TEXT DEFAULT 'active'"),
-        ("observations", "last_accessed_epoch", "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER"),
-        ("session_summaries", "decisions", "ALTER TABLE session_summaries ADD COLUMN decisions TEXT"),
-        ("session_summaries", "preferences", "ALTER TABLE session_summaries ADD COLUMN preferences TEXT"),
-        ("pending_observations", "lease_owner", "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT"),
-        ("pending_observations", "lease_expires_epoch", "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER"),
+        (
+            "observations",
+            "status",
+            "ALTER TABLE observations ADD COLUMN status TEXT DEFAULT 'active'",
+        ),
+        (
+            "observations",
+            "last_accessed_epoch",
+            "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER",
+        ),
+        (
+            "session_summaries",
+            "decisions",
+            "ALTER TABLE session_summaries ADD COLUMN decisions TEXT",
+        ),
+        (
+            "session_summaries",
+            "preferences",
+            "ALTER TABLE session_summaries ADD COLUMN preferences TEXT",
+        ),
+        (
+            "pending_observations",
+            "lease_owner",
+            "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT",
+        ),
+        (
+            "pending_observations",
+            "lease_expires_epoch",
+            "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER",
+        ),
     ];
     for (table, col, sql) in migrations {
         if !column_exists(conn, table, col)? {
@@ -682,6 +706,19 @@ pub fn count_pending(conn: &Connection, session_id: &str) -> Result<i64> {
         |row| row.get(0),
     )?;
     Ok(count)
+}
+
+/// Returns age (seconds) of the oldest unleased pending row for a session.
+pub fn oldest_pending_age_secs(conn: &Connection, session_id: &str) -> Result<Option<i64>> {
+    let now = chrono::Utc::now().timestamp();
+    let oldest: Option<i64> = conn.query_row(
+        "SELECT MIN(created_at_epoch) FROM pending_observations
+         WHERE session_id = ?1
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?2)",
+        params![session_id, now],
+        |row| row.get(0),
+    )?;
+    Ok(oldest.map(|epoch| now.saturating_sub(epoch)))
 }
 
 #[derive(Debug, Clone)]
