@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{db, observe};
+use remem::{db, observe, search};
 
 fn setup_observation_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -94,6 +94,30 @@ fn get_observations_by_ids_respects_project_filter() -> Result<()> {
     let filtered = db::get_observations_by_ids(&conn, &[1, 2], Some("p1"))?;
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].id, 1);
+    Ok(())
+}
+
+#[test]
+fn search_handles_hyphenated_queries_without_fts_error() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT INTO observations
+         (id, memory_session_id, project, type, title, narrative, created_at, created_at_epoch, status)
+         VALUES (1, 'm1', 'p', 'feature', 'om-generator refactor', 'CRE deal member', '2026-02-21T00:00:00Z', ?1, 'active')",
+        params![now],
+    )?;
+
+    // Hyphenated query should not cause "no such column" FTS5 error
+    let results = search::search(&conn, Some("om-generator"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, 1);
+
+    // Multiple hyphens and special chars
+    let results = search::search(&conn, Some("om-generator CRE"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
     Ok(())
 }
 

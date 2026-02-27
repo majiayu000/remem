@@ -4,6 +4,21 @@ use rusqlite::Connection;
 use crate::db::{self, Observation};
 use crate::memory_format::OBSERVATION_TYPES;
 
+/// Escape a user query for FTS5 MATCH safety.
+/// Wraps each whitespace-separated token in double quotes so that
+/// special characters like `-`, `/`, `.` are treated as literals
+/// instead of FTS5 operators.
+fn sanitize_fts_query(raw: &str) -> String {
+    raw.split_whitespace()
+        .map(|token| {
+            // Escape any embedded double quotes by doubling them
+            let escaped = token.replace('"', "\"\"");
+            format!("\"{escaped}\"")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn search(
     conn: &Connection,
     query: Option<&str>,
@@ -15,7 +30,16 @@ pub fn search(
 ) -> Result<Vec<Observation>> {
     match query {
         Some(q) if !q.is_empty() => {
-            db::search_observations_fts(conn, q, project, obs_type, limit, offset, include_stale)
+            let safe_query = sanitize_fts_query(q);
+            db::search_observations_fts(
+                conn,
+                &safe_query,
+                project,
+                obs_type,
+                limit,
+                offset,
+                include_stale,
+            )
         }
         _ => {
             // No query — return recent observations filtered by project/type
