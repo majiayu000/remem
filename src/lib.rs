@@ -7,5 +7,7 @@ pub mod log;
 pub mod mcp;
 pub mod memory_format;
 pub mod observe;
+pub mod observe_flush;
 pub mod search;
 pub mod summarize;
+pub mod worker;

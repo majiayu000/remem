@@ -99,6 +99,18 @@ impl MemoryServer {
         description = "Search past observations by keyword/project/type. Returns compact results (id, type, title, subtitle). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
+        let start = std::time::Instant::now();
+        crate::log::info(
+            "mcp",
+            &format!(
+                "search called query={:?} project={:?} type={:?} limit={} offset={}",
+                params.query,
+                params.project,
+                params.r#type,
+                params.limit.unwrap_or(20),
+                params.offset.unwrap_or(0),
+            ),
+        );
         self.with_conn(|conn| {
             let results = search::search(
                 conn,
@@ -127,6 +139,10 @@ impl MemoryServer {
                 })
                 .collect();
 
+            crate::log::info(
+                "mcp",
+                &format!("search done count={} {}ms", search_results.len(), start.elapsed().as_millis()),
+            );
             serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
         })
     }
@@ -136,6 +152,18 @@ impl MemoryServer {
         description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point."
     )]
     fn timeline(&self, Parameters(params): Parameters<TimelineParams>) -> Result<String, String> {
+        let start = std::time::Instant::now();
+        crate::log::info(
+            "mcp",
+            &format!(
+                "timeline called anchor={:?} query={:?} project={:?} before={} after={}",
+                params.anchor,
+                params.query,
+                params.project,
+                params.depth_before.unwrap_or(5),
+                params.depth_after.unwrap_or(5),
+            ),
+        );
         self.with_conn(|conn| {
             let anchor_id = if let Some(id) = params.anchor {
                 id
@@ -166,6 +194,10 @@ impl MemoryServer {
                 e.to_string()
             })?;
 
+            crate::log::info(
+                "mcp",
+                &format!("timeline done anchor={} count={} {}ms", anchor_id, results.len(), start.elapsed().as_millis()),
+            );
             serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
         })
     }
@@ -178,6 +210,11 @@ impl MemoryServer {
         &self,
         Parameters(params): Parameters<GetObservationsParams>,
     ) -> Result<String, String> {
+        let start = std::time::Instant::now();
+        crate::log::info(
+            "mcp",
+            &format!("get_observations called ids={:?} project={:?}", params.ids, params.project),
+        );
         self.with_conn(|conn| {
             let results =
                 db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
@@ -194,6 +231,10 @@ impl MemoryServer {
                     );
                 }
             }
+            crate::log::info(
+                "mcp",
+                &format!("get_observations done count={} {}ms", results.len(), start.elapsed().as_millis()),
+            );
             serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
         })
     }
@@ -206,6 +247,15 @@ impl MemoryServer {
         &self,
         Parameters(params): Parameters<SaveMemoryParams>,
     ) -> Result<String, String> {
+        crate::log::info(
+            "mcp",
+            &format!(
+                "save_memory called title={:?} project={:?} text_len={}",
+                params.title,
+                params.project,
+                params.text.len(),
+            ),
+        );
         self.with_conn(|conn| {
             let project = params.project.as_deref().unwrap_or("manual");
 
@@ -229,6 +279,7 @@ impl MemoryServer {
                 e.to_string()
             })?;
 
+            crate::log::info("mcp", &format!("save_memory done id={}", id));
             Ok(format!("{{\"id\": {}, \"status\": \"saved\"}}", id))
         })
     }
@@ -265,9 +316,29 @@ impl ServerHandler for MemoryServer {
 }
 
 pub async fn run_mcp_server() -> Result<()> {
-    crate::log::info("mcp", "server started");
+    let db_path = crate::db::db_path();
+    let db_exists = db_path.exists();
+    crate::log::info(
+        "mcp",
+        &format!("server starting db={} exists={}", db_path.display(), db_exists),
+    );
     let server = MemoryServer::new()?;
+    // Quick sanity check: count observations
+    {
+        let conn = server.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM observations", [], |r| r.get(0))
+            .unwrap_or(-1);
+        let fts_count: i64 = conn
+            .query_row("SELECT count(*) FROM observations_fts", [], |r| r.get(0))
+            .unwrap_or(-1);
+        crate::log::info(
+            "mcp",
+            &format!("server ready observations={} fts_index={}", count, fts_count),
+        );
+    }
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
+    crate::log::info("mcp", "server stopped");
     Ok(())
 }

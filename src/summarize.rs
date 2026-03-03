@@ -5,17 +5,13 @@ use std::hash::{Hash, Hasher};
 
 use crate::db;
 use crate::memory_format;
-use crate::observe;
+use crate::observe_flush;
 
 const SUMMARY_PROMPT: &str = include_str!("../prompts/summary.txt");
 
 /// 同项目 summarize 冷却期（秒）
 const SUMMARIZE_COOLDOWN_SECS: i64 = 300;
 
-/// 触发 summarize 的最小 pending 数量
-const MIN_PENDING_FOR_SUMMARIZE: i64 = 3;
-/// 对于 pending < MIN 的轻量会话，等待超过该阈值后也会强制 flush。
-const MIN_PENDING_FORCE_FLUSH_AGE_SECS: i64 = 180;
 /// Stop hook stdin read timeout. Some runners may keep stdin open on edge cases.
 const SUMMARIZE_STDIN_TIMEOUT_MS: u64 = 3000;
 
@@ -128,11 +124,7 @@ fn read_stdin_with_timeout(timeout_ms: u64) -> Result<Option<String>> {
     }
 }
 
-/// Stop hook entry: read stdin, spawn background worker, return immediately.
-/// 多层 gate 防止 token 浪费：
-/// 1. pending >= MIN_PENDING_FOR_SUMMARIZE，或 pending 低于阈值但已等待足够久
-/// 2. 项目冷却期（同项目 5 分钟内不重复 summarize）
-/// 3. message hash 去重（相同 assistant message 不重复处理）
+/// Stop hook entry: enqueue summary job and return immediately.
 pub async fn summarize() -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
@@ -149,102 +141,211 @@ pub async fn summarize() -> Result<()> {
     let Some(session_id) = &hook.session_id else {
         return Ok(());
     };
-    if let Some(msg) = &hook.last_assistant_message {
-        if msg.contains("<skip_summary") || msg.len() < 50 {
-            return Ok(());
-        }
-    }
-
-    let conn = db::open_db()?;
-
-    // Gate 1: 最小 pending 数量（过滤短命 session 和无操作 session）
-    let pending = db::count_pending(&conn, session_id)?;
-    if pending < MIN_PENDING_FOR_SUMMARIZE {
-        let oldest_age = db::oldest_pending_age_secs(&conn, session_id)?.unwrap_or(0);
-        if oldest_age < MIN_PENDING_FORCE_FLUSH_AGE_SECS {
-            crate::log::info(
-                "summarize",
-                &format!(
-                    "session={} has {} pending (min={}), oldest={}s (<{}s), skipping",
-                    session_id,
-                    pending,
-                    MIN_PENDING_FOR_SUMMARIZE,
-                    oldest_age,
-                    MIN_PENDING_FORCE_FLUSH_AGE_SECS
-                ),
-            );
-            return Ok(());
-        }
-        crate::log::info(
-            "summarize",
-            &format!(
-                "session={} has {} pending (<min={}), oldest={}s (>= {}s), force flush",
-                session_id,
-                pending,
-                MIN_PENDING_FOR_SUMMARIZE,
-                oldest_age,
-                MIN_PENDING_FORCE_FLUSH_AGE_SECS
-            ),
-        );
-    }
-
     let cwd = hook.cwd.as_deref().unwrap_or(".");
     let project = db::project_from_cwd(cwd);
-
-    // Gate 2: 项目冷却期
-    if db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)? {
-        crate::log::info(
-            "summarize",
-            &format!(
-                "project={} on cooldown ({}s), skipping",
-                project, SUMMARIZE_COOLDOWN_SECS
-            ),
-        );
-        return Ok(());
-    }
-
-    // Gate 3: message hash 去重
-    if let Some(msg) = &hook.last_assistant_message {
-        let msg_hash = hash_message(msg);
-        if db::is_duplicate_message(&conn, &project, &msg_hash)? {
-            crate::log::info(
-                "summarize",
-                &format!("project={} duplicate message hash, skipping", project),
-            );
-            return Ok(());
-        }
-    }
-
+    let conn = db::open_db()?;
+    db::enqueue_job(
+        &conn,
+        db::JobType::Summary,
+        &project,
+        Some(session_id),
+        &input,
+        100,
+    )?;
+    // Low-priority maintenance job: deduped per project by enqueue_job.
+    db::enqueue_job(
+        &conn,
+        db::JobType::Compress,
+        &project,
+        None,
+        "{}",
+        200,
+    )?;
     crate::log::info(
         "summarize",
-        &format!(
-            "session={} project={} pending={}, dispatching worker",
-            session_id, project, pending
-        ),
+        &format!("QUEUED summary session={} project={}", session_id, project),
     );
-
-    // Spawn background worker — Stop hook returns immediately
+    // Kick one worker cycle in background so hooks stay non-blocking.
     let exe = std::env::current_exe()?;
     let stderr_file = crate::log::open_log_append();
     let stderr_cfg = match stderr_file {
         Some(f) => std::process::Stdio::from(f),
         None => std::process::Stdio::null(),
     };
-    let mut child = std::process::Command::new(&exe)
-        .arg("summarize-worker")
+    let _child = std::process::Command::new(&exe)
+        .arg("worker")
+        .arg("--once")
         .env("REMEM_STDERR_TO_LOG", "1")
-        .stdin(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg)
         .spawn()?;
+    Ok(())
+}
 
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(input.as_bytes())?;
+/// Process one queued summary job payload (hook JSON).
+/// This path only does summary generation and DB write; it does not run maintenance tasks.
+pub async fn process_summary_job_input(input: &str) -> Result<()> {
+    let hook: SummarizeInput = serde_json::from_str(input)?;
+    let Some(session_id) = hook.session_id else {
+        return Ok(());
+    };
+    let cwd = hook.cwd.as_deref().unwrap_or(".");
+    let project = project_from_cwd(cwd);
+
+    let assistant_msg = hook
+        .last_assistant_message
+        .or_else(|| {
+            hook.transcript_path
+                .as_deref()
+                .and_then(extract_last_assistant_message)
+        })
+        .unwrap_or_default();
+
+    if assistant_msg.is_empty() {
+        return Ok(());
+    }
+    if assistant_msg.contains("<skip_summary") || assistant_msg.len() < 50 {
+        return Ok(());
     }
 
-    crate::log::info("summarize", "dispatched to background worker");
+    let msg = if assistant_msg.len() > 12000 {
+        crate::db::truncate_str(&assistant_msg, 12000).to_string()
+    } else {
+        assistant_msg
+    };
+
+    let mut conn = db::open_db()?;
+    if db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)? {
+        crate::log::info(
+            "summary-job",
+            &format!("project={} on cooldown, skipping", project),
+        );
+        return Ok(());
+    }
+
+    let msg_hash = hash_message(&msg);
+    if db::is_duplicate_message(&conn, &project, &msg_hash)? {
+        crate::log::info(
+            "summary-job",
+            &format!("project={} duplicate message, skipping", project),
+        );
+        return Ok(());
+    }
+
+    let memory_sid = db::upsert_session(&conn, &session_id, &project, None)?;
+    let existing_ctx = match db::get_summary_by_session(&conn, &memory_sid, &project)? {
+        Some(prev) => {
+            let mut parts = Vec::new();
+            if let Some(r) = &prev.request {
+                parts.push(format!(
+                    "<request>{}</request>",
+                    memory_format::xml_escape_text(r)
+                ));
+            }
+            if let Some(c) = &prev.completed {
+                parts.push(format!(
+                    "<completed>{}</completed>",
+                    memory_format::xml_escape_text(c)
+                ));
+            }
+            if let Some(d) = &prev.decisions {
+                parts.push(format!(
+                    "<decisions>{}</decisions>",
+                    memory_format::xml_escape_text(d)
+                ));
+            }
+            if let Some(l) = &prev.learned {
+                parts.push(format!(
+                    "<learned>{}</learned>",
+                    memory_format::xml_escape_text(l)
+                ));
+            }
+            if let Some(n) = &prev.next_steps {
+                parts.push(format!(
+                    "<next_steps>{}</next_steps>",
+                    memory_format::xml_escape_text(n)
+                ));
+            }
+            if let Some(p) = &prev.preferences {
+                parts.push(format!(
+                    "<preferences>{}</preferences>",
+                    memory_format::xml_escape_text(p)
+                ));
+            }
+            format!(
+                "<existing_summary>\n{}\n</existing_summary>\n\n",
+                parts.join("\n")
+            )
+        }
+        None => String::new(),
+    };
+    let user_message = format!(
+        "{}Here is the assistant's last response from the session:\n\n{}",
+        existing_ctx, msg
+    );
+
+    if !db::try_acquire_summarize_lock(&mut conn, &project, WORKER_TIMEOUT_SECS as i64)? {
+        crate::log::info(
+            "summary-job",
+            &format!("project={} summarize lock held, skipping", project),
+        );
+        return Ok(());
+    }
+
+    let ai_start = std::time::Instant::now();
+    let response = match crate::ai::call_ai(
+        SUMMARY_PROMPT,
+        &user_message,
+        crate::ai::UsageContext {
+            project: Some(&project),
+            operation: "summarize",
+        },
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = db::release_summarize_lock(&conn, &project);
+            anyhow::bail!("summary ai failed: {}", e);
+        }
+    };
+    crate::log::info(
+        "summary-job",
+        &format!("AI response {}ms {}B", ai_start.elapsed().as_millis(), response.len()),
+    );
+
+    let Some(summary) = parse_summary(&response) else {
+        let _ = db::release_summarize_lock(&conn, &project);
+        crate::log::info("summary-job", "session skipped by AI");
+        return Ok(());
+    };
+
+    let usage = response.len() as i64 / 4;
+    let _deleted = db::finalize_summarize(
+        &mut conn,
+        &memory_sid,
+        &project,
+        &msg_hash,
+        summary.request.as_deref(),
+        summary.completed.as_deref(),
+        summary.decisions.as_deref(),
+        summary.learned.as_deref(),
+        summary.next_steps.as_deref(),
+        summary.preferences.as_deref(),
+        None,
+        usage,
+    )?;
+    db::release_summarize_lock(&conn, &project)?;
+    crate::log::info(
+        "summary-job",
+        &format!("saved summary project={} session={}", project, session_id),
+    );
     Ok(())
+}
+
+pub async fn process_compress_job(project: &str) -> Result<()> {
+    maybe_compress(project).await
 }
 
 /// Max total runtime for a single worker invocation (seconds).
@@ -315,7 +416,7 @@ async fn summarize_worker_inner() -> Result<()> {
     );
 
     // Flush pending observation queue (current session)
-    match observe::flush_pending(&session_id, &project).await {
+    match observe_flush::flush_pending(&session_id, &project).await {
         Ok(n) => {
             if n > 0 {
                 crate::log::info("summarize-worker", &format!("flushed {} observations", n));
@@ -357,7 +458,7 @@ async fn summarize_worker_inner() -> Result<()> {
 
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(STALE_FLUSH_TIMEOUT_SECS),
-                        observe::flush_pending(sid.as_str(), &project),
+                        observe_flush::flush_pending(sid.as_str(), &project),
                     )
                     .await
                     {

@@ -114,7 +114,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -305,7 +305,32 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_ai_usage_created
            ON ai_usage_events(created_at_epoch DESC);
          CREATE INDEX IF NOT EXISTS idx_ai_usage_project_created
-           ON ai_usage_events(project, created_at_epoch DESC);",
+           ON ai_usage_events(project, created_at_epoch DESC);
+
+         CREATE TABLE IF NOT EXISTS jobs (
+             id INTEGER PRIMARY KEY,
+             job_type TEXT NOT NULL,
+             project TEXT NOT NULL,
+             session_id TEXT,
+             payload_json TEXT NOT NULL,
+             state TEXT NOT NULL,
+             priority INTEGER NOT NULL DEFAULT 100,
+             attempt_count INTEGER NOT NULL DEFAULT 0,
+             max_attempts INTEGER NOT NULL DEFAULT 6,
+             lease_owner TEXT,
+             lease_expires_epoch INTEGER,
+             next_retry_epoch INTEGER NOT NULL DEFAULT 0,
+             last_error TEXT,
+             created_at_epoch INTEGER NOT NULL,
+             updated_at_epoch INTEGER NOT NULL
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_jobs_claim
+           ON jobs(state, next_retry_epoch, priority, created_at_epoch, id);
+         CREATE INDEX IF NOT EXISTS idx_jobs_project_state
+           ON jobs(project, state, created_at_epoch DESC);
+         CREATE INDEX IF NOT EXISTS idx_jobs_lease
+           ON jobs(state, lease_expires_epoch);",
     )?;
     migrate_session_summaries_v4(conn)?;
     Ok(())
@@ -719,6 +744,224 @@ pub fn oldest_pending_age_secs(conn: &Connection, session_id: &str) -> Result<Op
         |row| row.get(0),
     )?;
     Ok(oldest.map(|epoch| now.saturating_sub(epoch)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobType {
+    Observation,
+    Summary,
+    Compress,
+}
+
+impl JobType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Observation => "observation",
+            Self::Summary => "summary",
+            Self::Compress => "compress",
+        }
+    }
+
+    fn from_db(raw: &str) -> Result<Self> {
+        match raw {
+            "observation" => Ok(Self::Observation),
+            "summary" => Ok(Self::Summary),
+            "compress" => Ok(Self::Compress),
+            _ => anyhow::bail!("unknown job_type: {}", raw),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Job {
+    pub id: i64,
+    pub job_type: JobType,
+    pub project: String,
+    pub session_id: Option<String>,
+    pub payload_json: String,
+    pub attempt_count: i64,
+    pub max_attempts: i64,
+}
+
+pub fn enqueue_job(
+    conn: &Connection,
+    job_type: JobType,
+    project: &str,
+    session_id: Option<&str>,
+    payload_json: &str,
+    priority: i64,
+) -> Result<i64> {
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM jobs
+             WHERE job_type = ?1
+               AND project = ?2
+               AND COALESCE(session_id, '') = COALESCE(?3, '')
+               AND state IN ('pending', 'processing')
+             ORDER BY id DESC
+             LIMIT 1",
+            params![job_type.as_str(), project, session_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO jobs
+         (job_type, project, session_id, payload_json, state, priority,
+          attempt_count, max_attempts, lease_owner, lease_expires_epoch,
+          next_retry_epoch, last_error, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, 'pending', ?5, 0, 6, NULL, NULL, ?6, NULL, ?6, ?6)",
+        params![job_type.as_str(), project, session_id, payload_json, priority, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn claim_next_job(conn: &mut Connection, lease_owner: &str, lease_secs: i64) -> Result<Option<Job>> {
+    let now = chrono::Utc::now().timestamp();
+    let lease_expires = now + lease_secs.max(1);
+    let tx = conn.transaction()?;
+    let candidate: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM jobs
+             WHERE state = 'pending' AND next_retry_epoch <= ?1
+             ORDER BY priority ASC, created_at_epoch ASC, id ASC
+             LIMIT 1",
+            params![now],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let Some(job_id) = candidate else {
+        tx.commit()?;
+        return Ok(None);
+    };
+
+    let updated = tx.execute(
+        "UPDATE jobs
+         SET state = 'processing',
+             lease_owner = ?1,
+             lease_expires_epoch = ?2,
+             updated_at_epoch = ?3
+         WHERE id = ?4 AND state = 'pending'",
+        params![lease_owner, lease_expires, now, job_id],
+    )?;
+    if updated == 0 {
+        tx.commit()?;
+        return Ok(None);
+    }
+
+    let row = tx.query_row(
+        "SELECT id, job_type, project, session_id, payload_json, attempt_count, max_attempts
+         FROM jobs WHERE id = ?1",
+        params![job_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        },
+    )?;
+    tx.commit()?;
+    Ok(Some(Job {
+        id: row.0,
+        job_type: JobType::from_db(&row.1)?,
+        project: row.2,
+        session_id: row.3,
+        payload_json: row.4,
+        attempt_count: row.5,
+        max_attempts: row.6,
+    }))
+}
+
+pub fn mark_job_done(conn: &Connection, job_id: i64, lease_owner: &str) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'done',
+             lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             updated_at_epoch = ?1
+         WHERE id = ?2 AND lease_owner = ?3",
+        params![now, job_id, lease_owner],
+    )?;
+    Ok(())
+}
+
+pub fn requeue_stuck_jobs(conn: &Connection) -> Result<usize> {
+    let now = chrono::Utc::now().timestamp();
+    let count = conn.execute(
+        "UPDATE jobs
+         SET state = 'pending',
+             lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             updated_at_epoch = ?1
+         WHERE state = 'processing'
+           AND lease_expires_epoch IS NOT NULL
+           AND lease_expires_epoch < ?1",
+        params![now],
+    )?;
+    Ok(count)
+}
+
+pub fn mark_job_failed_or_retry(
+    conn: &Connection,
+    job_id: i64,
+    lease_owner: &str,
+    err: &str,
+    backoff_secs: i64,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let (attempt_count, max_attempts): (i64, i64) = conn.query_row(
+        "SELECT attempt_count, max_attempts FROM jobs WHERE id = ?1",
+        params![job_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    let next_attempt = attempt_count + 1;
+    if next_attempt >= max_attempts {
+        conn.execute(
+            "UPDATE jobs
+             SET state = 'failed',
+                 attempt_count = ?1,
+                 last_error = ?2,
+                 lease_owner = NULL,
+                 lease_expires_epoch = NULL,
+                 updated_at_epoch = ?3
+             WHERE id = ?4 AND lease_owner = ?5",
+            params![next_attempt, truncate_str(err, 2000), now, job_id, lease_owner],
+        )?;
+        return Ok(());
+    }
+
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'pending',
+             attempt_count = ?1,
+             next_retry_epoch = ?2,
+             last_error = ?3,
+             lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             updated_at_epoch = ?4
+         WHERE id = ?5 AND lease_owner = ?6",
+        params![
+            next_attempt,
+            now + backoff_secs.max(1),
+            truncate_str(err, 2000),
+            now,
+            job_id,
+            lease_owner
+        ],
+    )?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

@@ -2,11 +2,19 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+/// Hooks 配置: ~/.claude/settings.json
 fn settings_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
         .join("settings.json")
+}
+
+/// MCP server 配置: ~/.claude.json (Claude Code 实际读取 MCP 的位置)
+fn claude_json_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude.json")
 }
 
 fn old_hooks_path() -> PathBuf {
@@ -30,10 +38,9 @@ fn binary_path() -> Result<String> {
         .context("二进制路径包含非 UTF-8 字符")
 }
 
-fn read_settings() -> Result<Value> {
-    let path = settings_path();
+fn read_json_file(path: &PathBuf) -> Result<Value> {
     if path.exists() {
-        let content = std::fs::read_to_string(&path)
+        let content = std::fs::read_to_string(path)
             .with_context(|| format!("读取 {} 失败", path.display()))?;
         serde_json::from_str(&content).with_context(|| format!("解析 {} 失败", path.display()))
     } else {
@@ -41,13 +48,12 @@ fn read_settings() -> Result<Value> {
     }
 }
 
-fn write_settings(settings: &Value) -> Result<()> {
-    let path = settings_path();
+fn write_json_file(path: &PathBuf, value: &Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let content = serde_json::to_string_pretty(settings)?;
-    std::fs::write(&path, content).with_context(|| format!("写入 {} 失败", path.display()))
+    let content = serde_json::to_string_pretty(value)?;
+    std::fs::write(path, content).with_context(|| format!("写入 {} 失败", path.display()))
 }
 
 fn build_hooks(bin: &str) -> Value {
@@ -59,7 +65,7 @@ fn build_hooks(bin: &str) -> Value {
             "hooks": [{ "type": "command", "command": format!("{} session-init", bin), "timeout": 15000 }]
         }],
         "PostToolUse": [{
-            "matcher": "Write|Edit|NotebookEdit|Bash",
+            "matcher": "Write|Edit|NotebookEdit|Bash|Task",
             "hooks": [{ "type": "command", "command": format!("{} observe", bin), "timeout": 120000 }]
         }],
         "Stop": [{
@@ -70,6 +76,7 @@ fn build_hooks(bin: &str) -> Value {
 
 fn build_mcp_server(bin: &str) -> Value {
     json!({
+        "type": "stdio",
         "command": bin,
         "args": ["mcp"]
     })
@@ -138,13 +145,15 @@ fn remove_remem_mcp(settings: &mut Value, bin: &str) {
 
 pub fn install() -> Result<()> {
     let bin = binary_path()?;
-    let mut settings = read_settings()?;
+    let settings_file = settings_path();
+    let claude_json_file = claude_json_path();
 
-    // 清理旧的 remem 配置
+    // === 1. Hooks → ~/.claude/settings.json ===
+    let mut settings = read_json_file(&settings_file)?;
     remove_remem_hooks(&mut settings, &bin);
+    // 清理 settings.json 中残留的旧 MCP 配置
     remove_remem_mcp(&mut settings, &bin);
 
-    // 添加 hooks
     let new_hooks = build_hooks(&bin);
     let obj = settings
         .as_object_mut()
@@ -160,26 +169,30 @@ pub fn install() -> Result<()> {
             }
         }
     }
+    write_json_file(&settings_file, &settings)?;
 
-    // 添加 MCP server
-    let obj = settings
+    // === 2. MCP server → ~/.claude.json ===
+    let mut claude_json = read_json_file(&claude_json_file)?;
+    remove_remem_mcp(&mut claude_json, &bin);
+
+    let obj = claude_json
         .as_object_mut()
-        .context("settings.json 根节点不是 Object")?;
+        .context("~/.claude.json 根节点不是 Object")?;
     let mcp_servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
     if let Some(servers) = mcp_servers.as_object_mut() {
         servers.insert("remem".to_string(), build_mcp_server(&bin));
     }
-
-    write_settings(&settings)?;
+    write_json_file(&claude_json_file, &claude_json)?;
 
     // 创建数据目录
     let data_dir = remem_data_dir();
     std::fs::create_dir_all(&data_dir)?;
 
     eprintln!("remem install 完成:");
-    eprintln!("  hooks + MCP → {}", settings_path().display());
-    eprintln!("  数据目录    → {}", data_dir.display());
-    eprintln!("  二进制路径  → {}", bin);
+    eprintln!("  hooks → {}", settings_file.display());
+    eprintln!("  MCP   → {}", claude_json_file.display());
+    eprintln!("  数据  → {}", data_dir.display());
+    eprintln!("  二进制 → {}", bin);
 
     // 检查旧 hooks.json
     let old_path = old_hooks_path();
@@ -197,19 +210,27 @@ pub fn install() -> Result<()> {
 
 pub fn uninstall() -> Result<()> {
     let bin = binary_path()?;
-    let path = settings_path();
-    if !path.exists() {
-        eprintln!("settings.json 不存在，无需清理");
-        return Ok(());
+    let settings_file = settings_path();
+    let claude_json_file = claude_json_path();
+
+    // 清理 hooks from settings.json
+    if settings_file.exists() {
+        let mut settings = read_json_file(&settings_file)?;
+        remove_remem_hooks(&mut settings, &bin);
+        remove_remem_mcp(&mut settings, &bin); // 清理残留
+        write_json_file(&settings_file, &settings)?;
+        eprintln!("  hooks 已从 {} 移除", settings_file.display());
     }
 
-    let mut settings = read_settings()?;
-    remove_remem_hooks(&mut settings, &bin);
-    remove_remem_mcp(&mut settings, &bin);
-    write_settings(&settings)?;
+    // 清理 MCP from ~/.claude.json
+    if claude_json_file.exists() {
+        let mut claude_json = read_json_file(&claude_json_file)?;
+        remove_remem_mcp(&mut claude_json, &bin);
+        write_json_file(&claude_json_file, &claude_json)?;
+        eprintln!("  MCP 已从 {} 移除", claude_json_file.display());
+    }
 
-    eprintln!("remem uninstall 完成:");
-    eprintln!("  已从 {} 移除 hooks 和 MCP 配置", path.display());
+    eprintln!("remem uninstall 完成");
     eprintln!("  数据目录 {} 保留不动", remem_data_dir().display());
 
     Ok(())

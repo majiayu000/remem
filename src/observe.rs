@@ -2,12 +2,9 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::db;
-use crate::memory_format::{self, xml_escape_attr, xml_escape_text, OBSERVATION_TYPES};
 
-const OBSERVATION_PROMPT: &str = include_str!("../prompts/observation.txt");
-
-/// Tools that produce meaningful observations (modify state)
-const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash"];
+/// Tools that produce meaningful observations (modify state or capture research)
+const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash", "Task"];
 
 /// Tools to always skip (metadata/navigation)
 const SKIP_TOOLS: &[&str] = &[
@@ -62,17 +59,18 @@ const BASH_SKIP_PREFIXES: &[&str] = &[
     "htop",
     "df ",
     "du ",
+    "grep ",
+    "rg ",
+    "find ",
+    "git grep",
 ];
 
 /// Max tool_response size stored in queue (save DB space)
 const MAX_RESPONSE_SIZE: usize = 4000;
-
-/// Max events per flush batch (prevents oversized AI input)
-const FLUSH_BATCH_SIZE: usize = 15;
-/// On AI timeout, split large batches recursively to improve success rate.
-const FLUSH_RETRY_MIN_BATCH_SIZE: usize = 1;
-/// Pending lease duration for a single flush worker.
-const PENDING_LEASE_SECS: i64 = 240;
+/// Larger limit for Task agent results (research/analysis output)
+const MAX_TASK_RESPONSE_SIZE: usize = 16000;
+/// Task tool_input truncation (keep only prompt core)
+const MAX_TASK_INPUT_SIZE: usize = 2000;
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
@@ -87,9 +85,36 @@ use crate::db::project_from_cwd;
 
 pub fn should_skip_bash_command(cmd: &str) -> bool {
     let cmd_trimmed = cmd.trim();
+    let cmd_lower = cmd_trimmed.to_lowercase();
+
     BASH_SKIP_PREFIXES
         .iter()
-        .any(|prefix| cmd_trimmed.starts_with(prefix))
+        .any(|prefix| cmd_lower.starts_with(prefix))
+        || cmd_lower.contains("| grep ")
+        || is_read_only_polling_cmd(&cmd_lower)
+}
+
+fn is_read_only_polling_cmd(cmd_lower: &str) -> bool {
+    let is_curl = cmd_lower.starts_with("curl ");
+    let has_mutation_method = cmd_lower.contains("-x post")
+        || cmd_lower.contains("-x put")
+        || cmd_lower.contains("-x patch")
+        || cmd_lower.contains("-x delete")
+        || cmd_lower.contains("--request post")
+        || cmd_lower.contains("--request put")
+        || cmd_lower.contains("--request patch")
+        || cmd_lower.contains("--request delete");
+
+    if is_curl && !has_mutation_method {
+        return true;
+    }
+
+    // Common status polling pattern: sleep N && curl ...
+    if cmd_lower.starts_with("sleep ") && cmd_lower.contains("&& curl ") {
+        return true;
+    }
+
+    false
 }
 
 pub async fn session_init() -> Result<()> {
@@ -165,19 +190,28 @@ pub async fn observe() -> Result<()> {
         }
     }
 
+    let is_task = tool_name == "Task";
+    let input_limit = if is_task { MAX_TASK_INPUT_SIZE } else { MAX_RESPONSE_SIZE };
+    let response_limit = if is_task { MAX_TASK_RESPONSE_SIZE } else { MAX_RESPONSE_SIZE };
+
     let tool_input_str = hook.tool_input.as_ref().map(|v| {
-        serde_json::to_string(v).unwrap_or_else(|e| {
+        let s = serde_json::to_string(v).unwrap_or_else(|e| {
             crate::log::warn("observe", &format!("tool_input serialize failed: {}", e));
             "{}".to_string()
-        })
+        });
+        if s.len() > input_limit {
+            crate::db::truncate_str(&s, input_limit).to_string()
+        } else {
+            s
+        }
     });
     let tool_response_str = hook.tool_response.as_ref().map(|v| {
         let s = serde_json::to_string(v).unwrap_or_else(|e| {
             crate::log::warn("observe", &format!("tool_response serialize failed: {}", e));
             "{}".to_string()
         });
-        if s.len() > MAX_RESPONSE_SIZE {
-            crate::db::truncate_str(&s, MAX_RESPONSE_SIZE).to_string()
+        if s.len() > response_limit {
+            crate::db::truncate_str(&s, response_limit).to_string()
         } else {
             s
         }
@@ -193,6 +227,18 @@ pub async fn observe() -> Result<()> {
         tool_response_str.as_deref(),
         Some(cwd),
     )?;
+    let job_payload = serde_json::json!({
+        "session_id": &session_id,
+        "project": &project
+    });
+    db::enqueue_job(
+        &conn,
+        db::JobType::Observation,
+        &project,
+        Some(&session_id),
+        &job_payload.to_string(),
+        50,
+    )?;
 
     let count = db::count_pending(&conn, &session_id)?;
     crate::log::info(
@@ -206,302 +252,33 @@ pub async fn observe() -> Result<()> {
     Ok(())
 }
 
-/// Build existing memory context for delta deduplication.
-/// Returns formatted XML block, or empty string if no recent memories.
-fn build_existing_context(conn: &rusqlite::Connection, project: &str) -> Result<String> {
-    let recent = db::query_observations(conn, project, OBSERVATION_TYPES, 10)?;
-    if recent.is_empty() {
-        return Ok(String::new());
+#[cfg(test)]
+mod tests {
+    use super::should_skip_bash_command;
+
+    #[test]
+    fn skip_read_only_search_commands() {
+        assert!(should_skip_bash_command("grep -rn \"foo\" src/"));
+        assert!(should_skip_bash_command("rg -n foo src"));
+        assert!(should_skip_bash_command("find src -name '*.ts'"));
+        assert!(should_skip_bash_command("git grep -n startIngestionJob"));
     }
 
-    let mut buf = String::from("<existing_memories>\n");
-    for obs in &recent {
-        buf.push_str(&format!(
-            "<memory type=\"{}\">{}{}</memory>\n",
-            xml_escape_attr(&obs.r#type),
-            obs.title
-                .as_deref()
-                .map(|t| format!(" title=\"{}\"", xml_escape_attr(t)))
-                .unwrap_or_default(),
-            obs.subtitle
-                .as_deref()
-                .map(|s| format!(" — {}", xml_escape_text(s)))
-                .unwrap_or_default(),
+    #[test]
+    fn skip_read_only_polling_commands() {
+        assert!(should_skip_bash_command("curl -s http://localhost:9800/tasks/1"));
+        assert!(should_skip_bash_command(
+            "sleep 60 && curl -s http://localhost:9800/tasks/1"
         ));
     }
-    buf.push_str("</existing_memories>\n");
-    Ok(buf)
-}
 
-fn build_session_events_xml(batch: &[db::PendingObservation]) -> String {
-    let mut events = String::new();
-    for (i, p) in batch.iter().enumerate() {
-        events.push_str(&format!(
-            "<event index=\"{}\">\n\
-             <tool>{}</tool>\n\
-             <working_directory>{}</working_directory>\n\
-             <parameters>{}</parameters>\n\
-             <outcome>{}</outcome>\n\
-             </event>\n",
-            i + 1,
-            xml_escape_text(&p.tool_name),
-            xml_escape_text(p.cwd.as_deref().unwrap_or(".")),
-            xml_escape_text(p.tool_input.as_deref().unwrap_or("")),
-            xml_escape_text(p.tool_response.as_deref().unwrap_or("")),
+    #[test]
+    fn keep_mutating_commands() {
+        assert!(!should_skip_bash_command("git add src/observe.rs"));
+        assert!(!should_skip_bash_command("git commit -m \"feat: tune filter\""));
+        assert!(!should_skip_bash_command("git push origin main"));
+        assert!(!should_skip_bash_command(
+            "curl -X POST http://localhost:9800/tasks"
         ));
     }
-    events
-}
-
-fn is_ai_timeout_error(err: &anyhow::Error) -> bool {
-    err.to_string().to_lowercase().contains("timed out")
-}
-
-fn persist_flush_batch(
-    conn: &mut rusqlite::Connection,
-    session_id: &str,
-    project: &str,
-    lease_owner: &str,
-    batch: &[db::PendingObservation],
-    observations: &[memory_format::ParsedObservation],
-    usage: i64,
-) -> Result<()> {
-    let ids: Vec<i64> = batch.iter().map(|p| p.id).collect();
-    let per_obs_usage = usage / observations.len().max(1) as i64;
-
-    let tx = conn.transaction()?;
-    let memory_session_id = db::upsert_session(&tx, session_id, project, None)?;
-
-    for obs in observations {
-        let facts_json = if obs.facts.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&obs.facts)?)
-        };
-        let concepts_json = if obs.concepts.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&obs.concepts)?)
-        };
-        let files_read_json = if obs.files_read.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&obs.files_read)?)
-        };
-        let files_modified_json = if obs.files_modified.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&obs.files_modified)?)
-        };
-
-        let obs_id = db::insert_observation(
-            &tx,
-            &memory_session_id,
-            project,
-            &obs.obs_type,
-            obs.title.as_deref(),
-            obs.subtitle.as_deref(),
-            obs.narrative.as_deref(),
-            facts_json.as_deref(),
-            concepts_json.as_deref(),
-            files_read_json.as_deref(),
-            files_modified_json.as_deref(),
-            None,
-            per_obs_usage,
-        )?;
-
-        if !obs.files_modified.is_empty() {
-            let stale_count = db::mark_stale_by_files(&tx, obs_id, project, &obs.files_modified)?;
-            if stale_count > 0 {
-                crate::log::info(
-                    "flush",
-                    &format!("marked {} stale (file overlap)", stale_count),
-                );
-            }
-        }
-    }
-
-    let deleted = db::delete_pending_claimed(&tx, lease_owner, &ids)?;
-    if deleted != ids.len() {
-        anyhow::bail!(
-            "pending ack mismatch: expected {}, deleted {}",
-            ids.len(),
-            deleted
-        );
-    }
-
-    tx.commit()?;
-    Ok(())
-}
-
-/// Flush pending queue: batch all queued items into one AI call.
-pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
-    let mut conn = db::open_db()?;
-    let lease_owner = format!(
-        "flush-{}-{}-{}",
-        std::process::id(),
-        chrono::Utc::now().timestamp_millis(),
-        crate::db::truncate_str(session_id, 8)
-    );
-    let pending = db::claim_pending(
-        &conn,
-        session_id,
-        FLUSH_BATCH_SIZE,
-        &lease_owner,
-        PENDING_LEASE_SECS,
-    )?;
-
-    if pending.is_empty() {
-        crate::log::info("flush", "no pending observations");
-        return Ok(0);
-    }
-
-    let timer = crate::log::Timer::start(
-        "flush",
-        &format!("{} events project={}", pending.len(), project),
-    );
-
-    // Large batches may timeout in claude CLI; split and retry recursively.
-    let mut ranges: Vec<(usize, usize)> = vec![(0, pending.len())];
-    let mut total_observations = 0usize;
-    let mut total_usage = 0i64;
-    let mut split_retries = 0usize;
-    let mut titles: Vec<String> = Vec::new();
-
-    while let Some((start, end)) = ranges.pop() {
-        let batch = &pending[start..end];
-        if batch.is_empty() {
-            continue;
-        }
-
-        // Delta: include recent existing memories so AI skips duplicates
-        let existing_context = match build_existing_context(&conn, project) {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                crate::log::warn(
-                    "flush",
-                    &format!("existing context failed (continuing): {}", e),
-                );
-                String::new()
-            }
-        };
-
-        let events = build_session_events_xml(batch);
-        let user_message = format!(
-            "{}<session_events>\n{}</session_events>",
-            existing_context, events
-        );
-
-        let ai_start = std::time::Instant::now();
-        let response = match crate::ai::call_ai(
-            OBSERVATION_PROMPT,
-            &user_message,
-            crate::ai::UsageContext {
-                project: Some(project),
-                operation: "flush",
-            },
-        )
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                let can_split = is_ai_timeout_error(&e) && batch.len() > FLUSH_RETRY_MIN_BATCH_SIZE;
-                if can_split {
-                    let mid = start + (batch.len() / 2);
-                    if mid > start && mid < end {
-                        split_retries += 1;
-                        crate::log::warn(
-                            "flush",
-                            &format!(
-                                "AI timeout on {} events, splitting into {} + {}",
-                                batch.len(),
-                                mid - start,
-                                end - mid
-                            ),
-                        );
-                        // DFS order: process left half first.
-                        ranges.push((mid, end));
-                        ranges.push((start, mid));
-                        continue;
-                    }
-                }
-
-                if let Err(release_err) = db::release_pending_claims(&conn, &lease_owner) {
-                    crate::log::warn("flush", &format!("release claim failed: {}", release_err));
-                }
-                crate::log::warn("flush", &format!("AI call failed: {}", e));
-                timer.done(&format!("AI error: {}", e));
-                return Err(e);
-            }
-        };
-        let ai_ms = ai_start.elapsed().as_millis();
-        crate::log::info(
-            "flush",
-            &format!(
-                "AI response {}ms {}B (batch {} events)",
-                ai_ms,
-                response.len(),
-                batch.len()
-            ),
-        );
-
-        let observations = memory_format::parse_observations(&response);
-        if observations.is_empty() {
-            crate::log::info(
-                "flush",
-                &format!(
-                    "no observations extracted from batch ({} events)",
-                    batch.len()
-                ),
-            );
-            let ids: Vec<i64> = batch.iter().map(|p| p.id).collect();
-            db::delete_pending_claimed(&conn, &lease_owner, &ids)?;
-            continue;
-        }
-
-        let usage = response.len() as i64 / 4;
-        if let Err(e) = persist_flush_batch(
-            &mut conn,
-            session_id,
-            project,
-            &lease_owner,
-            batch,
-            &observations,
-            usage,
-        ) {
-            if let Err(release_err) = db::release_pending_claims(&conn, &lease_owner) {
-                crate::log::warn("flush", &format!("release claim failed: {}", release_err));
-            }
-            return Err(e);
-        }
-
-        total_usage += usage;
-        total_observations += observations.len();
-        titles.extend(
-            observations
-                .iter()
-                .filter_map(|o| o.title.as_deref().map(str::to_string)),
-        );
-    }
-
-    if total_observations == 0 {
-        timer.done("0 observations");
-        return Ok(0);
-    }
-
-    let retry_suffix = if split_retries > 0 {
-        format!("; split_retries={}", split_retries)
-    } else {
-        String::new()
-    };
-    timer.done(&format!(
-        "{} events → {} observations (~{}tok) [{}]{}",
-        pending.len(),
-        total_observations,
-        total_usage,
-        titles.join(", "),
-        retry_suffix
-    ));
-
-    Ok(total_observations)
 }

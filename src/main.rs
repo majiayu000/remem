@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{Local, TimeZone};
 use clap::{Parser, Subcommand};
-use remem::{context, db, install, mcp, observe, summarize};
+use remem::{context, db, install, mcp, observe, observe_flush, summarize, worker};
 
 #[derive(Parser)]
 #[command(name = "remem", about = "Persistent memory for Claude Code")]
@@ -28,7 +28,7 @@ enum Commands {
     SessionInit,
     /// Extract observations from PostToolUse hook (stdin JSON)
     Observe,
-    /// Stop hook dispatcher: spawn background worker, return immediately
+    /// Stop hook dispatcher: enqueue summary job and return immediately
     Summarize,
     /// Background worker: actual summarization (called by Summarize, not by hooks)
     SummarizeWorker,
@@ -40,6 +40,15 @@ enum Commands {
         /// Project name
         #[arg(long)]
         project: String,
+    },
+    /// Run persistent async worker for queued jobs
+    Worker {
+        /// Process one job (or none) and exit
+        #[arg(long)]
+        once: bool,
+        /// Idle sleep between polling cycles in ms
+        #[arg(long, default_value_t = 1000)]
+        idle_ms: u64,
     },
     /// Run MCP server (stdio transport, long-running)
     Mcp,
@@ -189,7 +198,10 @@ async fn main() -> Result<()> {
             session_id,
             project,
         } => {
-            observe::flush_pending(&session_id, &project).await?;
+            observe_flush::flush_pending(&session_id, &project).await?;
+        }
+        Commands::Worker { once, idle_ms } => {
+            worker::run(once, idle_ms).await?;
         }
         Commands::Mcp => {
             mcp::run_mcp_server().await?;
