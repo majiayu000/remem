@@ -1,9 +1,12 @@
 use anyhow::Result;
+use chrono::Utc;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::db;
@@ -28,7 +31,10 @@ impl MemoryServer {
     where
         F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
     {
-        let conn = self.conn.lock().map_err(|e| format!("DB lock poisoned: {}", e))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| format!("DB lock poisoned: {}", e))?;
         f(&conn)
     }
 }
@@ -79,6 +85,10 @@ struct SaveMemoryParams {
     title: Option<String>,
     #[schemars(description = "Project name")]
     project: Option<String>,
+    #[schemars(
+        description = "Optional local markdown path for backup copy. Relative paths are resolved from current working directory."
+    )]
+    local_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -90,6 +100,118 @@ struct SearchResult {
     created_at: String,
     project: Option<String>,
     status: String,
+}
+
+const LOCAL_SAVE_ENABLE_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_COPY";
+const LOCAL_SAVE_DIR_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_DIR";
+
+fn env_enabled(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(v) => {
+            let lower = v.trim().to_ascii_lowercase();
+            !matches!(lower.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => default,
+    }
+}
+
+fn remem_data_dir() -> PathBuf {
+    std::env::var("REMEM_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".remem")
+        })
+}
+
+fn sanitize_segment(raw: &str, fallback: &str, limit: usize) -> String {
+    let mut out = String::with_capacity(raw.len().min(limit));
+    let mut last_underscore = false;
+    for ch in raw.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() || ch == '_' {
+            ch.to_ascii_lowercase()
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if last_underscore {
+                continue;
+            }
+            last_underscore = true;
+        } else {
+            last_underscore = false;
+        }
+        out.push(mapped);
+        if out.len() >= limit {
+            break;
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn default_local_note_path(project: &str, title: Option<&str>) -> PathBuf {
+    let base = std::env::var(LOCAL_SAVE_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| remem_data_dir().join("manual-notes"));
+    let project_dir = sanitize_segment(project, "manual", 64);
+    let title_slug = sanitize_segment(title.unwrap_or("memory"), "memory", 64);
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    base.join(project_dir)
+        .join(format!("{}-{}.md", ts, title_slug))
+}
+
+fn resolve_local_note_path(
+    project: &str,
+    title: Option<&str>,
+    local_path: Option<&str>,
+) -> PathBuf {
+    if let Some(raw) = local_path.and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    }) {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(p)
+        }
+    } else {
+        default_local_note_path(project, title)
+    }
+}
+
+fn build_local_note_content(project: &str, title: &str, text: &str) -> String {
+    let now = Utc::now().to_rfc3339();
+    format!(
+        "---\nsource: remem.save_memory\nsaved_at: {}\nproject: {}\n---\n\n# {}\n\n{}\n",
+        now, project, title, text
+    )
+}
+
+fn write_local_note(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "create local note directory failed {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+    std::fs::write(path, content)
+        .map_err(|e| format!("write local note failed {}: {}", path.display(), e))
 }
 
 #[tool_router]
@@ -141,7 +263,11 @@ impl MemoryServer {
 
             crate::log::info(
                 "mcp",
-                &format!("search done count={} {}ms", search_results.len(), start.elapsed().as_millis()),
+                &format!(
+                    "search done count={} {}ms",
+                    search_results.len(),
+                    start.elapsed().as_millis()
+                ),
             );
             serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
         })
@@ -196,7 +322,12 @@ impl MemoryServer {
 
             crate::log::info(
                 "mcp",
-                &format!("timeline done anchor={} count={} {}ms", anchor_id, results.len(), start.elapsed().as_millis()),
+                &format!(
+                    "timeline done anchor={} count={} {}ms",
+                    anchor_id,
+                    results.len(),
+                    start.elapsed().as_millis()
+                ),
             );
             serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
         })
@@ -213,27 +344,30 @@ impl MemoryServer {
         let start = std::time::Instant::now();
         crate::log::info(
             "mcp",
-            &format!("get_observations called ids={:?} project={:?}", params.ids, params.project),
+            &format!(
+                "get_observations called ids={:?} project={:?}",
+                params.ids, params.project
+            ),
         );
         self.with_conn(|conn| {
-            let results =
-                db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
-                    .map_err(|e| {
-                        crate::log::warn("mcp", &format!("get_observations failed: {}", e));
-                        e.to_string()
-                    })?;
+            let results = db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
+                .map_err(|e| {
+                    crate::log::warn("mcp", &format!("get_observations failed: {}", e));
+                    e.to_string()
+                })?;
             let accessed_ids: Vec<i64> = results.iter().map(|o| o.id).collect();
             if !accessed_ids.is_empty() {
                 if let Err(e) = db::update_last_accessed(conn, &accessed_ids) {
-                    crate::log::warn(
-                        "mcp",
-                        &format!("update_last_accessed failed: {}", e),
-                    );
+                    crate::log::warn("mcp", &format!("update_last_accessed failed: {}", e));
                 }
             }
             crate::log::info(
                 "mcp",
-                &format!("get_observations done count={} {}ms", results.len(), start.elapsed().as_millis()),
+                &format!(
+                    "get_observations done count={} {}ms",
+                    results.len(),
+                    start.elapsed().as_millis()
+                ),
             );
             serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
         })
@@ -241,7 +375,7 @@ impl MemoryServer {
 
     /// Manually save a memory/observation
     #[tool(
-        description = "Manually save an important observation, decision, or learning to persistent memory. Use when you discover something worth remembering for future sessions (architecture decisions, gotchas, user preferences)."
+        description = "Persist an important observation/decision for future sessions. By default this tool also writes a local markdown backup copy. If user asks to 'save a document', create/update a local file first; use save_memory as long-term memory backup."
     )]
     fn save_memory(
         &self,
@@ -256,9 +390,31 @@ impl MemoryServer {
                 params.text.len(),
             ),
         );
-        self.with_conn(|conn| {
-            let project = params.project.as_deref().unwrap_or("manual");
+        let project = params.project.as_deref().unwrap_or("manual");
+        let title = params.title.as_deref().unwrap_or("Memory");
+        let local_copy_enabled = env_enabled(LOCAL_SAVE_ENABLE_ENV, true);
+        let mut local_path_str: Option<String> = None;
+        let local_status: &str = if local_copy_enabled {
+            "saved"
+        } else {
+            "disabled"
+        };
 
+        if local_copy_enabled {
+            let local_path = resolve_local_note_path(
+                project,
+                params.title.as_deref(),
+                params.local_path.as_deref(),
+            );
+            let content = build_local_note_content(project, title, &params.text);
+            write_local_note(&local_path, &content).map_err(|e| {
+                crate::log::warn("mcp", &format!("save_memory local copy failed: {}", e));
+                e
+            })?;
+            local_path_str = Some(local_path.display().to_string());
+        }
+
+        self.with_conn(|conn| {
             let id = db::insert_observation(
                 conn,
                 "manual",
@@ -279,8 +435,20 @@ impl MemoryServer {
                 e.to_string()
             })?;
 
-            crate::log::info("mcp", &format!("save_memory done id={}", id));
-            Ok(format!("{{\"id\": {}, \"status\": \"saved\"}}", id))
+            crate::log::info(
+                "mcp",
+                &format!(
+                    "save_memory done id={} local_status={} local_path={:?}",
+                    id, local_status, local_path_str
+                ),
+            );
+            serde_json::to_string(&json!({
+                "id": id,
+                "status": "saved",
+                "local_status": local_status,
+                "local_path": local_path_str,
+            }))
+            .map_err(|e| e.to_string())
         })
     }
 }
@@ -296,7 +464,10 @@ impl ServerHandler for MemoryServer {
                  2. When you need details: `search(query)` → get matching IDs\n\
                  3. Then: `get_observations(ids)` → full narrative, facts, concepts, files\n\
                  4. Use `timeline(anchor/query)` to understand chronological context around a change\n\
-                 5. Use `save_memory(text)` to persist important decisions or discoveries\n\n\
+                 5. Use `save_memory(text)` to persist important decisions or discoveries (and local markdown backup)\n\n\
+                 ## Local document rule\n\
+                 - If user asks to save/write/update a document, create or edit a local file first\n\
+                 - `save_memory` is long-term memory backup, not a replacement for project docs\n\n\
                  ## When to search\n\
                  - User asks about past work, previous sessions, or \"what did we do\"\n\
                  - You need implementation details for code you're about to modify\n\
@@ -320,7 +491,11 @@ pub async fn run_mcp_server() -> Result<()> {
     let db_exists = db_path.exists();
     crate::log::info(
         "mcp",
-        &format!("server starting db={} exists={}", db_path.display(), db_exists),
+        &format!(
+            "server starting db={} exists={}",
+            db_path.display(),
+            db_exists
+        ),
     );
     let server = MemoryServer::new()?;
     // Quick sanity check: count observations
@@ -334,11 +509,32 @@ pub async fn run_mcp_server() -> Result<()> {
             .unwrap_or(-1);
         crate::log::info(
             "mcp",
-            &format!("server ready observations={} fts_index={}", count, fts_count),
+            &format!(
+                "server ready observations={} fts_index={}",
+                count, fts_count
+            ),
         );
     }
     let service = server.serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     crate::log::info("mcp", "server stopped");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_local_note_path, sanitize_segment};
+
+    #[test]
+    fn sanitize_segment_collapses_invalid_chars() {
+        let got = sanitize_segment("Harness / PR#33 -- Review Loop", "fallback", 64);
+        assert_eq!(got, "harness_pr_33_review_loop");
+    }
+
+    #[test]
+    fn resolve_relative_path_from_cwd() {
+        let got = resolve_local_note_path("manual", Some("x"), Some("docs/test.md"));
+        assert!(got.is_absolute());
+        assert!(got.ends_with("docs/test.md"));
+    }
 }

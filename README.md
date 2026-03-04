@@ -245,9 +245,14 @@ remem cleanup    # 一键清理所有垃圾数据
 | `search` | 全文搜索（FTS5）+ 项目/类型过滤，返回 ID+标题 |
 | `get_observations` | 按 ID 获取完整记忆（narrative, facts, concepts, files） |
 | `timeline` | 时间线查询：指定锚点前后的观察序列 |
-| `save_memory` | 手动保存重要记忆（架构决策、用户偏好等） |
+| `save_memory` | 手动保存重要记忆，并默认落一份本地 Markdown 备份 |
 
 推荐工作流：`search(query)` → 找到相关 ID → `get_observations(ids)` 获取完整内容。
+
+`save_memory` 行为说明：
+- 默认双写：写入 SQLite 记忆 + 写入本地 Markdown（默认 `~/.remem/manual-notes/<project>/...md`）
+- 可通过 `local_path` 参数指定本地落盘路径
+- 用户明确要求“保存文档”时，建议先写项目本地文件，再用 `save_memory` 作为长期记忆备份
 
 ## 项目识别
 
@@ -279,6 +284,8 @@ remem cleanup    # 一键清理所有垃圾数据
 | `REMEM_CONTEXT_SHOW_LAST_SUMMARY` | `true` | 显示最近 session summary |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI 路径 |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | 日志单文件上限（字节），超过后自动轮转 |
+| `REMEM_SAVE_MEMORY_LOCAL_COPY` | `true` | `save_memory` 是否启用本地 Markdown 备份 |
+| `REMEM_SAVE_MEMORY_LOCAL_DIR` | `~/.remem/manual-notes` | `save_memory` 本地备份目录（未传 `local_path` 时生效） |
 | `REMEM_PRICE_INPUT_PER_MTOK` | 模型默认 | 覆盖所有模型 input 单价（USD/百万 token） |
 | `REMEM_PRICE_OUTPUT_PER_MTOK` | 模型默认 | 覆盖所有模型 output 单价（USD/百万 token） |
 | `REMEM_PRICE_HAIKU_INPUT_PER_MTOK` | `0.8` | Haiku input 单价（USD/百万 token） |
