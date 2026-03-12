@@ -134,7 +134,10 @@ pub async fn summarize() -> Result<()> {
     let hook: SummarizeInput = match serde_json::from_str(&input) {
         Ok(v) => v,
         Err(e) => {
-            crate::log::warn("summarize", &format!("invalid hook payload, skipping: {}", e));
+            crate::log::warn(
+                "summarize",
+                &format!("invalid hook payload, skipping: {}", e),
+            );
             return Ok(());
         }
     };
@@ -153,14 +156,7 @@ pub async fn summarize() -> Result<()> {
         100,
     )?;
     // Low-priority maintenance job: deduped per project by enqueue_job.
-    db::enqueue_job(
-        &conn,
-        db::JobType::Compress,
-        &project,
-        None,
-        "{}",
-        200,
-    )?;
+    db::enqueue_job(&conn, db::JobType::Compress, &project, None, "{}", 200)?;
     crate::log::info(
         "summarize",
         &format!("QUEUED summary session={} project={}", session_id, project),
@@ -312,7 +308,11 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
     };
     crate::log::info(
         "summary-job",
-        &format!("AI response {}ms {}B", ai_start.elapsed().as_millis(), response.len()),
+        &format!(
+            "AI response {}ms {}B",
+            ai_start.elapsed().as_millis(),
+            response.len()
+        ),
     );
 
     let Some(summary) = parse_summary(&response) else {

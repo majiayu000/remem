@@ -48,7 +48,10 @@ fn rotate_if_needed(path: &std::path::Path, max_bytes: u64) {
         };
         if src.exists() {
             if let Err(e) = std::fs::rename(&src, &dst) {
-                eprintln!("[remem] log rotate: rename {:?} → {:?} failed: {}", src, dst, e);
+                eprintln!(
+                    "[remem] log rotate: rename {:?} → {:?} failed: {}",
+                    src, dst, e
+                );
             }
         }
     }

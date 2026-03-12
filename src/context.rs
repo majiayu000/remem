@@ -350,8 +350,13 @@ fn render_timeline(
 
                 let session = &obs.memory_session_id;
                 if *session != current_session {
-                    // New session — render table header
-                    output.push_str(&format!("**{}**\n", session));
+                    // New session — render table header with resume ID
+                    let resume_hint = obs
+                        .content_session_id
+                        .as_deref()
+                        .map(|id| format!(" `claude --resume {}`", id))
+                        .unwrap_or_default();
+                    output.push_str(&format!("**{}**{}\n", session, resume_hint));
                     let mut header = "| ID | Time | T | Title |".to_string();
                     let mut sep = "|----|------|---|-------|".to_string();
                     if config.show_read_tokens {

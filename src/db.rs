@@ -36,6 +36,9 @@ pub struct Observation {
     pub project: Option<String>,
     pub status: String,
     pub last_accessed_epoch: Option<i64>,
+    /// Original Claude Code session ID (for `claude --resume`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -815,12 +818,23 @@ pub fn enqueue_job(
           attempt_count, max_attempts, lease_owner, lease_expires_epoch,
           next_retry_epoch, last_error, created_at_epoch, updated_at_epoch)
          VALUES (?1, ?2, ?3, ?4, 'pending', ?5, 0, 6, NULL, NULL, ?6, NULL, ?6, ?6)",
-        params![job_type.as_str(), project, session_id, payload_json, priority, now],
+        params![
+            job_type.as_str(),
+            project,
+            session_id,
+            payload_json,
+            priority,
+            now
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
-pub fn claim_next_job(conn: &mut Connection, lease_owner: &str, lease_secs: i64) -> Result<Option<Job>> {
+pub fn claim_next_job(
+    conn: &mut Connection,
+    lease_owner: &str,
+    lease_secs: i64,
+) -> Result<Option<Job>> {
     let now = chrono::Utc::now().timestamp();
     let lease_expires = now + lease_secs.max(1);
     let tx = conn.transaction()?;
@@ -937,7 +951,13 @@ pub fn mark_job_failed_or_retry(
                  lease_expires_epoch = NULL,
                  updated_at_epoch = ?3
              WHERE id = ?4 AND lease_owner = ?5",
-            params![next_attempt, truncate_str(err, 2000), now, job_id, lease_owner],
+            params![
+                next_attempt,
+                truncate_str(err, 2000),
+                now,
+                job_id,
+                lease_owner
+            ],
         )?;
         return Ok(());
     }

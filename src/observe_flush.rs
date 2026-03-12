@@ -1,7 +1,9 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::memory_format::{self, xml_escape_attr, xml_escape_text, ParsedObservation, OBSERVATION_TYPES};
+use crate::memory_format::{
+    self, xml_escape_attr, xml_escape_text, ParsedObservation, OBSERVATION_TYPES,
+};
 
 const OBSERVATION_PROMPT: &str = include_str!("../prompts/observation.txt");
 const TASK_OBSERVATION_PROMPT: &str = include_str!("../prompts/task_observation.txt");
@@ -239,8 +241,10 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
     );
 
     // Split into Task vs Action batches
-    let (task_pending, action_pending): (Vec<_>, Vec<_>) =
-        pending.iter().enumerate().partition::<Vec<_>, _>(|(_, p)| p.tool_name == "Task");
+    let (task_pending, action_pending): (Vec<_>, Vec<_>) = pending
+        .iter()
+        .enumerate()
+        .partition::<Vec<_>, _>(|(_, p)| p.tool_name == "Task");
     let task_indices: Vec<usize> = task_pending.into_iter().map(|(i, _)| i).collect();
     let action_indices: Vec<usize> = action_pending.into_iter().map(|(i, _)| i).collect();
 
@@ -303,16 +307,19 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
             };
 
             // Build events XML from borrowed batch
-            let batch_owned: Vec<db::PendingObservation> = batch.iter().map(|p| db::PendingObservation {
-                id: p.id,
-                session_id: p.session_id.clone(),
-                project: p.project.clone(),
-                tool_name: p.tool_name.clone(),
-                tool_input: p.tool_input.clone(),
-                tool_response: p.tool_response.clone(),
-                cwd: p.cwd.clone(),
-                created_at_epoch: p.created_at_epoch,
-            }).collect();
+            let batch_owned: Vec<db::PendingObservation> = batch
+                .iter()
+                .map(|p| db::PendingObservation {
+                    id: p.id,
+                    session_id: p.session_id.clone(),
+                    project: p.project.clone(),
+                    tool_name: p.tool_name.clone(),
+                    tool_input: p.tool_input.clone(),
+                    tool_response: p.tool_response.clone(),
+                    cwd: p.cwd.clone(),
+                    created_at_epoch: p.created_at_epoch,
+                })
+                .collect();
             let events = build_session_events_xml(&batch_owned);
             let user_message = format!(
                 "{}<session_events>\n{}</session_events>",

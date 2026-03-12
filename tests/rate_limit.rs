@@ -5,7 +5,19 @@ use remem::{db, observe, search};
 
 fn setup_observation_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "CREATE TABLE observations (
+        "CREATE TABLE IF NOT EXISTS sdk_sessions (
+            id INTEGER PRIMARY KEY,
+            content_session_id TEXT UNIQUE NOT NULL,
+            memory_session_id TEXT NOT NULL,
+            project TEXT,
+            user_prompt TEXT,
+            started_at TEXT,
+            started_at_epoch INTEGER,
+            status TEXT DEFAULT 'active',
+            prompt_counter INTEGER DEFAULT 1
+        );
+
+        CREATE TABLE observations (
             id INTEGER PRIMARY KEY,
             memory_session_id TEXT NOT NULL,
             project TEXT,

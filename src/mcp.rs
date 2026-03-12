@@ -100,6 +100,8 @@ struct SearchResult {
     created_at: String,
     project: Option<String>,
     status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_session_id: Option<String>,
 }
 
 const LOCAL_SAVE_ENABLE_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_COPY";
@@ -258,6 +260,7 @@ impl MemoryServer {
                     created_at: o.created_at,
                     project: o.project,
                     status: o.status,
+                    content_session_id: o.content_session_id,
                 })
                 .collect();
 

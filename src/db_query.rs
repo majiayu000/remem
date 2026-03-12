@@ -7,7 +7,8 @@ use crate::db::SessionSummary;
 /// Shared row mapper — eliminates 5x duplication of Observation field extraction.
 /// Expects columns: id, memory_session_id, type, title, subtitle, narrative,
 /// facts, concepts, files_read, files_modified, discovery_tokens,
-/// created_at, created_at_epoch, project, status, last_accessed_epoch
+/// created_at, created_at_epoch, project, status, last_accessed_epoch,
+/// content_session_id
 fn map_observation_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
     Ok(Observation {
         id: row.get(0)?,
@@ -28,6 +29,7 @@ fn map_observation_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
             .get::<_, Option<String>>(14)?
             .unwrap_or_else(|| "active".to_string()),
         last_accessed_epoch: row.get(15)?,
+        content_session_id: row.get(16)?,
     })
 }
 
@@ -35,9 +37,18 @@ fn map_observation_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
 /// 秒级 epoch 当前 ~1.7×10⁹，毫秒级 ~1.7×10¹²。以 10¹⁰ 为分界线排除旧数据。
 const EPOCH_SECS_ONLY: &str = "created_at_epoch < 10000000000";
 
-const OBS_COLS_WITH_PROJECT: &str = "id, memory_session_id, type, title, subtitle, narrative, \
-    facts, concepts, files_read, files_modified, discovery_tokens, \
-    created_at, created_at_epoch, project, status, last_accessed_epoch";
+/// Build SELECT column list for observations, including content_session_id via subquery.
+/// `table_ref` is the table name or alias (e.g. "observations" or "o").
+fn obs_select_cols(table_ref: &str) -> String {
+    format!(
+        "{t}.id, {t}.memory_session_id, {t}.type, {t}.title, {t}.subtitle, {t}.narrative, \
+         {t}.facts, {t}.concepts, {t}.files_read, {t}.files_modified, {t}.discovery_tokens, \
+         {t}.created_at, {t}.created_at_epoch, {t}.project, {t}.status, {t}.last_accessed_epoch, \
+         (SELECT s.content_session_id FROM sdk_sessions s \
+          WHERE s.memory_session_id = {t}.memory_session_id LIMIT 1) AS content_session_id",
+        t = table_ref
+    )
+}
 
 fn collect_rows<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>>,
@@ -122,7 +133,7 @@ pub fn query_observations(
         "SELECT {} FROM observations \
          WHERE {} AND {} AND type IN ({}) \
          ORDER BY created_at_epoch DESC LIMIT ?{}",
-        OBS_COLS_WITH_PROJECT,
+        obs_select_cols("observations"),
         project_filter,
         EPOCH_SECS_ONLY,
         placeholders.join(", "),
@@ -251,9 +262,7 @@ pub fn search_observations_fts(
     param_values.push(Box::new(offset));
 
     let sql = format!(
-        "SELECT o.id, o.memory_session_id, o.type, o.title, o.subtitle, o.narrative, \
-         o.facts, o.concepts, o.files_read, o.files_modified, o.discovery_tokens, \
-         o.created_at, o.created_at_epoch, o.project, o.status, o.last_accessed_epoch \
+        "SELECT {} \
          FROM observations o \
          JOIN observations_fts ON observations_fts.rowid = o.id \
          WHERE {} \
@@ -267,6 +276,7 @@ pub fn search_observations_fts(
            )) * CASE WHEN o.status = 'stale' THEN 0.25 ELSE 1.0 END\
          ) DESC \
          LIMIT ?{} OFFSET ?{}",
+        obs_select_cols("o"),
         conditions.join(" AND "),
         idx,
         idx + 1
@@ -304,7 +314,7 @@ pub fn get_observations_by_ids(
     let sql = format!(
         "SELECT {} FROM observations WHERE {} \
          ORDER BY created_at_epoch DESC",
-        OBS_COLS_WITH_PROJECT,
+        obs_select_cols("observations"),
         conditions.join(" AND ")
     );
 
@@ -350,7 +360,7 @@ pub fn get_oldest_observations(
         "SELECT {} FROM observations \
          WHERE {} AND {} AND status IN ('active', 'stale') \
          ORDER BY created_at_epoch ASC LIMIT ?{}",
-        OBS_COLS_WITH_PROJECT, project_filter, EPOCH_SECS_ONLY, idx
+        obs_select_cols("observations"), project_filter, EPOCH_SECS_ONLY, idx
     );
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
@@ -367,7 +377,7 @@ pub fn get_timeline_around(
 ) -> Result<Vec<Observation>> {
     let anchor_sql = format!(
         "SELECT {} FROM observations WHERE id = ?1",
-        OBS_COLS_WITH_PROJECT
+        obs_select_cols("observations")
     );
     let anchor: Observation =
         conn.query_row(&anchor_sql, params![anchor_id], map_observation_row)?;
@@ -383,7 +393,7 @@ pub fn get_timeline_around(
             "SELECT {} FROM observations \
              WHERE {} AND created_at_epoch {} ?1{} \
              ORDER BY created_at_epoch {} LIMIT ?2",
-            OBS_COLS_WITH_PROJECT, EPOCH_SECS_ONLY, cmp, extra, order
+            obs_select_cols("observations"), EPOCH_SECS_ONLY, cmp, extra, order
         )
     };
 

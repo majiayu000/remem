@@ -191,8 +191,16 @@ pub async fn observe() -> Result<()> {
     }
 
     let is_task = tool_name == "Task";
-    let input_limit = if is_task { MAX_TASK_INPUT_SIZE } else { MAX_RESPONSE_SIZE };
-    let response_limit = if is_task { MAX_TASK_RESPONSE_SIZE } else { MAX_RESPONSE_SIZE };
+    let input_limit = if is_task {
+        MAX_TASK_INPUT_SIZE
+    } else {
+        MAX_RESPONSE_SIZE
+    };
+    let response_limit = if is_task {
+        MAX_TASK_RESPONSE_SIZE
+    } else {
+        MAX_RESPONSE_SIZE
+    };
 
     let tool_input_str = hook.tool_input.as_ref().map(|v| {
         let s = serde_json::to_string(v).unwrap_or_else(|e| {
@@ -266,7 +274,9 @@ mod tests {
 
     #[test]
     fn skip_read_only_polling_commands() {
-        assert!(should_skip_bash_command("curl -s http://localhost:9800/tasks/1"));
+        assert!(should_skip_bash_command(
+            "curl -s http://localhost:9800/tasks/1"
+        ));
         assert!(should_skip_bash_command(
             "sleep 60 && curl -s http://localhost:9800/tasks/1"
         ));
@@ -275,7 +285,9 @@ mod tests {
     #[test]
     fn keep_mutating_commands() {
         assert!(!should_skip_bash_command("git add src/observe.rs"));
-        assert!(!should_skip_bash_command("git commit -m \"feat: tune filter\""));
+        assert!(!should_skip_bash_command(
+            "git commit -m \"feat: tune filter\""
+        ));
         assert!(!should_skip_bash_command("git push origin main"));
         assert!(!should_skip_bash_command(
             "curl -X POST http://localhost:9800/tasks"
