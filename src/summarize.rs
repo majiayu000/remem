@@ -70,6 +70,10 @@ pub struct ParsedSummary {
     pub learned: Option<String>,
     pub next_steps: Option<String>,
     pub preferences: Option<String>,
+    pub workstream_title: Option<String>,
+    pub workstream_progress: Option<String>,
+    pub workstream_next: Option<String>,
+    pub workstream_blockers: Option<String>,
 }
 
 pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
@@ -88,7 +92,50 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
         learned: memory_format::extract_field(content, "learned"),
         next_steps: memory_format::extract_field(content, "next_steps"),
         preferences: memory_format::extract_field(content, "preferences"),
+        workstream_title: memory_format::extract_field(content, "workstream"),
+        workstream_progress: memory_format::extract_field(content, "workstream_progress"),
+        workstream_next: memory_format::extract_field(content, "workstream_next"),
+        workstream_blockers: memory_format::extract_field(content, "workstream_blockers"),
     })
+}
+
+fn save_workstream_if_present(
+    conn: &rusqlite::Connection,
+    project: &str,
+    memory_sid: &str,
+    summary: &ParsedSummary,
+) {
+    if summary.workstream_title.is_none() {
+        return;
+    }
+    let parsed = crate::workstream::ParsedWorkStream {
+        title: summary.workstream_title.clone(),
+        progress: summary.workstream_progress.clone(),
+        next_action: summary.workstream_next.clone(),
+        blockers: summary.workstream_blockers.clone(),
+        is_completed: false,
+    };
+    match crate::workstream::upsert_workstream(conn, project, memory_sid, &parsed) {
+        Ok(id) => {
+            crate::log::info(
+                "workstream",
+                &format!("upserted workstream id={} project={}", id, project),
+            );
+        }
+        Err(e) => {
+            crate::log::warn(
+                "workstream",
+                &format!("upsert failed project={}: {}", project, e),
+            );
+        }
+    }
+    // Lightweight lifecycle cleanup
+    if let Err(e) = crate::workstream::auto_pause_inactive(conn, project, 7) {
+        crate::log::warn("workstream", &format!("auto_pause failed: {}", e));
+    }
+    if let Err(e) = crate::workstream::auto_abandon_inactive(conn, project, 30) {
+        crate::log::warn("workstream", &format!("auto_abandon failed: {}", e));
+    }
 }
 
 fn read_stdin_with_timeout(timeout_ms: u64) -> Result<Option<String>> {
@@ -337,6 +384,7 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
         usage,
     )?;
     db::release_summarize_lock(&conn, &project)?;
+    save_workstream_if_present(&conn, &project, &memory_sid, &summary);
     crate::log::info(
         "summary-job",
         &format!("saved summary project={} session={}", project, session_id),
@@ -743,6 +791,7 @@ async fn summarize_worker_inner() -> Result<()> {
             &format!("replaced {} old summary(s)", deleted),
         );
     }
+    save_workstream_if_present(&conn_for_summary, &project, &memory_sid, &summary);
 
     let request_preview = summary.request.as_deref().unwrap_or("-");
     timer.done(&format!("~{}tok request=\"{}\"", usage, request_preview));
@@ -866,6 +915,42 @@ async fn maybe_compress(project: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_summary_with_workstream() {
+        let xml = r#"<summary>
+<request>Implement WorkStream layer</request>
+<completed>Added data model and schema</completed>
+<workstream>WorkStream 层实现</workstream>
+<workstream_progress>Completed steps 1-3</workstream_progress>
+<workstream_next>Implement context output</workstream_next>
+<workstream_blockers></workstream_blockers>
+</summary>"#;
+        let parsed = parse_summary(xml).unwrap();
+        assert_eq!(parsed.request.as_deref(), Some("Implement WorkStream layer"));
+        assert_eq!(parsed.workstream_title.as_deref(), Some("WorkStream 层实现"));
+        assert_eq!(
+            parsed.workstream_progress.as_deref(),
+            Some("Completed steps 1-3")
+        );
+        assert_eq!(
+            parsed.workstream_next.as_deref(),
+            Some("Implement context output")
+        );
+        assert!(parsed.workstream_blockers.is_none()); // empty → None
+    }
+
+    #[test]
+    fn test_parse_summary_without_workstream() {
+        let xml = r#"<summary>
+<request>Quick question</request>
+<completed>Answered</completed>
+</summary>"#;
+        let parsed = parse_summary(xml).unwrap();
+        assert_eq!(parsed.request.as_deref(), Some("Quick question"));
+        assert!(parsed.workstream_title.is_none());
+        assert!(parsed.workstream_progress.is_none());
+    }
 
     #[test]
     fn maintenance_budget_gate_is_strict() {

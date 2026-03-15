@@ -20,6 +20,10 @@ OUTPUT FORMAT
   <learned>[Key insights, gotchas, problem-solution pairs worth remembering]</learned>
   <next_steps>[Remaining TODOs, priority order]</next_steps>
   <preferences>[User preferences: coding style, naming, libraries, communication style — only if NEW preferences discovered]</preferences>
+  <workstream>[The high-level task name this session is working on. Should be stable across sessions (e.g. "WorkStream 层实现", "Auth middleware rewrite"). Leave empty for trivial sessions.]</workstream>
+  <workstream_progress>[Progress description, e.g. "Completed data model and schema, frontend remaining"]</workstream_progress>
+  <workstream_next>[Next concrete action to take]</workstream_next>
+  <workstream_blockers>[Blocking issues, leave empty if none]</workstream_blockers>
 </summary>
 ```
 
@@ -43,5 +47,6 @@ RULES:
 <skip_summary reason="[brief reason]" />
 ```
 
+- "workstream" is the high-level goal name that stays stable across sessions working on the same task. Use consistent naming so the system can match across sessions. Leave workstream fields empty for trivial sessions (quick questions, small fixes).
 All fields are optional. Focus on WHAT and WHY, not HOW.
 Do not output anything other than the XML.
