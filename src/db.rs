@@ -117,7 +117,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -336,6 +336,36 @@ fn ensure_schema_migrations(conn: &Connection) -> Result<()> {
            ON jobs(state, lease_expires_epoch);",
     )?;
     migrate_session_summaries_v4(conn)?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workstreams (
+            id INTEGER PRIMARY KEY,
+            project TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            progress TEXT,
+            next_action TEXT,
+            blockers TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            completed_at_epoch INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS workstream_sessions (
+            id INTEGER PRIMARY KEY,
+            workstream_id INTEGER NOT NULL,
+            memory_session_id TEXT NOT NULL,
+            linked_at_epoch INTEGER NOT NULL,
+            UNIQUE(workstream_id, memory_session_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_workstreams_project_status
+          ON workstreams(project, status, updated_at_epoch DESC);
+        CREATE INDEX IF NOT EXISTS idx_workstream_sessions_ws
+          ON workstream_sessions(workstream_id);
+        CREATE INDEX IF NOT EXISTS idx_workstream_sessions_session
+          ON workstream_sessions(memory_session_id);",
+    )?;
+
     Ok(())
 }
 

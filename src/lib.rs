@@ -11,3 +11,4 @@ pub mod observe_flush;
 pub mod search;
 pub mod summarize;
 pub mod worker;
+pub mod workstream;
