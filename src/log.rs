@@ -4,11 +4,7 @@ const DEFAULT_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
 const LOG_ROTATION_KEEP: usize = 3;
 
 fn log_path() -> Option<std::path::PathBuf> {
-    let data_dir = std::env::var("REMEM_DATA_DIR")
-        .map(std::path::PathBuf::from)
-        .or_else(|_| dirs::home_dir().map(|d| d.join(".remem")).ok_or(()))
-        .ok()?;
-    Some(data_dir.join("remem.log"))
+    Some(crate::db::data_dir().join("remem.log"))
 }
 
 fn log_max_bytes() -> u64 {

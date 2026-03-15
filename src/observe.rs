@@ -2,9 +2,10 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::db;
+use crate::memory;
 
-/// Tools that produce meaningful observations (modify state or capture research)
-const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash", "Task"];
+/// Tools that produce meaningful events (modify state or capture research)
+const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash", "Task", "Agent"];
 
 /// Tools to always skip (metadata/navigation)
 const SKIP_TOOLS: &[&str] = &[
@@ -64,13 +65,6 @@ const BASH_SKIP_PREFIXES: &[&str] = &[
     "find ",
     "git grep",
 ];
-
-/// Max tool_response size stored in queue (save DB space)
-const MAX_RESPONSE_SIZE: usize = 4000;
-/// Larger limit for Task agent results (research/analysis output)
-const MAX_TASK_RESPONSE_SIZE: usize = 16000;
-/// Task tool_input truncation (keep only prompt core)
-const MAX_TASK_INPUT_SIZE: usize = 2000;
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
@@ -140,21 +134,144 @@ pub async fn session_init() -> Result<()> {
     let conn = db::open_db()?;
     db::upsert_session(&conn, &session_id, &project, None)?;
 
-    // Lightweight cleanup only — no AI calls in hook context.
-    // Stale flush (with AI) is handled by summarize_worker instead.
-    let stale = db::cleanup_stale_pending(&conn)?;
-    if stale > 0 {
-        crate::log::info(
-            "session-init",
-            &format!("cleaned {} stale pending (>1h)", stale),
-        );
-    }
-
     timer.done(&format!("project={}", project));
     Ok(())
 }
 
-/// PostToolUse hook: queue to SQLite, no AI call.
+/// Shorten a file path to last 2 components for compact display.
+pub fn short_path(full: &str) -> &str {
+    let parts: Vec<&str> = full.rsplitn(3, '/').collect();
+    match parts.len() {
+        1 => parts[0],
+        2 => full,
+        _ => {
+            let start = full.len() - parts[0].len() - parts[1].len() - 1;
+            &full[start..]
+        }
+    }
+}
+
+/// Generate a structured event from a PostToolUse hook.
+/// Returns (event_type, summary, detail, files_json) or None to skip.
+fn event_summary(
+    tool_name: &str,
+    input: &Option<serde_json::Value>,
+    response: &Option<serde_json::Value>,
+) -> Option<(String, String, Option<String>, Option<String>, Option<i32>)> {
+    match tool_name {
+        "Edit" => {
+            let file = input.as_ref()?.get("file_path")?.as_str()?;
+            let files_json = serde_json::to_string(&[file]).ok();
+            Some((
+                "file_edit".into(),
+                format!("Edit {}", short_path(file)),
+                None,
+                files_json,
+                None,
+            ))
+        }
+        "Write" => {
+            let file = input.as_ref()?.get("file_path")?.as_str()?;
+            let files_json = serde_json::to_string(&[file]).ok();
+            Some((
+                "file_create".into(),
+                format!("Create {}", short_path(file)),
+                None,
+                files_json,
+                None,
+            ))
+        }
+        "NotebookEdit" => {
+            let file = input
+                .as_ref()?
+                .get("notebook_path")?
+                .as_str()
+                .or_else(|| input.as_ref()?.get("file_path")?.as_str())?;
+            let files_json = serde_json::to_string(&[file]).ok();
+            Some((
+                "file_edit".into(),
+                format!("NotebookEdit {}", short_path(file)),
+                None,
+                files_json,
+                None,
+            ))
+        }
+        "Bash" => {
+            let cmd = input.as_ref()?.get("command")?.as_str()?;
+            let cmd_short = db::truncate_str(cmd.trim(), 60);
+            let exit_code = response
+                .as_ref()
+                .and_then(|r| r.get("exitCode"))
+                .and_then(|c| c.as_i64())
+                .map(|c| c as i32);
+            let code_str = exit_code
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into());
+            let stderr = if exit_code.unwrap_or(0) != 0 {
+                response
+                    .as_ref()
+                    .and_then(|r| r.get("stderr"))
+                    .and_then(|s| s.as_str())
+                    .map(|s| db::truncate_str(s, 500).to_string())
+            } else {
+                None
+            };
+            Some((
+                "bash".into(),
+                format!("Run `{}` (exit {})", cmd_short, code_str),
+                stderr,
+                None,
+                exit_code,
+            ))
+        }
+        "Grep" => {
+            let pattern = input.as_ref()?.get("pattern")?.as_str().unwrap_or("?");
+            let path = input
+                .as_ref()
+                .and_then(|v| v.get("path"))
+                .and_then(|p| p.as_str())
+                .unwrap_or(".");
+            Some((
+                "search".into(),
+                format!(
+                    "Grep '{}' in {}",
+                    db::truncate_str(pattern, 40),
+                    short_path(path)
+                ),
+                None,
+                None,
+                None,
+            ))
+        }
+        "Glob" => {
+            let pattern = input.as_ref()?.get("pattern")?.as_str().unwrap_or("?");
+            Some((
+                "search".into(),
+                format!("Glob {}", pattern),
+                None,
+                None,
+                None,
+            ))
+        }
+        "Agent" | "Task" => {
+            let desc = input
+                .as_ref()
+                .and_then(|v| v.get("description").or_else(|| v.get("prompt")))
+                .and_then(|d| d.as_str())
+                .unwrap_or("agent task");
+            Some((
+                "agent".into(),
+                format!("Agent: {}", db::truncate_str(desc, 80)),
+                None,
+                None,
+                None,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// PostToolUse hook: write event directly to SQLite (zero LLM, rule-based).
 pub async fn observe() -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
     let hook: HookInput = serde_json::from_str(&input)?;
@@ -171,91 +288,40 @@ pub async fn observe() -> Result<()> {
         return Ok(());
     }
 
-    // Only queue action tools (Write, Edit, Bash, NotebookEdit)
+    // Only record action tools
     if !ACTION_TOOLS.contains(&tool_name) {
-        crate::log::info("observe", &format!("SKIP tool={} (read-only)", tool_name));
         return Ok(());
     }
 
-    // Filter out routine Bash commands (read-only/build operations)
+    // Filter out routine Bash commands
     if tool_name == "Bash" {
         if let Some(cmd) = hook.tool_input.as_ref().and_then(|v| v["command"].as_str()) {
             if should_skip_bash_command(cmd) {
-                crate::log::info(
-                    "observe",
-                    &format!("SKIP bash cmd={}", db::truncate_str(cmd.trim(), 60)),
-                );
                 return Ok(());
             }
         }
     }
 
-    let is_task = tool_name == "Task";
-    let input_limit = if is_task {
-        MAX_TASK_INPUT_SIZE
-    } else {
-        MAX_RESPONSE_SIZE
+    // Generate structured event summary (rule-based, zero LLM)
+    let Some((event_type, summary, detail, files_json, exit_code)) =
+        event_summary(tool_name, &hook.tool_input, &hook.tool_response)
+    else {
+        return Ok(());
     };
-    let response_limit = if is_task {
-        MAX_TASK_RESPONSE_SIZE
-    } else {
-        MAX_RESPONSE_SIZE
-    };
-
-    let tool_input_str = hook.tool_input.as_ref().map(|v| {
-        let s = serde_json::to_string(v).unwrap_or_else(|e| {
-            crate::log::warn("observe", &format!("tool_input serialize failed: {}", e));
-            "{}".to_string()
-        });
-        if s.len() > input_limit {
-            crate::db::truncate_str(&s, input_limit).to_string()
-        } else {
-            s
-        }
-    });
-    let tool_response_str = hook.tool_response.as_ref().map(|v| {
-        let s = serde_json::to_string(v).unwrap_or_else(|e| {
-            crate::log::warn("observe", &format!("tool_response serialize failed: {}", e));
-            "{}".to_string()
-        });
-        if s.len() > response_limit {
-            crate::db::truncate_str(&s, response_limit).to_string()
-        } else {
-            s
-        }
-    });
 
     let conn = db::open_db()?;
-    db::enqueue_pending(
+    memory::insert_event(
         &conn,
         &session_id,
         &project,
-        tool_name,
-        tool_input_str.as_deref(),
-        tool_response_str.as_deref(),
-        Some(cwd),
-    )?;
-    let job_payload = serde_json::json!({
-        "session_id": &session_id,
-        "project": &project
-    });
-    db::enqueue_job(
-        &conn,
-        db::JobType::Observation,
-        &project,
-        Some(&session_id),
-        &job_payload.to_string(),
-        50,
+        &event_type,
+        &summary,
+        detail.as_deref(),
+        files_json.as_deref(),
+        exit_code,
     )?;
 
-    let count = db::count_pending(&conn, &session_id)?;
-    crate::log::info(
-        "observe",
-        &format!(
-            "QUEUED tool={} project={} pending={}",
-            tool_name, project, count
-        ),
-    );
+    crate::log::info("observe", &format!("EVENT {} project={}", summary, project));
 
     Ok(())
 }

@@ -50,7 +50,7 @@ fn obs_select_cols(table_ref: &str) -> String {
     )
 }
 
-fn collect_rows<T>(
+pub fn collect_rows<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row) -> rusqlite::Result<T>>,
 ) -> Result<Vec<T>> {
     let mut result = Vec::new();
@@ -60,6 +60,13 @@ fn collect_rows<T>(
     Ok(result)
 }
 
+/// Escape LIKE wildcards so literal `%` and `_` in labels are not treated as patterns.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 fn project_lookup_terms(project: &str) -> (Vec<String>, Vec<String>) {
     let mut exact = vec![project.to_string()];
     let mut like = Vec::new();
@@ -67,10 +74,10 @@ fn project_lookup_terms(project: &str) -> (Vec<String>, Vec<String>) {
     if let Some((label, _)) = project.rsplit_once('@') {
         if !label.is_empty() {
             exact.push(label.to_string());
-            like.push(format!("{label}@%"));
+            like.push(format!("{}@%", escape_like(label)));
         }
     } else if !project.is_empty() {
-        like.push(format!("{project}@%"));
+        like.push(format!("{}@%", escape_like(project)));
     }
 
     exact.sort();
@@ -95,7 +102,7 @@ fn push_project_filter(
         idx += 1;
     }
     for pat in like {
-        clauses.push(format!("{column} LIKE ?{idx}"));
+        clauses.push(format!("{column} LIKE ?{idx} ESCAPE '\\'"));
         params.push(Box::new(pat));
         idx += 1;
     }
@@ -141,7 +148,7 @@ pub fn query_observations(
     );
 
     let mut stmt = conn.prepare(&sql)?;
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
     let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
     collect_rows(rows)
 }
@@ -164,7 +171,7 @@ pub fn query_summaries(
         project_filter, EPOCH_SECS_ONLY, idx
     ))?;
 
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
     let rows = stmt.query_map(refs.as_slice(), |row| {
         Ok(SessionSummary {
             id: row.get(0)?,
@@ -202,7 +209,7 @@ pub fn get_summary_by_session(
         project_filter, EPOCH_SECS_ONLY
     ))?;
 
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
     let mut rows = stmt.query_map(refs.as_slice(), |row| {
         Ok(SessionSummary {
             id: row.get(0)?,
@@ -283,7 +290,79 @@ pub fn search_observations_fts(
     );
 
     let mut stmt = conn.prepare(&sql)?;
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
+    let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
+    collect_rows(rows)
+}
+
+/// LIKE-based fallback search for queries with tokens shorter than 3 characters.
+/// Each token must appear in at least one text column (title/subtitle/narrative/facts/concepts).
+pub fn search_observations_like(
+    conn: &Connection,
+    tokens: &[&str],
+    project: Option<&str>,
+    obs_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+) -> Result<Vec<Observation>> {
+    if tokens.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut conditions = vec![format!("o.{}", EPOCH_SECS_ONLY)];
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+
+    for token in tokens {
+        let like_pattern = format!("%{token}%");
+        let cols = [
+            "o.title",
+            "o.subtitle",
+            "o.narrative",
+            "o.facts",
+            "o.concepts",
+        ];
+        let token_clauses: Vec<String> = cols
+            .iter()
+            .map(|col| format!("{col} LIKE ?{idx}"))
+            .collect();
+        param_values.push(Box::new(like_pattern));
+        conditions.push(format!("({})", token_clauses.join(" OR ")));
+        idx += 1;
+    }
+
+    if let Some(p) = project {
+        let (project_filter, next_idx) =
+            push_project_filter("o.project", p, idx, &mut param_values);
+        conditions.push(project_filter);
+        idx = next_idx;
+    }
+    if let Some(t) = obs_type {
+        conditions.push(format!("o.type = ?{idx}"));
+        param_values.push(Box::new(t.to_string()));
+        idx += 1;
+    }
+    if !include_stale {
+        conditions.push("o.status = 'active'".to_string());
+    }
+
+    param_values.push(Box::new(limit));
+    param_values.push(Box::new(offset));
+
+    let sql = format!(
+        "SELECT {} FROM observations o \
+         WHERE {} \
+         ORDER BY o.created_at_epoch DESC \
+         LIMIT ?{} OFFSET ?{}",
+        obs_select_cols("o"),
+        conditions.join(" AND "),
+        idx,
+        idx + 1
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&param_values);
     let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
     collect_rows(rows)
 }
@@ -319,7 +398,7 @@ pub fn get_observations_by_ids(
     );
 
     let mut stmt = conn.prepare(&sql)?;
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
     let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
     collect_rows(rows)
 }
@@ -333,7 +412,7 @@ pub fn count_active_observations(conn: &Connection, project: &str) -> Result<i64
          WHERE {} AND {} AND status IN ('active', 'stale')",
         project_filter, EPOCH_SECS_ONLY
     );
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
     let count: i64 = conn.query_row(&sql, refs.as_slice(), |row| row.get(0))?;
     Ok(count)
 }
@@ -360,10 +439,13 @@ pub fn get_oldest_observations(
         "SELECT {} FROM observations \
          WHERE {} AND {} AND status IN ('active', 'stale') \
          ORDER BY created_at_epoch ASC LIMIT ?{}",
-        obs_select_cols("observations"), project_filter, EPOCH_SECS_ONLY, idx
+        obs_select_cols("observations"),
+        project_filter,
+        EPOCH_SECS_ONLY,
+        idx
     );
     let mut stmt = conn.prepare(&sql)?;
-    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&param_values);
     let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
     collect_rows(rows)
 }
@@ -393,7 +475,11 @@ pub fn get_timeline_around(
             "SELECT {} FROM observations \
              WHERE {} AND created_at_epoch {} ?1{} \
              ORDER BY created_at_epoch {} LIMIT ?2",
-            obs_select_cols("observations"), EPOCH_SECS_ONLY, cmp, extra, order
+            obs_select_cols("observations"),
+            EPOCH_SECS_ONLY,
+            cmp,
+            extra,
+            order
         )
     };
 
@@ -410,8 +496,7 @@ pub fn get_timeline_around(
         };
         let sql = build_sql(is_before, project_filter.as_deref());
         let mut stmt = conn.prepare(&sql)?;
-        let refs: Vec<&dyn rusqlite::types::ToSql> =
-            params_vec.iter().map(|b| b.as_ref()).collect();
+        let refs = crate::db::to_sql_refs(&params_vec);
         let rows = stmt.query_map(refs.as_slice(), map_observation_row)?;
         for row in rows {
             result.push(row?);

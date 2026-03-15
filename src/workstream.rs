@@ -79,11 +79,7 @@ pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<
             completed_at_epoch: row.get(10)?,
         })
     })?;
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
-    Ok(result)
+    crate::db_query::collect_rows(rows)
 }
 
 pub fn query_workstreams(
@@ -114,11 +110,7 @@ pub fn query_workstreams(
     } else {
         stmt.query_map(params![project], map_workstream_row)?
     };
-    let mut result = Vec::new();
-    for row in rows {
-        result.push(row?);
-    }
-    Ok(result)
+    crate::db_query::collect_rows(rows)
 }
 
 fn map_workstream_row(row: &rusqlite::Row) -> rusqlite::Result<WorkStream> {
@@ -194,11 +186,7 @@ pub fn upsert_workstream(
     } else {
         WorkStreamStatus::Active
     };
-    let completed_at = if parsed.is_completed {
-        Some(now)
-    } else {
-        None
-    };
+    let completed_at = if parsed.is_completed { Some(now) } else { None };
 
     let ws_id = if let Some(existing) = find_matching_workstream(conn, project, title)? {
         conn.execute(
@@ -276,10 +264,15 @@ pub fn update_workstream_manual(
     if let Some(sv) = &status_val {
         if *sv == WorkStreamStatus::Completed {
             sets.push(format!("completed_at_epoch = ?{}", param_idx));
+            param_idx += 1;
         }
     }
 
-    let sql = format!("UPDATE workstreams SET {} WHERE id = ?{}", sets.join(", "), param_idx);
+    let sql = format!(
+        "UPDATE workstreams SET {} WHERE id = ?{}",
+        sets.join(", "),
+        param_idx
+    );
 
     // Use a simpler approach: always include all params positionally
     let completed_at = status_val
@@ -301,7 +294,7 @@ pub fn update_workstream_manual(
     }
     dynamic_params.push(Box::new(id));
 
-    let refs: Vec<&dyn rusqlite::types::ToSql> = dynamic_params.iter().map(|b| b.as_ref()).collect();
+    let refs = crate::db::to_sql_refs(&dynamic_params);
     let affected = conn.execute(&sql, refs.as_slice())?;
     Ok(affected > 0)
 }

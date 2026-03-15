@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::db;
+use crate::memory;
 use crate::search;
 
 #[derive(Clone)]
@@ -86,6 +87,16 @@ struct SaveMemoryParams {
     #[schemars(description = "Project name")]
     project: Option<String>,
     #[schemars(
+        description = "Stable topic identifier for cross-session dedup. Same project+topic_key updates existing memory instead of creating new one. Format: kebab-case descriptive key, e.g. 'fts5-search-strategy', 'auth-middleware-design'."
+    )]
+    topic_key: Option<String>,
+    #[schemars(
+        description = "Memory type: decision, discovery, bugfix, architecture, preference. Defaults to 'discovery'."
+    )]
+    memory_type: Option<String>,
+    #[schemars(description = "List of related file paths")]
+    files: Option<Vec<String>>,
+    #[schemars(
         description = "Optional local markdown path for backup copy. Relative paths are resolved from current working directory."
     )]
     local_path: Option<String>,
@@ -115,13 +126,12 @@ struct UpdateWorkStreamParams {
 struct SearchResult {
     id: i64,
     r#type: String,
-    title: Option<String>,
-    subtitle: Option<String>,
-    created_at: String,
-    project: Option<String>,
-    status: String,
+    title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content_session_id: Option<String>,
+    topic_key: Option<String>,
+    updated_at: String,
+    project: String,
+    status: String,
 }
 
 const LOCAL_SAVE_ENABLE_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_COPY";
@@ -138,13 +148,7 @@ fn env_enabled(key: &str, default: bool) -> bool {
 }
 
 fn remem_data_dir() -> PathBuf {
-    std::env::var("REMEM_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".remem")
-        })
+    db::data_dir()
 }
 
 fn sanitize_segment(raw: &str, fallback: &str, limit: usize) -> String {
@@ -238,9 +242,9 @@ fn write_local_note(path: &Path, content: &str) -> Result<(), String> {
 
 #[tool_router]
 impl MemoryServer {
-    /// Search memory index. Returns IDs with titles. Use get_observations for full details.
+    /// Search memories by keyword/project/type.
     #[tool(
-        description = "Search past observations by keyword/project/type. Returns compact results (id, type, title, subtitle). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
+        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let start = std::time::Instant::now();
@@ -272,15 +276,19 @@ impl MemoryServer {
 
             let search_results: Vec<SearchResult> = results
                 .into_iter()
-                .map(|o| SearchResult {
-                    id: o.id,
-                    r#type: o.r#type,
-                    title: o.title,
-                    subtitle: o.subtitle,
-                    created_at: o.created_at,
-                    project: o.project,
-                    status: o.status,
-                    content_session_id: o.content_session_id,
+                .map(|m| {
+                    let updated = chrono::DateTime::from_timestamp(m.updated_at_epoch, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_default();
+                    SearchResult {
+                        id: m.id,
+                        r#type: m.memory_type,
+                        title: m.title,
+                        topic_key: m.topic_key,
+                        updated_at: updated,
+                        project: m.project,
+                        status: m.status,
+                    }
                 })
                 .collect();
 
@@ -396,9 +404,15 @@ impl MemoryServer {
         })
     }
 
-    /// Manually save a memory/observation
+    /// Save a structured memory for future sessions
     #[tool(
-        description = "Persist an important observation/decision for future sessions. By default this tool also writes a local markdown backup copy. If user asks to 'save a document', create/update a local file first; use save_memory as long-term memory backup."
+        description = "Save a memory for future sessions. MUST be called after: \
+        (1) architecture decisions — record what was chosen, why, and what was rejected, \
+        (2) bug fixes with root cause — record symptom, root cause, fix, and prevention, \
+        (3) important discoveries — record finding and its implications, \
+        (4) user preferences — record preference and reasoning. \
+        Use topic_key for cross-session dedup (same project+topic_key updates existing memory). \
+        By default also writes a local markdown backup."
     )]
     fn save_memory(
         &self,
@@ -407,14 +421,22 @@ impl MemoryServer {
         crate::log::info(
             "mcp",
             &format!(
-                "save_memory called title={:?} project={:?} text_len={}",
+                "save_memory called title={:?} project={:?} type={:?} topic_key={:?} text_len={}",
                 params.title,
                 params.project,
+                params.memory_type,
+                params.topic_key,
                 params.text.len(),
             ),
         );
         let project = params.project.as_deref().unwrap_or("manual");
         let title = params.title.as_deref().unwrap_or("Memory");
+        let memory_type = params.memory_type.as_deref().unwrap_or("discovery");
+        let files_json = params
+            .files
+            .as_ref()
+            .and_then(|f| serde_json::to_string(f).ok());
+
         let local_copy_enabled = env_enabled(LOCAL_SAVE_ENABLE_ENV, true);
         let mut local_path_str: Option<String> = None;
         let local_status: &str = if local_copy_enabled {
@@ -438,36 +460,34 @@ impl MemoryServer {
         }
 
         self.with_conn(|conn| {
-            let id = db::insert_observation(
+            let id = memory::insert_memory(
                 conn,
-                "manual",
+                None,
                 project,
-                "discovery",
-                params.title.as_deref(),
-                None,
-                Some(&params.text),
-                None,
-                None,
-                None,
-                None,
-                None,
-                0,
+                params.topic_key.as_deref(),
+                title,
+                &params.text,
+                memory_type,
+                files_json.as_deref(),
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
                 e.to_string()
             })?;
 
+            let upserted = params.topic_key.is_some();
             crate::log::info(
                 "mcp",
                 &format!(
-                    "save_memory done id={} local_status={} local_path={:?}",
-                    id, local_status, local_path_str
+                    "save_memory done id={} type={} upserted={} local_status={} local_path={:?}",
+                    id, memory_type, upserted, local_status, local_path_str
                 ),
             );
             serde_json::to_string(&json!({
                 "id": id,
                 "status": "saved",
+                "memory_type": memory_type,
+                "upserted": upserted,
                 "local_status": local_status,
                 "local_path": local_path_str,
             }))
@@ -536,7 +556,10 @@ impl MemoryServer {
             })?;
             crate::log::info(
                 "mcp",
-                &format!("update_workstream done id={} updated={}", params.id, updated),
+                &format!(
+                    "update_workstream done id={} updated={}",
+                    params.id, updated
+                ),
             );
             serde_json::to_string(&json!({
                 "id": params.id,
@@ -567,6 +590,21 @@ impl ServerHandler for MemoryServer {
                  - You need implementation details for code you're about to modify\n\
                  - Debugging an issue that may have been fixed before\n\
                  - Looking for architecture decisions or rationale\n\n\
+                 ## When to save memory (MUST follow)\n\
+                 Call `save_memory` immediately when:\n\
+                 1. **Making a technical decision** → type=decision, record what was chosen, why, what was rejected\n\
+                 2. **Fixing a bug** → type=bugfix, record root cause, fix, how to prevent\n\
+                 3. **Discovering a code constraint/pattern** → type=discovery, record finding and impact\n\
+                 4. **Completing a feature module** → type=architecture, record design points and file structure\n\
+                 5. **Learning a user preference** → type=preference, record preference and reasoning\n\n\
+                 ## topic_key rules\n\
+                 - Same topic MUST use a stable topic_key — cross-session updates to same memory instead of duplicates\n\
+                 - Format: kebab-case descriptive key, e.g. \"fts5-search-strategy\", \"auth-middleware-design\"\n\
+                 - Before saving, search first to check if a memory on this topic already exists\n\n\
+                 ## Do NOT save\n\
+                 - Single file edits (git tracks these)\n\
+                 - Temporary debugging steps (only save conclusions)\n\
+                 - Content that duplicates an existing memory (search first)\n\n\
                  ## Tips\n\
                  - The context index is usually sufficient — only fetch details when needed\n\
                  - bugfix and decision types often contain critical context worth fetching\n\
@@ -596,20 +634,19 @@ pub async fn run_mcp_server() -> Result<()> {
         ),
     );
     let server = MemoryServer::new()?;
-    // Quick sanity check: count observations
-    {
-        let conn = server.conn.lock().unwrap();
-        let count: i64 = conn
-            .query_row("SELECT count(*) FROM observations", [], |r| r.get(0))
+    // Quick sanity check: count memories + observations
+    if let Ok(conn) = server.conn.lock() {
+        let mem_count: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
             .unwrap_or(-1);
-        let fts_count: i64 = conn
-            .query_row("SELECT count(*) FROM observations_fts", [], |r| r.get(0))
+        let obs_count: i64 = conn
+            .query_row("SELECT count(*) FROM observations", [], |r| r.get(0))
             .unwrap_or(-1);
         crate::log::info(
             "mcp",
             &format!(
-                "server ready observations={} fts_index={}",
-                count, fts_count
+                "server ready memories={} observations={}",
+                mem_count, obs_count
             ),
         );
     }

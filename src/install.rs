@@ -25,9 +25,7 @@ fn old_hooks_path() -> PathBuf {
 }
 
 fn remem_data_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".remem")
+    crate::db::data_dir()
 }
 
 fn binary_path() -> Result<String> {

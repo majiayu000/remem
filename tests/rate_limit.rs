@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{db, observe, search};
+use remem::{db, memory, observe, search};
 
 fn setup_observation_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -39,7 +39,8 @@ fn setup_observation_schema(conn: &Connection) -> Result<()> {
         CREATE VIRTUAL TABLE observations_fts USING fts5(
             title, subtitle, narrative, facts, concepts,
             content='observations',
-            content_rowid='id'
+            content_rowid='id',
+            tokenize='trigram'
         );
 
         CREATE TRIGGER observations_ai AFTER INSERT ON observations BEGIN
@@ -57,6 +58,49 @@ fn setup_observation_schema(conn: &Connection) -> Result<()> {
             VALUES ('delete', old.id, old.title, old.subtitle, old.narrative, old.facts, old.concepts);
             INSERT INTO observations_fts(rowid, title, subtitle, narrative, facts, concepts)
             VALUES (new.id, new.title, new.subtitle, new.narrative, new.facts, new.concepts);
+        END;",
+    )?;
+    Ok(())
+}
+
+fn setup_memory_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE memories (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT,
+            project TEXT NOT NULL,
+            topic_key TEXT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            files TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active'
+        );
+
+        CREATE VIRTUAL TABLE memories_fts USING fts5(
+            title, content,
+            content='memories',
+            content_rowid='id',
+            tokenize='trigram'
+        );
+
+        CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
+            INSERT INTO memories_fts(rowid, title, content)
+            VALUES (new.id, new.title, new.content);
+        END;
+
+        CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, title, content)
+            VALUES ('delete', old.id, old.title, old.content);
+            INSERT INTO memories_fts(rowid, title, content)
+            VALUES (new.id, new.title, new.content);
+        END;
+
+        CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
+            INSERT INTO memories_fts(memories_fts, rowid, title, content)
+            VALUES ('delete', old.id, old.title, old.content);
         END;",
     )?;
     Ok(())
@@ -112,22 +156,22 @@ fn get_observations_by_ids_respects_project_filter() -> Result<()> {
 #[test]
 fn search_handles_hyphenated_queries_without_fts_error() -> Result<()> {
     let conn = Connection::open_in_memory()?;
-    setup_observation_schema(&conn)?;
-    let now = chrono::Utc::now().timestamp();
+    setup_memory_schema(&conn)?;
 
-    conn.execute(
-        "INSERT INTO observations
-         (id, memory_session_id, project, type, title, narrative, created_at, created_at_epoch, status)
-         VALUES (1, 'm1', 'p', 'feature', 'om-generator refactor', 'CRE deal member', '2026-02-21T00:00:00Z', ?1, 'active')",
-        params![now],
+    memory::insert_memory(
+        &conn,
+        Some("s1"),
+        "p",
+        None,
+        "om-generator refactor",
+        "CRE deal member refactoring complete",
+        "discovery",
+        None,
     )?;
 
-    // Hyphenated query should not cause "no such column" FTS5 error
     let results = search::search(&conn, Some("om-generator"), None, None, 10, 0, true)?;
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, 1);
 
-    // Multiple hyphens and special chars
     let results = search::search(&conn, Some("om-generator CRE"), None, None, 10, 0, true)?;
     assert_eq!(results.len(), 1);
     Ok(())
@@ -156,5 +200,122 @@ fn search_decay_prefers_newer_records_on_same_match() -> Result<()> {
     let results = db::search_observations_fts(&conn, "hello", Some("p"), None, 10, 0, true)?;
     assert!(results.len() >= 2);
     assert_eq!(results[0].id, 2);
+    Ok(())
+}
+
+/// Helper to insert a test memory.
+fn insert_mem(conn: &Connection, project: &str, title: &str, content: &str) -> Result<i64> {
+    memory::insert_memory(
+        conn,
+        Some("s1"),
+        project,
+        None,
+        title,
+        content,
+        "discovery",
+        None,
+    )
+}
+
+#[test]
+fn search_chinese_4char_via_fts_trigram() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "竞品对标分析报告", "调研了多个内存框架")?;
+    insert_mem(&conn, "p", "English only title", "No Chinese here")?;
+
+    let results = search::search(&conn, Some("竞品对标"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    assert!(results[0].title.contains("竞品"));
+    Ok(())
+}
+
+#[test]
+fn search_chinese_2char_via_like_fallback() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "竞品对标分析报告", "调研了多个内存框架")?;
+    insert_mem(&conn, "p", "English only title", "No Chinese here")?;
+
+    let results = search::search(&conn, Some("竞品"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    assert!(results[0].title.contains("竞品"));
+    Ok(())
+}
+
+#[test]
+fn search_chinese_single_char_via_like_fallback() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "竞品对标分析报告", "调研了多个内存框架")?;
+
+    let results = search::search(&conn, Some("框"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn search_english_short_token_via_like_fallback() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "DB schema migration", "Updated AI model")?;
+    insert_mem(&conn, "p", "Other topic entirely", "Nothing relevant")?;
+
+    let results = search::search(&conn, Some("DB"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    assert!(results[0].title.contains("DB"));
+    Ok(())
+}
+
+#[test]
+fn search_mixed_chinese_english() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "Letta 框架分析", "内存管理系统调研")?;
+    insert_mem(&conn, "p", "Letta overview", "English description")?;
+    insert_mem(&conn, "p", "其他框架", "不相关内容")?;
+
+    let results = search::search(&conn, Some("Letta 框架"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    assert!(results[0].title.contains("Letta"));
+    Ok(())
+}
+
+#[test]
+fn search_no_results_returns_empty() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "Hello world", "Some content")?;
+
+    let results = search::search(&conn, Some("不存在的内容"), None, None, 10, 0, true)?;
+    assert!(results.is_empty());
+    Ok(())
+}
+
+#[test]
+fn search_chinese_in_narrative_field() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(
+        &conn,
+        "p",
+        "English title",
+        "这段叙述包含工作流状态追踪的设计决策",
+    )?;
+
+    let results = search::search(&conn, Some("工作流"), None, None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn search_with_project_filter() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "proj-a", "竞品对标报告", "分析内容")?;
+    insert_mem(&conn, "proj-b", "竞品对标报告", "分析内容")?;
+
+    let results = search::search(&conn, Some("竞品对标"), Some("proj-a"), None, 10, 0, true)?;
+    assert_eq!(results.len(), 1);
     Ok(())
 }
