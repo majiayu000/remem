@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use crate::db::{self, Observation, SessionSummary};
 use crate::memory_format::OBSERVATION_TYPES;
+use crate::workstream::WorkStream;
 
 const CHARS_PER_TOKEN: usize = 4;
 const SUMMARY_LOOKAHEAD: i64 = 1;
@@ -222,6 +223,17 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, use_colors: bool) 
             economics.savings,
             economics.savings_percent,
         ));
+    }
+
+    // Active WorkStreams
+    match crate::workstream::query_active_workstreams(&conn, &project) {
+        Ok(workstreams) if !workstreams.is_empty() => {
+            render_workstreams(&mut output, &workstreams);
+        }
+        Err(e) => {
+            crate::log::warn("context", &format!("query workstreams failed: {}", e));
+        }
+        _ => {}
     }
 
     // Build timeline — high-value types get priority for full display
@@ -497,6 +509,26 @@ fn render_summary_fields(output: &mut String, summary: &SessionSummary) {
             }
         }
     }
+}
+
+fn render_workstreams(output: &mut String, workstreams: &[WorkStream]) {
+    output.push_str("**Active WorkStreams**:\n");
+    output.push_str("| # | Status | WorkStream | Progress | Next Action |\n");
+    output.push_str("|---|--------|------------|----------|-------------|\n");
+    for ws in workstreams {
+        let status = match ws.status {
+            crate::workstream::WorkStreamStatus::Active => "active",
+            crate::workstream::WorkStreamStatus::Paused => "paused",
+            _ => ws.status.as_str(),
+        };
+        let progress = ws.progress.as_deref().unwrap_or("-");
+        let next = ws.next_action.as_deref().unwrap_or("-");
+        output.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            ws.id, status, ws.title, progress, next
+        ));
+    }
+    output.push('\n');
 }
 
 fn render_empty_state(project: &str, _use_colors: bool) {
