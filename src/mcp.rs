@@ -91,6 +91,26 @@ struct SaveMemoryParams {
     local_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct WorkStreamsParams {
+    #[schemars(description = "Project name filter")]
+    project: Option<String>,
+    #[schemars(description = "Status filter: active, paused, completed, abandoned")]
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct UpdateWorkStreamParams {
+    #[schemars(description = "WorkStream ID to update")]
+    id: i64,
+    #[schemars(description = "New status: active, paused, completed, abandoned")]
+    status: Option<String>,
+    #[schemars(description = "Next action to take")]
+    next_action: Option<String>,
+    #[schemars(description = "Current blockers")]
+    blockers: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct SearchResult {
     id: i64,
@@ -454,6 +474,77 @@ impl MemoryServer {
             .map_err(|e| e.to_string())
         })
     }
+
+    /// List workstreams for a project
+    #[tool(
+        description = "List active workstreams (high-level tasks tracked across sessions). Filter by project and/or status. Shows progress, next action, and blockers for each workstream."
+    )]
+    fn workstreams(
+        &self,
+        Parameters(params): Parameters<WorkStreamsParams>,
+    ) -> Result<String, String> {
+        crate::log::info(
+            "mcp",
+            &format!(
+                "workstreams called project={:?} status={:?}",
+                params.project, params.status
+            ),
+        );
+        self.with_conn(|conn| {
+            let project = params.project.as_deref().unwrap_or("");
+            let results = if project.is_empty() {
+                // No project filter — return empty hint
+                return Ok(r#"{"error": "project parameter required"}"#.to_string());
+            } else {
+                crate::workstream::query_workstreams(conn, project, params.status.as_deref())
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("workstreams query failed: {}", e));
+                        e.to_string()
+                    })?
+            };
+            crate::log::info("mcp", &format!("workstreams done count={}", results.len()));
+            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+        })
+    }
+
+    /// Manually update a workstream's status, next action, or blockers
+    #[tool(
+        description = "Update a workstream's status, next_action, or blockers. Use to manually mark a workstream as completed/paused/abandoned, or to update progress notes."
+    )]
+    fn update_workstream(
+        &self,
+        Parameters(params): Parameters<UpdateWorkStreamParams>,
+    ) -> Result<String, String> {
+        crate::log::info(
+            "mcp",
+            &format!(
+                "update_workstream called id={} status={:?}",
+                params.id, params.status
+            ),
+        );
+        self.with_conn(|conn| {
+            let updated = crate::workstream::update_workstream_manual(
+                conn,
+                params.id,
+                params.status.as_deref(),
+                params.next_action.as_deref(),
+                params.blockers.as_deref(),
+            )
+            .map_err(|e| {
+                crate::log::warn("mcp", &format!("update_workstream failed: {}", e));
+                e.to_string()
+            })?;
+            crate::log::info(
+                "mcp",
+                &format!("update_workstream done id={} updated={}", params.id, updated),
+            );
+            serde_json::to_string(&json!({
+                "id": params.id,
+                "updated": updated,
+            }))
+            .map_err(|e| e.to_string())
+        })
+    }
 }
 
 #[tool_handler]
@@ -480,7 +571,11 @@ impl ServerHandler for MemoryServer {
                  - The context index is usually sufficient — only fetch details when needed\n\
                  - bugfix and decision types often contain critical context worth fetching\n\
                  - Search supports project filter to scope results\n\
-                 - Observations with status=\"stale\" may be outdated. Prefer active observations when available."
+                 - Observations with status=\"stale\" may be outdated. Prefer active observations when available.\n\n\
+                 ## WorkStreams\n\
+                 - `workstreams(project)` lists active high-level tasks tracked across sessions\n\
+                 - `update_workstream(id, status?, next_action?, blockers?)` manually updates a workstream\n\
+                 - WorkStreams are auto-created from session summaries — no manual creation needed"
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
