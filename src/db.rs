@@ -56,7 +56,7 @@ fn project_label_from_path(path: &std::path::Path) -> String {
     }
 }
 
-fn canonical_project_path(cwd: &str) -> PathBuf {
+pub fn canonical_project_path(cwd: &str) -> PathBuf {
     let path = std::path::Path::new(cwd);
     let abs = if path.is_absolute() {
         path.to_path_buf()

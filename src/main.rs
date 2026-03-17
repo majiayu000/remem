@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use remem::{context, db, install, mcp, memory, observe, summarize, worker};
+use remem::{claude_memory, context, db, install, mcp, memory, observe, summarize, worker};
 
 #[derive(Parser)]
 #[command(name = "remem", about = "Persistent memory for Claude Code")]
@@ -43,6 +43,12 @@ enum Commands {
     Uninstall,
     /// Run data cleanup (old events + stale memories)
     Cleanup,
+    /// Sync session summaries to Claude Code native memory directory
+    SyncMemory {
+        /// Working directory
+        #[arg(long)]
+        cwd: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -86,6 +92,16 @@ async fn main() -> Result<()> {
         }
         Commands::Cleanup => {
             run_cleanup()?;
+        }
+        Commands::SyncMemory { cwd } => {
+            let cwd = cwd.unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
+            });
+            let project = db::project_from_cwd(&cwd);
+            claude_memory::sync_to_claude_memory(&cwd, &project)?;
         }
     }
 

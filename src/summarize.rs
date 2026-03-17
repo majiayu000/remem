@@ -356,6 +356,12 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
         "summary-job",
         &format!("saved summary project={} session={}", project, session_id),
     );
+
+    // Sync to Claude Code native memory directory
+    if let Err(e) = crate::claude_memory::sync_to_claude_memory(cwd, &project) {
+        crate::log::warn("summary-job", &format!("claude memory sync failed: {}", e));
+    }
+
     Ok(())
 }
 

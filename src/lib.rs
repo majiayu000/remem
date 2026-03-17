@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod claude_memory;
 pub mod context;
 pub mod db;
 pub mod db_job;

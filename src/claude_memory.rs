@@ -1,0 +1,194 @@
+//! Write session summaries to Claude Code's native memory directory.
+//!
+//! Claude Code auto-loads `~/.claude/projects/<encoded-cwd>/memory/MEMORY.md`
+//! and files referenced in it. By writing remem summaries there, Claude Code
+//! sees them natively without MCP calls.
+
+use anyhow::Result;
+use std::path::PathBuf;
+
+/// Encode a CWD path to Claude Code's project directory format.
+/// `/Users/lifcc/Desktop/code/AI/tools/remem` → `-Users-lifcc-Desktop-code-AI-tools-remem`
+fn encode_project_path(cwd: &str) -> String {
+    let canonical = crate::db::canonical_project_path(cwd);
+    let path_str = canonical.to_string_lossy();
+    path_str.replace('/', "-")
+}
+
+/// Get the Claude Code memory directory for a project.
+fn claude_memory_dir(cwd: &str) -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let encoded = encode_project_path(cwd);
+    home.join(".claude")
+        .join("projects")
+        .join(&encoded)
+        .join("memory")
+}
+
+const REMEM_FILE: &str = "remem_sessions.md";
+const MAX_SESSIONS: usize = 10;
+const MAX_DECISIONS: usize = 8;
+const REQUEST_CHAR_LIMIT: usize = 120;
+const COMPLETED_CHAR_LIMIT: usize = 200;
+
+/// Query recent session summaries and key decisions, then write to Claude Code memory.
+pub fn sync_to_claude_memory(cwd: &str, project: &str) -> Result<()> {
+    let conn = crate::db::open_db()?;
+    let memory_dir = claude_memory_dir(cwd);
+
+    // Check if Claude Code memory dir exists for this project
+    if !memory_dir.exists() {
+        crate::log::info(
+            "claude-mem",
+            &format!("skip: no claude memory dir for {}", project),
+        );
+        return Ok(());
+    }
+
+    // Query recent sessions
+    let mut stmt = conn.prepare(
+        "SELECT request, completed, decisions, created_at_epoch \
+         FROM session_summaries \
+         WHERE project = ?1 AND request IS NOT NULL AND request != '' \
+         ORDER BY created_at_epoch DESC LIMIT ?2",
+    )?;
+
+    struct SessionRow {
+        request: String,
+        completed: Option<String>,
+        decisions: Option<String>,
+        created_at_epoch: i64,
+    }
+
+    let sessions: Vec<SessionRow> = stmt
+        .query_map(rusqlite::params![project, MAX_SESSIONS as i64], |row| {
+            Ok(SessionRow {
+                request: row.get(0)?,
+                completed: row.get(1)?,
+                decisions: row.get(2)?,
+                created_at_epoch: row.get(3)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if sessions.is_empty() {
+        return Ok(());
+    }
+
+    // Build content
+    let mut content = String::new();
+    content.push_str("---\n");
+    content.push_str("name: remem_sessions\n");
+    content.push_str(
+        "description: 最近会话摘要和关键决策（由 remem 自动生成），详细记忆用 remem search 查询\n",
+    );
+    content.push_str("type: project\n");
+    content.push_str("---\n\n");
+
+    // Recent sessions
+    content.push_str("## Recent Sessions\n\n");
+    for s in &sessions {
+        let date = format_date(s.created_at_epoch);
+        let request: String = s.request.chars().take(REQUEST_CHAR_LIMIT).collect();
+        content.push_str(&format!("**{}** {}\n", date, request));
+
+        if let Some(completed) = &s.completed {
+            // Take first non-empty line, truncate
+            let first_line = completed
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("");
+            let truncated: String = first_line.chars().take(COMPLETED_CHAR_LIMIT).collect();
+            if !truncated.is_empty() {
+                content.push_str(&format!("  → {}\n", truncated));
+            }
+        }
+        content.push('\n');
+    }
+
+    // Collect unique decisions
+    let mut all_decisions: Vec<String> = Vec::new();
+    for s in &sessions {
+        if let Some(decisions) = &s.decisions {
+            for line in decisions.lines() {
+                let trimmed = line
+                    .trim()
+                    .trim_start_matches(['•', '-', '*', ' ', ':'])
+                    .replace("**", "");
+                let trimmed = trimmed.trim();
+                if !trimmed.is_empty() && all_decisions.len() < MAX_DECISIONS {
+                    // Deduplicate by checking prefix overlap
+                    let prefix: String = trimmed.chars().take(40).collect();
+                    if !all_decisions.iter().any(|d| d.starts_with(&prefix)) {
+                        all_decisions.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if !all_decisions.is_empty() {
+        content.push_str("## Key Decisions\n\n");
+        for d in &all_decisions {
+            let truncated: String = d.chars().take(COMPLETED_CHAR_LIMIT).collect();
+            content.push_str(&format!("- {}\n", truncated));
+        }
+        content.push('\n');
+    }
+
+    content.push_str("---\n");
+    content.push_str("*Auto-generated by remem. 详细记忆: `remem search` MCP 工具 | 数据库: ~/.remem/remem.db*\n");
+
+    // Write file
+    let file_path = memory_dir.join(REMEM_FILE);
+    std::fs::write(&file_path, &content)?;
+
+    // Update MEMORY.md if needed
+    ensure_memory_index(&memory_dir)?;
+
+    crate::log::info(
+        "claude-mem",
+        &format!(
+            "synced {} sessions + {} decisions to {}",
+            sessions.len(),
+            all_decisions.len(),
+            file_path.display()
+        ),
+    );
+
+    Ok(())
+}
+
+fn ensure_memory_index(memory_dir: &std::path::Path) -> Result<()> {
+    let index_path = memory_dir.join("MEMORY.md");
+    let pointer = format!("- [remem_sessions]({REMEM_FILE}) — 最近会话摘要和关键决策（remem 自动同步）");
+
+    if index_path.exists() {
+        let existing = std::fs::read_to_string(&index_path)?;
+        if existing.contains(REMEM_FILE) {
+            return Ok(());
+        }
+        // Append pointer
+        let mut new_content = existing.trim_end().to_string();
+        new_content.push_str("\n\n## Auto\n");
+        new_content.push_str(&pointer);
+        new_content.push('\n');
+        std::fs::write(&index_path, new_content)?;
+    } else {
+        let content = format!("# Memory Index\n\n## Auto\n{}\n", pointer);
+        std::fs::write(&index_path, content)?;
+    }
+
+    Ok(())
+}
+
+fn format_date(epoch: i64) -> String {
+    chrono::DateTime::from_timestamp(epoch, 0)
+        .map(|dt| {
+            use chrono::TimeZone;
+            let local = chrono::Local.from_utc_datetime(&dt.naive_utc());
+            local.format("%m-%d %H:%M").to_string()
+        })
+        .unwrap_or_default()
+}
