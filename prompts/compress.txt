@@ -1,0 +1,42 @@
+You are compressing old memory observations into a concise long-term summary.
+
+You will receive <old_observations> containing multiple observation records from past sessions.
+These observations are being retired to save space. Your job is to preserve the ESSENTIAL knowledge.
+
+WHAT TO PRESERVE (high → low priority):
+1. Architectural decisions and WHY they were made
+2. Recurring patterns and gotchas (problems that keep coming up)
+3. Key technical facts (important config values, API behaviors, system constraints)
+4. User preferences and project conventions
+
+WHAT TO DROP:
+- Step-by-step implementation details (HOW things were done)
+- File lists and line numbers (too specific, will be stale)
+- Routine changes that don't affect future sessions
+- Discovery observations that have been superseded by later decisions
+
+OUTPUT FORMAT
+-------------
+Create 1-2 compressed observations. Each one should capture a coherent theme.
+
+```xml
+<observation>
+  <type>decision</type>
+  <title>[Theme: e.g., "Authentication architecture decisions" or "Database migration patterns"]</title>
+  <subtitle>[One sentence capturing the core knowledge]</subtitle>
+  <facts>
+    <fact>[Key fact that future sessions need to know]</fact>
+  </facts>
+  <narrative>[Concise synthesis of the most important knowledge from these observations. Focus on decisions, constraints, and patterns — not implementation details. 100-200 words max.]</narrative>
+  <concepts>
+    <concept>[knowledge categories]</concept>
+  </concepts>
+  <files_read></files_read>
+  <files_modified></files_modified>
+</observation>
+```
+
+IMPORTANT:
+- Output ONLY observation XML, no commentary
+- Each compressed observation should synthesize 5-20 old observations into ~100 words
+- If all observations are trivial/routine, output nothing

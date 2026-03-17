@@ -1,6 +1,9 @@
 // Re-export submodules so callers can still use `db::xxx` paths.
+pub use crate::db_job::*;
 pub use crate::db_models::*;
+pub use crate::db_pending::*;
 pub use crate::db_query::*;
+pub use crate::db_usage::*;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -72,13 +75,11 @@ fn canonical_project_path(cwd: &str) -> PathBuf {
 }
 
 /// Build a stable project key from cwd.
-/// Format: "<last2>@<hash12>", where hash is derived from canonical absolute path.
-/// Example: "tools/remem@b7f8a1d44c2e"
+/// Format: "<last2>", where last2 is the last 2 path components.
+/// Example: "tools/remem"
 pub fn project_from_cwd(cwd: &str) -> String {
     let canonical = canonical_project_path(cwd);
-    let label = project_label_from_path(&canonical);
-    let suffix = deterministic_hash(canonical.to_string_lossy().as_bytes()) & 0x0000_FFFF_FFFF_FFFF;
-    format!("{label}@{suffix:012x}")
+    project_label_from_path(&canonical)
 }
 
 pub fn data_dir() -> PathBuf {
@@ -96,7 +97,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -109,9 +110,14 @@ pub fn open_db() -> Result<Connection> {
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;
 
+    // Load sqlite-vec extension
+    crate::vector::load_vec_extension(&conn)?;
+
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version < SCHEMA_VERSION {
         ensure_core_schema(&conn)?;
+        ensure_pending_table(&conn)?;
+        crate::vector::ensure_vec_table(&conn)?;
         ensure_schema_migrations(&conn, version)?;
         conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))?;
     }
@@ -196,6 +202,24 @@ fn ensure_core_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_pending_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS pending_observations (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            project TEXT NOT NULL,
+            tool_name TEXT NOT NULL,
+            tool_input TEXT,
+            tool_response TEXT,
+            cwd TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            lease_owner TEXT,
+            lease_expires_epoch INTEGER
+        )",
+    )?;
+    Ok(())
+}
+
 fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
     let migrations: &[(&str, &str, &str)] = &[
         (
@@ -234,6 +258,22 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
             conn.execute_batch(sql)?;
         }
     }
+
+    // v9: Remove @hash suffix from project fields
+    if old_version < 9 {
+        crate::log::info("db", "migrating to v9: removing @hash from project fields");
+        conn.execute_batch(
+            "UPDATE observations SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE memories SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE events SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE session_summaries SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE sdk_sessions SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE workstreams SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE pending_observations SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';
+             UPDATE jobs SET project = substr(project, 1, instr(project || '@', '@') - 1) WHERE project LIKE '%@%';"
+        )?;
+    }
+
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status);
          CREATE INDEX IF NOT EXISTS idx_observations_project_status

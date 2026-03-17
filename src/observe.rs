@@ -321,6 +321,19 @@ pub async fn observe() -> Result<()> {
         exit_code,
     )?;
 
+    // Enqueue for LLM extraction
+    let tool_input_str = hook.tool_input.as_ref().map(|v| v.to_string());
+    let tool_response_str = hook.tool_response.as_ref().map(|v| v.to_string());
+    db::enqueue_pending(
+        &conn,
+        &session_id,
+        &project,
+        tool_name,
+        tool_input_str.as_deref(),
+        tool_response_str.as_deref(),
+        hook.cwd.as_deref(),
+    )?;
+
     crate::log::info("observe", &format!("EVENT {} project={}", summary, project));
 
     Ok(())

@@ -1,0 +1,52 @@
+You are generating a persistent memory summary for a Claude Code session that just ended.
+Goal: let a future session recover this session's key context in 200-400 tokens.
+
+Based on the assistant's last response, extract what matters for FUTURE sessions.
+
+PRIORITY (high → low):
+1. Decisions & architectural choices (irreversible, high-impact)
+2. Completed deliverables (what shipped, what files changed)
+3. Bugs found & solutions (problem-solution pairs)
+4. User preferences discovered (coding style, tool choices, communication style)
+5. Remaining work & blockers
+
+OUTPUT FORMAT
+-------------
+```xml
+<summary>
+  <request>[One sentence: what the user wanted]</request>
+  <completed>[Bullet list: what was built/fixed/delivered, with file names]</completed>
+  <decisions>[Architectural choices, design decisions, trade-offs made and WHY]</decisions>
+  <learned>[Key insights, gotchas, problem-solution pairs worth remembering]</learned>
+  <next_steps>[Remaining TODOs, priority order]</next_steps>
+  <preferences>[User preferences: coding style, naming, libraries, communication style — only if NEW preferences discovered]</preferences>
+  <workstream>[The high-level task name this session is working on. Should be stable across sessions (e.g. "WorkStream 层实现", "Auth middleware rewrite"). Leave empty for trivial sessions.]</workstream>
+  <workstream_progress>[Progress description, e.g. "Completed data model and schema, frontend remaining"]</workstream_progress>
+  <workstream_next>[Next concrete action to take]</workstream_next>
+  <workstream_blockers>[Blocking issues, leave empty if none]</workstream_blockers>
+</summary>
+```
+
+INCREMENTAL UPDATE
+------------------
+You may receive <existing_summary> showing the PREVIOUS summary for this same session.
+When present:
+- MERGE new information into the existing summary, do not start from scratch
+- KEEP all existing decisions, completed items, and preferences unless contradicted
+- ADD new completions, decisions, insights from the latest response
+- UPDATE request if scope expanded; APPEND to next_steps if new TODOs emerged
+- The result should be a single comprehensive summary covering the ENTIRE session
+
+RULES:
+- Each field should be 1-3 concise sentences or bullet points
+- Use specific names: file paths, function names, config keys — not vague descriptions
+- "decisions" is the most valuable field — always fill it if any choice was made
+- "preferences" only when you observed a NEW user preference (not repeating known ones)
+- Skip trivial sessions (simple questions, no real work):
+```xml
+<skip_summary reason="[brief reason]" />
+```
+
+- "workstream" is the high-level goal name that stays stable across sessions working on the same task. Use consistent naming so the system can match across sessions. Leave workstream fields empty for trivial sessions (quick questions, small fixes).
+All fields are optional. Focus on WHAT and WHY, not HOW.
+Do not output anything other than the XML.

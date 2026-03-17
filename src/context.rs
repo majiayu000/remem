@@ -97,7 +97,12 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         "**\u{63d0}\u{793a}\u{ff1a}** \u{4fee}\u{6539}\u{5df2}\u{77e5}\u{9879}\u{76ee}\u{4ee3}\u{7801}\u{524d}\u{ff0c}\u{5148}\u{7528} remem search \u{5de5}\u{5177}\u{67e5}\u{8be2}\u{76f8}\u{5173}\u{8bb0}\u{5fc6}\u{3002}\u{505a}\u{51fa}\u{91cd}\u{8981}\u{51b3}\u{7b56}\u{6216}\u{4fee}\u{590d} bug \u{540e}\u{ff0c}\u{7528} save_memory(type=..., topic_key=...) \u{8bb0}\u{5f55}\u{3002}\n\n",
     );
 
-    // Key memories grouped by type
+    // Core Memory (Tier 0): Top weighted memories with full content
+    if !memories.is_empty() {
+        render_core_memory(&mut output, &memories);
+    }
+
+    // Memory Index (Tier 1): All memories grouped by type
     if !memories.is_empty() {
         render_memories_by_type(&mut output, &memories);
     }
@@ -130,7 +135,79 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
     Ok(())
 }
 
+fn calculate_memory_score(memory: &Memory, now_epoch: i64) -> f64 {
+    // Type weights
+    let type_weight = match memory.memory_type.as_str() {
+        "decision" => 3.0,
+        "bugfix" => 2.5,
+        "architecture" => 2.0,
+        "discovery" => 1.0,
+        "preference" => 1.5,
+        _ => 0.5,
+    };
+
+    // Time decay
+    let age_days = (now_epoch - memory.updated_at_epoch) / 86400;
+    let time_decay = if age_days <= 7 {
+        1.0
+    } else if age_days <= 30 {
+        0.7
+    } else {
+        0.4
+    };
+
+    type_weight * time_decay
+}
+
+fn render_core_memory(output: &mut String, memories: &[Memory]) {
+    let now = chrono::Utc::now().timestamp();
+
+    // Calculate scores and sort
+    let mut scored: Vec<(&Memory, f64)> = memories
+        .iter()
+        .map(|m| (m, calculate_memory_score(m, now)))
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Take top 5-8 memories, limit total to ~1500 tokens (~6000 chars)
+    let mut selected = Vec::new();
+    let mut total_chars = 0;
+    const MAX_CHARS: usize = 6000;
+    const MAX_ITEMS: usize = 8;
+    const ITEM_CHAR_LIMIT: usize = 400;
+
+    for (mem, _score) in scored.iter().take(MAX_ITEMS) {
+        let truncated: String = mem.text.chars().take(ITEM_CHAR_LIMIT).collect();
+        let item_len = truncated.len() + mem.title.len() + 50; // +50 for formatting
+        if total_chars + item_len > MAX_CHARS && !selected.is_empty() {
+            break;
+        }
+        selected.push((mem, truncated));
+        total_chars += item_len;
+    }
+
+    if selected.is_empty() {
+        return;
+    }
+
+    output.push_str("## Core Memory\n\n");
+    output.push_str("Critical context loaded on every session start:\n\n");
+
+    for (mem, truncated) in selected {
+        let emoji = type_emoji(&mem.memory_type);
+        let date = format_epoch_short(mem.updated_at_epoch);
+        output.push_str(&format!("### {} {} (#{}, {})\n\n", emoji, mem.title, mem.id, date));
+        output.push_str(&truncated);
+        if mem.text.len() > ITEM_CHAR_LIMIT {
+            output.push_str("...");
+        }
+        output.push_str("\n\n");
+    }
+}
+
 fn render_memories_by_type(output: &mut String, memories: &[Memory]) {
+    output.push_str("## Memory Index\n\n");
+
     // Group by type
     let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
     for m in memories {

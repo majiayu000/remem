@@ -76,6 +76,8 @@ struct GetObservationsParams {
     ids: Vec<i64>,
     #[schemars(description = "Project name filter")]
     project: Option<String>,
+    #[schemars(description = "Source type: 'memory' or 'observation' (default: 'memory')")]
+    source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -129,6 +131,9 @@ struct SearchResult {
     title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     topic_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
+    source: String,
     updated_at: String,
     project: String,
     status: String,
@@ -244,7 +249,7 @@ fn write_local_note(path: &Path, content: &str) -> Result<(), String> {
 impl MemoryServer {
     /// Search memories by keyword/project/type.
     #[tool(
-        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
+        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key, 300-char preview). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let start = std::time::Instant::now();
@@ -280,11 +285,14 @@ impl MemoryServer {
                     let updated = chrono::DateTime::from_timestamp(m.updated_at_epoch, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                         .unwrap_or_default();
+                    let preview = m.text.chars().take(300).collect::<String>();
                     SearchResult {
                         id: m.id,
                         r#type: m.memory_type,
                         title: m.title,
                         topic_key: m.topic_key,
+                        preview: Some(preview),
+                        source: "memory".to_string(),
                         updated_at: updated,
                         project: m.project,
                         status: m.status,
@@ -366,37 +374,51 @@ impl MemoryServer {
 
     /// Get full observation details by IDs
     #[tool(
-        description = "Fetch complete observation details (narrative, facts, concepts, files_read, files_modified) by IDs. Use after search() to get full context. This is the second step in the search → get_observations workflow."
+        description = "Fetch complete observation details (narrative, facts, concepts, files_read, files_modified) by IDs. Use after search() to get full context. This is the second step in the search → get_observations workflow. Supports both 'memory' and 'observation' sources."
     )]
     fn get_observations(
         &self,
         Parameters(params): Parameters<GetObservationsParams>,
     ) -> Result<String, String> {
         let start = std::time::Instant::now();
+        let source = params.source.as_deref().unwrap_or("memory");
         crate::log::info(
             "mcp",
             &format!(
-                "get_observations called ids={:?} project={:?}",
-                params.ids, params.project
+                "get_observations called ids={:?} project={:?} source={}",
+                params.ids, params.project, source
             ),
         );
         self.with_conn(|conn| {
-            let results = db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
-                .map_err(|e| {
-                    crate::log::warn("mcp", &format!("get_observations failed: {}", e));
-                    e.to_string()
-                })?;
-            let accessed_ids: Vec<i64> = results.iter().map(|o| o.id).collect();
-            if !accessed_ids.is_empty() {
-                if let Err(e) = db::update_last_accessed(conn, &accessed_ids) {
-                    crate::log::warn("mcp", &format!("update_last_accessed failed: {}", e));
+            let results = if source == "observation" {
+                // Query observations table
+                let obs = db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("get_observations failed: {}", e));
+                        e.to_string()
+                    })?;
+                let accessed_ids: Vec<i64> = obs.iter().map(|o| o.id).collect();
+                if !accessed_ids.is_empty() {
+                    if let Err(e) = db::update_last_accessed(conn, &accessed_ids) {
+                        crate::log::warn("mcp", &format!("update_last_accessed failed: {}", e));
+                    }
                 }
-            }
+                serde_json::to_value(&obs).map_err(|e| e.to_string())?
+            } else {
+                // Query memories table
+                let memories = memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref())
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("get_memories failed: {}", e));
+                        e.to_string()
+                    })?;
+                serde_json::to_value(&memories).map_err(|e| e.to_string())?
+            };
             crate::log::info(
                 "mcp",
                 &format!(
-                    "get_observations done count={} {}ms",
-                    results.len(),
+                    "get_observations done source={} count={} {}ms",
+                    source,
+                    params.ids.len(),
                     start.elapsed().as_millis()
                 ),
             );

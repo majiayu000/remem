@@ -119,10 +119,11 @@ fn bash_skip_filter_stays_in_observe_module() {
 fn project_key_is_stable_and_collision_resistant() {
     let a = db::project_from_cwd("/tmp/work/api");
     let b = db::project_from_cwd("/tmp/personal/api");
+    // After v9 migration: no @hash suffix, just last 2 components
+    assert_eq!(a, "work/api");
+    assert_eq!(b, "personal/api");
     assert_ne!(a, b);
-    assert!(a.starts_with("work/api@"));
-    let suffix = a.split('@').nth(1).unwrap_or_default();
-    assert_eq!(suffix.len(), 12);
+    // Stability: same path always produces same key
     assert_eq!(a, db::project_from_cwd("/tmp/work/api"));
 }
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use remem::{context, db, install, mcp, memory, observe};
+use remem::{context, db, install, mcp, memory, observe, summarize, worker};
 
 #[derive(Parser)]
 #[command(name = "remem", about = "Persistent memory for Claude Code")]
@@ -27,8 +27,14 @@ enum Commands {
     SessionInit,
     /// Extract observations from PostToolUse hook (stdin JSON)
     Observe,
-    /// Stop hook: auto-summarize session activity and run cleanup
+    /// Stop hook: enqueue summary job and trigger worker
     Summarize,
+    /// Background worker: process queued jobs (summary/compress/flush)
+    Worker {
+        /// Run one cycle then exit (for hook-triggered workers)
+        #[arg(long)]
+        once: bool,
+    },
     /// Run MCP server (stdio transport, long-running)
     Mcp,
     /// Install hooks + MCP to ~/.claude/settings.json
@@ -64,7 +70,10 @@ async fn main() -> Result<()> {
             observe::observe().await?;
         }
         Commands::Summarize => {
-            run_summarize()?;
+            summarize::summarize().await?;
+        }
+        Commands::Worker { once } => {
+            worker::run(once, 2000).await?;
         }
         Commands::Mcp => {
             mcp::run_mcp_server().await?;
@@ -78,90 +87,6 @@ async fn main() -> Result<()> {
         Commands::Cleanup => {
             run_cleanup()?;
         }
-    }
-
-    Ok(())
-}
-
-/// Stop hook: pure SQL session summary (no LLM).
-fn run_summarize() -> Result<()> {
-    let input = std::io::read_to_string(std::io::stdin())?;
-    let hook: serde_json::Value = serde_json::from_str(&input)?;
-
-    let session_id = hook["session_id"].as_str().unwrap_or("unknown").to_string();
-    let cwd = hook["cwd"].as_str().unwrap_or(".").to_string();
-    let project = db::project_from_cwd(&cwd);
-
-    let conn = db::open_db()?;
-
-    // Count session activity
-    let event_count = memory::count_session_events(&conn, &session_id)?;
-    let memory_count = memory::count_session_memories(&conn, &session_id)?;
-
-    remem::log::info(
-        "summarize",
-        &format!(
-            "session={} events={} memories={}",
-            session_id, event_count, memory_count
-        ),
-    );
-
-    // If Claude didn't save any memories, generate auto activity summary
-    if memory_count == 0 && event_count > 0 {
-        let files = memory::get_session_files_modified(&conn, &session_id)?;
-        let files_str = if files.is_empty() {
-            "none".to_string()
-        } else {
-            files.join(", ")
-        };
-        let summary = format!(
-            "Session activity: {} events, modified files: [{}]",
-            event_count, files_str
-        );
-
-        memory::insert_memory(
-            &conn,
-            Some(&session_id),
-            &project,
-            None,
-            &format!("Session {}", &session_id[..session_id.len().min(8)]),
-            &summary,
-            "session_activity",
-            None,
-        )?;
-
-        remem::log::info(
-            "summarize",
-            &format!("auto-saved session_activity: {summary}"),
-        );
-    }
-
-    // Cleanup old data
-    let events_deleted = memory::cleanup_old_events(&conn, 30)?;
-    let memories_archived = memory::archive_stale_memories(&conn, 180)?;
-
-    if events_deleted > 0 || memories_archived > 0 {
-        remem::log::info(
-            "summarize",
-            &format!(
-                "cleanup: deleted {} old events, archived {} stale memories",
-                events_deleted, memories_archived
-            ),
-        );
-    }
-
-    // Workstream lifecycle
-    let paused = remem::workstream::auto_pause_inactive(&conn, &project, 7)?;
-    let abandoned = remem::workstream::auto_abandon_inactive(&conn, &project, 30)?;
-
-    if paused > 0 || abandoned > 0 {
-        remem::log::info(
-            "summarize",
-            &format!(
-                "workstream lifecycle: paused={}, abandoned={}",
-                paused, abandoned
-            ),
-        );
     }
 
     Ok(())

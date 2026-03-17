@@ -47,19 +47,6 @@ pub struct SessionSummary {
     pub project: Option<String>,
 }
 
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct PendingObservation {
-    pub id: i64,
-    pub session_id: String,
-    pub project: String,
-    pub tool_name: String,
-    pub tool_input: Option<String>,
-    pub tool_response: Option<String>,
-    pub cwd: Option<String>,
-    pub created_at_epoch: i64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobType {
     Observation,

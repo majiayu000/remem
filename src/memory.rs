@@ -13,7 +13,7 @@ pub struct Memory {
     pub project: String,
     pub topic_key: Option<String>,
     pub title: String,
-    pub content: String,
+    pub text: String,
     pub memory_type: String,
     pub files: Option<String>,
     pub created_at_epoch: i64,
@@ -388,7 +388,7 @@ fn map_memory_row(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         project: row.get(2)?,
         topic_key: row.get(3)?,
         title: row.get(4)?,
-        content: row.get(5)?,
+        text: row.get(5)?,
         memory_type: row.get(6)?,
         files: row.get(7)?,
         created_at_epoch: row.get(8)?,
@@ -525,7 +525,7 @@ mod tests {
         let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
         assert_eq!(memories.len(), 1);
         assert_eq!(memories[0].title, "FTS5 trigram v2");
-        assert!(memories[0].content.contains("LIKE fallback"));
+        assert!(memories[0].text.contains("LIKE fallback"));
     }
 
     #[test]
