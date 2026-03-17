@@ -3,7 +3,7 @@ use chrono::{Local, TimeZone};
 use std::collections::HashMap;
 
 use crate::db;
-use crate::memory::{self, Event, Memory};
+use crate::memory::{self, Memory};
 use crate::workstream::WorkStream;
 
 use crate::db::project_from_cwd;
@@ -71,13 +71,13 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
 
     // Load memories grouped by type
     let memories = memory::get_recent_memories(&conn, &project, 50).unwrap_or_default();
-    // Load recent events for activity summary
-    let events = memory::get_recent_events(&conn, &project, 30).unwrap_or_default();
+    // Load recent session summaries (what was discussed/accomplished)
+    let summaries = query_recent_summaries(&conn, &project, 5).unwrap_or_default();
     // Load workstreams
     let workstreams =
         crate::workstream::query_active_workstreams(&conn, &project).unwrap_or_default();
 
-    if memories.is_empty() && events.is_empty() && workstreams.is_empty() {
+    if memories.is_empty() && summaries.is_empty() && workstreams.is_empty() {
         // Fall back to legacy observations if no new data yet
         render_legacy_context(&conn, &project, cwd)?;
         return Ok(());
@@ -112,9 +112,9 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         render_workstreams(&mut output, &workstreams);
     }
 
-    // Recent activity from events
-    if !events.is_empty() {
-        render_recent_activity(&mut output, &events);
+    // Recent sessions (what was discussed/accomplished)
+    if !summaries.is_empty() {
+        render_recent_sessions(&mut output, &summaries);
     }
 
     // Footer
@@ -126,10 +126,10 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
     print!("{}", output);
 
     timer.done(&format!(
-        "project={} memories={} events={} workstreams={}",
+        "project={} memories={} summaries={} workstreams={}",
         project,
         memories.len(),
-        events.len(),
+        summaries.len(),
         workstreams.len(),
     ));
     Ok(())
@@ -271,55 +271,66 @@ fn render_workstreams(output: &mut String, workstreams: &[WorkStream]) {
     output.push('\n');
 }
 
-fn render_recent_activity(output: &mut String, events: &[Event]) {
-    output.push_str("### Recent Activity\n");
+/// A recent session summary for display.
+struct SessionSummaryBrief {
+    request: String,
+    completed: Option<String>,
+    created_at_epoch: i64,
+}
 
-    // Compact: group consecutive same-type events
-    let mut file_edits: HashMap<String, usize> = HashMap::new();
-    let mut other_events: Vec<&Event> = Vec::new();
-
-    for e in events {
-        if e.event_type == "file_edit" || e.event_type == "file_create" {
-            if let Some(files_json) = &e.files {
-                if let Ok(files) = serde_json::from_str::<Vec<String>>(files_json) {
-                    for f in files {
-                        // Shorten path to last 2 components
-                        let short = crate::observe::short_path(&f);
-                        *file_edits.entry(short.to_string()).or_insert(0) += 1;
-                    }
-                }
-            }
-        } else {
-            other_events.push(e);
+fn query_recent_summaries(
+    conn: &rusqlite::Connection,
+    project: &str,
+    limit: usize,
+) -> Result<Vec<SessionSummaryBrief>> {
+    let mut stmt = conn.prepare(
+        "SELECT request, completed, created_at_epoch \
+         FROM session_summaries \
+         WHERE project = ?1 AND request IS NOT NULL AND request != '' \
+         ORDER BY created_at_epoch DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![project, limit as i64],
+        |row| {
+            Ok(SessionSummaryBrief {
+                request: row.get(0)?,
+                completed: row.get(1)?,
+                created_at_epoch: row.get(2)?,
+            })
+        },
+    )?;
+    let mut results = Vec::new();
+    for row in rows {
+        if let Ok(r) = row {
+            results.push(r);
         }
     }
+    Ok(results)
+}
 
-    // Show file edits summary
-    if !file_edits.is_empty() {
-        let mut sorted: Vec<_> = file_edits.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        output.push_str("Files modified: ");
-        let items: Vec<String> = sorted
-            .iter()
-            .take(10)
-            .map(|(f, count)| {
-                if *count > 1 {
-                    format!("{} (\u{00d7}{})", f, count)
-                } else {
-                    f.clone()
-                }
-            })
-            .collect();
-        output.push_str(&items.join(", "));
+fn render_recent_sessions(output: &mut String, summaries: &[SessionSummaryBrief]) {
+    output.push_str("## Recent Sessions\n\n");
+
+    for s in summaries {
+        let date = format_epoch_short(s.created_at_epoch);
+        let time = format_epoch_time(s.created_at_epoch);
+
+        // Request: what the user asked
+        output.push_str(&format!("**{}** {} — {}\n", date, time, s.request));
+
+        // Completed: first bullet point only (keep it concise)
+        if let Some(completed) = &s.completed {
+            let first_line = completed
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("");
+            let truncated: String = first_line.chars().take(200).collect();
+            if !truncated.is_empty() {
+                output.push_str(&format!("  {}\n", truncated));
+            }
+        }
         output.push('\n');
     }
-
-    // Show other events (bash, agent, search)
-    for e in other_events.iter().take(10) {
-        let time = format_epoch_time(e.created_at_epoch);
-        output.push_str(&format!("- {} {}\n", time, e.summary));
-    }
-    output.push('\n');
 }
 
 /// Fall back to legacy observation-based context when no memories exist yet.
