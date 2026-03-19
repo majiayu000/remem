@@ -78,8 +78,8 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         crate::workstream::query_active_workstreams(&conn, &project).unwrap_or_default();
 
     if memories.is_empty() && summaries.is_empty() && workstreams.is_empty() {
-        // Fall back to legacy observations if no new data yet
-        render_legacy_context(&conn, &project, cwd)?;
+        render_empty_state(&project);
+        timer.done("empty (no data)");
         return Ok(());
     }
 
@@ -331,52 +331,6 @@ fn render_recent_sessions(output: &mut String, summaries: &[SessionSummaryBrief]
         }
         output.push('\n');
     }
-}
-
-/// Fall back to legacy observation-based context when no memories exist yet.
-fn render_legacy_context(conn: &rusqlite::Connection, project: &str, _cwd: &str) -> Result<()> {
-    use crate::db_models::OBSERVATION_TYPES;
-
-    let type_refs: Vec<&str> = OBSERVATION_TYPES.to_vec();
-    let observations = crate::db_query::query_observations(conn, project, &type_refs, 50)?;
-
-    if observations.is_empty() {
-        render_empty_state(project);
-        crate::log::info("context", "empty (no data, legacy)");
-        return Ok(());
-    }
-
-    let mut output = String::new();
-    output.push_str(&format!(
-        "# [{}] recent context, {}\n\n",
-        project,
-        format_header_datetime()
-    ));
-    output.push_str(
-        "**\u{63d0}\u{793a}\u{ff1a}** \u{4fee}\u{6539}\u{5df2}\u{77e5}\u{9879}\u{76ee}\u{4ee3}\u{7801}\u{524d}\u{ff0c}\u{5148}\u{7528} remem search \u{5de5}\u{5177}\u{67e5}\u{8be2}\u{76f8}\u{5173}\u{8bb0}\u{5fc6}\u{3002}\n\n",
-    );
-
-    // Simple observation listing
-    output.push_str("### Observations (legacy)\n");
-    output.push_str("| # | Type | Title |\n");
-    output.push_str("|---|------|-------|\n");
-    for obs in observations.iter().take(30) {
-        let title = obs.title.as_deref().unwrap_or("-");
-        output.push_str(&format!("| {} | {} | {} |\n", obs.id, obs.r#type, title));
-    }
-    output.push('\n');
-
-    output.push_str(&format!(
-        "\n{} observations loaded. Use MCP search tools to access details.\n",
-        observations.len()
-    ));
-
-    print!("{}", output);
-    crate::log::info(
-        "context",
-        &format!("project={} obs={} (legacy)", project, observations.len()),
-    );
-    Ok(())
 }
 
 fn render_empty_state(project: &str) {

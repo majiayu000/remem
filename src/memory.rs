@@ -379,6 +379,162 @@ pub fn count_session_events(conn: &Connection, session_id: &str) -> Result<i64> 
     Ok(count)
 }
 
+// --- Auto-promote from session summaries ---
+
+/// Minimum content length to be worth promoting.
+const MIN_DECISION_LEN: usize = 30;
+const MIN_LEARNED_LEN: usize = 30;
+const MIN_PREFERENCE_LEN: usize = 10;
+
+/// Generate a stable topic_key from text for UPSERT dedup.
+fn slugify(text: &str, max_len: usize) -> String {
+    let slug: String = text
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c
+            } else if c == '-' || c == '_' || c == ' ' {
+                '-'
+            } else if !c.is_ascii() {
+                // Keep CJK and other unicode chars for meaningful keys
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Collapse multiple dashes and trim
+    let mut result = String::with_capacity(slug.len());
+    let mut last_dash = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !last_dash && !result.is_empty() {
+                result.push('-');
+            }
+            last_dash = true;
+        } else {
+            result.push(c);
+            last_dash = false;
+        }
+    }
+    let trimmed = result.trim_end_matches('-');
+    if trimmed.len() <= max_len {
+        trimmed.to_string()
+    } else {
+        // Truncate at char boundary
+        trimmed.chars().take(max_len).collect()
+    }
+}
+
+/// Auto-promote session summary fields to memories.
+/// Called after successful finalize_summarize(). Zero LLM cost.
+/// Returns number of memories created/updated.
+pub fn promote_summary_to_memories(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    request: Option<&str>,
+    decisions: Option<&str>,
+    learned: Option<&str>,
+    preferences: Option<&str>,
+) -> Result<usize> {
+    let request_text = request.unwrap_or("").trim();
+    let mut count = 0;
+
+    // Promote decisions → memory_type="decision"
+    if let Some(text) = decisions {
+        let text = text.trim();
+        if text.len() >= MIN_DECISION_LEN {
+            let title = if request_text.is_empty() {
+                "Session decisions".to_string()
+            } else {
+                let preview = &request_text[..request_text.len().min(80)];
+                format!("{} — decisions", preview)
+            };
+            let content = if request_text.is_empty() {
+                text.to_string()
+            } else {
+                format!("**Request**: {}\n\n**Decisions**: {}", request_text, text)
+            };
+            let topic_key = format!("auto-decision-{}", slugify(request_text, 50));
+            insert_memory(
+                conn,
+                Some(session_id),
+                project,
+                Some(&topic_key),
+                &title,
+                &content,
+                "decision",
+                None,
+            )?;
+            count += 1;
+        }
+    }
+
+    // Promote learned → memory_type="discovery"
+    if let Some(text) = learned {
+        let text = text.trim();
+        if text.len() >= MIN_LEARNED_LEN {
+            let title = if request_text.is_empty() {
+                "Session insights".to_string()
+            } else {
+                let preview = &request_text[..request_text.len().min(80)];
+                format!("{} — learned", preview)
+            };
+            let content = if request_text.is_empty() {
+                text.to_string()
+            } else {
+                format!("**Request**: {}\n\n**Learned**: {}", request_text, text)
+            };
+            let topic_key = format!("auto-discovery-{}", slugify(request_text, 50));
+            insert_memory(
+                conn,
+                Some(session_id),
+                project,
+                Some(&topic_key),
+                &title,
+                &content,
+                "discovery",
+                None,
+            )?;
+            count += 1;
+        }
+    }
+
+    // Promote preferences → memory_type="preference"
+    if let Some(text) = preferences {
+        let text = text.trim();
+        if text.len() >= MIN_PREFERENCE_LEN {
+            let title = format!(
+                "Preference: {}",
+                &text[..text.len().min(60)]
+            );
+            let topic_key = format!("auto-preference-{}", slugify(text, 50));
+            insert_memory(
+                conn,
+                Some(session_id),
+                project,
+                Some(&topic_key),
+                &title,
+                text,
+                "preference",
+                None,
+            )?;
+            count += 1;
+        }
+    }
+
+    if count > 0 {
+        crate::log::info(
+            "promote",
+            &format!("promoted {} memories from summary project={}", count, project),
+        );
+    }
+
+    Ok(count)
+}
+
 // --- Row Mappers ---
 
 fn map_memory_row(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
@@ -682,6 +838,113 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn test_promote_summary_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let count = promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Fix FTS5 search bug"),
+            Some("Switched from unicode61 to trigram tokenizer for better CJK support"),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 1);
+
+        let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].memory_type, "decision");
+        assert!(memories[0].title.contains("decisions"));
+        assert!(memories[0].text.contains("trigram"));
+        assert!(memories[0].topic_key.as_ref().unwrap().starts_with("auto-decision-"));
+    }
+
+    #[test]
+    fn test_promote_summary_all_fields() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let count = promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Add workstream support"),
+            Some("Used priority-based job queue for workstream processing"),
+            Some("WorkStream state transitions need careful ordering to avoid race conditions"),
+            Some("User prefers Chinese comments in code"),
+        )
+        .unwrap();
+        assert_eq!(count, 3);
+
+        let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert_eq!(memories.len(), 3);
+
+        let types: Vec<&str> = memories.iter().map(|m| m.memory_type.as_str()).collect();
+        assert!(types.contains(&"decision"));
+        assert!(types.contains(&"discovery"));
+        assert!(types.contains(&"preference"));
+    }
+
+    #[test]
+    fn test_promote_skips_short_content() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let count = promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Quick fix"),
+            Some("minor"),          // < 30 chars, should be skipped
+            Some("short"),           // < 30 chars, should be skipped
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 0);
+
+        let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert!(memories.is_empty());
+    }
+
+    #[test]
+    fn test_promote_upsert_same_topic() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        // First session
+        promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Fix FTS5 search"),
+            Some("Initial approach: use unicode61 tokenizer for word boundary detection"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        // Second session with same request → should UPSERT
+        promote_summary_to_memories(
+            &conn,
+            "session-2",
+            "test/proj",
+            Some("Fix FTS5 search"),
+            Some("Switched to trigram tokenizer — unicode61 fails on CJK characters"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+        // Same topic_key → updated, not duplicated
+        assert_eq!(memories.len(), 1);
+        assert!(memories[0].text.contains("trigram"));
     }
 
     #[test]
