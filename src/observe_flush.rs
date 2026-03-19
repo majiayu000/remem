@@ -93,6 +93,8 @@ fn persist_flush_batch(
     batch: &[db::PendingObservation],
     observations: &[ParsedObservation],
     usage: i64,
+    branch: Option<&str>,
+    commit_sha: Option<&str>,
 ) -> Result<()> {
     let ids: Vec<i64> = batch.iter().map(|p| p.id).collect();
     let per_obs_usage = usage / observations.len().max(1) as i64;
@@ -137,7 +139,7 @@ fn persist_flush_batch(
             Some(serde_json::to_string(&obs.files_modified)?)
         };
 
-        let obs_id = db::insert_observation(
+        let obs_id = db::insert_observation_with_branch(
             &tx,
             &memory_session_id,
             project,
@@ -151,6 +153,8 @@ fn persist_flush_batch(
             files_modified_json.as_deref(),
             None,
             per_obs_usage,
+            branch,
+            commit_sha,
         )?;
 
         if !obs.files_modified.is_empty() {
@@ -233,6 +237,8 @@ async fn flush_single_task(
     }
 
     let usage = response.len() as i64 / 4;
+    let branch = pending.cwd.as_deref().and_then(db::detect_git_branch);
+    let commit_sha = pending.cwd.as_deref().and_then(db::detect_git_commit);
     persist_flush_batch(
         conn,
         session_id,
@@ -241,6 +247,8 @@ async fn flush_single_task(
         std::slice::from_ref(pending),
         &observations,
         usage,
+        branch.as_deref(),
+        commit_sha.as_deref(),
     )?;
 
     Ok(observations.len())
@@ -430,6 +438,10 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
             }
 
             let usage = response.len() as i64 / 4;
+            // Detect branch from the first event's cwd
+            let batch_cwd = batch.first().and_then(|p| p.cwd.as_deref());
+            let batch_branch = batch_cwd.and_then(db::detect_git_branch);
+            let batch_commit = batch_cwd.and_then(db::detect_git_commit);
             persist_flush_batch(
                 &mut conn,
                 session_id,
@@ -438,6 +450,8 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
                 &batch_owned,
                 &observations,
                 usage,
+                batch_branch.as_deref(),
+                batch_commit.as_deref(),
             )?;
 
             _total_usage += usage;

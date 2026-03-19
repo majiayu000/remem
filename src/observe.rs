@@ -309,6 +309,10 @@ pub async fn observe() -> Result<()> {
         return Ok(());
     };
 
+    // Detect git branch/commit from working directory
+    let branch = hook.cwd.as_deref().and_then(db::detect_git_branch);
+    let _commit_sha = hook.cwd.as_deref().and_then(db::detect_git_commit);
+
     let conn = db::open_db()?;
     memory::insert_event(
         &conn,
@@ -334,12 +338,18 @@ pub async fn observe() -> Result<()> {
         hook.cwd.as_deref(),
     )?;
 
-    crate::log::info("observe", &format!("EVENT {} project={}", summary, project));
+    crate::log::info(
+        "observe",
+        &format!(
+            "EVENT {} project={} branch={:?}",
+            summary, project, branch
+        ),
+    );
 
     // Sync native Claude Code memory writes to remem DB
     if matches!(tool_name, "Write" | "Edit") {
         if let Some(file_path) = hook.tool_input.as_ref().and_then(|v| v["file_path"].as_str()) {
-            if let Err(e) = sync_native_memory(&conn, &session_id, file_path) {
+            if let Err(e) = sync_native_memory(&conn, &session_id, file_path, branch.as_deref()) {
                 crate::log::warn("observe", &format!("native memory sync failed: {}", e));
             }
         }
@@ -354,6 +364,7 @@ fn sync_native_memory(
     conn: &rusqlite::Connection,
     session_id: &str,
     file_path: &str,
+    branch: Option<&str>,
 ) -> Result<()> {
     // Must be a .md file in a Claude Code memory directory
     if !file_path.ends_with(".md") {
@@ -389,7 +400,7 @@ fn sync_native_memory(
         .unwrap_or("unknown");
     let topic_key = format!("native-{}", filename);
 
-    memory::insert_memory(
+    memory::insert_memory_with_branch(
         conn,
         Some(session_id),
         &project,
@@ -398,6 +409,7 @@ fn sync_native_memory(
         body.trim(),
         &memory_type,
         None,
+        branch,
     )?;
 
     crate::log::info(

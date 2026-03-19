@@ -30,6 +30,12 @@ pub struct Observation {
     /// Original Claude Code session ID (for `claude --resume`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_session_id: Option<String>,
+    /// Git branch name at the time of observation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Git short commit SHA at the time of observation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

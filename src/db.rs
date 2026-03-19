@@ -105,7 +105,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -387,6 +387,10 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
         migrate_to_v8(conn)?;
     }
 
+    if old_version < 10 {
+        migrate_to_v10(conn)?;
+    }
+
     Ok(())
 }
 
@@ -482,6 +486,85 @@ fn migrate_to_v8(conn: &Connection) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Schema v10: Add branch/commit_sha columns to observations and memories for git branch isolation.
+fn migrate_to_v10(conn: &Connection) -> Result<()> {
+    let migrations: &[(&str, &str, &str)] = &[
+        (
+            "observations",
+            "branch",
+            "ALTER TABLE observations ADD COLUMN branch TEXT",
+        ),
+        (
+            "observations",
+            "commit_sha",
+            "ALTER TABLE observations ADD COLUMN commit_sha TEXT",
+        ),
+        (
+            "memories",
+            "branch",
+            "ALTER TABLE memories ADD COLUMN branch TEXT",
+        ),
+    ];
+    for (table, col, sql) in migrations {
+        if !column_exists(conn, table, col)? {
+            conn.execute_batch(sql)?;
+        }
+    }
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_observations_branch
+           ON observations(project, branch, created_at_epoch DESC);
+         CREATE INDEX IF NOT EXISTS idx_memories_branch
+           ON memories(project, branch, updated_at_epoch DESC);",
+    )?;
+
+    crate::log::info("db", "migrated to v10: added branch/commit_sha columns");
+    Ok(())
+}
+
+/// Detect the current git branch from a working directory.
+/// Returns None if not in a git repo or git is not available.
+pub fn detect_git_branch(cwd: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        // Detached HEAD — not a named branch
+        None
+    } else {
+        Some(branch)
+    }
+}
+
+/// Detect the current short commit SHA from a working directory.
+/// Returns None if not in a git repo or git is not available.
+pub fn detect_git_commit(cwd: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if sha.is_empty() {
+        None
+    } else {
+        Some(sha)
+    }
 }
 
 /// Migrate FTS table from unicode61 to trigram tokenizer for CJK support.
@@ -737,6 +820,42 @@ pub fn insert_observation(
     prompt_number: Option<i64>,
     discovery_tokens: i64,
 ) -> Result<i64> {
+    insert_observation_with_branch(
+        conn,
+        memory_session_id,
+        project,
+        obs_type,
+        title,
+        subtitle,
+        narrative,
+        facts,
+        concepts,
+        files_read,
+        files_modified,
+        prompt_number,
+        discovery_tokens,
+        None,
+        None,
+    )
+}
+
+pub fn insert_observation_with_branch(
+    conn: &Connection,
+    memory_session_id: &str,
+    project: &str,
+    obs_type: &str,
+    title: Option<&str>,
+    subtitle: Option<&str>,
+    narrative: Option<&str>,
+    facts: Option<&str>,
+    concepts: Option<&str>,
+    files_read: Option<&str>,
+    files_modified: Option<&str>,
+    prompt_number: Option<i64>,
+    discovery_tokens: i64,
+    branch: Option<&str>,
+    commit_sha: Option<&str>,
+) -> Result<i64> {
     let now = chrono::Utc::now();
     let created_at = now.to_rfc3339();
     let created_at_epoch = now.timestamp();
@@ -745,8 +864,8 @@ pub fn insert_observation(
         "INSERT INTO observations \
          (memory_session_id, project, type, title, subtitle, narrative, \
           facts, concepts, files_read, files_modified, prompt_number, \
-          created_at, created_at_epoch, discovery_tokens) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+          created_at, created_at_epoch, discovery_tokens, branch, commit_sha) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             memory_session_id,
             project,
@@ -761,7 +880,9 @@ pub fn insert_observation(
             prompt_number,
             created_at,
             created_at_epoch,
-            discovery_tokens
+            discovery_tokens,
+            branch,
+            commit_sha
         ],
     )?;
     Ok(conn.last_insert_rowid())

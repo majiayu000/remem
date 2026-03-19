@@ -32,9 +32,26 @@ pub fn search(
     offset: i64,
     _include_stale: bool,
 ) -> Result<Vec<Memory>> {
+    search_with_branch(conn, query, project, memory_type, limit, offset, _include_stale, None)
+}
+
+pub fn search_with_branch(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    _include_stale: bool,
+    branch: Option<&str>,
+) -> Result<Vec<Memory>> {
     // Search without project filter in SQL, apply suffix matching post-filter.
     // This handles project fragmentation (e.g., "harness" vs "tools/harness").
-    let fetch_limit = if project.is_some() { limit * 3 } else { limit };
+    let fetch_limit = if project.is_some() || branch.is_some() {
+        limit * 3
+    } else {
+        limit
+    };
 
     let mut results = match query {
         Some(q) if !q.is_empty() => {
@@ -64,6 +81,14 @@ pub fn search(
     // Post-filter by project using suffix matching
     if let Some(proj) = project {
         results.retain(|m| project_matches(&m.project, proj));
+    }
+
+    // Post-filter by branch (NULL branch matches all — old data without branch)
+    if let Some(br) = branch {
+        results.retain(|m| match &m.branch {
+            Some(b) => b == br,
+            None => true, // old data without branch is visible everywhere
+        });
     }
 
     // Apply offset and limit

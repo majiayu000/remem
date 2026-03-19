@@ -33,7 +33,9 @@ fn setup_observation_schema(conn: &Connection) -> Result<()> {
             created_at TEXT,
             created_at_epoch INTEGER,
             status TEXT DEFAULT 'active',
-            last_accessed_epoch INTEGER
+            last_accessed_epoch INTEGER,
+            branch TEXT,
+            commit_sha TEXT
         );
 
         CREATE VIRTUAL TABLE observations_fts USING fts5(
@@ -76,7 +78,8 @@ fn setup_memory_schema(conn: &Connection) -> Result<()> {
             files TEXT,
             created_at_epoch INTEGER NOT NULL,
             updated_at_epoch INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active'
+            status TEXT NOT NULL DEFAULT 'active',
+            branch TEXT
         );
 
         CREATE VIRTUAL TABLE memories_fts USING fts5(

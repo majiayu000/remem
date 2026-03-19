@@ -54,6 +54,8 @@ struct SearchParams {
     offset: Option<i64>,
     #[schemars(description = "Include stale observations (default true, stale ranked lower)")]
     include_stale: Option<bool>,
+    #[schemars(description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included.")]
+    branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -256,16 +258,17 @@ impl MemoryServer {
         crate::log::info(
             "mcp",
             &format!(
-                "search called query={:?} project={:?} type={:?} limit={} offset={}",
+                "search called query={:?} project={:?} type={:?} branch={:?} limit={} offset={}",
                 params.query,
                 params.project,
                 params.r#type,
+                params.branch,
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
             ),
         );
         self.with_conn(|conn| {
-            let results = search::search(
+            let results = search::search_with_branch(
                 conn,
                 params.query.as_deref(),
                 params.project.as_deref(),
@@ -273,6 +276,7 @@ impl MemoryServer {
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
                 params.include_stale.unwrap_or(true),
+                params.branch.as_deref(),
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));

@@ -30,6 +30,8 @@ fn map_observation_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
             .unwrap_or_else(|| "active".to_string()),
         last_accessed_epoch: row.get(15)?,
         content_session_id: row.get(16)?,
+        branch: row.get(17)?,
+        commit_sha: row.get(18)?,
     })
 }
 
@@ -45,7 +47,8 @@ fn obs_select_cols(table_ref: &str) -> String {
          {t}.facts, {t}.concepts, {t}.files_read, {t}.files_modified, {t}.discovery_tokens, \
          {t}.created_at, {t}.created_at_epoch, {t}.project, {t}.status, {t}.last_accessed_epoch, \
          (SELECT s.content_session_id FROM sdk_sessions s \
-          WHERE s.memory_session_id = {t}.memory_session_id LIMIT 1) AS content_session_id",
+          WHERE s.memory_session_id = {t}.memory_session_id LIMIT 1) AS content_session_id, \
+         {t}.branch, {t}.commit_sha",
         t = table_ref
     )
 }

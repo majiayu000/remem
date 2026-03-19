@@ -19,6 +19,9 @@ pub struct Memory {
     pub created_at_epoch: i64,
     pub updated_at_epoch: i64,
     pub status: String,
+    /// Git branch name associated with this memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +60,20 @@ pub fn insert_memory(
     memory_type: &str,
     files: Option<&str>,
 ) -> Result<i64> {
+    insert_memory_with_branch(conn, session_id, project, topic_key, title, content, memory_type, files, None)
+}
+
+pub fn insert_memory_with_branch(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
 
     // UPSERT: if topic_key is set, try to find existing
@@ -73,9 +90,9 @@ pub fn insert_memory(
             if let Some(id) = existing_id {
                 conn.execute(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
-                     memory_type = ?4, files = ?5, updated_at_epoch = ?6 \
-                     WHERE id = ?7",
-                    params![session_id, title, content, memory_type, files, now, id],
+                     memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7 \
+                     WHERE id = ?8",
+                    params![session_id, title, content, memory_type, files, now, branch, id],
                 )?;
                 return Ok(id);
             }
@@ -85,8 +102,8 @@ pub fn insert_memory(
     conn.execute(
         "INSERT INTO memories \
          (session_id, project, topic_key, title, content, memory_type, files, \
-          created_at_epoch, updated_at_epoch, status) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'active')",
+          created_at_epoch, updated_at_epoch, status, branch) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'active', ?9)",
         params![
             session_id,
             project,
@@ -95,7 +112,8 @@ pub fn insert_memory(
             content,
             memory_type,
             files,
-            now
+            now,
+            branch
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -104,7 +122,7 @@ pub fn insert_memory(
 pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Memory>> {
     let mut stmt = conn.prepare(
         "SELECT id, session_id, project, topic_key, title, content, memory_type, files, \
-         created_at_epoch, updated_at_epoch, status \
+         created_at_epoch, updated_at_epoch, status, branch \
          FROM memories \
          WHERE project = ?1 AND status = 'active' \
          ORDER BY updated_at_epoch DESC LIMIT ?2",
@@ -121,7 +139,7 @@ pub fn get_memories_by_type(
 ) -> Result<Vec<Memory>> {
     let mut stmt = conn.prepare(
         "SELECT id, session_id, project, topic_key, title, content, memory_type, files, \
-         created_at_epoch, updated_at_epoch, status \
+         created_at_epoch, updated_at_epoch, status, branch \
          FROM memories \
          WHERE project = ?1 AND memory_type = ?2 AND status = 'active' \
          ORDER BY updated_at_epoch DESC LIMIT ?3",
@@ -152,7 +170,7 @@ pub fn get_memories_by_ids(
 
     let sql = format!(
         "SELECT id, session_id, project, topic_key, title, content, memory_type, files, \
-         created_at_epoch, updated_at_epoch, status \
+         created_at_epoch, updated_at_epoch, status, branch \
          FROM memories WHERE {} ORDER BY updated_at_epoch DESC",
         conditions.join(" AND ")
     );
@@ -195,7 +213,7 @@ pub fn search_memories_fts(
 
     let sql = format!(
         "SELECT m.id, m.session_id, m.project, m.topic_key, m.title, m.content, \
-         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status \
+         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch \
          FROM memories m \
          JOIN memories_fts ON memories_fts.rowid = m.id \
          WHERE {} \
@@ -257,7 +275,7 @@ pub fn search_memories_like(
 
     let sql = format!(
         "SELECT m.id, m.session_id, m.project, m.topic_key, m.title, m.content, \
-         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status \
+         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch \
          FROM memories m \
          WHERE {} \
          ORDER BY m.updated_at_epoch DESC \
@@ -550,6 +568,7 @@ fn map_memory_row(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         created_at_epoch: row.get(8)?,
         updated_at_epoch: row.get(9)?,
         status: row.get(10)?,
+        branch: row.get(11)?,
     })
 }
 
@@ -585,7 +604,8 @@ mod tests {
                 files TEXT,
                 created_at_epoch INTEGER NOT NULL,
                 updated_at_epoch INTEGER NOT NULL,
-                status TEXT NOT NULL DEFAULT 'active'
+                status TEXT NOT NULL DEFAULT 'active',
+                branch TEXT
             );
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content,
