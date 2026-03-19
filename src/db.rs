@@ -45,7 +45,7 @@ fn project_label_from_path(path: &std::path::Path) -> String {
             _ => None,
         })
         .collect();
-    match components.len() {
+    let raw = match components.len() {
         0 => path.to_string_lossy().to_string(),
         1 => components[0].to_string_lossy().to_string(),
         n => format!(
@@ -53,7 +53,15 @@ fn project_label_from_path(path: &std::path::Path) -> String {
             components[n - 2].to_string_lossy(),
             components[n - 1].to_string_lossy()
         ),
+    };
+    // Strip worktree @hash suffixes (e.g., "tools/remem@d431465db16f" → "tools/remem")
+    if let Some(at_pos) = raw.rfind('@') {
+        let after = &raw[at_pos + 1..];
+        if !after.is_empty() && after.chars().all(|c| c.is_ascii_hexdigit()) {
+            return raw[..at_pos].to_string();
+        }
     }
+    raw
 }
 
 pub fn canonical_project_path(cwd: &str) -> PathBuf {
