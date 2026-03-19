@@ -17,6 +17,7 @@ pub mod observe;
 pub mod observe_flush;
 pub mod search;
 pub mod summarize;
+pub mod timeline;
 pub mod vector;
 pub mod worker;
 pub mod workstream;

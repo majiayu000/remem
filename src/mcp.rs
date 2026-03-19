@@ -107,6 +107,14 @@ struct SaveMemoryParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct TimelineReportParams {
+    #[schemars(description = "Project name (required)")]
+    project: String,
+    #[schemars(description = "Full report with timeline and monthly breakdown (default false)")]
+    full: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct WorkStreamsParams {
     #[schemars(description = "Project name filter")]
     project: Option<String>,
@@ -522,6 +530,24 @@ impl MemoryServer {
     }
 
     /// List workstreams for a project
+    #[tool(
+        description = "Generate a project timeline report with activity history, type distribution, and Token ROI analysis. Use for understanding project evolution and memory system value."
+    )]
+    fn timeline_report(
+        &self,
+        Parameters(params): Parameters<TimelineReportParams>,
+    ) -> Result<String, String> {
+        let full = params.full.unwrap_or(false);
+        crate::log::info(
+            "mcp",
+            &format!("timeline_report project={:?} full={}", params.project, full),
+        );
+        self.with_conn(|conn| {
+            crate::timeline::generate_timeline_report(conn, &params.project, full)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     #[tool(
         description = "List active workstreams (high-level tasks tracked across sessions). Filter by project and/or status. Shows progress, next action, and blockers for each workstream."
     )]

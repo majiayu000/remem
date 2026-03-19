@@ -90,7 +90,7 @@ fn project_lookup_terms(project: &str) -> (Vec<String>, Vec<String>) {
     (exact, like)
 }
 
-fn push_project_filter(
+pub fn push_project_filter(
     column: &str,
     project: &str,
     mut idx: usize,
