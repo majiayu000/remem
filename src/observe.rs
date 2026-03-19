@@ -336,12 +336,192 @@ pub async fn observe() -> Result<()> {
 
     crate::log::info("observe", &format!("EVENT {} project={}", summary, project));
 
+    // Sync native Claude Code memory writes to remem DB
+    if matches!(tool_name, "Write" | "Edit") {
+        if let Some(file_path) = hook.tool_input.as_ref().and_then(|v| v["file_path"].as_str()) {
+            if let Err(e) = sync_native_memory(&conn, &session_id, file_path) {
+                crate::log::warn("observe", &format!("native memory sync failed: {}", e));
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// Detect writes to Claude Code native memory files and sync to remem DB.
+/// Pattern: ~/.claude/projects/*/memory/*.md (excluding MEMORY.md index)
+fn sync_native_memory(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    file_path: &str,
+) -> Result<()> {
+    // Must be a .md file in a Claude Code memory directory
+    if !file_path.ends_with(".md") {
+        return Ok(());
+    }
+    if !file_path.contains("/.claude/projects/") || !file_path.contains("/memory/") {
+        return Ok(());
+    }
+    // Skip MEMORY.md index file
+    if file_path.ends_with("/MEMORY.md") {
+        return Ok(());
+    }
+
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(()), // file might not exist yet during Edit
+    };
+
+    // Parse frontmatter: ---\nkey: value\n---\ncontent
+    let (title, memory_type, body) = parse_native_memory_frontmatter(&content);
+
+    if body.trim().is_empty() {
+        return Ok(());
+    }
+
+    // Extract project from the path: ~/.claude/projects/-Users-x-code-AI-tools-remem/memory/
+    let project = extract_project_from_memory_path(file_path);
+
+    // Use filename (without .md) as topic_key for UPSERT
+    let filename = std::path::Path::new(file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    let topic_key = format!("native-{}", filename);
+
+    memory::insert_memory(
+        conn,
+        Some(session_id),
+        &project,
+        Some(&topic_key),
+        &title,
+        body.trim(),
+        &memory_type,
+        None,
+    )?;
+
+    crate::log::info(
+        "observe",
+        &format!("synced native memory: {} → project={}", filename, project),
+    );
+    Ok(())
+}
+
+/// Parse Claude Code memory frontmatter format.
+/// Returns (title, memory_type, body).
+fn parse_native_memory_frontmatter(content: &str) -> (String, String, &str) {
+    let default_title = "Untitled memory".to_string();
+    let default_type = "discovery".to_string();
+
+    // Check for frontmatter delimiters
+    if !content.starts_with("---") {
+        return (default_title, default_type, content);
+    }
+
+    let after_first = &content[3..];
+    let Some(end_pos) = after_first.find("\n---") else {
+        return (default_title, default_type, content);
+    };
+
+    let frontmatter = &after_first[..end_pos];
+    let body_start = 3 + end_pos + 4; // skip "---" + frontmatter + "\n---"
+    let body = if body_start < content.len() {
+        &content[body_start..]
+    } else {
+        ""
+    };
+
+    let mut name = None;
+    let mut mem_type = None;
+
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if let Some(val) = line.strip_prefix("name:") {
+            name = Some(val.trim().to_string());
+        } else if let Some(val) = line.strip_prefix("type:") {
+            let raw = val.trim();
+            // Map Claude Code types to remem types
+            mem_type = Some(match raw {
+                "user" | "feedback" => "preference".to_string(),
+                "project" => "discovery".to_string(),
+                "reference" => "discovery".to_string(),
+                other => other.to_string(),
+            });
+        }
+    }
+
+    (
+        name.unwrap_or(default_title),
+        mem_type.unwrap_or(default_type),
+        body,
+    )
+}
+
+/// Extract project name from Claude Code memory path.
+/// ~/.claude/projects/-Users-x-Desktop-code-AI-tools-remem/memory/foo.md
+/// → "tools/remem" (last 2 meaningful components)
+fn extract_project_from_memory_path(file_path: &str) -> String {
+    // Find the project slug between /projects/ and /memory/
+    let Some(projects_pos) = file_path.find("/projects/") else {
+        return "unknown".to_string();
+    };
+    let after_projects = &file_path[projects_pos + "/projects/".len()..];
+    let slug = after_projects.split('/').next().unwrap_or("unknown");
+
+    // The slug is like "-Users-x-Desktop-code-AI-tools-remem"
+    // Convert back to path components and take last 2
+    let parts: Vec<&str> = slug.split('-').filter(|s| !s.is_empty()).collect();
+    if parts.len() >= 2 {
+        format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
+    } else if parts.len() == 1 {
+        parts[0].to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::should_skip_bash_command;
+    use super::*;
+
+    #[test]
+    fn parse_frontmatter_full() {
+        let content = "---\nname: my memory\ndescription: test\ntype: feedback\n---\nBody content here.";
+        let (title, mem_type, body) = parse_native_memory_frontmatter(content);
+        assert_eq!(title, "my memory");
+        assert_eq!(mem_type, "preference"); // feedback → preference
+        assert_eq!(body.trim(), "Body content here.");
+    }
+
+    #[test]
+    fn parse_frontmatter_missing() {
+        let content = "Just plain text, no frontmatter.";
+        let (title, mem_type, body) = parse_native_memory_frontmatter(content);
+        assert_eq!(title, "Untitled memory");
+        assert_eq!(mem_type, "discovery");
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn parse_frontmatter_project_type() {
+        let content = "---\nname: deploy notes\ntype: project\n---\nContent.";
+        let (_, mem_type, _) = parse_native_memory_frontmatter(content);
+        assert_eq!(mem_type, "discovery"); // project → discovery
+    }
+
+    #[test]
+    fn extract_project_from_path() {
+        let path = "/Users/lifcc/.claude/projects/-Users-lifcc-Desktop-code-AI-tools-remem/memory/feedback_quality.md";
+        let project = extract_project_from_memory_path(path);
+        assert_eq!(project, "tools/remem");
+    }
+
+    #[test]
+    fn extract_project_short_slug() {
+        let path = "/Users/x/.claude/projects/-myproject/memory/foo.md";
+        let project = extract_project_from_memory_path(path);
+        assert_eq!(project, "myproject");
+    }
 
     #[test]
     fn skip_read_only_search_commands() {
