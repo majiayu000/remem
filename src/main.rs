@@ -69,6 +69,9 @@ enum PreferenceAction {
         /// Project name (defaults to current directory)
         #[arg(long)]
         project: Option<String>,
+        /// Make this preference visible in all projects
+        #[arg(long)]
+        global: bool,
         /// Preference text
         text: String,
     },
@@ -159,10 +162,18 @@ fn run_preferences(action: PreferenceAction) -> Result<()> {
         PreferenceAction::List => {
             preference::list_preferences(&conn, &default_project)?;
         }
-        PreferenceAction::Add { project, text } => {
+        PreferenceAction::Add {
+            project,
+            global,
+            text,
+        } => {
             let proj = project.unwrap_or(default_project);
-            let id = preference::add_preference(&conn, &proj, &text)?;
-            println!("Preference added (id={}) for project '{}'", id, proj);
+            let id = preference::add_preference(&conn, &proj, &text, global)?;
+            let scope_label = if global { "global" } else { "project" };
+            println!(
+                "Preference added (id={}, scope={}) for project '{}'",
+                id, scope_label, proj
+            );
         }
         PreferenceAction::Remove { id } => {
             if preference::remove_preference(&conn, id)? {

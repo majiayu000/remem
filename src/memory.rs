@@ -22,6 +22,13 @@ pub struct Memory {
     /// Git branch name associated with this memory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Scope: "project" (default, only visible in this project) or "global" (visible everywhere).
+    #[serde(default = "default_scope")]
+    pub scope: String,
+}
+
+fn default_scope() -> String {
+    "project".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +91,32 @@ pub fn insert_memory_with_branch(
     files: Option<&str>,
     branch: Option<&str>,
 ) -> Result<i64> {
+    insert_memory_full(
+        conn,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        branch,
+        "project",
+    )
+}
+
+pub fn insert_memory_full(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
 
     // UPSERT: if topic_key is set, try to find existing
@@ -100,8 +133,8 @@ pub fn insert_memory_with_branch(
             if let Some(id) = existing_id {
                 conn.execute(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
-                     memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7 \
-                     WHERE id = ?8",
+                     memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
+                     scope = ?8 WHERE id = ?9",
                     params![
                         session_id,
                         title,
@@ -110,6 +143,7 @@ pub fn insert_memory_with_branch(
                         files,
                         now,
                         branch,
+                        scope,
                         id
                     ],
                 )?;
@@ -121,8 +155,8 @@ pub fn insert_memory_with_branch(
     conn.execute(
         "INSERT INTO memories \
          (session_id, project, topic_key, title, content, memory_type, files, \
-          created_at_epoch, updated_at_epoch, status, branch) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'active', ?9)",
+          created_at_epoch, updated_at_epoch, status, branch, scope) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'active', ?9, ?10)",
         params![
             session_id,
             project,
@@ -132,20 +166,21 @@ pub fn insert_memory_with_branch(
             memory_type,
             files,
             now,
-            branch
+            branch,
+            scope
         ],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
 pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Memory>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, session_id, project, topic_key, title, content, memory_type, files, \
-         created_at_epoch, updated_at_epoch, status, branch \
-         FROM memories \
-         WHERE project = ?1 AND status = 'active' \
+    let sql = format!(
+        "SELECT {} FROM memories \
+         WHERE (project = ?1 OR scope = 'global') AND status = 'active' \
          ORDER BY updated_at_epoch DESC LIMIT ?2",
-    )?;
+        MEMORY_COLS,
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project, limit], map_memory_row)?;
     crate::db_query::collect_rows(rows)
 }
@@ -156,13 +191,13 @@ pub fn get_memories_by_type(
     memory_type: &str,
     limit: i64,
 ) -> Result<Vec<Memory>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, session_id, project, topic_key, title, content, memory_type, files, \
-         created_at_epoch, updated_at_epoch, status, branch \
-         FROM memories \
-         WHERE project = ?1 AND memory_type = ?2 AND status = 'active' \
+    let sql = format!(
+        "SELECT {} FROM memories \
+         WHERE (project = ?1 OR scope = 'global') AND memory_type = ?2 AND status = 'active' \
          ORDER BY updated_at_epoch DESC LIMIT ?3",
-    )?;
+        MEMORY_COLS,
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project, memory_type, limit], map_memory_row)?;
     crate::db_query::collect_rows(rows)
 }
@@ -189,7 +224,7 @@ pub fn get_memories_by_ids(
 
     let sql = format!(
         "SELECT id, session_id, project, topic_key, title, content, memory_type, files, \
-         created_at_epoch, updated_at_epoch, status, branch \
+         created_at_epoch, updated_at_epoch, status, branch, scope \
          FROM memories WHERE {} ORDER BY updated_at_epoch DESC",
         conditions.join(" AND ")
     );
@@ -232,7 +267,7 @@ pub fn search_memories_fts(
 
     let sql = format!(
         "SELECT m.id, m.session_id, m.project, m.topic_key, m.title, m.content, \
-         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch \
+         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch, m.scope \
          FROM memories m \
          JOIN memories_fts ON memories_fts.rowid = m.id \
          WHERE {} \
@@ -294,7 +329,7 @@ pub fn search_memories_like(
 
     let sql = format!(
         "SELECT m.id, m.session_id, m.project, m.topic_key, m.title, m.content, \
-         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch \
+         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch, m.scope \
          FROM memories m \
          WHERE {} \
          ORDER BY m.updated_at_epoch DESC \
@@ -578,6 +613,10 @@ pub fn promote_summary_to_memories(
 
 // --- Row Mappers ---
 
+pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
+    map_memory_row(row)
+}
+
 fn map_memory_row(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     Ok(Memory {
         id: row.get(0)?,
@@ -592,8 +631,15 @@ fn map_memory_row(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
         updated_at_epoch: row.get(9)?,
         status: row.get(10)?,
         branch: row.get(11)?,
+        scope: row
+            .get::<_, Option<String>>(12)?
+            .unwrap_or_else(|| "project".to_string()),
     })
 }
+
+/// Column list for all memory SELECT queries.
+pub const MEMORY_COLS: &str = "id, session_id, project, topic_key, title, content, memory_type, \
+                              files, created_at_epoch, updated_at_epoch, status, branch, scope";
 
 fn map_event_row(row: &rusqlite::Row) -> rusqlite::Result<Event> {
     Ok(Event {
@@ -628,7 +674,8 @@ mod tests {
                 created_at_epoch INTEGER NOT NULL,
                 updated_at_epoch INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
-                branch TEXT
+                branch TEXT,
+                scope TEXT DEFAULT 'project'
             );
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content,

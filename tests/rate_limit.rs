@@ -79,7 +79,8 @@ fn setup_memory_schema(conn: &Connection) -> Result<()> {
             created_at_epoch INTEGER NOT NULL,
             updated_at_epoch INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
-            branch TEXT
+            branch TEXT,
+            scope TEXT DEFAULT 'project'
         );
 
         CREATE VIRTUAL TABLE memories_fts USING fts5(

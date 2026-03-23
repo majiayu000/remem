@@ -105,7 +105,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
@@ -389,6 +389,14 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
 
     if old_version < 10 {
         migrate_to_v10(conn)?;
+    }
+
+    // v11: Add scope column to memories (project vs global)
+    if !column_exists(conn, "memories", "scope")? {
+        conn.execute_batch(
+            "ALTER TABLE memories ADD COLUMN scope TEXT DEFAULT 'project';
+             CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, status, updated_at_epoch DESC);",
+        )?;
     }
 
     Ok(())

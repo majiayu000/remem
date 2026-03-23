@@ -3,37 +3,22 @@ use rusqlite::{params, Connection};
 
 use crate::memory::{self, Memory};
 
-/// Query global preferences that appear in 3+ projects.
+/// Query global preferences: scope='global' OR topic_key appears in 3+ projects.
 pub fn query_global_preferences(conn: &Connection, limit: usize) -> Result<Vec<Memory>> {
-    let mut stmt = conn.prepare(
-        "SELECT m.id, m.session_id, m.project, m.topic_key, m.title, m.content, \
-         m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch, m.status, m.branch \
-         FROM memories m \
-         WHERE m.memory_type = 'preference' AND m.status = 'active' AND m.topic_key IS NOT NULL \
-         AND m.topic_key IN ( \
+    let sql = format!(
+        "SELECT {} FROM memories \
+         WHERE memory_type = 'preference' AND status = 'active' \
+         AND (scope = 'global' OR (topic_key IS NOT NULL AND topic_key IN ( \
              SELECT topic_key FROM memories \
              WHERE memory_type = 'preference' AND status = 'active' AND topic_key IS NOT NULL \
              GROUP BY topic_key HAVING COUNT(DISTINCT project) >= 3 \
-         ) \
-         GROUP BY m.topic_key \
-         ORDER BY MAX(m.updated_at_epoch) DESC LIMIT ?1",
-    )?;
-    let rows = stmt.query_map(params![limit as i64], |row| {
-        Ok(Memory {
-            id: row.get(0)?,
-            session_id: row.get(1)?,
-            project: row.get(2)?,
-            topic_key: row.get(3)?,
-            title: row.get(4)?,
-            text: row.get(5)?,
-            memory_type: row.get(6)?,
-            files: row.get(7)?,
-            created_at_epoch: row.get(8)?,
-            updated_at_epoch: row.get(9)?,
-            status: row.get(10)?,
-            branch: row.get(11)?,
-        })
-    })?;
+         ))) \
+         GROUP BY COALESCE(topic_key, id) \
+         ORDER BY MAX(updated_at_epoch) DESC LIMIT ?1",
+        memory::MEMORY_COLS,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![limit as i64], memory::map_memory_row_pub)?;
     crate::db_query::collect_rows(rows)
 }
 
@@ -149,14 +134,15 @@ pub fn list_preferences(conn: &Connection, project: &str) -> Result<()> {
     Ok(())
 }
 
-/// Add a preference.
-pub fn add_preference(conn: &Connection, project: &str, text: &str) -> Result<i64> {
+/// Add a preference. Defaults to global scope.
+pub fn add_preference(conn: &Connection, project: &str, text: &str, global: bool) -> Result<i64> {
     let title = format!("Preference: {}", &text[..text.len().min(60)]);
     let topic_key = format!(
         "manual-preference-{}",
         crate::memory::slugify_for_topic(text, 50)
     );
-    memory::insert_memory(
+    let scope = if global { "global" } else { "project" };
+    memory::insert_memory_full(
         conn,
         None,
         project,
@@ -165,6 +151,8 @@ pub fn add_preference(conn: &Connection, project: &str, text: &str) -> Result<i6
         text,
         "preference",
         None,
+        None,
+        scope,
     )
 }
 
@@ -198,7 +186,8 @@ mod tests {
                 created_at_epoch INTEGER NOT NULL,
                 updated_at_epoch INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
-                branch TEXT
+                branch TEXT,
+                scope TEXT DEFAULT 'project'
             );
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content,
@@ -313,6 +302,7 @@ mod tests {
                 updated_at_epoch: 0,
                 status: "active".into(),
                 branch: None,
+                scope: "global".into(),
             },
             Memory {
                 id: 2,
@@ -327,6 +317,7 @@ mod tests {
                 updated_at_epoch: 0,
                 status: "active".into(),
                 branch: None,
+                scope: "global".into(),
             },
         ];
 
@@ -339,7 +330,12 @@ mod tests {
     #[test]
     fn test_add_and_remove_preference() -> Result<()> {
         let conn = setup_test_db();
-        let id = add_preference(&conn, "test/proj", "Always use descriptive variable names")?;
+        let id = add_preference(
+            &conn,
+            "test/proj",
+            "Always use descriptive variable names",
+            true,
+        )?;
         assert!(id > 0);
 
         let prefs = memory::get_memories_by_type(&conn, "test/proj", "preference", 10)?;
