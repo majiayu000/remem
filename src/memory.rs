@@ -578,13 +578,14 @@ pub fn promote_summary_to_memories(
         }
     }
 
-    // Promote preferences → memory_type="preference"
+    // Promote preferences → memory_type="preference", scope="global"
+    // Preferences are user-level knowledge that applies across all projects
     if let Some(text) = preferences {
         let text = text.trim();
         if text.len() >= MIN_PREFERENCE_LEN {
             let title = format!("Preference: {}", &text[..text.len().min(60)]);
             let topic_key = format!("auto-preference-{}", slugify(text, 50));
-            insert_memory(
+            insert_memory_full(
                 conn,
                 Some(session_id),
                 project,
@@ -593,6 +594,8 @@ pub fn promote_summary_to_memories(
                 text,
                 "preference",
                 None,
+                None,
+                "global",
             )?;
             count += 1;
         }

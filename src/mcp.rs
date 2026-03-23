@@ -54,7 +54,9 @@ struct SearchParams {
     offset: Option<i64>,
     #[schemars(description = "Include stale observations (default true, stale ranked lower)")]
     include_stale: Option<bool>,
-    #[schemars(description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included.")]
+    #[schemars(
+        description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included."
+    )]
     branch: Option<String>,
 }
 
@@ -104,6 +106,10 @@ struct SaveMemoryParams {
         description = "Optional local markdown path for backup copy. Relative paths are resolved from current working directory."
     )]
     local_path: Option<String>,
+    #[schemars(
+        description = "Memory scope: 'project' (default, only this project) or 'global' (visible in all projects). Use 'global' for user preferences and cross-project knowledge."
+    )]
+    scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -418,11 +424,12 @@ impl MemoryServer {
                 serde_json::to_value(&obs).map_err(|e| e.to_string())?
             } else {
                 // Query memories table
-                let memories = memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref())
-                    .map_err(|e| {
-                        crate::log::warn("mcp", &format!("get_memories failed: {}", e));
-                        e.to_string()
-                    })?;
+                let memories =
+                    memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref())
+                        .map_err(|e| {
+                            crate::log::warn("mcp", &format!("get_memories failed: {}", e));
+                            e.to_string()
+                        })?;
                 serde_json::to_value(&memories).map_err(|e| e.to_string())?
             };
             crate::log::info(
@@ -494,7 +501,16 @@ impl MemoryServer {
         }
 
         self.with_conn(|conn| {
-            let id = memory::insert_memory(
+            // Auto-detect scope: preference type defaults to global, others to project
+            let scope = params
+                .scope
+                .as_deref()
+                .unwrap_or(if memory_type == "preference" {
+                    "global"
+                } else {
+                    "project"
+                });
+            let id = memory::insert_memory_full(
                 conn,
                 None,
                 project,
@@ -503,6 +519,8 @@ impl MemoryServer {
                 &params.text,
                 memory_type,
                 files_json.as_deref(),
+                None,
+                scope,
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
