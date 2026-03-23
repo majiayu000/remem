@@ -96,7 +96,14 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         branch_label,
         format_header_datetime()
     ));
-    output.push_str("Use `search`/`get_observations` for details. `save_memory` after decisions/bugfixes.\n\n");
+    output.push_str(
+        "Use `search`/`get_observations` for details. `save_memory` after decisions/bugfixes.\n\n",
+    );
+
+    // Preferences section — top priority, rendered before core memories
+    if let Err(e) = crate::preference::render_preferences(&mut output, &conn, &project, cwd) {
+        crate::log::warn("context", &format!("render_preferences failed: {}", e));
+    }
 
     if !memories.is_empty() {
         render_core_memory(&mut output, &memories);
@@ -114,10 +121,7 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         render_recent_sessions(&mut output, &summaries);
     }
 
-    output.push_str(&format!(
-        "{} memories loaded.\n",
-        memories.len()
-    ));
+    output.push_str(&format!("{} memories loaded.\n", memories.len()));
 
     print!("{}", output);
 
@@ -296,13 +300,7 @@ fn query_recent_summaries(
             created_at_epoch: row.get(2)?,
         })
     })?;
-    let mut results = Vec::new();
-    for row in rows {
-        if let Ok(r) = row {
-            results.push(r);
-        }
-    }
-    Ok(results)
+    Ok(rows.flatten().collect())
 }
 
 fn render_recent_sessions(output: &mut String, summaries: &[SessionSummaryBrief]) {

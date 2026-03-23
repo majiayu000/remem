@@ -1,3 +1,9 @@
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::manual_div_ceil
+)]
+
 pub mod ai;
 pub mod claude_memory;
 pub mod context;
@@ -15,6 +21,7 @@ pub mod memory;
 pub mod memory_format;
 pub mod observe;
 pub mod observe_flush;
+pub mod preference;
 pub mod search;
 pub mod summarize;
 pub mod timeline;

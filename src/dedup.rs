@@ -31,7 +31,10 @@ pub fn find_hash_duplicates(
             params![id],
             |r| r.get(0),
         )?;
-        let obs_hash = format!("{:x}", crate::db::deterministic_hash(obs_narrative.as_bytes()));
+        let obs_hash = format!(
+            "{:x}",
+            crate::db::deterministic_hash(obs_narrative.as_bytes())
+        );
         if obs_hash == content_hash {
             candidates.push(id);
         }
@@ -109,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_hash_dedup_finds_exact_match() -> Result<()> {
-        let mut conn = rusqlite::Connection::open_in_memory()?;
+        let conn = rusqlite::Connection::open_in_memory()?;
 
         // Initialize schema properly
         conn.execute_batch(

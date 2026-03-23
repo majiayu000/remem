@@ -29,11 +29,13 @@ fn remem_data_dir() -> PathBuf {
 }
 
 fn binary_path() -> Result<String> {
-    std::env::current_exe()
-        .context("无法获取当前二进制路径")?
+    let install_path = dirs::home_dir()
+        .context("无法获取 HOME 目录")?
+        .join(".local/bin/remem");
+    install_path
         .to_str()
         .map(|s| s.to_string())
-        .context("二进制路径包含非 UTF-8 字符")
+        .context("安装路径包含非 UTF-8 字符")
 }
 
 fn read_json_file(path: &PathBuf) -> Result<Value> {
@@ -186,22 +188,28 @@ pub fn install() -> Result<()> {
     let data_dir = remem_data_dir();
     std::fs::create_dir_all(&data_dir)?;
 
-    eprintln!("remem install 完成:");
-    eprintln!("  hooks → {}", settings_file.display());
-    eprintln!("  MCP   → {}", claude_json_file.display());
-    eprintln!("  数据  → {}", data_dir.display());
-    eprintln!("  二进制 → {}", bin);
+    eprintln!("remem install complete:");
+    eprintln!("  hooks  -> {}", settings_file.display());
+    eprintln!("  MCP    -> {}", claude_json_file.display());
+    eprintln!("  data   -> {}", data_dir.display());
+    eprintln!("  binary -> {}", bin);
 
-    // 检查旧 hooks.json
+    // Check for legacy hooks.json
     let old_path = old_hooks_path();
     if old_path.exists() {
         eprintln!();
-        eprintln!("检测到旧版 hooks.json: {}", old_path.display());
+        eprintln!("Legacy hooks.json detected: {}", old_path.display());
         eprintln!(
-            "Claude Code 不读取此文件，可以安全删除: rm {}",
+            "Claude Code does not read this file. Safe to delete: rm {}",
             old_path.display()
         );
     }
+
+    eprintln!();
+    eprintln!("Next steps:");
+    eprintln!("  1. Restart Claude Code (quit and reopen)");
+    eprintln!("  2. remem will automatically capture your sessions");
+    eprintln!("  3. Run 'remem status' to check system health");
 
     Ok(())
 }

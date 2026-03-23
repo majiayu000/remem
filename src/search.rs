@@ -32,7 +32,16 @@ pub fn search(
     offset: i64,
     _include_stale: bool,
 ) -> Result<Vec<Memory>> {
-    search_with_branch(conn, query, project, memory_type, limit, offset, _include_stale, None)
+    search_with_branch(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        _include_stale,
+        None,
+    )
 }
 
 pub fn search_with_branch(
@@ -159,7 +168,7 @@ pub fn search_observations(
         results.retain(|o| {
             o.project
                 .as_deref()
-                .map_or(false, |p| project_matches(p, proj))
+                .is_some_and(|p| project_matches(p, proj))
         });
     }
 

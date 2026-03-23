@@ -60,7 +60,17 @@ pub fn insert_memory(
     memory_type: &str,
     files: Option<&str>,
 ) -> Result<i64> {
-    insert_memory_with_branch(conn, session_id, project, topic_key, title, content, memory_type, files, None)
+    insert_memory_with_branch(
+        conn,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        None,
+    )
 }
 
 pub fn insert_memory_with_branch(
@@ -92,7 +102,16 @@ pub fn insert_memory_with_branch(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7 \
                      WHERE id = ?8",
-                    params![session_id, title, content, memory_type, files, now, branch, id],
+                    params![
+                        session_id,
+                        title,
+                        content,
+                        memory_type,
+                        files,
+                        now,
+                        branch,
+                        id
+                    ],
                 )?;
                 return Ok(id);
             }
@@ -405,6 +424,10 @@ const MIN_LEARNED_LEN: usize = 30;
 const MIN_PREFERENCE_LEN: usize = 10;
 
 /// Generate a stable topic_key from text for UPSERT dedup.
+pub fn slugify_for_topic(text: &str, max_len: usize) -> String {
+    slugify(text, max_len)
+}
+
 fn slugify(text: &str, max_len: usize) -> String {
     let slug: String = text
         .to_lowercase()
@@ -524,10 +547,7 @@ pub fn promote_summary_to_memories(
     if let Some(text) = preferences {
         let text = text.trim();
         if text.len() >= MIN_PREFERENCE_LEN {
-            let title = format!(
-                "Preference: {}",
-                &text[..text.len().min(60)]
-            );
+            let title = format!("Preference: {}", &text[..text.len().min(60)]);
             let topic_key = format!("auto-preference-{}", slugify(text, 50));
             insert_memory(
                 conn,
@@ -546,7 +566,10 @@ pub fn promote_summary_to_memories(
     if count > 0 {
         crate::log::info(
             "promote",
-            &format!("promoted {} memories from summary project={}", count, project),
+            &format!(
+                "promoted {} memories from summary project={}",
+                count, project
+            ),
         );
     }
 
@@ -882,7 +905,8 @@ mod tests {
         assert_eq!(memories[0].memory_type, "decision");
         assert!(memories[0].title.contains("decisions"));
         assert!(memories[0].text.contains("trigram"));
-        assert!(memories[0].topic_key.as_ref().unwrap().starts_with("auto-decision-"));
+        let topic = memories[0].topic_key.as_deref().unwrap_or_default();
+        assert!(topic.starts_with("auto-decision-"));
     }
 
     #[test]
@@ -921,8 +945,8 @@ mod tests {
             "session-1",
             "test/proj",
             Some("Quick fix"),
-            Some("minor"),          // < 30 chars, should be skipped
-            Some("short"),           // < 30 chars, should be skipped
+            Some("minor"), // < 30 chars, should be skipped
+            Some("short"), // < 30 chars, should be skipped
             None,
         )
         .unwrap();

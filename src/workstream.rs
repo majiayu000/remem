@@ -248,7 +248,7 @@ pub fn update_workstream_manual(
     let mut param_idx = 2u32;
 
     // Build dynamic SET clause
-    let status_val = status.map(|s| WorkStreamStatus::from_db(s));
+    let status_val = status.map(WorkStreamStatus::from_db);
     if status_val.is_some() {
         sets.push(format!("status = ?{}", param_idx));
         param_idx += 1;
