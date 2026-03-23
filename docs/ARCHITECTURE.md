@@ -250,6 +250,25 @@ Recommended workflow: `search(query)` → find relevant IDs → `get_observation
 - Custom local path via `local_path` parameter
 - When user asks to "save a document", write project-local file first, then `save_memory` as long-term backup
 
+## Memory Scope (Project vs Global)
+
+Memories have a `scope` field: `project` (default) or `global`.
+
+| Scope | Visibility | Auto-assigned to |
+|-------|-----------|------------------|
+| `project` | Only in the originating project | decision, bugfix, discovery, architecture |
+| `global` | All projects | preference |
+
+**How it works automatically:**
+- When a session summary is promoted to memories, `preference` type automatically gets `scope=global`
+- When Claude calls `save_memory(type="preference")`, scope defaults to `global`
+- Other types (decision, bugfix, etc.) stay `project`-scoped
+- Context injection query: `WHERE (project = ? OR scope = 'global')`
+
+**No manual action needed.** Preferences learned in project A automatically appear in project B's context.
+
+The `save_memory` MCP tool accepts an optional `scope` parameter for explicit control. The CLI supports `remem preferences add --global "text"` for manual global preferences.
+
 ## Project Identification
 
 Project key = `last two path segments + canonical absolute path hash`, balancing readability and uniqueness:
@@ -316,7 +335,7 @@ observations (memory_session_id, project, type, title, subtitle, narrative, fact
 
 -- Long-term memories (auto-promoted from summaries + manual save)
 memories (session_id, project, topic_key, title, content, memory_type, files, branch,
-          created_at_epoch, updated_at_epoch, status)
+          created_at_epoch, updated_at_epoch, status, scope[project|global])
 
 -- Session summaries
 session_summaries (memory_session_id, project, request, completed, decisions, learned,
@@ -355,3 +374,4 @@ memories_fts (title, content)                                    -- FTS5 trigram
 - **Branch-aware memories**: Memories tagged with git branch, current branch prioritized in context
 - **Auto-promotion**: Session summaries automatically distilled into typed memories (decision/bugfix/preference/discovery)
 - **Preference-first context**: Preferences rendered before core memories, always visible at session start
+- **Global scope for preferences**: Preferences auto-scoped as `global`, visible across all projects without manual action. Other memory types stay `project`-scoped. Inspired by Augment's User Rules vs Workspace Rules separation

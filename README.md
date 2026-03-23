@@ -59,6 +59,8 @@ Your normal Claude Code workflow
 
 **You don't need to do anything** — capture, distillation, and retrieval are fully automatic.
 
+Memories are scoped by project. **Preferences** (coding style, tool choices) are automatically shared across all projects — learn once, apply everywhere.
+
 ## Commands
 
 ```bash
@@ -84,6 +86,7 @@ remem sync-memory --cwd .  # Sync summaries to Claude Code native memory
 | Decision tracking | Not specialized | Type-aware (decision/bugfix/discovery) |
 | Search | Basic | FTS5 full-text with CJK support |
 | Branch awareness | No | Branch-scoped memories |
+| Cross-project sharing | No | Preferences auto-shared globally |
 | Session summaries | No | Auto-generated with request/completed/decisions |
 | WorkStream tracking | No | Cross-session task tracking with status |
 
