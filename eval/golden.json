@@ -1,5 +1,5 @@
 {
-  "version": "1.0",
+  "version": "1.1",
   "description": "Golden dataset for remem search quality evaluation. Relevance: 3=highly relevant, 2=partially relevant, 1=marginally relevant, 0=irrelevant.",
   "queries": [
     {
@@ -7,8 +7,8 @@
       "query": "FTS5 搜索",
       "category": "exact",
       "project": null,
-      "relevant_ids": [20, 19, 95, 96],
-      "notes": "Should find FTS5-related decisions and discoveries in remem project"
+      "relevant_ids": [20, 19, 965, 966, 1068, 22],
+      "notes": "Should find FTS5-related decisions and discoveries. 965/966/1068 are newer sessions discussing FTS5 search quality."
     },
     {
       "id": "q02",
@@ -47,7 +47,7 @@
       "query": "偏好系统",
       "category": "exact",
       "project": "tools/remem",
-      "relevant_ids": [700, 701, 912, 913],
+      "relevant_ids": [700, 701, 912, 913, 662],
       "notes": "Should find preference system implementation decisions"
     },
     {
@@ -55,24 +55,24 @@
       "query": "Harness 任务失败",
       "category": "fuzzy",
       "project": "tools/harness",
-      "relevant_ids": [878, 929, 930, 942, 943],
-      "notes": "Should find Harness task failure diagnosis across sessions"
+      "relevant_ids": [878, 929, 930, 955, 956, 791],
+      "notes": "Should find Harness task failure diagnosis across sessions. 955/956 are newer task failure sessions."
     },
     {
       "id": "q08",
       "query": "记忆质量",
       "category": "fuzzy",
       "project": null,
-      "relevant_ids": [748, 914, 915],
-      "notes": "Should find memories about memory quality preferences and strategy"
+      "relevant_ids": [748, 914, 915, 936, 946, 948, 912, 663],
+      "notes": "Should find memories about memory quality preferences and strategy. Multiple sessions discuss quality-first principle."
     },
     {
       "id": "q09",
       "query": "ToolAdapter trait",
       "category": "exact",
-      "project": "tools/remem",
-      "relevant_ids": [940, 941, 936, 937],
-      "notes": "Should find adapter refactoring decisions"
+      "project": null,
+      "relevant_ids": [],
+      "notes": "ToolAdapter does not appear in any memory content. Original IDs were incorrectly assigned."
     },
     {
       "id": "q10",
@@ -87,16 +87,16 @@
       "query": "跨项目记忆共享",
       "category": "fuzzy",
       "project": null,
-      "relevant_ids": [700, 701, 912, 913],
-      "notes": "Should find global scope and cross-project sharing decisions"
+      "relevant_ids": [700, 701, 912, 913, 668, 669, 914],
+      "notes": "Should find global scope and cross-project sharing decisions. 668/669 discuss cross-project sync, 914 discusses quality strategy."
     },
     {
       "id": "q12",
       "query": "om-generator 架构",
       "category": "exact",
       "project": "mutil-om/om-generator",
-      "relevant_ids": [12],
-      "notes": "Should find OM Generator architecture analysis"
+      "relevant_ids": [187, 723],
+      "notes": "Should find OM Generator architecture. ID 12 has project='om-generator' (no prefix), so doesn't match filter. 187 and 723 are correct project matches."
     },
     {
       "id": "q13",
@@ -111,8 +111,8 @@
       "query": "自动提升 memory",
       "category": "exact",
       "project": "tools/remem",
-      "relevant_ids": [700, 701],
-      "notes": "Should find auto-promote summary to memories feature"
+      "relevant_ids": [700, 701, 912, 1009],
+      "notes": "Should find auto-promote summary to memories feature. 700/701 contain auto-promote design. 912 discusses memory quality strategy."
     },
     {
       "id": "q15",
@@ -143,24 +143,24 @@
       "query": "抖音视频发布",
       "category": "exact",
       "project": null,
-      "relevant_ids": [845],
-      "notes": "Should find Douyin video publishing decisions"
+      "relevant_ids": [845, 11, 581, 577, 844, 856, 262, 340],
+      "notes": "Should find Douyin video publishing decisions. Multiple sessions cover douyin video publishing workflow."
     },
     {
       "id": "q19",
       "query": "Claude Code hook 机制",
       "category": "fuzzy",
-      "project": "tools/remem",
-      "relevant_ids": [700, 701, 912, 913],
-      "notes": "Should find hook system design decisions"
+      "project": null,
+      "relevant_ids": [416, 417, 20, 18],
+      "notes": "Should find hook system design decisions. 416/417 directly discuss Claude Code hooks vs subagent. Removed project filter since hook discussions span projects."
     },
     {
       "id": "q20",
       "query": "context compression",
       "category": "exact",
-      "project": "tools/remem",
-      "relevant_ids": [700, 701],
-      "notes": "Should find context compression feature work"
+      "project": null,
+      "relevant_ids": [],
+      "notes": "No memories specifically discuss context compression implementation. Removed incorrect IDs and project filter."
     },
     {
       "id": "q21",
@@ -183,8 +183,8 @@
       "query": "MCP server 实现",
       "category": "fuzzy",
       "project": "tools/remem",
-      "relevant_ids": [700, 701],
-      "notes": "Should find MCP server implementation details"
+      "relevant_ids": [18, 913],
+      "notes": "Should find MCP server implementation details. 18 is MCP ecosystem survey, 913 discusses MCP integration."
     },
     {
       "id": "q24",
@@ -207,40 +207,40 @@
       "query": "性能优化 benchmark",
       "category": "fuzzy",
       "project": null,
-      "relevant_ids": [936, 937],
-      "notes": "Should find benchmark and performance related work"
+      "relevant_ids": [80, 936, 937],
+      "notes": "Should find benchmark and performance related work. 80 is Seedance benchmark, 936/937 discuss quality optimization."
     },
     {
       "id": "q27",
       "query": "X Twitter 发帖",
       "category": "exact",
       "project": "life/x",
-      "relevant_ids": [666],
-      "notes": "Should find X/Twitter posting automation decisions"
+      "relevant_ids": [666, 54, 55, 470, 495],
+      "notes": "Should find X/Twitter posting automation decisions. Multiple sessions discuss X posting."
     },
     {
       "id": "q28",
       "query": "质量优先成本",
       "category": "exact",
       "project": null,
-      "relevant_ids": [748],
-      "notes": "Should find quality-over-cost preference"
+      "relevant_ids": [748, 912, 936, 946, 948, 688, 728],
+      "notes": "Should find quality-over-cost preference. Multiple memories express this principle."
     },
     {
       "id": "q29",
       "query": "VibeGuard 规则",
       "category": "fuzzy",
       "project": null,
-      "relevant_ids": [838, 107],
-      "notes": "Should find VibeGuard rule-related decisions"
+      "relevant_ids": [16, 733, 107, 1084],
+      "notes": "Should find VibeGuard rule-related decisions. 16 is VibeGuard Learn, 733 is VibeGuard packaging, 1084 is guard message format."
     },
     {
       "id": "q30",
       "query": "session summary 格式",
       "category": "exact",
       "project": "tools/remem",
-      "relevant_ids": [700, 701],
-      "notes": "Should find summary format/structure decisions"
+      "relevant_ids": [18, 1009],
+      "notes": "Should find summary format/structure decisions. 18 discusses MCP tools including summary format. 1009 discusses title/content format."
     }
   ]
 }

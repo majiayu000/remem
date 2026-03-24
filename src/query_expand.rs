@@ -170,6 +170,36 @@ fn segment_cjk(text: &str) -> Vec<String> {
     segments
 }
 
+/// Return core tokens from query: CJK segmented + whitespace split, NO synonym expansion.
+/// Used for LIKE fallback where AND semantics require only user-intent tokens.
+pub fn core_tokens(raw: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mixed = tokenize_mixed(raw);
+    for token in &mixed {
+        let chars: Vec<char> = token.chars().collect();
+        let all_cjk = !chars.is_empty() && chars.iter().all(|c| is_cjk(*c));
+
+        if all_cjk && chars.len() > 1 {
+            let segments = segment_cjk(token);
+            let any_multi = segments.iter().any(|s| s.chars().count() > 1);
+            if any_multi {
+                for seg in &segments {
+                    if seg.chars().count() >= 2 && seen.insert(seg.to_lowercase()) {
+                        tokens.push(seg.clone());
+                    }
+                }
+            } else if seen.insert(token.to_lowercase()) {
+                tokens.push(token.clone());
+            }
+        } else if seen.insert(token.to_lowercase()) {
+            tokens.push(token.clone());
+        }
+    }
+    tokens
+}
+
 /// Expand query tokens with synonyms. Returns deduplicated expanded list.
 /// Handles CJK text by segmenting first, then expanding each segment.
 pub fn expand_query(raw: &str) -> Vec<String> {

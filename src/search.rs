@@ -60,14 +60,18 @@ pub fn search_with_branch(
     let mut results = match query {
         Some(q) if !q.is_empty() => {
             let fetch = limit * 2; // Over-fetch for RRF fusion
-            let orig_tokens: Vec<&str> = q.split_whitespace().collect();
             let expanded = crate::query_expand::expand_query(q);
             let exp_strs: Vec<&str> = expanded.iter().map(|s| s.as_str()).collect();
             let long_tokens: Vec<&str> = exp_strs.iter().filter(|t| t.chars().count() >= 3).copied().collect();
 
+            // Core tokens: segmented from original query (no synonym expansion).
+            // Used for LIKE fallback with AND semantics.
+            let core_tokens = crate::query_expand::core_tokens(q);
+            let core_refs: Vec<&str> = core_tokens.iter().map(|s| s.as_str()).collect();
+
             let mut channels: Vec<Vec<i64>> = Vec::new();
 
-            // Channel 1: FTS5 with expanded OR query
+            // Channel 1: FTS5 with expanded OR query (includes synonyms)
             if !long_tokens.is_empty() {
                 let safe_query = sanitize_fts_query(&long_tokens.join(" "));
                 let fts = memory::search_memories_fts(conn, &safe_query, project, memory_type, fetch, 0)?;
@@ -88,8 +92,8 @@ pub fn search_with_branch(
                 }
             }
 
-            // Channel 4: LIKE fallback with original tokens
-            let like = memory::search_memories_like(conn, &orig_tokens, project, memory_type, fetch, 0)?;
+            // Channel 4: LIKE fallback with core tokens (AND semantics, no synonyms)
+            let like = memory::search_memories_like(conn, &core_refs, project, memory_type, fetch, 0)?;
             if !like.is_empty() {
                 channels.push(like.iter().map(|m| m.id).collect());
             }
