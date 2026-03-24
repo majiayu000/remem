@@ -61,11 +61,54 @@ Your normal Claude Code workflow
 
 Memories are scoped by project. **Preferences** (coding style, tool choices) are automatically shared across all projects — learn once, apply everywhere.
 
+## Search Architecture
+
+remem uses a **4-channel Reciprocal Rank Fusion (RRF)** search inspired by [Hindsight](https://github.com/vectorize-io/hindsight):
+
+```
+Query: "数据库加密"
+        │
+   ┌────┴────────────────────────────────┐
+   │          4 parallel channels         │
+   ├─────────────────────────────────────┤
+   │ 1. FTS5 (BM25)    trigram + OR      │
+   │ 2. Entity Index    1600+ entities    │
+   │ 3. Temporal        "昨天"/"last week"│
+   │ 4. LIKE fallback   short tokens      │
+   └──────────┬──────────────────────────┘
+              │
+        RRF Fusion: score = Σ 1/(60 + rank_i)
+              │
+        Top-K results sorted by fused score
+```
+
+Additional search enhancements:
+- **Chinese↔English synonym expansion** (50+ term mappings)
+- **Title-weighted BM25** (`bm25(fts, 10.0, 1.0)` — title matches 10x)
+- **Hybrid routing** — long tokens → FTS5, short tokens → LIKE, merged with dedup
+
+### Search Quality (eval on 953 real memories, 30 queries)
+
+| Metric | Value |
+|--------|-------|
+| MRR | 0.272 |
+| Recall@5 | 0.272 |
+| Hit Rate@5 | 0.346 |
+
+Run `remem eval` to benchmark on your own data.
+
 ## Commands
 
 ```bash
 remem install              # Configure hooks + MCP server
 remem uninstall            # Remove hooks + MCP (data preserved)
+remem doctor               # System health check (6 checks)
+remem search "query"       # Search memories from CLI
+remem show <id>            # Show memory details
+remem eval                 # Run search quality benchmark
+remem backfill-entities    # Populate entity index from existing memories
+remem encrypt              # Encrypt database with SQLCipher
+remem api --port 5567      # Start REST API server
 remem status               # Show system health and statistics
 remem preferences list     # View all preferences
 remem preferences add "text"  # Add a preference manually
@@ -76,6 +119,44 @@ remem mcp                  # Start MCP server (used by Claude Code)
 remem sync-memory --cwd .  # Sync summaries to Claude Code native memory
 ```
 
+## REST API
+
+remem includes an Axum-based REST API for cross-platform integration:
+
+```bash
+remem api --port 5567
+```
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/search?query=&project=&limit=` | GET | Search memories |
+| `/api/v1/memory?id=` | GET | Get single memory |
+| `/api/v1/memories` | POST | Save a memory |
+| `/api/v1/status` | GET | System status |
+
+## Security
+
+- **SQLCipher encryption**: `remem encrypt` encrypts the database at rest
+- **File permissions**: Data directory `0700`, log files `0600`
+- **Key storage**: `~/.remem/.key` with `0600` permissions
+- **Encryption key**: Set `REMEM_CIPHER_KEY` env var or use auto-generated key file
+- **API binding**: REST API binds `127.0.0.1` only (localhost)
+
+## Multi-Tool Support
+
+remem's `ToolAdapter` trait enables support for multiple AI coding tools:
+
+```rust
+pub trait ToolAdapter: Send + Sync {
+    fn name(&self) -> &str;
+    fn parse_hook(&self, raw_json: &str) -> Option<ParsedHookEvent>;
+    fn should_skip(&self, event: &ParsedHookEvent) -> bool;
+    fn classify_event(&self, event: &ParsedHookEvent) -> Option<EventSummary>;
+}
+```
+
+Currently supports Claude Code. Future: Codex, Cursor, Aider — implement the trait only.
+
 ## remem vs Built-in Memory
 
 | Feature | Claude Code Memory | remem |
@@ -84,11 +165,14 @@ remem sync-memory --cwd .  # Sync summaries to Claude Code native memory
 | Cross-session context | ~5 recent memories | 50+ scored memories |
 | Preferences | Mixed with other content | Dedicated section, always visible |
 | Decision tracking | Not specialized | Type-aware (decision/bugfix/discovery) |
-| Search | Basic | FTS5 full-text with CJK support |
+| Search | Basic | 4-channel RRF fusion with entity index |
 | Branch awareness | No | Branch-scoped memories |
 | Cross-project sharing | No | Preferences auto-shared globally |
 | Session summaries | No | Auto-generated with request/completed/decisions |
 | WorkStream tracking | No | Cross-session task tracking with status |
+| Database encryption | No | SQLCipher at rest |
+| CLI tools | No | `doctor`, `search`, `show`, `eval` |
+| REST API | No | Axum HTTP server |
 
 ## Real-world Usage
 
@@ -96,10 +180,11 @@ After 1 month of production use:
 
 ```
 remem v0.2.0
-  Memories:       656
-  Observations:  1670
-  Sessions:      1076
-  Database:     120 MB
+  Memories:      1001
+  Observations:  1834
+  Entities:      1599
+  Database:     138 MB
+  Tests:         123 passing
 ```
 
 ## Architecture
@@ -107,14 +192,16 @@ remem v0.2.0
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed documentation including:
 
 - System architecture diagram
-- Module overview (~8200 lines across 26 modules)
+- Module overview (~10,200 lines across 30 modules)
 - Data flow (observation capture → distillation → context injection)
 - Memory lifecycle (pending → observations → memories)
+- 4-channel RRF search (FTS5 + Entity + Temporal + LIKE)
 - Rate limiting (3-gate system)
 - AI call strategy (HTTP-first + CLI fallback)
 - MCP Server (7 tools)
+- REST API (Axum)
 - Environment variables (full list)
-- Database schema
+- Database schema (v12)
 - Design decisions
 
 ## Uninstall
