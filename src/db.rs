@@ -107,6 +107,114 @@ pub fn db_path() -> PathBuf {
 /// Current schema version — bump when adding migrations.
 const SCHEMA_VERSION: i64 = 11;
 
+/// Load SQLCipher encryption key from env var or key file.
+/// Returns None if no encryption is configured (backward compatible).
+fn load_cipher_key() -> Option<String> {
+    // Priority 1: environment variable
+    if let Ok(key) = std::env::var("REMEM_CIPHER_KEY") {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+    // Priority 2: key file in data directory
+    let key_path = data_dir().join(".key");
+    if key_path.exists() {
+        if let Ok(key) = std::fs::read_to_string(&key_path) {
+            let key = key.trim().to_string();
+            if !key.is_empty() {
+                return Some(key);
+            }
+        }
+    }
+    None
+}
+
+/// Generate a random encryption key and save to key file.
+/// Returns the generated key.
+pub fn generate_cipher_key() -> Result<String> {
+    use std::io::Write;
+    let key: String = (0..32)
+        .map(|_| format!("{:02x}", rand_byte()))
+        .collect();
+    let key_path = data_dir().join(".key");
+    let mut f = std::fs::File::create(&key_path)?;
+    f.write_all(key.as_bytes())?;
+    // Restrict key file to owner only
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        if let Err(e) = std::fs::set_permissions(&key_path, perms) {
+            crate::log::warn("db", &format!("cannot set key file permissions: {}", e));
+        }
+    }
+    Ok(key)
+}
+
+/// Simple random byte from /dev/urandom or fallback to time-based.
+fn rand_byte() -> u8 {
+    use std::io::Read;
+    let mut buf = [0u8; 1];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf[0];
+        }
+    }
+    // Fallback: time-based (not cryptographically secure, but functional)
+    (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos()
+        & 0xFF) as u8
+}
+
+/// Encrypt an existing unencrypted database.
+/// Creates an encrypted copy, then replaces the original.
+pub fn encrypt_database(key: &str) -> Result<()> {
+    let db_file = db_path();
+    if !db_file.exists() {
+        anyhow::bail!("database not found: {}", db_file.display());
+    }
+
+    let encrypted_path = db_file.with_extension("db.enc");
+
+    // Open original DB (unencrypted)
+    let conn = Connection::open(&db_file)?;
+    conn.execute_batch("PRAGMA busy_timeout=5000;")?;
+
+    // Attach encrypted copy and export
+    conn.execute(
+        &format!(
+            "ATTACH DATABASE '{}' AS encrypted KEY '{}'",
+            encrypted_path.display(),
+            key.replace('\'', "''")
+        ),
+        [],
+    )?;
+    conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
+    conn.execute(
+        &format!(
+            "DETACH DATABASE encrypted"
+        ),
+        [],
+    )?;
+    drop(conn);
+
+    // Replace original with encrypted version
+    let backup_path = db_file.with_extension("db.bak");
+    std::fs::rename(&db_file, &backup_path)?;
+    std::fs::rename(&encrypted_path, &db_file)?;
+
+    crate::log::info(
+        "encrypt",
+        &format!(
+            "database encrypted, backup at {}",
+            backup_path.display()
+        ),
+    );
+    Ok(())
+}
+
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
     if let Some(parent) = path.parent() {
@@ -123,6 +231,12 @@ pub fn open_db() -> Result<Connection> {
     }
     let conn = Connection::open(&path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
+
+    // Apply SQLCipher encryption key if configured
+    if let Some(key) = load_cipher_key() {
+        conn.pragma_update(None, "key", &key)?;
+    }
+
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;

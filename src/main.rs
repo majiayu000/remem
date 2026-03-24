@@ -80,6 +80,8 @@ enum Commands {
         /// Memory ID
         id: i64,
     },
+    /// Encrypt the database with SQLCipher
+    Encrypt,
     /// Run REST API server
     Api {
         /// Port to listen on
@@ -181,6 +183,9 @@ async fn main() -> Result<()> {
         }
         Commands::Show { id } => {
             run_show(id)?;
+        }
+        Commands::Encrypt => {
+            run_encrypt()?;
         }
         Commands::Api { port } => {
             api::run_api_server(port).await?;
@@ -392,6 +397,26 @@ fn run_show(id: i64) -> Result<()> {
     println!();
     println!("{}", m.text);
 
+    Ok(())
+}
+
+/// Encrypt the database with SQLCipher.
+fn run_encrypt() -> Result<()> {
+    let key_path = db::data_dir().join(".key");
+    if key_path.exists() {
+        println!("Database is already encrypted (key file exists at {})", key_path.display());
+        return Ok(());
+    }
+
+    println!("Generating encryption key...");
+    let key = db::generate_cipher_key()?;
+    println!("Key saved to {}", key_path.display());
+
+    println!("Encrypting database (this may take a moment)...");
+    db::encrypt_database(&key)?;
+
+    println!("Done. Database is now encrypted with SQLCipher.");
+    println!("Backup saved as remem.db.bak");
     Ok(())
 }
 
