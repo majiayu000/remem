@@ -112,11 +112,12 @@ fn setup_memory_schema(conn: &Connection) -> Result<()> {
 
 #[test]
 fn bash_skip_filter_stays_in_observe_module() {
-    assert!(observe::should_skip_bash_command("git status"));
-    assert!(observe::should_skip_bash_command("  ls -la  "));
-    assert!(observe::should_skip_bash_command("cargo build --release"));
-    assert!(!observe::should_skip_bash_command("git commit -m 'fix'"));
-    assert!(!observe::should_skip_bash_command("cargo test"));
+    use remem::adapter_claude::should_skip_bash_command;
+    assert!(should_skip_bash_command("git status"));
+    assert!(should_skip_bash_command("  ls -la  "));
+    assert!(should_skip_bash_command("cargo build --release"));
+    assert!(!should_skip_bash_command("git commit -m 'fix'"));
+    assert!(!should_skip_bash_command("cargo test"));
 }
 
 #[test]

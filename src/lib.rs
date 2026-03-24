@@ -4,6 +4,8 @@
     clippy::manual_div_ceil
 )]
 
+pub mod adapter;
+pub mod adapter_claude;
 pub mod ai;
 pub mod claude_memory;
 pub mod context;
