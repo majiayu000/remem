@@ -503,8 +503,84 @@ fn slugify(text: &str, max_len: usize) -> String {
     }
 }
 
+/// Split a multi-line text block into individual items.
+/// Recognizes bullet points (•, -, *), numbered lists, and line breaks.
+fn split_into_items(text: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Detect list item start: bullet points, numbered, or semicolon-separated
+        let is_new_item = trimmed.starts_with("• ")
+            || trimmed.starts_with("- ")
+            || trimmed.starts_with("* ")
+            || trimmed.starts_with("· ")
+            || trimmed
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+                && trimmed.contains(". ");
+
+        if is_new_item {
+            if !current.trim().is_empty() {
+                items.push(current.trim().to_string());
+            }
+            // Strip the bullet/number prefix
+            let content = trimmed
+                .trim_start_matches(|c: char| c == '•' || c == '-' || c == '*' || c == '·')
+                .trim_start();
+            let content = if content
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+            {
+                // Strip "1. " prefix
+                content
+                    .find(". ")
+                    .map(|pos| &content[pos + 2..])
+                    .unwrap_or(content)
+            } else {
+                content
+            };
+            current = content.to_string();
+        } else {
+            // Continuation line
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(trimmed);
+        }
+    }
+    if !current.trim().is_empty() {
+        items.push(current.trim().to_string());
+    }
+
+    // If no list items detected, try splitting by semicolons
+    if items.len() <= 1 {
+        let original = text.trim();
+        let semi_split: Vec<String> = original
+            .split('；')
+            .flat_map(|s| s.split(';'))
+            .map(|s| s.trim().to_string())
+            .filter(|s| s.len() >= MIN_DECISION_LEN)
+            .collect();
+        if semi_split.len() > 1 {
+            return semi_split;
+        }
+    }
+
+    items
+}
+
 /// Auto-promote session summary fields to memories.
 /// Called after successful finalize_summarize(). Zero LLM cost.
+/// Splits multi-item decisions/learned into individual memories for better search precision.
 /// Returns number of memories created/updated.
 pub fn promote_summary_to_memories(
     conn: &Connection,
@@ -518,63 +594,121 @@ pub fn promote_summary_to_memories(
     let request_text = request.unwrap_or("").trim();
     let mut count = 0;
 
-    // Promote decisions → memory_type="decision"
+    // Promote decisions → memory_type="decision" (split into individual items)
     if let Some(text) = decisions {
         let text = text.trim();
         if text.len() >= MIN_DECISION_LEN {
-            let title = if request_text.is_empty() {
-                "Session decisions".to_string()
+            let items = split_into_items(text);
+            if items.len() > 1 {
+                // Multiple decisions: create one memory per decision
+                for (i, item) in items.iter().enumerate() {
+                    if item.len() < MIN_DECISION_LEN {
+                        continue;
+                    }
+                    let title = if request_text.is_empty() {
+                        format!("Decision: {}", &item[..item.len().min(70)])
+                    } else {
+                        let preview = &request_text[..request_text.len().min(60)];
+                        format!("{} — decision {}", preview, i + 1)
+                    };
+                    let topic_key =
+                        format!("auto-decision-{}-{}", slugify(request_text, 40), i + 1);
+                    insert_memory(
+                        conn,
+                        Some(session_id),
+                        project,
+                        Some(&topic_key),
+                        &title,
+                        item,
+                        "decision",
+                        None,
+                    )?;
+                    count += 1;
+                }
             } else {
-                let preview = &request_text[..request_text.len().min(80)];
-                format!("{} — decisions", preview)
-            };
-            let content = if request_text.is_empty() {
-                text.to_string()
-            } else {
-                format!("**Request**: {}\n\n**Decisions**: {}", request_text, text)
-            };
-            let topic_key = format!("auto-decision-{}", slugify(request_text, 50));
-            insert_memory(
-                conn,
-                Some(session_id),
-                project,
-                Some(&topic_key),
-                &title,
-                &content,
-                "decision",
-                None,
-            )?;
-            count += 1;
+                // Single decision: keep as-is
+                let title = if request_text.is_empty() {
+                    "Session decisions".to_string()
+                } else {
+                    let preview = &request_text[..request_text.len().min(80)];
+                    format!("{} — decisions", preview)
+                };
+                let content = if request_text.is_empty() {
+                    text.to_string()
+                } else {
+                    format!("**Request**: {}\n\n**Decisions**: {}", request_text, text)
+                };
+                let topic_key = format!("auto-decision-{}", slugify(request_text, 50));
+                insert_memory(
+                    conn,
+                    Some(session_id),
+                    project,
+                    Some(&topic_key),
+                    &title,
+                    &content,
+                    "decision",
+                    None,
+                )?;
+                count += 1;
+            }
         }
     }
 
-    // Promote learned → memory_type="discovery"
+    // Promote learned → memory_type="discovery" (split into individual items)
     if let Some(text) = learned {
         let text = text.trim();
         if text.len() >= MIN_LEARNED_LEN {
-            let title = if request_text.is_empty() {
-                "Session insights".to_string()
+            let items = split_into_items(text);
+            if items.len() > 1 {
+                for (i, item) in items.iter().enumerate() {
+                    if item.len() < MIN_LEARNED_LEN {
+                        continue;
+                    }
+                    let title = if request_text.is_empty() {
+                        format!("Discovery: {}", &item[..item.len().min(70)])
+                    } else {
+                        let preview = &request_text[..request_text.len().min(60)];
+                        format!("{} — discovery {}", preview, i + 1)
+                    };
+                    let topic_key =
+                        format!("auto-discovery-{}-{}", slugify(request_text, 40), i + 1);
+                    insert_memory(
+                        conn,
+                        Some(session_id),
+                        project,
+                        Some(&topic_key),
+                        &title,
+                        item,
+                        "discovery",
+                        None,
+                    )?;
+                    count += 1;
+                }
             } else {
-                let preview = &request_text[..request_text.len().min(80)];
-                format!("{} — learned", preview)
-            };
-            let content = if request_text.is_empty() {
-                text.to_string()
-            } else {
-                format!("**Request**: {}\n\n**Learned**: {}", request_text, text)
-            };
-            let topic_key = format!("auto-discovery-{}", slugify(request_text, 50));
-            insert_memory(
-                conn,
-                Some(session_id),
-                project,
-                Some(&topic_key),
-                &title,
-                &content,
-                "discovery",
-                None,
-            )?;
-            count += 1;
+                let title = if request_text.is_empty() {
+                    "Session insights".to_string()
+                } else {
+                    let preview = &request_text[..request_text.len().min(80)];
+                    format!("{} — learned", preview)
+                };
+                let content = if request_text.is_empty() {
+                    text.to_string()
+                } else {
+                    format!("**Request**: {}\n\n**Learned**: {}", request_text, text)
+                };
+                let topic_key = format!("auto-discovery-{}", slugify(request_text, 50));
+                insert_memory(
+                    conn,
+                    Some(session_id),
+                    project,
+                    Some(&topic_key),
+                    &title,
+                    &content,
+                    "discovery",
+                    None,
+                )?;
+                count += 1;
+            }
         }
     }
 
@@ -1074,5 +1208,90 @@ mod tests {
             )
             .unwrap();
         assert_eq!(active, 1);
+    }
+
+    #[test]
+    fn test_split_into_items_bullets() {
+        let text = "• Use RwLock for concurrent reads\n• Switch to trigram tokenizer\n• Set compression threshold=100";
+        let items = split_into_items(text);
+        assert_eq!(items.len(), 3);
+        assert!(items[0].contains("RwLock"));
+        assert!(items[1].contains("trigram"));
+        assert!(items[2].contains("compression"));
+    }
+
+    #[test]
+    fn test_split_into_items_dashes() {
+        let text = "- First decision about architecture\n- Second decision about testing\n- Third one";
+        let items = split_into_items(text);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn test_split_into_items_single_line() {
+        let text = "Switched from unicode61 to trigram tokenizer for better CJK support";
+        let items = split_into_items(text);
+        assert_eq!(items.len(), 1);
+        assert!(items[0].contains("trigram"));
+    }
+
+    #[test]
+    fn test_split_into_items_semicolons() {
+        let text = "Use RwLock for concurrent reads; Switch to trigram tokenizer for CJK; Set compression threshold to 100 observations";
+        let items = split_into_items(text);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn test_promote_multi_decisions() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let decisions = "• Use RwLock instead of Mutex for concurrent read support\n\
+                         • Switch to trigram tokenizer for CJK text search\n\
+                         • Set compression threshold to 100 observations";
+        let count = promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Optimize search and concurrency"),
+            Some(decisions),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 3);
+
+        let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert_eq!(memories.len(), 3);
+        for m in &memories {
+            assert_eq!(m.memory_type, "decision");
+        }
+    }
+
+    #[test]
+    fn test_promote_multi_learned() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let learned = "- FTS5 trigram tokenizer handles CJK without word boundaries\n\
+                       - WAL mode allows concurrent reads with single writer";
+        let count = promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Research storage"),
+            None,
+            Some(learned),
+            None,
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+
+        let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert_eq!(memories.len(), 2);
+        for m in &memories {
+            assert_eq!(m.memory_type, "discovery");
+        }
     }
 }
