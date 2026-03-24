@@ -1,0 +1,246 @@
+{
+  "version": "1.0",
+  "description": "Golden dataset for remem search quality evaluation. Relevance: 3=highly relevant, 2=partially relevant, 1=marginally relevant, 0=irrelevant.",
+  "queries": [
+    {
+      "id": "q01",
+      "query": "FTS5 搜索",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [20, 19, 95, 96],
+      "notes": "Should find FTS5-related decisions and discoveries in remem project"
+    },
+    {
+      "id": "q02",
+      "query": "数据库加密",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [940, 941],
+      "notes": "Should find SQLCipher encryption decisions"
+    },
+    {
+      "id": "q03",
+      "query": "POST 端点挂起",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [929, 930],
+      "notes": "Should find Harness POST /tasks hang diagnosis"
+    },
+    {
+      "id": "q04",
+      "query": "竞品分析",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [914, 915, 20, 19],
+      "notes": "Should find competitive analysis for remem"
+    },
+    {
+      "id": "q05",
+      "query": "错误处理 unwrap",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [93, 94, 95, 96],
+      "notes": "Should find unwrap error handling fix sessions"
+    },
+    {
+      "id": "q06",
+      "query": "偏好系统",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [700, 701, 912, 913],
+      "notes": "Should find preference system implementation decisions"
+    },
+    {
+      "id": "q07",
+      "query": "Harness 任务失败",
+      "category": "fuzzy",
+      "project": "tools/harness",
+      "relevant_ids": [878, 929, 930, 942, 943],
+      "notes": "Should find Harness task failure diagnosis across sessions"
+    },
+    {
+      "id": "q08",
+      "query": "记忆质量",
+      "category": "fuzzy",
+      "project": null,
+      "relevant_ids": [748, 914, 915],
+      "notes": "Should find memories about memory quality preferences and strategy"
+    },
+    {
+      "id": "q09",
+      "query": "ToolAdapter trait",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [940, 941, 936, 937],
+      "notes": "Should find adapter refactoring decisions"
+    },
+    {
+      "id": "q10",
+      "query": "REST API",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [940, 941],
+      "notes": "Should find REST API implementation decisions"
+    },
+    {
+      "id": "q11",
+      "query": "跨项目记忆共享",
+      "category": "fuzzy",
+      "project": null,
+      "relevant_ids": [700, 701, 912, 913],
+      "notes": "Should find global scope and cross-project sharing decisions"
+    },
+    {
+      "id": "q12",
+      "query": "om-generator 架构",
+      "category": "exact",
+      "project": "mutil-om/om-generator",
+      "relevant_ids": [12],
+      "notes": "Should find OM Generator architecture analysis"
+    },
+    {
+      "id": "q13",
+      "query": "视频生成",
+      "category": "fuzzy",
+      "project": null,
+      "relevant_ids": [],
+      "notes": "Broad query about video generation across projects"
+    },
+    {
+      "id": "q14",
+      "query": "自动提升 memory",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [700, 701],
+      "notes": "Should find auto-promote summary to memories feature"
+    },
+    {
+      "id": "q15",
+      "query": "worker 超时",
+      "category": "fuzzy",
+      "project": null,
+      "relevant_ids": [],
+      "notes": "Should find worker timeout/retry related decisions if any"
+    },
+    {
+      "id": "q16",
+      "query": "trigram tokenizer",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [20, 95, 96],
+      "notes": "Should find trigram tokenizer decisions for CJK"
+    },
+    {
+      "id": "q17",
+      "query": "uv 环境管理",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [8],
+      "notes": "Should find uv contribution/migration work"
+    },
+    {
+      "id": "q18",
+      "query": "抖音视频发布",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [845],
+      "notes": "Should find Douyin video publishing decisions"
+    },
+    {
+      "id": "q19",
+      "query": "Claude Code hook 机制",
+      "category": "fuzzy",
+      "project": "tools/remem",
+      "relevant_ids": [700, 701, 912, 913],
+      "notes": "Should find hook system design decisions"
+    },
+    {
+      "id": "q20",
+      "query": "context compression",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [700, 701],
+      "notes": "Should find context compression feature work"
+    },
+    {
+      "id": "q21",
+      "query": "上次修了什么 bug",
+      "category": "temporal",
+      "project": null,
+      "relevant_ids": [],
+      "notes": "Temporal query - should find recent bugfix memories"
+    },
+    {
+      "id": "q22",
+      "query": "Reddit 自动回复",
+      "category": "exact",
+      "project": "life/x",
+      "relevant_ids": [666],
+      "notes": "Should find Reddit auto-reply system decisions"
+    },
+    {
+      "id": "q23",
+      "query": "MCP server 实现",
+      "category": "fuzzy",
+      "project": "tools/remem",
+      "relevant_ids": [700, 701],
+      "notes": "Should find MCP server implementation details"
+    },
+    {
+      "id": "q24",
+      "query": "Engram 对比",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [19, 20, 914, 915],
+      "notes": "Should find Engram competitive comparison"
+    },
+    {
+      "id": "q25",
+      "query": "数据库迁移到 MongoDB",
+      "category": "adversarial",
+      "project": null,
+      "relevant_ids": [],
+      "notes": "Adversarial: we never discussed MongoDB migration, should return empty or irrelevant"
+    },
+    {
+      "id": "q26",
+      "query": "性能优化 benchmark",
+      "category": "fuzzy",
+      "project": null,
+      "relevant_ids": [936, 937],
+      "notes": "Should find benchmark and performance related work"
+    },
+    {
+      "id": "q27",
+      "query": "X Twitter 发帖",
+      "category": "exact",
+      "project": "life/x",
+      "relevant_ids": [666],
+      "notes": "Should find X/Twitter posting automation decisions"
+    },
+    {
+      "id": "q28",
+      "query": "质量优先成本",
+      "category": "exact",
+      "project": null,
+      "relevant_ids": [748],
+      "notes": "Should find quality-over-cost preference"
+    },
+    {
+      "id": "q29",
+      "query": "VibeGuard 规则",
+      "category": "fuzzy",
+      "project": null,
+      "relevant_ids": [838, 107],
+      "notes": "Should find VibeGuard rule-related decisions"
+    },
+    {
+      "id": "q30",
+      "query": "session summary 格式",
+      "category": "exact",
+      "project": "tools/remem",
+      "relevant_ids": [700, 701],
+      "notes": "Should find summary format/structure decisions"
+    }
+  ]
+}

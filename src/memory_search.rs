@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::db;
-use crate::memory::{map_memory_row_pub, Memory, MEMORY_COLS};
+use crate::memory::{map_memory_row_pub, Memory};
 
 /// Push project suffix-match filter into SQL conditions.
 /// "harness" matches exact "harness" OR ends with "/harness".

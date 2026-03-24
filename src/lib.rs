@@ -18,6 +18,7 @@ pub mod db_query;
 pub mod db_usage;
 pub mod dedup;
 pub mod doctor;
+pub mod eval_metrics;
 pub mod install;
 pub mod log;
 pub mod mcp;

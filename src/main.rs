@@ -80,6 +80,15 @@ enum Commands {
         /// Memory ID
         id: i64,
     },
+    /// Run search quality evaluation against golden dataset
+    Eval {
+        /// Path to golden dataset JSON
+        #[arg(long, default_value = "eval/golden.json")]
+        dataset: String,
+        /// Max results per query
+        #[arg(long, short = 'k', default_value = "5")]
+        k: usize,
+    },
     /// Encrypt the database with SQLCipher
     Encrypt,
     /// Run REST API server
@@ -183,6 +192,9 @@ async fn main() -> Result<()> {
         }
         Commands::Show { id } => {
             run_show(id)?;
+        }
+        Commands::Eval { dataset, k } => {
+            run_eval(&dataset, k)?;
         }
         Commands::Encrypt => {
             run_encrypt()?;
@@ -396,6 +408,87 @@ fn run_show(id: i64) -> Result<()> {
     println!("Updated:  {}", updated);
     println!();
     println!("{}", m.text);
+
+    Ok(())
+}
+
+/// Run search quality evaluation against golden dataset.
+fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
+    use remem::eval_metrics;
+
+    #[derive(serde::Deserialize)]
+    struct GoldenDataset {
+        queries: Vec<GoldenQuery>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GoldenQuery {
+        id: String,
+        query: String,
+        category: String,
+        project: Option<String>,
+        relevant_ids: Vec<i64>,
+    }
+
+    let content = std::fs::read_to_string(dataset_path)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {}", dataset_path, e))?;
+    let dataset: GoldenDataset = serde_json::from_str(&content)?;
+    let conn = db::open_db()?;
+
+    let mut total_rr = 0.0;
+    let mut total_p = 0.0;
+    let mut total_r = 0.0;
+    let mut total_hit = 0.0;
+    let mut evaluated = 0usize;
+
+    println!("remem eval — {} queries, k={}\n", dataset.queries.len(), k);
+
+    for q in &dataset.queries {
+        let results = remem::search::search(
+            &conn,
+            Some(&q.query),
+            q.project.as_deref(),
+            None,
+            k as i64,
+            0,
+            false,
+        )?;
+        let result_ids: Vec<i64> = results.iter().map(|m| m.id).collect();
+
+        let rr = eval_metrics::reciprocal_rank(&result_ids, &q.relevant_ids);
+        let p = eval_metrics::precision_at_k(&result_ids, &q.relevant_ids, k);
+        let r = eval_metrics::recall_at_k(&result_ids, &q.relevant_ids, k);
+        let hit = eval_metrics::hit_at_k(&result_ids, &q.relevant_ids, k);
+
+        let status = if q.relevant_ids.is_empty() {
+            if results.is_empty() { "PASS" } else { "---" }
+        } else if hit > 0.0 {
+            "HIT"
+        } else {
+            "MISS"
+        };
+
+        println!(
+            "  [{}] {:>4} | P@{}={:.2} R@{}={:.2} RR={:.2} | {} | {}",
+            q.id, status, k, p, k, r, rr, q.category, q.query
+        );
+
+        if !q.relevant_ids.is_empty() {
+            total_rr += rr;
+            total_p += p;
+            total_r += r;
+            total_hit += hit;
+            evaluated += 1;
+        }
+    }
+
+    if evaluated > 0 {
+        let n = evaluated as f64;
+        println!("\n--- Aggregate ({} queries with ground truth) ---", evaluated);
+        println!("  MRR:          {:.3}", total_rr / n);
+        println!("  Precision@{}:  {:.3}", k, total_p / n);
+        println!("  Recall@{}:     {:.3}", k, total_r / n);
+        println!("  Hit Rate@{}:   {:.3}", k, total_hit / n);
+    }
 
     Ok(())
 }
