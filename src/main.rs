@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use remem::{
-    claude_memory, context, db, install, mcp, memory, observe, preference, summarize, worker,
+    claude_memory, context, db, doctor, install, mcp, memory, observe, preference, summarize,
+    worker,
 };
 
 #[derive(Parser)]
@@ -58,6 +59,8 @@ enum Commands {
     },
     /// Show system status and statistics
     Status,
+    /// Diagnose system health (hooks, MCP, database, queue)
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -139,6 +142,9 @@ async fn main() -> Result<()> {
         }
         Commands::Status => {
             run_status()?;
+        }
+        Commands::Doctor => {
+            doctor::run_doctor()?;
         }
     }
 
