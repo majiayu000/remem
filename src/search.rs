@@ -17,12 +17,6 @@ fn sanitize_fts_query(raw: &str) -> String {
         .join(" ")
 }
 
-/// Check if a project value matches the filter using suffix matching.
-/// "harness" matches "harness", "tools/harness", "vibeguard/harness".
-fn project_matches(project: &str, filter: &str) -> bool {
-    project == filter || project.ends_with(&format!("/{filter}"))
-}
-
 pub fn search(
     conn: &Connection,
     query: Option<&str>,
@@ -54,43 +48,31 @@ pub fn search_with_branch(
     _include_stale: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
-    // Search without project filter in SQL, apply suffix matching post-filter.
-    // This handles project fragmentation (e.g., "harness" vs "tools/harness").
-    let fetch_limit = if project.is_some() || branch.is_some() {
-        limit * 3
-    } else {
-        limit
-    };
-
+    // Project suffix matching is now pushed into SQL (memory.rs), so no 3x over-fetch needed.
     let mut results = match query {
         Some(q) if !q.is_empty() => {
             let tokens: Vec<&str> = q.split_whitespace().collect();
             let has_short_token = tokens.iter().any(|t| t.chars().count() < 3);
 
             if has_short_token {
-                memory::search_memories_like(conn, &tokens, None, memory_type, fetch_limit, 0)?
+                memory::search_memories_like(conn, &tokens, project, memory_type, limit, offset)?
             } else {
                 let safe_query = sanitize_fts_query(q);
-                memory::search_memories_fts(conn, &safe_query, None, memory_type, fetch_limit, 0)?
+                memory::search_memories_fts(conn, &safe_query, project, memory_type, limit, offset)?
             }
         }
         _ => {
             // No query — return recent memories; need project for this path
             let proj = project.unwrap_or("");
             if proj.is_empty() {
-                return Ok(vec![]);
+                return Ok(vec![])
             } else if let Some(t) = memory_type {
-                memory::get_memories_by_type(conn, proj, t, fetch_limit)?
+                memory::get_memories_by_type(conn, proj, t, limit)?
             } else {
-                memory::get_recent_memories(conn, proj, fetch_limit)?
+                memory::get_recent_memories(conn, proj, limit)?
             }
         }
     };
-
-    // Post-filter by project using suffix matching
-    if let Some(proj) = project {
-        results.retain(|m| project_matches(&m.project, proj));
-    }
 
     // Post-filter by branch (NULL branch matches all — old data without branch)
     if let Some(br) = branch {
@@ -100,13 +82,7 @@ pub fn search_with_branch(
         });
     }
 
-    // Apply offset and limit
-    let start = offset as usize;
-    if start >= results.len() {
-        return Ok(vec![]);
-    }
-    let end = (start + limit as usize).min(results.len());
-    Ok(results[start..end].to_vec())
+    Ok(results)
 }
 
 /// Search observations (used by get_observations MCP tool).
@@ -122,8 +98,6 @@ pub fn search_observations(
     use crate::db_models::OBSERVATION_TYPES;
     use crate::db_query;
 
-    let fetch_limit = if project.is_some() { limit * 3 } else { limit };
-
     let mut results = match query {
         Some(q) if !q.is_empty() => {
             let tokens: Vec<&str> = q.split_whitespace().collect();
@@ -133,10 +107,10 @@ pub fn search_observations(
                 db_query::search_observations_like(
                     conn,
                     &tokens,
-                    None,
+                    project,
                     obs_type,
-                    fetch_limit,
-                    0,
+                    limit,
+                    offset,
                     include_stale,
                 )?
             } else {
@@ -144,10 +118,10 @@ pub fn search_observations(
                 db_query::search_observations_fts(
                     conn,
                     &safe_query,
-                    None,
+                    project,
                     obs_type,
-                    fetch_limit,
-                    0,
+                    limit,
+                    offset,
                     include_stale,
                 )?
             }
@@ -158,17 +132,19 @@ pub fn search_observations(
             if proj.is_empty() {
                 return Ok(vec![]);
             } else {
-                db_query::query_observations(conn, proj, &types, fetch_limit)?
+                db_query::query_observations(conn, proj, &types, limit)?
             }
         }
     };
 
-    // Post-filter by project using suffix matching
+    // Observation project filter: push into SQL for FTS/LIKE paths too
+    // For now, keep post-filter for observations since db_query functions
+    // use a different project matching approach (push_project_filter).
     if let Some(proj) = project {
         results.retain(|o| {
             o.project
                 .as_deref()
-                .is_some_and(|p| project_matches(p, proj))
+                .is_some_and(|p| p == proj || p.ends_with(&format!("/{proj}")))
         });
     }
 
