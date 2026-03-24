@@ -71,7 +71,8 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             ),
         );
 
-        let timed = tokio::time::timeout(Duration::from_secs(JOB_TIMEOUT_SECS), process_job(&job)).await;
+        let timed =
+            tokio::time::timeout(Duration::from_secs(JOB_TIMEOUT_SECS), process_job(&job)).await;
         let conn = db::open_db()?;
         match timed {
             Ok(Ok(())) => {

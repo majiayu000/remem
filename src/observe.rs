@@ -340,15 +340,16 @@ pub async fn observe() -> Result<()> {
 
     crate::log::info(
         "observe",
-        &format!(
-            "EVENT {} project={} branch={:?}",
-            summary, project, branch
-        ),
+        &format!("EVENT {} project={} branch={:?}", summary, project, branch),
     );
 
     // Sync native Claude Code memory writes to remem DB
     if matches!(tool_name, "Write" | "Edit") {
-        if let Some(file_path) = hook.tool_input.as_ref().and_then(|v| v["file_path"].as_str()) {
+        if let Some(file_path) = hook
+            .tool_input
+            .as_ref()
+            .and_then(|v| v["file_path"].as_str())
+        {
             if let Err(e) = sync_native_memory(&conn, &session_id, file_path, branch.as_deref()) {
                 crate::log::warn("observe", &format!("native memory sync failed: {}", e));
             }
@@ -498,7 +499,8 @@ mod tests {
 
     #[test]
     fn parse_frontmatter_full() {
-        let content = "---\nname: my memory\ndescription: test\ntype: feedback\n---\nBody content here.";
+        let content =
+            "---\nname: my memory\ndescription: test\ntype: feedback\n---\nBody content here.";
         let (title, mem_type, body) = parse_native_memory_frontmatter(content);
         assert_eq!(title, "my memory");
         assert_eq!(mem_type, "preference"); // feedback → preference

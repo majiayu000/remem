@@ -162,7 +162,8 @@ pub fn sync_to_claude_memory(cwd: &str, project: &str) -> Result<()> {
 
 fn ensure_memory_index(memory_dir: &std::path::Path) -> Result<()> {
     let index_path = memory_dir.join("MEMORY.md");
-    let pointer = format!("- [remem_sessions]({REMEM_FILE}) — 最近会话摘要和关键决策（remem 自动同步）");
+    let pointer =
+        format!("- [remem_sessions]({REMEM_FILE}) — 最近会话摘要和关键决策（remem 自动同步）");
 
     if index_path.exists() {
         let existing = std::fs::read_to_string(&index_path)?;

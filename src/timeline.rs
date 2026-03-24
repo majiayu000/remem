@@ -180,15 +180,19 @@ fn query_monthly(conn: &Connection, project: &str) -> Result<Vec<MonthRow>> {
     let obs_rows = stmt.query_map(refs.as_slice(), |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
     })?;
-    let mut months: std::collections::BTreeMap<String, MonthRow> = std::collections::BTreeMap::new();
+    let mut months: std::collections::BTreeMap<String, MonthRow> =
+        std::collections::BTreeMap::new();
     for row in obs_rows {
         let (m, cnt) = row?;
-        months.entry(m.clone()).or_insert(MonthRow {
-            month: m,
-            observations: 0,
-            sessions: 0,
-            ai_cost: 0.0,
-        }).observations = cnt;
+        months
+            .entry(m.clone())
+            .or_insert(MonthRow {
+                month: m,
+                observations: 0,
+                sessions: 0,
+                ai_cost: 0.0,
+            })
+            .observations = cnt;
     }
 
     let mut p2: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -206,12 +210,15 @@ fn query_monthly(conn: &Connection, project: &str) -> Result<Vec<MonthRow>> {
     })?;
     for row in sess_rows {
         let (m, cnt) = row?;
-        months.entry(m.clone()).or_insert(MonthRow {
-            month: m,
-            observations: 0,
-            sessions: 0,
-            ai_cost: 0.0,
-        }).sessions = cnt;
+        months
+            .entry(m.clone())
+            .or_insert(MonthRow {
+                month: m,
+                observations: 0,
+                sessions: 0,
+                ai_cost: 0.0,
+            })
+            .sessions = cnt;
     }
 
     let mut p3: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -229,12 +236,15 @@ fn query_monthly(conn: &Connection, project: &str) -> Result<Vec<MonthRow>> {
     })?;
     for row in cost_rows {
         let (m, cost) = row?;
-        months.entry(m.clone()).or_insert(MonthRow {
-            month: m,
-            observations: 0,
-            sessions: 0,
-            ai_cost: 0.0,
-        }).ai_cost = cost;
+        months
+            .entry(m.clone())
+            .or_insert(MonthRow {
+                month: m,
+                observations: 0,
+                sessions: 0,
+                ai_cost: 0.0,
+            })
+            .ai_cost = cost;
     }
 
     let mut result: Vec<MonthRow> = months.into_values().collect();
@@ -243,11 +253,7 @@ fn query_monthly(conn: &Connection, project: &str) -> Result<Vec<MonthRow>> {
 }
 
 /// Generate a project timeline report in Markdown format.
-pub fn generate_timeline_report(
-    conn: &Connection,
-    project: &str,
-    full: bool,
-) -> Result<String> {
+pub fn generate_timeline_report(conn: &Connection, project: &str, full: bool) -> Result<String> {
     let overview = query_overview(conn, project)?;
     let type_counts = query_type_counts(conn, project)?;
     let token_econ = query_token_economics(conn, project)?;
