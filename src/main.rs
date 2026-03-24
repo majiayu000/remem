@@ -61,6 +61,25 @@ enum Commands {
     Status,
     /// Diagnose system health (hooks, MCP, database, queue)
     Doctor,
+    /// Search memories from the command line
+    Search {
+        /// Search query
+        query: String,
+        /// Filter by project
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Filter by type (decision/discovery/bugfix/architecture/preference)
+        #[arg(long, short = 't')]
+        memory_type: Option<String>,
+        /// Max results
+        #[arg(long, short = 'n', default_value = "10")]
+        limit: i64,
+    },
+    /// Show a single memory by ID
+    Show {
+        /// Memory ID
+        id: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -145,6 +164,17 @@ async fn main() -> Result<()> {
         }
         Commands::Doctor => {
             doctor::run_doctor()?;
+        }
+        Commands::Search {
+            query,
+            project,
+            memory_type,
+            limit,
+        } => {
+            run_search(&query, project.as_deref(), memory_type.as_deref(), limit)?;
+        }
+        Commands::Show { id } => {
+            run_show(id)?;
         }
     }
 
@@ -282,6 +312,76 @@ fn run_status() -> Result<()> {
             println!("  {:>4}  {}", count, proj);
         }
     }
+
+    Ok(())
+}
+
+/// Search memories from the CLI.
+fn run_search(
+    query: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+) -> Result<()> {
+    let conn = db::open_db()?;
+    let results = remem::search::search(&conn, Some(query), project, memory_type, limit, 0, false)?;
+
+    if results.is_empty() {
+        println!("No results found.");
+        return Ok(());
+    }
+
+    println!("Found {} result(s):\n", results.len());
+    for m in &results {
+        let date = chrono::DateTime::from_timestamp(m.created_at_epoch, 0)
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        let preview = m.text.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+        println!(
+            "  [{}] {} | {} | {} | {}",
+            m.id, m.memory_type, m.project, date, m.title
+        );
+        if !preview.is_empty() && preview != m.title {
+            println!("       {}", preview);
+        }
+    }
+
+    Ok(())
+}
+
+/// Show a single memory by ID.
+fn run_show(id: i64) -> Result<()> {
+    let conn = db::open_db()?;
+    let memories = memory::get_memories_by_ids(&conn, &[id], None)?;
+
+    let Some(m) = memories.first() else {
+        println!("Memory {} not found.", id);
+        return Ok(());
+    };
+
+    let created = chrono::DateTime::from_timestamp(m.created_at_epoch, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_default();
+    let updated = chrono::DateTime::from_timestamp(m.updated_at_epoch, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_default();
+
+    println!("ID:       {}", m.id);
+    println!("Title:    {}", m.title);
+    println!("Type:     {}", m.memory_type);
+    println!("Project:  {}", m.project);
+    println!("Scope:    {}", m.scope);
+    println!("Status:   {}", m.status);
+    if let Some(tk) = &m.topic_key {
+        println!("Topic:    {}", tk);
+    }
+    if let Some(br) = &m.branch {
+        println!("Branch:   {}", br);
+    }
+    println!("Created:  {}", created);
+    println!("Updated:  {}", updated);
+    println!();
+    println!("{}", m.text);
 
     Ok(())
 }
