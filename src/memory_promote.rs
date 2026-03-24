@@ -8,6 +8,9 @@ const MIN_DECISION_LEN: usize = 30;
 const MIN_LEARNED_LEN: usize = 30;
 const MIN_PREFERENCE_LEN: usize = 10;
 
+/// Max title length — leaves room for FTS matching.
+const MAX_TITLE_LEN: usize = 120;
+
 /// Generate a stable topic_key from text for UPSERT dedup.
 pub fn slugify_for_topic(text: &str, max_len: usize) -> String {
     slugify(text, max_len)
@@ -47,6 +50,62 @@ fn slugify(text: &str, max_len: usize) -> String {
         trimmed.to_string()
     } else {
         trimmed.chars().take(max_len).collect()
+    }
+}
+
+/// Build a keyword-rich title from the content itself.
+/// Falls back to request prefix only if content is too short.
+fn build_title(content: &str, request: &str, label: &str) -> String {
+    // Use the content itself as the title source (not request).
+    // Truncate to MAX_TITLE_LEN with word-boundary awareness.
+    let source = if content.len() >= 20 { content } else { request };
+    if source.is_empty() {
+        return format!("Session {label}");
+    }
+    let truncated = truncate_at_boundary(source, MAX_TITLE_LEN - label.len() - 5);
+    format!("{truncated} — {label}")
+}
+
+/// Build a keyword-rich title for a single item in a multi-item list.
+fn build_item_title(item: &str, label: &str, _index: usize) -> String {
+    let truncated = truncate_at_boundary(item, MAX_TITLE_LEN - label.len() - 5);
+    format!("{truncated} — {label}")
+}
+
+/// Truncate text at a word or sentence boundary, preserving keywords.
+fn truncate_at_boundary(text: &str, max_len: usize) -> String {
+    let text = text.trim();
+    if text.len() <= max_len {
+        return text.to_string();
+    }
+    // Find a good break point: prefer sentence-end, then word boundary.
+    let slice = &text[..max_len];
+    // Try to break at sentence end.
+    for sep in ['。', '；', ';', '.', '，', ','] {
+        if let Some(pos) = slice.rfind(sep) {
+            if pos > max_len / 2 {
+                return text[..pos + sep.len_utf8()].trim().to_string();
+            }
+        }
+    }
+    // Break at word boundary (space or CJK char boundary).
+    if let Some(pos) = slice.rfind(' ') {
+        if pos > max_len / 2 {
+            return text[..pos].to_string();
+        }
+    }
+    // Hard truncate at char boundary.
+    text.chars().take(max_len).collect()
+}
+
+/// Build content with request as lightweight context, not the primary text.
+/// The content body is the decision/learned text itself, with request as a one-line header.
+fn build_content(body: &str, request: &str) -> String {
+    if request.is_empty() {
+        body.to_string()
+    } else {
+        // Request as a compact context line, body is the primary content.
+        format!("[Context: {}]\n\n{}", truncate_at_boundary(request, 150), body)
     }
 }
 
@@ -144,12 +203,8 @@ pub fn promote_summary_to_memories(
                     if item.len() < MIN_DECISION_LEN {
                         continue;
                     }
-                    let title = if request_text.is_empty() {
-                        format!("Decision: {}", &item[..item.len().min(70)])
-                    } else {
-                        let preview = &request_text[..request_text.len().min(60)];
-                        format!("{} — decision {}", preview, i + 1)
-                    };
+                    let title = build_item_title(item, "decision", i);
+                    let content = build_content(item, request_text);
                     let topic_key =
                         format!("auto-decision-{}-{}", slugify(request_text, 40), i + 1);
                     insert_memory(
@@ -158,24 +213,15 @@ pub fn promote_summary_to_memories(
                         project,
                         Some(&topic_key),
                         &title,
-                        item,
+                        &content,
                         "decision",
                         None,
                     )?;
                     count += 1;
                 }
             } else {
-                let title = if request_text.is_empty() {
-                    "Session decisions".to_string()
-                } else {
-                    let preview = &request_text[..request_text.len().min(80)];
-                    format!("{} — decisions", preview)
-                };
-                let content = if request_text.is_empty() {
-                    text.to_string()
-                } else {
-                    format!("**Request**: {}\n\n**Decisions**: {}", request_text, text)
-                };
+                let title = build_title(text, request_text, "decisions");
+                let content = build_content(text, request_text);
                 let topic_key = format!("auto-decision-{}", slugify(request_text, 50));
                 insert_memory(
                     conn,
@@ -201,12 +247,8 @@ pub fn promote_summary_to_memories(
                     if item.len() < MIN_LEARNED_LEN {
                         continue;
                     }
-                    let title = if request_text.is_empty() {
-                        format!("Discovery: {}", &item[..item.len().min(70)])
-                    } else {
-                        let preview = &request_text[..request_text.len().min(60)];
-                        format!("{} — discovery {}", preview, i + 1)
-                    };
+                    let title = build_item_title(item, "learned", i);
+                    let content = build_content(item, request_text);
                     let topic_key =
                         format!("auto-discovery-{}-{}", slugify(request_text, 40), i + 1);
                     insert_memory(
@@ -215,24 +257,15 @@ pub fn promote_summary_to_memories(
                         project,
                         Some(&topic_key),
                         &title,
-                        item,
+                        &content,
                         "discovery",
                         None,
                     )?;
                     count += 1;
                 }
             } else {
-                let title = if request_text.is_empty() {
-                    "Session insights".to_string()
-                } else {
-                    let preview = &request_text[..request_text.len().min(80)];
-                    format!("{} — learned", preview)
-                };
-                let content = if request_text.is_empty() {
-                    text.to_string()
-                } else {
-                    format!("**Request**: {}\n\n**Learned**: {}", request_text, text)
-                };
+                let title = build_title(text, request_text, "learned");
+                let content = build_content(text, request_text);
                 let topic_key = format!("auto-discovery-{}", slugify(request_text, 50));
                 insert_memory(
                     conn,
@@ -252,7 +285,7 @@ pub fn promote_summary_to_memories(
     if let Some(text) = preferences {
         let text = text.trim();
         if text.len() >= MIN_PREFERENCE_LEN {
-            let title = format!("Preference: {}", &text[..text.len().min(60)]);
+            let title = build_title(text, "", "preference");
             let topic_key = format!("auto-preference-{}", slugify(text, 50));
             insert_memory_full(
                 conn,
@@ -318,6 +351,55 @@ mod tests {
     }
 
     #[test]
+    fn test_build_title_from_content() {
+        let title = build_title(
+            "Use RwLock instead of Mutex for concurrent read support",
+            "Optimize search and concurrency",
+            "decision",
+        );
+        // Title should be derived from content, not request
+        assert!(title.contains("RwLock"));
+        assert!(title.contains("— decision"));
+    }
+
+    #[test]
+    fn test_build_title_fallback_to_request() {
+        let title = build_title("short", "Optimize search and concurrency", "decision");
+        // Short content falls back to request
+        assert!(title.contains("Optimize"));
+    }
+
+    #[test]
+    fn test_build_content_no_boilerplate() {
+        let content = build_content(
+            "Use RwLock instead of Mutex for concurrent read support",
+            "Optimize search",
+        );
+        // Content should NOT have **Request**: or **Decisions**: boilerplate
+        assert!(!content.contains("**Request**"));
+        assert!(!content.contains("**Decisions**"));
+        // Should have compact context header
+        assert!(content.contains("[Context:"));
+        assert!(content.contains("RwLock"));
+    }
+
+    #[test]
+    fn test_truncate_at_boundary() {
+        let text = "Use RwLock instead of Mutex for concurrent read support in the database layer";
+        let truncated = truncate_at_boundary(text, 40);
+        assert!(truncated.len() <= 45); // Allow slight overshoot for word boundary
+        assert!(!truncated.ends_with(' '));
+    }
+
+    #[test]
+    fn test_truncate_cjk() {
+        let text = "使用 RwLock 替代 Mutex 实现并发读支持。数据库层需要高并发";
+        let truncated = truncate_at_boundary(text, 30);
+        // Should break at sentence boundary '。'
+        assert!(truncated.contains("。") || truncated.len() <= 35);
+    }
+
+    #[test]
     fn test_promote_multi_decisions() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         setup_memory_schema(&conn);
@@ -336,6 +418,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(count, 3);
+
+        // Verify titles are content-derived, not request-derived
+        let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+        let titles: Vec<&str> = memories.iter().map(|m| m.title.as_str()).collect();
+        assert!(
+            titles.iter().any(|t| t.contains("RwLock")),
+            "title should contain keyword from content: {:?}",
+            titles
+        );
+        assert!(
+            titles.iter().any(|t| t.contains("trigram")),
+            "title should contain keyword from content: {:?}",
+            titles
+        );
     }
 
     #[test]
@@ -356,5 +452,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_promote_content_format() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let decisions = "Switched from unicode61 to trigram tokenizer for better CJK support";
+        promote_summary_to_memories(
+            &conn,
+            "session-1",
+            "test/proj",
+            Some("Fix search"),
+            Some(decisions),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert_eq!(memories.len(), 1);
+        // Content should use compact format, not **Request**/**Decisions** boilerplate
+        assert!(
+            !memories[0].text.contains("**Request**"),
+            "content should not have boilerplate: {}",
+            memories[0].text
+        );
+        assert!(
+            memories[0].text.contains("[Context:"),
+            "content should have compact context: {}",
+            memories[0].text
+        );
     }
 }
