@@ -74,6 +74,11 @@ fn write_log(level: &str, component: &str, msg: &str) {
             .open(&path)
         {
             Ok(mut f) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                }
                 if let Err(e) = writeln!(f, "{}", line) {
                     eprintln!("[remem] log write failed: {}", e);
                 }

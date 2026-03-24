@@ -111,6 +111,15 @@ pub fn open_db() -> Result<Connection> {
     let path = db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
+        // Restrict data directory to owner only (rwx------)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o700);
+            if let Err(e) = std::fs::set_permissions(parent, perms) {
+                crate::log::warn("db", &format!("cannot set data dir permissions: {}", e));
+            }
+        }
     }
     let conn = Connection::open(&path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
