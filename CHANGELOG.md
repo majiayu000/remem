@@ -39,15 +39,19 @@
 - Search-friendly summary prompt rules
 
 ### Testing
-- 123 tests (82 unit + 14 benchmark + 14 promote + 13 integration)
+- 128 tests (87 unit + 14 benchmark + 14 promote + 13 integration)
 - Benchmark suite: 9 evaluation dimensions, 14 automated tests
-- Golden dataset: 30 real-world queries for `remem eval`
+- Golden dataset v1.1: 30 real-world queries, 24 with calibrated ground truth
 - IR metrics: NDCG, MRR, Precision@K, Recall@K, Hit@K
 
-### Eval Baseline (953 real memories, 30 queries)
-- MRR: 0.272
-- Recall@5: 0.272
-- Hit Rate@5: 0.346
+### Search Quality (1001 real memories, 30 queries)
+- MRR: 0.858
+- Precision@5: 0.460
+- Recall@5: 0.628
+- Hit Rate@5: 1.000
+- CJK dictionary segmentation: "数据库加密" → "数据库"+"加密" → database+encrypt
+- 90+ Chinese↔English synonym mappings
+- Core-token LIKE channel (CJK-segmented, no synonym noise)
 
 ## [0.2.0] - 2026-03-23
 

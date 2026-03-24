@@ -83,19 +83,22 @@ Query: "数据库加密"
 ```
 
 Additional search enhancements:
-- **Chinese↔English synonym expansion** (50+ term mappings)
+- **CJK dictionary segmentation** — "数据库加密" → "数据库" + "加密" → database + encrypt
+- **Chinese↔English synonym expansion** (90+ term mappings)
 - **Title-weighted BM25** (`bm25(fts, 10.0, 1.0)` — title matches 10x)
 - **Hybrid routing** — long tokens → FTS5, short tokens → LIKE, merged with dedup
+- **Core-token LIKE** — LIKE channel uses CJK-segmented original tokens (no synonym noise)
 
-### Search Quality (eval on 953 real memories, 30 queries)
+### Search Quality (eval on 1001 real memories, 30 queries)
 
 | Metric | Value |
 |--------|-------|
-| MRR | 0.272 |
-| Recall@5 | 0.272 |
-| Hit Rate@5 | 0.346 |
+| MRR | 0.858 |
+| Precision@5 | 0.460 |
+| Recall@5 | 0.628 |
+| Hit Rate@5 | 1.000 |
 
-Run `remem eval` to benchmark on your own data.
+Measured with `remem eval` against a [calibrated golden dataset](eval/golden.json) (v1.1, 24 queries with ground truth). No vector search — pure FTS5 + SQLite.
 
 ## Commands
 
@@ -179,12 +182,14 @@ Currently supports Claude Code. Future: Codex, Cursor, Aider — implement the t
 After 1 month of production use:
 
 ```
-remem v0.2.0
+remem v0.3.0
   Memories:      1001
   Observations:  1834
   Entities:      1599
   Database:     138 MB
-  Tests:         123 passing
+  Tests:         128 passing
+  Search MRR:    0.858
+  Hit Rate@5:    1.000
 ```
 
 ## Architecture
