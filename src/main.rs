@@ -89,6 +89,8 @@ enum Commands {
         #[arg(long, short = 'k', default_value = "5")]
         k: usize,
     },
+    /// Backfill entity index from existing memories
+    BackfillEntities,
     /// Encrypt the database with SQLCipher
     Encrypt,
     /// Run REST API server
@@ -195,6 +197,9 @@ async fn main() -> Result<()> {
         }
         Commands::Eval { dataset, k } => {
             run_eval(&dataset, k)?;
+        }
+        Commands::BackfillEntities => {
+            run_backfill_entities()?;
         }
         Commands::Encrypt => {
             run_encrypt()?;
@@ -409,6 +414,46 @@ fn run_show(id: i64) -> Result<()> {
     println!();
     println!("{}", m.text);
 
+    Ok(())
+}
+
+/// Backfill entity index from all existing active memories.
+fn run_backfill_entities() -> Result<()> {
+    let conn = db::open_db()?;
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories WHERE status = 'active'", [], |r| r.get(0))
+        .unwrap_or(0);
+    println!("Backfilling entities from {} active memories...", count);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, title, content FROM memories WHERE status = 'active'",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+
+    let mut total_entities = 0usize;
+    let mut memories_processed = 0usize;
+    for row in rows {
+        let (id, title, content) = row?;
+        let entities = remem::entity::extract_entities(&title, &content);
+        if !entities.is_empty() {
+            remem::entity::link_entities(&conn, id, &entities)?;
+            total_entities += entities.len();
+        }
+        memories_processed += 1;
+        if memories_processed % 100 == 0 {
+            println!("  processed {}/{}", memories_processed, count);
+        }
+    }
+
+    let unique: i64 = conn
+        .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))
+        .unwrap_or(0);
+    println!(
+        "Done. {} entities extracted, {} unique entities, {} memories processed.",
+        total_entities, unique, memories_processed
+    );
     Ok(())
 }
 
