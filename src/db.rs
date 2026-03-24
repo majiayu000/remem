@@ -105,7 +105,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 /// Load SQLCipher encryption key from env var or key file.
 /// Returns None if no encryption is configured (backward compatible).
@@ -519,6 +519,27 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE memories ADD COLUMN scope TEXT DEFAULT 'project';
              CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, status, updated_at_epoch DESC);",
+        )?;
+    }
+
+    // v12: Entity index for entity-aware retrieval
+    if old_version < 12 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS entities (
+                id INTEGER PRIMARY KEY,
+                canonical_name TEXT NOT NULL COLLATE NOCASE,
+                entity_type TEXT,
+                mention_count INTEGER DEFAULT 1,
+                created_at_epoch INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                UNIQUE(canonical_name)
+            );
+            CREATE TABLE IF NOT EXISTS memory_entities (
+                memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                PRIMARY KEY(memory_id, entity_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_entity_name ON entities(canonical_name COLLATE NOCASE);
+            CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_id);",
         )?;
     }
 

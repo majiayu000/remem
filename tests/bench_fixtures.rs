@@ -152,6 +152,19 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             blockers TEXT,
             created_at_epoch INTEGER NOT NULL,
             updated_at_epoch INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS entities (
+            id INTEGER PRIMARY KEY,
+            canonical_name TEXT NOT NULL COLLATE NOCASE,
+            entity_type TEXT,
+            mention_count INTEGER DEFAULT 1,
+            created_at_epoch INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(canonical_name)
+        );
+        CREATE TABLE IF NOT EXISTS memory_entities (
+            memory_id INTEGER NOT NULL,
+            entity_id INTEGER NOT NULL,
+            PRIMARY KEY(memory_id, entity_id)
         );",
     )?;
     Ok(())
