@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use remem::{
-    claude_memory, context, db, doctor, install, mcp, memory, observe, preference, summarize,
+    api, claude_memory, context, db, doctor, install, mcp, memory, observe, preference, summarize,
     worker,
 };
 
@@ -79,6 +79,12 @@ enum Commands {
     Show {
         /// Memory ID
         id: i64,
+    },
+    /// Run REST API server
+    Api {
+        /// Port to listen on
+        #[arg(long, short, default_value = "5567")]
+        port: u16,
     },
 }
 
@@ -175,6 +181,9 @@ async fn main() -> Result<()> {
         }
         Commands::Show { id } => {
             run_show(id)?;
+        }
+        Commands::Api { port } => {
+            api::run_api_server(port).await?;
         }
     }
 

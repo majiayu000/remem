@@ -21,6 +21,8 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 rmcp = { version = "0.15", features = ["server", "transport-io", "macros"] }
 reqwest = { version = "0.12", features = ["json"] }
+axum = { version = "0.8.8", features = ["json"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
 
 [profile.release]
 opt-level = "z"

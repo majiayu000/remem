@@ -7,6 +7,7 @@
 pub mod adapter;
 pub mod adapter_claude;
 pub mod ai;
+pub mod api;
 pub mod claude_memory;
 pub mod context;
 pub mod db;
