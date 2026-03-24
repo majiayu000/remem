@@ -48,7 +48,8 @@ struct MemoryItem {
 
 #[derive(Serialize)]
 struct Meta {
-    total: usize,
+    count: usize,
+    has_more: bool,
     limit: i64,
     offset: i64,
 }
@@ -122,7 +123,9 @@ async fn handle_search(
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    let conn = db.lock().unwrap();
+    let Ok(conn) = db.lock() else {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+    };
     match search::search(
         &conn,
         params.query.as_deref(),
@@ -133,12 +136,14 @@ async fn handle_search(
         false,
     ) {
         Ok(results) => {
+            let count = results.len();
+            let has_more = count as i64 >= limit;
             let items: Vec<MemoryItem> = results.iter().map(memory_to_item).collect();
-            let total = items.len();
             Json(SearchResponse {
                 data: items,
                 meta: Meta {
-                    total,
+                    count,
+                    has_more,
                     limit,
                     offset,
                 },
@@ -158,7 +163,9 @@ async fn handle_get_memory(
     State(db): State<DbState>,
     Query(params): Query<ShowParams>,
 ) -> impl IntoResponse {
-    let conn = db.lock().unwrap();
+    let Ok(conn) = db.lock() else {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+    };
     match memory::get_memories_by_ids(&conn, &[params.id], None) {
         Ok(results) if !results.is_empty() => {
             Json(memory_to_item(&results[0])).into_response()
@@ -179,7 +186,9 @@ async fn handle_save_memory(
     Json(req): Json<SaveMemoryRequest>,
 ) -> impl IntoResponse {
     let scope = req.scope.as_deref().unwrap_or("project");
-    let conn = db.lock().unwrap();
+    let Ok(conn) = db.lock() else {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+    };
     match memory::insert_memory_full(
         &conn,
         None,
@@ -210,7 +219,9 @@ async fn handle_save_memory(
 }
 
 async fn handle_status(State(db): State<DbState>) -> impl IntoResponse {
-    let conn = db.lock().unwrap();
+    let Ok(conn) = db.lock() else {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+    };
     let memory_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM memories WHERE status = 'active'",
@@ -231,6 +242,7 @@ async fn handle_status(State(db): State<DbState>) -> impl IntoResponse {
         "memories": memory_count,
         "observations": observation_count,
     }))
+    .into_response()
 }
 
 pub fn build_router() -> Router<DbState> {
