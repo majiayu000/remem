@@ -29,6 +29,7 @@ pub mod memory_search;
 pub mod observe;
 pub mod observe_flush;
 pub mod preference;
+pub mod query_expand;
 pub mod search;
 pub mod summarize;
 pub mod timeline;

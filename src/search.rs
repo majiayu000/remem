@@ -7,14 +7,21 @@ use crate::memory::{self, Memory};
 /// Wraps each whitespace-separated token in double quotes so that
 /// special characters like `-`, `/`, `.` are treated as literals
 /// instead of FTS5 operators.
+/// Escape and join tokens with OR for FTS5 MATCH.
+/// OR semantics: match ANY token, rank sorts by how many matched.
 fn sanitize_fts_query(raw: &str) -> String {
-    raw.split_whitespace()
+    let tokens: Vec<String> = raw
+        .split_whitespace()
         .map(|token| {
             let escaped = token.replace('"', "\"\"");
             format!("\"{escaped}\"")
         })
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+    if tokens.len() <= 1 {
+        tokens.join("")
+    } else {
+        tokens.join(" OR ")
+    }
 }
 
 pub fn search(
@@ -48,21 +55,52 @@ pub fn search_with_branch(
     _include_stale: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
-    // Project suffix matching is now pushed into SQL (memory.rs), so no 3x over-fetch needed.
     let mut results = match query {
         Some(q) if !q.is_empty() => {
-            let tokens: Vec<&str> = q.split_whitespace().collect();
-            let has_short_token = tokens.iter().any(|t| t.chars().count() < 3);
+            // Keep original tokens for LIKE fallback (preserves short tokens like "DB")
+            let orig_tokens: Vec<&str> = q.split_whitespace().collect();
+            let orig_short: Vec<&str> = orig_tokens.iter().filter(|t| t.chars().count() < 3).copied().collect();
+            // Expand query with synonyms (中英互查)
+            let expanded = crate::query_expand::expand_query(q);
+            let tokens: Vec<&str> = expanded.iter().map(|s| s.as_str()).collect();
+            let long_tokens: Vec<&str> = tokens.iter().filter(|t| t.chars().count() >= 3).copied().collect();
+            let short_tokens: Vec<&str> = orig_short; // Use original short tokens for LIKE
 
-            if has_short_token {
-                memory::search_memories_like(conn, &tokens, project, memory_type, limit, offset)?
+            let mut combined = Vec::new();
+            let mut seen_ids = std::collections::HashSet::new();
+
+            // FTS5 search with long tokens (OR semantics)
+            if !long_tokens.is_empty() {
+                let safe_query = sanitize_fts_query(&long_tokens.join(" "));
+                let fts = memory::search_memories_fts(conn, &safe_query, project, memory_type, limit, 0)?;
+                for m in fts {
+                    seen_ids.insert(m.id);
+                    combined.push(m);
+                }
+            }
+
+            // LIKE fallback: always try with original tokens when FTS returns too few
+            if (combined.len() as i64) < limit {
+                let remaining = (limit - combined.len() as i64).max(1);
+                let like = memory::search_memories_like(
+                    conn, &orig_tokens, project, memory_type, remaining, 0,
+                )?;
+                for m in like {
+                    if seen_ids.insert(m.id) {
+                        combined.push(m);
+                    }
+                }
+            }
+
+            if combined.is_empty() {
+                // Last resort: LIKE with expanded tokens
+                memory::search_memories_like(conn, &tokens, project, memory_type, limit, 0)?
             } else {
-                let safe_query = sanitize_fts_query(q);
-                memory::search_memories_fts(conn, &safe_query, project, memory_type, limit, offset)?
+                combined.truncate(limit as usize);
+                combined
             }
         }
         _ => {
-            // No query — return recent memories; need project for this path
             let proj = project.unwrap_or("");
             if proj.is_empty() {
                 return Ok(vec![])

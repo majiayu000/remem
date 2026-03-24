@@ -244,8 +244,8 @@ fn search_chinese_2char_via_like_fallback() -> Result<()> {
     insert_mem(&conn, "p", "English only title", "No Chinese here")?;
 
     let results = search::search(&conn, Some("竞品"), None, None, 10, 0, true)?;
-    assert_eq!(results.len(), 1);
-    assert!(results[0].title.contains("竞品"));
+    assert!(!results.is_empty(), "should find at least 1 result");
+    assert!(results[0].title.contains("竞品"), "first result should be most relevant");
     Ok(())
 }
 
@@ -268,8 +268,8 @@ fn search_english_short_token_via_like_fallback() -> Result<()> {
     insert_mem(&conn, "p", "Other topic entirely", "Nothing relevant")?;
 
     let results = search::search(&conn, Some("DB"), None, None, 10, 0, true)?;
-    assert_eq!(results.len(), 1);
-    assert!(results[0].title.contains("DB"));
+    assert!(!results.is_empty(), "should find at least 1 result");
+    assert!(results[0].title.contains("DB"), "first result should be most relevant");
     Ok(())
 }
 
@@ -282,8 +282,9 @@ fn search_mixed_chinese_english() -> Result<()> {
     insert_mem(&conn, "p", "其他框架", "不相关内容")?;
 
     let results = search::search(&conn, Some("Letta 框架"), None, None, 10, 0, true)?;
-    assert_eq!(results.len(), 1);
-    assert!(results[0].title.contains("Letta"));
+    assert!(!results.is_empty(), "should find at least 1 result");
+    // With OR semantics + synonym expansion, both "Letta 框架分析" and "Letta overview" may match
+    assert!(results[0].title.contains("Letta"), "first result should contain query term");
     Ok(())
 }
 
