@@ -32,6 +32,7 @@ pub mod observe_flush;
 pub mod preference;
 pub mod query_expand;
 pub mod search;
+pub mod search_multihop;
 pub mod summarize;
 pub mod temporal;
 pub mod timeline;

@@ -130,6 +130,80 @@ pub fn search_by_entity(conn: &Connection, query: &str, limit: i64) -> Result<Ve
     Ok(all_ids)
 }
 
+/// Entity graph expansion for multi-hop retrieval.
+/// Given a set of memory IDs (first-hop results), find co-occurring entities
+/// in those memories, then find OTHER memories that mention those entities.
+/// This enables "Melanie → Tom (her kid) → Tom likes dinosaurs" chains.
+pub fn expand_via_entity_graph(
+    conn: &Connection,
+    seed_memory_ids: &[i64],
+    exclude_ids: &[i64],
+    limit: i64,
+) -> Result<Vec<i64>> {
+    if seed_memory_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Step 1: Get all entity IDs linked to seed memories
+    let placeholders: Vec<String> = (1..=seed_memory_ids.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "SELECT DISTINCT entity_id FROM memory_entities WHERE memory_id IN ({})",
+        placeholders.join(", ")
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let param_values: Vec<Box<dyn rusqlite::types::ToSql>> = seed_memory_ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    let refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+    let entity_rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, i64>(0))?;
+    let entity_ids: Vec<i64> = entity_rows.flatten().collect();
+
+    if entity_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Step 2: Find memories linked to these entities, excluding already-seen ones
+    let entity_placeholders: Vec<String> =
+        (1..=entity_ids.len()).map(|i| format!("?{i}")).collect();
+
+    let exclude_set: std::collections::HashSet<i64> = exclude_ids.iter().copied().collect();
+    let seed_set: std::collections::HashSet<i64> = seed_memory_ids.iter().copied().collect();
+
+    let sql2 = format!(
+        "SELECT me.memory_id, COUNT(DISTINCT me.entity_id) as shared_count
+         FROM memory_entities me
+         WHERE me.entity_id IN ({})
+         GROUP BY me.memory_id
+         ORDER BY shared_count DESC
+         LIMIT ?{}",
+        entity_placeholders.join(", "),
+        entity_ids.len() + 1
+    );
+    let mut stmt2 = conn.prepare(&sql2)?;
+    let mut param_values2: Vec<Box<dyn rusqlite::types::ToSql>> = entity_ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    // Over-fetch to account for filtering
+    param_values2.push(Box::new(limit * 3));
+    let refs2: Vec<&dyn rusqlite::types::ToSql> = param_values2.iter().map(|b| b.as_ref()).collect();
+
+    let rows2 = stmt2.query_map(refs2.as_slice(), |r| r.get::<_, i64>(0))?;
+    let mut expanded_ids = Vec::new();
+    for row in rows2 {
+        let id = row?;
+        if !seed_set.contains(&id) && !exclude_set.contains(&id) {
+            expanded_ids.push(id);
+            if expanded_ids.len() >= limit as usize {
+                break;
+            }
+        }
+    }
+
+    Ok(expanded_ids)
+}
+
 fn is_stop_word(word: &str) -> bool {
     matches!(
         word,

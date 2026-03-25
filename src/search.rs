@@ -101,14 +101,34 @@ pub fn search_with_branch(
             if channels.is_empty() {
                 vec![]
             } else {
-                // RRF fusion
+                // First-pass RRF fusion
                 let fused = rrf_fuse(&channels, 60.0);
-                let top_ids: Vec<i64> = fused.iter().take(limit as usize).map(|(id, _)| *id).collect();
+                let first_hop_ids: Vec<i64> = fused.iter().take(limit as usize).map(|(id, _)| *id).collect();
 
-                // Batch load memories by fused IDs, preserving RRF order
-                let loaded = memory::get_memories_by_ids(conn, &top_ids, None)?;
-                let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
-                top_ids.iter().filter_map(|id| id_to_mem.get(id).cloned()).collect()
+                // Channel 5: Entity graph expansion (multi-hop)
+                // From first-hop results, find co-occurring entities, then find
+                // other memories sharing those entities. This enables chains like:
+                // "Melanie" → memory mentions "Melanie's son Tom" → "Tom likes dinosaurs"
+                let graph_ids = crate::entity::expand_via_entity_graph(
+                    conn,
+                    &first_hop_ids,
+                    &first_hop_ids, // exclude already-found
+                    fetch,
+                )?;
+                if !graph_ids.is_empty() {
+                    channels.push(graph_ids);
+                    // Re-fuse with the new channel
+                    let fused2 = rrf_fuse(&channels, 60.0);
+                    let top_ids: Vec<i64> = fused2.iter().take(limit as usize).map(|(id, _)| *id).collect();
+                    let loaded = memory::get_memories_by_ids(conn, &top_ids, None)?;
+                    let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
+                    top_ids.iter().filter_map(|id| id_to_mem.get(id).cloned()).collect()
+                } else {
+                    // No graph expansion available, use first-pass results
+                    let loaded = memory::get_memories_by_ids(conn, &first_hop_ids, None)?;
+                    let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
+                    first_hop_ids.iter().filter_map(|id| id_to_mem.get(id).cloned()).collect()
+                }
             }
         }
         _ => {

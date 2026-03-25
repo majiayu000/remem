@@ -10,7 +10,7 @@ mod bench_fixtures;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{memory, search, summarize};
+use remem::{entity, memory, search, search_multihop, summarize};
 
 use bench_fixtures::{
     coding_session_fixtures, insert_memory_at, insert_seed_memories, search_eval_memories,
@@ -884,6 +884,172 @@ fn bench_topic_key_dedup() -> Result<()> {
     assert!(
         strategy_mems[0].text.contains("LIKE fallback"),
         "Content should be the updated version"
+    );
+
+    Ok(())
+}
+
+// ===========================================================================
+// Scenario 10: Multi-hop Entity Graph Expansion
+// ===========================================================================
+
+#[test]
+fn bench_multi_hop_entity_graph_retrieval() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_full_schema(&conn)?;
+
+    // Simulate multi-hop scenario: "What do Melanie's kids like?"
+    // Memory 1: mentions Melanie and her son Tom
+    let id1 = memory::insert_memory(
+        &conn,
+        Some("s1"),
+        "personal",
+        None,
+        "Family update from Melanie",
+        "Melanie mentioned her son Tom started kindergarten this fall. \
+         She also talked about her daughter Sarah who is in 3rd grade.",
+        "discovery",
+        None,
+    )?;
+
+    // Memory 2: mentions Tom's interests (no direct mention of Melanie)
+    let id2 = memory::insert_memory(
+        &conn,
+        Some("s2"),
+        "personal",
+        None,
+        "Tom's hobbies",
+        "Tom loves dinosaurs and building Lego sets. He wants a T-Rex for his birthday.",
+        "discovery",
+        None,
+    )?;
+
+    // Memory 3: mentions Sarah's interests (no direct mention of Melanie)
+    let id3 = memory::insert_memory(
+        &conn,
+        Some("s3"),
+        "personal",
+        None,
+        "Sarah's school activities",
+        "Sarah is on the school swim team and loves reading Harry Potter books.",
+        "discovery",
+        None,
+    )?;
+
+    // Noise memory
+    memory::insert_memory(
+        &conn,
+        Some("s4"),
+        "personal",
+        None,
+        "Weekend plans",
+        "Going hiking at the national park this Saturday.",
+        "discovery",
+        None,
+    )?;
+
+    // Link entities to memories
+    entity::link_entities(&conn, id1, &[
+        "Melanie".to_string(), "Tom".to_string(), "Sarah".to_string(),
+    ])?;
+    entity::link_entities(&conn, id2, &["Tom".to_string(), "Lego".to_string()])?;
+    entity::link_entities(&conn, id3, &["Sarah".to_string()])?;
+
+    // Standard search: "Melanie's kids" — should find memory about Melanie
+    let standard = search::search(
+        &conn, Some("Melanie kids"), Some("personal"), None, 10, 0, true,
+    )?;
+    let standard_ids: Vec<i64> = standard.iter().map(|m| m.id).collect();
+
+    // Multi-hop search: should find Melanie + Tom's hobbies + Sarah's activities
+    let multi = search_multihop::search_multi_hop(
+        &conn, "Melanie kids", Some("personal"), 10,
+    )?;
+    let multi_ids: Vec<i64> = multi.memories.iter().map(|m| m.id).collect();
+
+    eprintln!("[Multi-hop] Standard search found: {:?}", standard_ids);
+    eprintln!("[Multi-hop] Multi-hop search found: {:?}", multi_ids);
+    eprintln!("[Multi-hop] Hops: {}", multi.hops);
+    eprintln!("[Multi-hop] Entities discovered: {:?}", multi.entities_discovered);
+
+    // Standard search should find at least the Melanie memory
+    assert!(
+        standard_ids.contains(&id1),
+        "Standard search should find Melanie memory"
+    );
+
+    // Multi-hop should find all three relevant memories
+    assert!(
+        multi_ids.contains(&id1),
+        "Multi-hop should find Melanie memory"
+    );
+    assert!(
+        multi_ids.contains(&id2),
+        "Multi-hop should find Tom's hobbies via entity graph"
+    );
+    assert!(
+        multi_ids.contains(&id3),
+        "Multi-hop should find Sarah's activities via entity graph"
+    );
+
+    // Multi-hop should have discovered entities from first-hop results
+    assert!(
+        !multi.entities_discovered.is_empty(),
+        "Should have discovered entities from first-hop results",
+    );
+
+    // The key assertion: multi-hop recall must be perfect (find all 3)
+    let relevant = vec![id1, id2, id3];
+    let multi_recall = recall_at_k(&multi_ids, &relevant, 10);
+    eprintln!("[Multi-hop] Multi-hop R@10={:.2}", multi_recall);
+    assert!(
+        multi_recall >= 1.0,
+        "Multi-hop should find all relevant memories, R@10={:.2}",
+        multi_recall,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn bench_entity_graph_expansion_finds_related() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_full_schema(&conn)?;
+
+    // Memory A mentions entities X and Y
+    let id_a = memory::insert_memory(
+        &conn, Some("s1"), "proj", None,
+        "Project setup with React and TypeScript",
+        "Configured React with TypeScript template.", "architecture", None,
+    )?;
+    // Memory B mentions entity Y and Z (related to A via Y)
+    let id_b = memory::insert_memory(
+        &conn, Some("s2"), "proj", None,
+        "TypeScript strict mode config",
+        "Enabled strict mode in tsconfig.", "decision", None,
+    )?;
+    // Memory C mentions entity Z only (related to B via Z, 2-hop from A)
+    let id_c = memory::insert_memory(
+        &conn, Some("s3"), "proj", None,
+        "ESLint config for strict mode",
+        "Added eslint-config-strict rules.", "decision", None,
+    )?;
+
+    entity::link_entities(&conn, id_a, &["React".to_string(), "TypeScript".to_string()])?;
+    entity::link_entities(&conn, id_b, &["TypeScript".to_string()])?;
+    entity::link_entities(&conn, id_c, &["ESLint".to_string()])?;
+
+    // From seed [id_a], entity graph should find id_b (shares TypeScript)
+    let expanded = entity::expand_via_entity_graph(&conn, &[id_a], &[], 10)?;
+    assert!(
+        expanded.contains(&id_b),
+        "Graph expansion from A should find B (shared entity: TypeScript). Got: {:?}",
+        expanded,
+    );
+    // id_c should NOT be found (no shared entity with A)
+    assert!(
+        !expanded.contains(&id_c),
+        "Graph expansion from A should NOT find C (no shared entity)",
     );
 
     Ok(())

@@ -58,6 +58,10 @@ struct SearchParams {
         description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included."
     )]
     branch: Option<String>,
+    #[schemars(
+        description = "Enable multi-hop search (default false). When true, performs entity graph expansion: finds entities in first-hop results, then searches for memories mentioning those entities. Use for questions that span multiple topics/people, e.g. 'What do Melanie\\'s kids like?' or 'What events has Caroline participated in?'"
+    )]
+    multi_hop: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -265,37 +269,60 @@ fn write_local_note(path: &Path, content: &str) -> Result<(), String> {
 impl MemoryServer {
     /// Search memories by keyword/project/type.
     #[tool(
-        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key, 300-char preview). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
+        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key, 300-char preview). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue. Set multi_hop=true for questions spanning multiple people/topics (e.g. 'What do X's kids like?')."
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let start = std::time::Instant::now();
+        let multi_hop = params.multi_hop.unwrap_or(false);
         crate::log::info(
             "mcp",
             &format!(
-                "search called query={:?} project={:?} type={:?} branch={:?} limit={} offset={}",
+                "search called query={:?} project={:?} type={:?} branch={:?} multi_hop={} limit={} offset={}",
                 params.query,
                 params.project,
                 params.r#type,
                 params.branch,
+                multi_hop,
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
             ),
         );
         self.with_conn(|conn| {
-            let results = search::search_with_branch(
-                conn,
-                params.query.as_deref(),
-                params.project.as_deref(),
-                params.r#type.as_deref(),
-                params.limit.unwrap_or(20),
-                params.offset.unwrap_or(0),
-                params.include_stale.unwrap_or(true),
-                params.branch.as_deref(),
-            )
-            .map_err(|e| {
-                crate::log::warn("mcp", &format!("search failed: {}", e));
-                e.to_string()
-            })?;
+            let limit = params.limit.unwrap_or(20);
+            let (results, hop_meta) = if multi_hop {
+                if let Some(q) = params.query.as_deref().filter(|q| !q.is_empty()) {
+                    let mh = crate::search_multihop::search_multi_hop(
+                        conn,
+                        q,
+                        params.project.as_deref(),
+                        limit,
+                    )
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("multi_hop search failed: {}", e));
+                        e.to_string()
+                    })?;
+                    let meta = Some((mh.hops, mh.entities_discovered));
+                    (mh.memories, meta)
+                } else {
+                    (vec![], None)
+                }
+            } else {
+                let r = search::search_with_branch(
+                    conn,
+                    params.query.as_deref(),
+                    params.project.as_deref(),
+                    params.r#type.as_deref(),
+                    limit,
+                    params.offset.unwrap_or(0),
+                    params.include_stale.unwrap_or(true),
+                    params.branch.as_deref(),
+                )
+                .map_err(|e| {
+                    crate::log::warn("mcp", &format!("search failed: {}", e));
+                    e.to_string()
+                })?;
+                (r, None)
+            };
 
             let search_results: Vec<SearchResult> = results
                 .into_iter()
@@ -318,15 +345,34 @@ impl MemoryServer {
                 })
                 .collect();
 
+            let hop_info = if let Some((hops, entities)) = &hop_meta {
+                format!(" hops={} entities_discovered={}", hops, entities.len())
+            } else {
+                String::new()
+            };
             crate::log::info(
                 "mcp",
                 &format!(
-                    "search done count={} {}ms",
+                    "search done count={} {}ms{}",
                     search_results.len(),
-                    start.elapsed().as_millis()
+                    start.elapsed().as_millis(),
+                    hop_info,
                 ),
             );
-            serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
+
+            // For multi-hop, include metadata about discovered entities
+            if let Some((hops, entities)) = hop_meta {
+                let response = serde_json::json!({
+                    "results": search_results,
+                    "multi_hop": {
+                        "hops": hops,
+                        "entities_discovered": entities,
+                    }
+                });
+                serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
+            } else {
+                serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
+            }
         })
     }
 
