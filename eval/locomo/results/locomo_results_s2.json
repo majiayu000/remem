@@ -1,0 +1,1220 @@
+{
+  "conv-41": [
+    {
+      "question": "Who did Maria have dinner with on May 3, 2023?",
+      "answer": "her mother",
+      "response": "friends from the gym",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria donate her car?",
+      "answer": "21 December 2022",
+      "response": "22 December 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What martial arts has John done?",
+      "answer": "Kickboxing, Taekwondo",
+      "response": "Kickboxing",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of volunteering have John and Maria both done?",
+      "answer": "Volunteering at a homeless shelter",
+      "response": "volunteering at a homeless shelter",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John join the online support group?",
+      "answer": "The week before 1 January 2023",
+      "response": "late December 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria go to the beach?",
+      "answer": "December 2022",
+      "response": "1 January, 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where has Maria made friends?",
+      "answer": "homeless shelter, gym, church",
+      "response": "At the homeless shelter.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What items des John mention having as a child?",
+      "answer": "A doll, a film camera",
+      "response": "a doll",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What might John's financial status be?",
+      "answer": "Middle-class or wealthy",
+      "response": "Under financial strain",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who gave Maria's family money when she was younger and her family was going through tough times?",
+      "answer": "Her aunt",
+      "response": "Her auntie.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria meet Jean?",
+      "answer": "February 24, 2023",
+      "response": "9 January 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What people has Maria met and helped while volunteering?",
+      "answer": "David, Jean, Cindy, Laura",
+      "response": "people at the homeless shelter",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What test has John taken multiple times?",
+      "answer": "The military aptitude test",
+      "response": "aptitude test",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria's grandmother pass away?",
+      "answer": "The week before 6 March 2023",
+      "response": "Last week.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Would John be considered a patriotic person?",
+      "answer": "Yes",
+      "response": "Yes, strongly patriotic.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What writing classes has Maria taken?",
+      "answer": "Poetry, creative writing",
+      "response": "Creative writing class.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John get his degree?",
+      "answer": "The week before 2 April 2023",
+      "response": "2 April 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What might John's degree be in?",
+      "answer": "Political science, Public administration, Public affairs",
+      "response": "Political science",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who did John go to yoga with?",
+      "answer": "Rob",
+      "response": "a colleague",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What damages have happened to John's car?",
+      "answer": "Broken windshield, Car broke down",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John take a road trip to the Pacific Northwest?",
+      "answer": "2022",
+      "response": "In 2022.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What areas of the U.S. has John been to or is planning to go to?",
+      "answer": "Pacific northwest, east coast",
+      "response": "the East Coast",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John go to a convention with colleagues?",
+      "answer": "March 2023",
+      "response": "18 April, 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What desserts has Maria made?",
+      "answer": "Banana split sundae, Peach cobbler",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John start boot camp with his family?",
+      "answer": "April.2023",
+      "response": "April 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What European countries has Maria been to?",
+      "answer": "Spain, England",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What has Maria done to feel closer to her faith?",
+      "answer": "Join a local church, buy a cross necklace",
+      "response": "Bought a cross necklace.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John have a party with veterans?",
+      "answer": "The Friday before 20 May 2023",
+      "response": "Shortly before 20 May 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What causes does John feel passionate about supporting?",
+      "answer": "Veterans, schools, infrastructure",
+      "response": "Veterans\u2019 rights and domestic-abuse support.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What events is Maria planning for the homeless shelter funraiser?",
+      "answer": "Chili cook-off, ring-toss tournament",
+      "response": "a ring-toss tournament",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What shelters does Maria volunteer at?",
+      "answer": "The homeless shelter, the dog shelter",
+      "response": "homeless shelters",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John get his dog Max?",
+      "answer": "In 2013",
+      "response": "Around 2013.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What outdoor activities has John done with his colleagues?",
+      "answer": "Hiking, mountaineering",
+      "response": "a hiking trip with his workmates",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What types of yoga has Maria practiced?",
+      "answer": "Aerial, kundalini",
+      "response": "Aerial yoga and kundalini yoga.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria join a gym?",
+      "answer": "The week before 16 June 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What states has Maria vacationed at?",
+      "answer": "Oregon, Florida",
+      "response": "Oregon",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What music events has John attended?",
+      "answer": "Live music event, violin concert",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What events for veterans has John participated in?",
+      "answer": "Petition, march, party, visiting veterans hospital, 5K charity run",
+      "response": "a veterans\u2019 party, a 5K charity run, and a march for veterans\u2019 rights",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria get in a car accident?",
+      "answer": "July 2, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Around which US holiday did Maria get into a car accident?",
+      "answer": "Independence Day",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the names of John's children?",
+      "answer": "Kyle, Sara",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does John live close to a beach or the mountains?",
+      "answer": "beach",
+      "response": "The beach.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What area was hit by a flood?",
+      "answer": "West County",
+      "response": "West County",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was John's old area hit with a flood?",
+      "answer": "The week before 7 July 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activities has Maria done with her church friends?",
+      "answer": "Hiking, picnic, volunteer work",
+      "response": "Hiking and a picnic with charades and a scavenger hunt.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Would John be open to moving to another country?",
+      "answer": "No, he has goals specifically in the U.S. like joining the military and running for office.",
+      "response": "Likely not.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria go hiking with her church friends?",
+      "answer": "The weekend before 22 July 2023",
+      "response": "the weekend of July 15\u201316, 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What exercises has John done?",
+      "answer": "Weight training, Circuit training, Kickboxing, yoga",
+      "response": "Kickboxing, rock climbing, and mountaineering.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John have his first firefighter call-out?",
+      "answer": "The sunday before 3` July 2023",
+      "response": "last Sunday",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What food item did Maria drop off at the homeless shelter?",
+      "answer": "Cakes",
+      "response": "baked goods",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What attributes describe John?",
+      "answer": "Selfless, family-oriented, passionate, rational",
+      "response": "Supportive, community-minded, family-oriented",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria start volunteering at the homeless shelter?",
+      "answer": "Around August 2022",
+      "response": "Around August 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who have written notes of gratitude to Maria?",
+      "answer": "Cindy, Laura",
+      "response": "Cindy, a shelter resident",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John help renovate his hometown community center?",
+      "answer": "2022",
+      "response": "Last year.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria take up community work with her church friends?",
+      "answer": "August 4, 2023",
+      "response": "Yesterday.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria receive a medal from the homeless shelter?",
+      "answer": "The week before 9 August 2023",
+      "response": "the week before 9 August 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John participate in a 5K charity run?",
+      "answer": "first weekend of August 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What causes has John done events for?",
+      "answer": "Toy drive, Community food drive, veterans, domestic violence",
+      "response": "Veterans and domestic abuse victims.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria get Coco?",
+      "answer": "Two weeks before 11 August 2023",
+      "response": "Two weeks ago.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John go on a camping trip with Max?",
+      "answer": "The summer of 2022",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are Maria's dogs' names?",
+      "answer": "Coco, Shadow",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Maria adopt Shadow?",
+      "answer": "The week before 13 August 2023",
+      "response": "Shortly before August 13, 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many dogs has Maria adopted from the dog shelter she volunteers at?",
+      "answer": "two",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many weeks passed between Maria adopting Coco and Shadow?",
+      "answer": "two weeks",
+      "response": "About 2 weeks",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What job might Maria pursue in the future?",
+      "answer": "Shelter coordinator, Counselor",
+      "response": "Social worker",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is John's main focus in local politics?",
+      "answer": "Improving education and infrastructure",
+      "response": "Improving education and infrastructure.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What sparked John's interest in improving education and infrastructure in the community?",
+      "answer": "Seeing how lack of education and crumbling infrastructure affected his neighborhood while growing up.",
+      "response": "Growing up with poor education and infrastructure in his neighborhood.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did the extra funding help the school shown in the photo shared by John?",
+      "answer": "Enabled needed repairs and renovations, making the learning environment safer and more modern for students.",
+      "response": "more resources for students",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of workout class did Maria start doing in December 2023?",
+      "answer": "aerial yoga",
+      "response": "Aerial yoga",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Maria donate to a homeless shelter in December 2023?",
+      "answer": "old car",
+      "response": "her old car",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of meal did John and his family make together in the photo shared by John?",
+      "answer": "pizza",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of online group did John join?",
+      "answer": "service-focused online group",
+      "response": "a service-focused online group",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of activities did John and his mates from the online group do as part of their service efforts?",
+      "answer": "gave out food and supplies at a homeless shelter, organized a toy drive for kids in need",
+      "response": "Serving at a homeless shelter and organizing a toy drive.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who inspired Maria to start volunteering?",
+      "answer": "Her aunt",
+      "response": "her aunt",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Maria sit with the little girl at the shelter event in February 2023?",
+      "answer": "The girl seemed sad and had no other family",
+      "response": "Because she seemed sad and alone.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jean go through before meeting Maria?",
+      "answer": "divorce, job loss, homelessness",
+      "response": "hard times",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did John decide to run for office again?",
+      "answer": "saw the impact he could make in the community through politics",
+      "response": "To make a difference in his community.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did John's colleague, Rob, invite him to?",
+      "answer": "beginner's yoga class",
+      "response": "a beginner's yoga class",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of John's one-year-old child?",
+      "answer": "Kyle",
+      "response": "Kyle",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How often does John take his kids to the park?",
+      "answer": "A few times a week",
+      "response": "A few times a week.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Maria make for her home to remind her of a trip to England?",
+      "answer": "painting of a castle on a hill",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Maria get the idea for the castle shadow box in her home?",
+      "answer": "England",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John receive a certificate for?",
+      "answer": "completion of a university degree",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What areas is John particularly interested in for policymaking?",
+      "answer": "education and infrastructure",
+      "response": "Education and infrastructure",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Maria participate in last weekend before April 10, 2023?",
+      "answer": "a 5K charity run",
+      "response": "a 5K charity run for a homeless shelter",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What event did John volunteer at last weekend?",
+      "answer": "career fair at a local school",
+      "response": "a veterans\u2019 rights march",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John do that put a strain on his wallet?",
+      "answer": "His car broke down",
+      "response": "His car broke down.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did John explore on a road trip last year?",
+      "answer": "Pacific Northwest",
+      "response": "the Pacific Northwest coast",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What topic has John been blogging about recently?",
+      "answer": "politics and the government",
+      "response": "Politics and government, especially education reform and infrastructure.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did John start blogging about politics and policies?",
+      "answer": "raise awareness and start conversations to create positive change",
+      "response": "To drive positive change in education and infrastructure.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the focus of John's recent research and writing on his blog?",
+      "answer": "education reform and infrastructure development",
+      "response": "education and infrastructure issues",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John attend with his colleagues in March 2023?",
+      "answer": "a tech-for-good convention",
+      "response": "a tech-for-good convention",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How often does John work out with his family?",
+      "answer": "Three times a week",
+      "response": "Three times a week.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How has John's fitness improved since starting boot camps with his family?",
+      "answer": "More energy, gains in strength and endurance",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of food did Maria have on her dinner spread iwth her mother?",
+      "answer": "Salads, sandwiches, homemade desserts",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did Maria and her mom do together in May 2023?",
+      "answer": "Made dinner together",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Maria do to feel closer to a community and her faith?",
+      "answer": "joined a nearby church",
+      "response": "Joined a nearby church.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Maria join a nearby church recently?",
+      "answer": "to feel closer to a community and her faith",
+      "response": "To feel closer to a community and her faith.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John host for the veterans in May 2023 as part of the project?",
+      "answer": "a small party to share their stories",
+      "response": "a small party for veterans",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John and the veterans do during the small party?",
+      "answer": "share stories and make connections",
+      "response": "Shared stories and made connections.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What emotions did John feel during the small party with the veterans?",
+      "answer": "heartwarming",
+      "response": "Heartwarmed.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What event is Maria getting ready for at the shelter on May 25, 2023?",
+      "answer": "fundraiser",
+      "response": "a shelter fundraiser",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Maria need to spread the word about for the fundraiser for the volunteer shelter?",
+      "answer": "chili cook-off",
+      "response": "the shelter chili cook-off",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the name of the pet that John had to say goodbye to on 3 June, 2023?",
+      "answer": "Max",
+      "response": "Max",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long was Max a part of John's family?",
+      "answer": "10 years",
+      "response": "10 years",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does John plan to honor the memories of his beloved pet?",
+      "answer": "By considering adopting a rescue dog",
+      "response": "consider adopting a rescue dog",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What important values does John want to teach his kids through adopting a rescue dog?",
+      "answer": "Responsibility and compassion",
+      "response": "Responsibility and compassion",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What new activity did Maria start recently, as mentioned on 3 June, 2023?",
+      "answer": "volunteering at a local dog shelter once a month",
+      "response": "Attending a nearby church",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Maria say it was like being at the waterfall in Oregon?",
+      "answer": "Like being in a fairy tale",
+      "response": "Like being in a fairy tale.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Maria say she feels when doing upside-down yoga poses?",
+      "answer": "Free and light",
+      "response": "free and light",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What exciting news did Maria share on 16 June, 2023?",
+      "answer": "joined a gym",
+      "response": "Her positive gym experience with kundalini yoga.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What yoga activity has Maria been trying to improve her strength and endurance?",
+      "answer": "kundalini yoga",
+      "response": "Kundalini yoga",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John recently get promoted to?",
+      "answer": "assistant manager",
+      "response": "assistant manager",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was one of the biggest challenges John faced in his journey to becoming assistant manager?",
+      "answer": "self-doubt",
+      "response": "Self-doubt.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does John describe the support he received during his journey to becoming assistant manager?",
+      "answer": "having support at home and his own grit",
+      "response": "Support at home from his family.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of event did John and his family attend in June 2023?",
+      "answer": "live music event",
+      "response": "a live music event",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Maria need to help her cousin find a new place to live?",
+      "answer": "Her cousin had to leave and find a new place in a hurry.",
+      "response": "Her cousin had to move out urgently.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What event did John participate in to show support for veterans' rights?",
+      "answer": "marching event",
+      "response": "a veterans' rights march",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What inspired John to join the marching event for veterans' rights?",
+      "answer": "Respect for the military and the desire to show support",
+      "response": "His respect for the military and standing up for his beliefs.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How often does John get to see sunsets like the one he shared with Maria?",
+      "answer": "At least once a week",
+      "response": "At least once a week.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What natural disaster affected John's old area on 7 July, 2023?",
+      "answer": "Flood",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did the flood impact the homes in John's old area?",
+      "answer": "Lots of homes were ruined.",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What motivated Maria and John to discuss potential solutions for their community on 7 July, 2023?",
+      "answer": "Flood in John's old area",
+      "response": "A recent flood in John\u2019s area.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Maria plan to do later on the evening of 7 July, 2023?",
+      "answer": "have dinner with friends from the gym",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of activities did Maria do at the picnic with her church friends?",
+      "answer": "played games like charades and a scavenger hunt",
+      "response": "Charades and a scavenger hunt.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does John appreciate about the veteran's hospital visit?",
+      "answer": "the resilience of the veterans and their inspiring stories",
+      "response": "A reminder to appreciate what he has.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John take away from visiting the veteran's hospital?",
+      "answer": "appreciation for giving back",
+      "response": "Inspiration to give back and appreciate what he has.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did John feel inspired to join the military after the visit to the hospital?",
+      "answer": "seeing the resilience of the veterans",
+      "response": "Hearing Samuel\u2019s inspiring stories.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "In what activity did Maria and her church friends participate in July 2023?",
+      "answer": "hiking",
+      "response": "Hiking with her church friends",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does John think about trying new classes at the yoga studio?",
+      "answer": "Trying new classes is a fun way to switch up the exercise routine.",
+      "response": "A great way to mix things up.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which activity has John done apart from yoga at the studio?",
+      "answer": "weight training",
+      "response": "weight training classes",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What community service did Maria mention that she was involved in on 31 July, 2023?",
+      "answer": "volunteered at a homeless shelter",
+      "response": "Dropping off baked goods at a homeless shelter",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Maria start volunteering at the homeless shelter?",
+      "answer": "Witnessed a family struggling on the streets and reached out to the shelter",
+      "response": "After seeing a struggling family on the streets.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John do the week before August 3, 2023 involving his kids?",
+      "answer": "Had a meaningful experience at a military memorial",
+      "response": "Got his kids involved in a virtual group supporting the military.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did John describe his kids' reaction at the military memorial?",
+      "answer": "awestruck and humbled",
+      "response": "quiet and respectful",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why does Maria think it's important for younger generations to visit military memorials?",
+      "answer": "To remember and appreciate those who served",
+      "response": "To remember and appreciate veterans\u2019 service.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does John believe is important for children regarding veterans?",
+      "answer": "Teaching them to respect and appreciate those who served",
+      "response": "Teaching kids to appreciate and remember veterans.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What happened to John's job in August 2023?",
+      "answer": "John lost his job at the mechanical engineering company.",
+      "response": "He lost his job when his mechanical engineering company tanked.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did Maria take up with her friends from church in August 2023?",
+      "answer": "community work",
+      "response": "Hiking with her church friends",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John do to help his community last year in his hometown?",
+      "answer": "Helped renovate a rundown community center.",
+      "response": "Helped renovate a rundown community center.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What cause did the 5K charity run organized by John support?",
+      "answer": "veterans and their families",
+      "response": "veterans and their families",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who did John work with to raise awareness and funds for victims of domestic abuse?",
+      "answer": "a local organization",
+      "response": "the community",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What recognition did Maria receive at the homeless shelter in August 2023?",
+      "answer": "a medal for volunteering",
+      "response": "a medal",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of Maria's puppy she got two weeks before August 11, 2023?",
+      "answer": "Coco",
+      "response": "Coco",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did John and Max enjoy together last summer?",
+      "answer": "Camping",
+      "response": "a camping trip",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does John describe the camping trip with Max?",
+      "answer": "Peaceful and awesome",
+      "response": "Peaceful and awesome.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why does John say he feels stuck and questioning his decisions and goals?",
+      "answer": "Not feeling like making much of an impact",
+      "response": "Wanting to make a positive difference.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of Maria's second puppy?",
+      "answer": "Shadow",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How is Maria's new puppy adjusting to its new home?",
+      "answer": "doing great - learning commands and house training",
+      "response": "Learning commands and house-training well.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is John currently doing as a volunteer in August 2023?",
+      "answer": "mentoring students at a local school",
+      "response": "Volunteering as a mentor.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activities does John's family enjoy doing together?",
+      "answer": "going for hikes, hanging out at the park, having picnics, playing board games, having movie nights",
+      "response": "Playground outings and making pizzas together.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did the donations help John's community acquire on 16 August, 2023?",
+      "answer": "a brand new fire truck",
+      "response": "canned food and clothes",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    }
+  ]
+}

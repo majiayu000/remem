@@ -1,0 +1,1268 @@
+{
+  "conv-50": [
+    {
+      "question": "When did Calvin first travel to Tokyo?",
+      "answer": "between 26 March and 20 April 2023",
+      "response": "Between March 26 and May 31, 2023.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What items did Calvin buy in March 2023?",
+      "answer": "mansion in Japan, luxury car Ferrari 488 GTB",
+      "response": "a new mansion and a luxury car",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave see Aerosmith perform live?",
+      "answer": "on the weekend before March 26, 2023",
+      "response": "the weekend of 18\u201319 March 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which bands has Dave enjoyed listening to?",
+      "answer": "Aerosmith, The Fireworks",
+      "response": "Aerosmith and other cool festival bands.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which country do Calvin and Dave want to meet in?",
+      "answer": "United States",
+      "response": "the United States",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are Dave's dreams?",
+      "answer": "open a car maintenance shop, work on classic cars, build a custom car from scratch",
+      "response": "Working on cars for a living\u2014restoring classics and building custom cars.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which types of cars does Dave like the most?",
+      "answer": "classic vintage cars",
+      "response": "Classic cars",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does Dave's shop employ a lot of people?",
+      "answer": "Yes",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave start his car maintenance shop?",
+      "answer": "May 1, 2023",
+      "response": "1 May 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did a mishap occur with Calvin's musical gear and favorite mic?",
+      "answer": "On a week before 16 May, 2023",
+      "response": "last week",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin's place get flooded in Tokyo?",
+      "answer": "On a week before 16 May, 2023",
+      "response": "Last week.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What mishaps has Calvin run into?",
+      "answer": "flooding of his mansion, car accident",
+      "response": "A flood at his place and a car accident.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Calvin's concert in Tokyo?",
+      "answer": "last week of May 2023",
+      "response": "Before 31 May 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Would Calvin enjoy performing at the Hollywood Bowl?",
+      "answer": "Yes; because he enjoys the rush of performing onstage to large crowds",
+      "response": "Yes, he\u2019d likely love it.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin meet with the creative team for his new album?",
+      "answer": "8 June, 2023",
+      "response": "9 June 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why does Dave regularly visit parks?",
+      "answer": "because it relaxes and calms him",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave take a trip to mountainous regions?",
+      "answer": "July 2023",
+      "response": "July 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin have a car incident?",
+      "answer": "on the Friday before 21 June, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many times has Calvin had to deal with insurance paperwork?",
+      "answer": "two times",
+      "response": "Once",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which places or events has Calvin visited in Tokyo?",
+      "answer": "music festival, car museum, Shibuya crossing, Shinjuku",
+      "response": "a Tokyo music festival and a concert performance",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who inspired Dave's passion for car engineering?",
+      "answer": "His Dad",
+      "response": "his dad",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does Calvin wish to become more popular?",
+      "answer": "Yes; he want's to grow his fanbase",
+      "response": "Yes\u2014he wants to reach more people.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does Calvin want to expand his brand?",
+      "answer": "yes",
+      "response": "Yes, worldwide.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Dave's main passion?",
+      "answer": "auto engineering",
+      "response": "Working on cars",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Can Dave work with engines?",
+      "answer": "yes",
+      "response": "Yes, he works on engines.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave host a card-playing night with his friends?",
+      "answer": "on the Friday before 22 August, 2023",
+      "response": "August 22, 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin record a podcast with his friends?",
+      "answer": "21 August, 2023",
+      "response": "August 22, 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which city was Calvin visiting in August 2023?",
+      "answer": "Miami",
+      "response": "Tokyo",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Calvin do to relax?",
+      "answer": "take long drives in his car, embrace nature, fixing cars",
+      "response": "making music",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are Dave's hobbies other than fixing cars?",
+      "answer": "take a walk, go hiking, listen to favorite albums, live concerts, photography",
+      "response": "Playing in a band, photography, and walks.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of music does Dave listen to?",
+      "answer": "classic rock, Japanese music",
+      "response": "Classic rock",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where was Dave in the last two weeks of August 2023?",
+      "answer": "San Francisco",
+      "response": "At a car workshop in San Francisco.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Dave return from with new knowledge of different techniques of car restoration?",
+      "answer": "San Francisco",
+      "response": "San Francisco",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Dave doing in San Francisco?",
+      "answer": "attending a car modification workshop",
+      "response": "Attending a car restoration workshop.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave return from San Francisco?",
+      "answer": "September 1, 2023",
+      "response": "Shortly before 2 September 2023.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin book flight tickets to Boston?",
+      "answer": "last week of August 2023",
+      "response": "Late August 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Calvin's album released?",
+      "answer": "September 11, 2023",
+      "response": "11th of September",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does Calvin love music tours?",
+      "answer": "yes",
+      "response": "Yes\u2014he enjoys touring.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave have a great jam session with his band?",
+      "answer": "September 14, 2023",
+      "response": "15 September 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Would Dave prefer working on a Dodge Charger or a Subaru Forester?",
+      "answer": "Dodge Charger",
+      "response": "Dodge Charger",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the artists Calvin used to listen to when he was a kid?",
+      "answer": "Tupac and Dr. Dre",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which of their family member do Calvin and Dave have nostalgic memories about?",
+      "answer": "Dad",
+      "response": "Dave\u2019s dad",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Based on the conversation, did Calvin and Dave have a meeting in Boston between August and November 2023? Answer in yes or no.",
+      "answer": "No",
+      "response": "No, only planned.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which city was Calvin at on October 3, 2023?",
+      "answer": "Boston",
+      "response": "Tokyo",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin met with local artists in Boston?",
+      "answer": "October 3, 2023",
+      "response": "Day 21.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What shared activities do Dave and Calvin have?",
+      "answer": "Working on cars",
+      "response": "Making music and creative projects",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Dave's favorite activity?",
+      "answer": "Restoring cars",
+      "response": "Working on cars",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many car shows has Dave attended?",
+      "answer": "two",
+      "response": "Three car shows.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Dave doing in the first weekend of October 2023?",
+      "answer": "attending a car show",
+      "response": "attending a music festival",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When Dave was a child, what did he and his father do in the garage?",
+      "answer": "tinkering with car engines, restoration and refurbishing cars",
+      "response": "Tinkered with engines.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin buy his second Ferrari?",
+      "answer": "first week of October 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin and Frank Ocean start collaborating?",
+      "answer": "August 2022",
+      "response": "August 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin plan on travelling to Tokyo the second time?",
+      "answer": "November 2023",
+      "response": "November 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who supports Calvin in tough times?",
+      "answer": "friends and team",
+      "response": "Dave",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does help Calvin stay connected to the creative process?",
+      "answer": "Calvin stays connected to the creative process by always staying up-to-date on world events and watching documentaries about artists.",
+      "response": "Watching music videos and artist documentaries.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin visit some of the sights in Boston with a former high school friend?",
+      "answer": "October 24, 2023",
+      "response": "25th October 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which cities did Dave travel to in 2023?",
+      "answer": "San Francsico, Detroit",
+      "response": "Boston",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which hobby did Dave pick up in October 2023?",
+      "answer": "photography",
+      "response": "Photography",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which events in Dave's life inspired him to take up auto engineering?",
+      "answer": "attending a car show with Dad, working on an old car in a neighbor's garage when he was young, spent a summer restoring an old car with Dad",
+      "response": "Working on cars with his dad, especially restoring an old car together.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many Ferraris does Calvin own?",
+      "answer": "two",
+      "response": "One Ferrari",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What gifts has Calvin received from his artist friends?",
+      "answer": "gold chain, custom-made guitar with an octopus on it",
+      "response": "a custom octopus-design guitar",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did Dave's work on the Ford Mustang take?",
+      "answer": "nearly two months",
+      "response": "ERROR: LLM call failed",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long was the car modification workshop in San Francisco?",
+      "answer": "two weeks",
+      "response": "About 3 days (Aug 11\u201314)",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What style of guitars does Calvin own?",
+      "answer": "custom-made yellow guitar with an octopus on it, shiny purple guitar",
+      "response": "Custom-made guitars with octopus artwork.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activities has Dave participated in with his friends?",
+      "answer": "weekly visits to local parks, countryside roadtrip, celebration of the opening of his car maintenance shop, card-playing nights",
+      "response": "Celebrating his new car shop opening.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave take a photo of a Boston clock tower?",
+      "answer": "September 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Do all of Dave's car restoration projects go smoothly?",
+      "answer": "No",
+      "response": "No\u2014some are hard work.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where was Calvin located in the last week of October 2023?",
+      "answer": "Tokyo",
+      "response": "Boston",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave find the car he repaired and started sharing in his blog?",
+      "answer": "last week of October 2023",
+      "response": "When he was ten.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave buy a vintage camera?",
+      "answer": "November 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin attend a gala in Boston?",
+      "answer": "November 16, 2023",
+      "response": "17 November 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did Calvin plan to stay in Japan?",
+      "answer": "A few months",
+      "response": "a few months",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which band was Dave's favorite at the music festival in April 2023?",
+      "answer": "Aerosmith",
+      "response": "Aerosmith",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Calvin attend a music festival in April 2023?",
+      "answer": "Tokyo",
+      "response": "Tokyo",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What advice did Calvin receive from the producer at the music festival?",
+      "answer": "to stay true to himself and sound unique",
+      "response": "Stay true to himself and sound unique.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Dave's new business venture as of 1 May, 2023?",
+      "answer": "Car maintenance shop",
+      "response": "Partnering with a local garage.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of cars does Dave work on at his shop?",
+      "answer": "all kinds of cars, from regular maintenance to full restorations of classic cars",
+      "response": "All kinds of cars, including classic restorations.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin receive as a gift from another artist?",
+      "answer": "a gold necklace with a diamond pendant",
+      "response": "a diamond pendant necklace",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the necklace Calvin received meant to remind him of?",
+      "answer": "why he keeps hustling as a musician",
+      "response": "his passion for music",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Dave do when he feels his creativity is frozen?",
+      "answer": "immerse himself in something he loves",
+      "response": "Immerses himself in what he loves, like concerts or favorite albums.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Calvin plan to jumpstart his inspiration?",
+      "answer": "explore other things and have some fun",
+      "response": "By exploring Boston\u2019s music scene.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin manage to save during the flood incident?",
+      "answer": "music gear and favorite microphone",
+      "response": "his music gear and favorite microphone",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Dave open in May 2023?",
+      "answer": "a car shop",
+      "response": "his own car maintenance shop",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What gives Dave a sense of achievement and purpose?",
+      "answer": "Fixing up things",
+      "response": "Fixing up things, especially cars.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What fuels Calvin's soul?",
+      "answer": "Performing live",
+      "response": "Performing live",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Dave doing to relax on weekends?",
+      "answer": "exploring parks",
+      "response": "Exploring parks and taking walks.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What sports activity is Calvin planning to try after the tour with Frank Ocean?",
+      "answer": "Skiing",
+      "response": "Skiing",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Calvin excited to do after getting his car fixed on 7 July, 2023?",
+      "answer": "get back on the road",
+      "response": "get back on the road",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin and his friends arrange for in the park?",
+      "answer": "regular walks together",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of music has Calvin been creating lately?",
+      "answer": "experimenting with different genres",
+      "response": "Genre-blending music with electronic elements",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Calvin describe his process of adding electronic elements to his songs?",
+      "answer": "gives them a fresh vibe",
+      "response": "An exciting process of self-discovery and growth.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What car brand does Calvin own that he is proud of?",
+      "answer": "Ferrari",
+      "response": "Ferrari",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Calvin's biggest current goal?",
+      "answer": "expand his brand worldwide and grow his fanbase",
+      "response": "Expand his brand worldwide.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Dave's advice to Calvin regarding his dreams?",
+      "answer": "to never forget his dreams",
+      "response": "Keep pushing and make an impact with your music.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What workshop did Dave get picked for on 11 August, 2023?",
+      "answer": "Car mod workshop",
+      "response": "a car mod workshop",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of modifications has Dave been working on in the car mod workshop?",
+      "answer": "engine swaps, suspension modifications, and body modifications",
+      "response": "Engine swaps, suspension mods, and body modifications.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of car did Dave work on during the workshop?",
+      "answer": "classic muscle car",
+      "response": "a classic muscle car",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Dave say is important for making his custom cars unique?",
+      "answer": "attention to small details",
+      "response": "Attention to detail.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did the audience in Tokyo react when Calvin sang one of his songs?",
+      "answer": "Everyone was so into it and sang along",
+      "response": "They were eager and lively.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Calvin meet Frank Ocean?",
+      "answer": "At a music festival in Tokyo",
+      "response": "At a music festival in Tokyo.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Calvin and Frank Ocean record a song together?",
+      "answer": "In the studio at Calvin's mansion",
+      "response": "at a music festival in Tokyo",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin and his friends record in August 2023?",
+      "answer": "a podcast discussing the rap industry",
+      "response": "a podcast about the rap industry",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Calvin start shooting a video for his new album?",
+      "answer": "Miami",
+      "response": "an awesome beach in Miami",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What design is featured on Calvin's guitar?",
+      "answer": "octopus",
+      "response": "An octopus design",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Calvin get his guitar customized with a shiny finish?",
+      "answer": "unique look",
+      "response": "To reflect his love for art and the sea.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What color glow did Calvin customize his guitar with?",
+      "answer": "purple",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Dave come back from with insights on car modification on 1st September 2023?",
+      "answer": "San Francisco",
+      "response": "San Francisco",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What emotion does Dave mention feeling when he sees the relief of someone whose car he fixed?",
+      "answer": "Proud",
+      "response": "like he\u2019s making a difference",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin book a flight ticket for on 1st September 2023?",
+      "answer": "Boston",
+      "response": "a trip to Boston",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Calvin excited about after the tour?",
+      "answer": "exploring and growing his brand",
+      "response": "a trip to Tokyo",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What plans do Calvin and Dave have for when Calvin visits Boston?",
+      "answer": "Check out Dave's garage and maybe get some ideas for future projects",
+      "response": "Meet up and explore Boston\u2019s food and music spots.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which Disney movie did Dave mention as one of his favorites?",
+      "answer": "Ratatouille",
+      "response": "Ratatouille",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Dave feel about the reactions of people when they see the finished restoration project?",
+      "answer": "satisfying and worth the hard work",
+      "response": "Satisfied and appreciative.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did Calvin enjoy during his summer drives?",
+      "answer": "feeling the wind blowing through his hair",
+      "response": "Reflecting on his life choices",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which song from the childhood of Calvin brings back memories of a road trip with his dad?",
+      "answer": "\"California Love\"",
+      "response": "\u201cCalifornia Love\u201d",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What project did Calvin work on to chill out?",
+      "answer": "A shiny orange car",
+      "response": "a music project",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What car did Dave work on in the junkyard?",
+      "answer": "Ford Mustang",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Dave find satisfying about restoring old cars?",
+      "answer": "Transforming something old and beat-up into something beautiful",
+      "response": "Seeing his hard work pay off.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Calvin and Dave use to reach their goals?",
+      "answer": "Hard work and determination",
+      "response": "their passions\u2014music and cars",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does working on cars represent for Dave?",
+      "answer": "Therapy and a way to get away from everyday stress",
+      "response": "Therapy and a lifelong passion",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Dave aim to do with his passion for cars?",
+      "answer": "Take something broken and make it into something awesome",
+      "response": "Make a living working on cars.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin recently get that is a \"masterpiece on wheels\"?",
+      "answer": "Ferrari",
+      "response": "a new luxury car",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who headlined the music festival that Dave attended in October?",
+      "answer": "The Fireworks",
+      "response": "Aerosmith",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Calvin stay motivated when faced with setbacks?",
+      "answer": "Reminds himself of his passion for goals, gets help from others, and takes a break to recharge",
+      "response": "Staying positive, leaning on passion/support, and taking breaks.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity does Dave find fulfilling, similar to Calvin's passion for music festivals?",
+      "answer": "fixing things",
+      "response": "working on cars",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Calvin and Dave meet Frank Ocean to start collaborating?",
+      "answer": "at a festival",
+      "response": "At a music festival in Tokyo.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which part of Tokyo is described as Tokyo's Times Square by Calvin?",
+      "answer": "Shibuya Crossing",
+      "response": "Shibuya Crossing",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What specific location in Tokyo does Calvin mention being excited to explore?",
+      "answer": "Shinjuku",
+      "response": "Shibuya Crossing and Shinjuku",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What dish does Dave recommend Calvin to try in Tokyo?",
+      "answer": "ramen",
+      "response": "ramen",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Calvin find energizing during the tour?",
+      "answer": "Performing and connecting with the crowd",
+      "response": "the crowd\u2019s energy",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Calvin balance his job and personal life?",
+      "answer": "Takes it one day at a time",
+      "response": "By relying on a strong support system.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What inspired Calvin's recent music?",
+      "answer": "Struggles that people go through",
+      "response": "Music videos, concerts, and artist documentaries.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Calvin describe his music in relation to capturing feelings?",
+      "answer": "Express himself and work through his emotions",
+      "response": "Digging deeper to capture feelings.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Dave start working on cars?",
+      "answer": "Fascinated with how machines work",
+      "response": "Finding an old car in a neighbor\u2019s garage.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the toughest part of car restoration according to Dave?",
+      "answer": "Paying extra attention to detail",
+      "response": "getting the details right",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Calvin believe makes an artist create something extraordinary?",
+      "answer": "Paying attention to small details",
+      "response": "Paying attention to small details.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Dave sell the car he restored last year?",
+      "answer": "Last year",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Calvin first get interested in cars?",
+      "answer": "at an early age",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Calvin feel about performing with someone he admires?",
+      "answer": "Unreal, like a dream come true",
+      "response": "Very lucky.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What realization did the nightclub experience bring to Calvin?",
+      "answer": "how much music means to him, it's like his passion and purpose",
+      "response": "That music brings people together.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Dave and Calvin agree on regarding their pursuits?",
+      "answer": "It's fulfilling and motivating",
+      "response": "That pursuing their passions is fulfilling.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which city is featured in the photograph Dave showed Calvin?",
+      "answer": "Boston",
+      "response": "Boston",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin do recently at his Japanese house?",
+      "answer": "Threw a small party for his new album",
+      "response": "Threw a party for his new album.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Dave recently start a blog about?",
+      "answer": "Car mods",
+      "response": "car mods",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Dave's way to share his passion with others?",
+      "answer": "Through a blog on car mods",
+      "response": "his car-mod blog",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of videos does Calvin usually watch on his television?",
+      "answer": "Music videos, concerts, documentaries about artists and their creative process",
+      "response": "Music videos, concerts, and artist documentaries.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of music has Dave been getting into lately?",
+      "answer": "Classic rock",
+      "response": "Classic rock",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What tools does Calvin use to boost his motivation for music?",
+      "answer": "Writing lyrics and notes",
+      "response": "TV\u2014music videos, concerts, and documentaries.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of content does Dave post on his blog that inspired others to start their own DIY projects?",
+      "answer": "How he made his car look like a beast",
+      "response": "A story about making a car look like a beast.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of impact does Dave's blog on car mods have on people?",
+      "answer": "It inspires others to start their DIY projects",
+      "response": "Inspires others to start DIY car projects.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who did Calvin invite to see him perform in Boston on 13 November, 2023?",
+      "answer": "his old high school buddy",
+      "response": "his old high school buddy",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What hobby did Calvin take up recently?",
+      "answer": "Photography",
+      "response": "Photography",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What new item did Dave buy recently?",
+      "answer": "A vintage camera",
+      "response": "ERROR: LLM call failed",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of photos does Dave like to capture with his new camera?",
+      "answer": "Nature - sunsets, beaches, waves",
+      "response": "Nature shots\u2014sunsets, beaches, and waves.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What event did Calvin attend in Boston?",
+      "answer": "Fancy gala",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Calvin discuss with the cool artist he met at the gala?",
+      "answer": "Music and art",
+      "response": "music and art",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Dave take a stunning photo of a waterfall?",
+      "answer": "Nearby park",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What positive impact does Calvin mention nature has on tough times?",
+      "answer": "Nature helps us appreciate life",
+      "response": "It helps you escape and de-stress.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    }
+  ]
+}

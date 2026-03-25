@@ -1,0 +1,32 @@
+{
+  "config": {
+    "model": "gpt-5.4",
+    "top_k": 10,
+    "retriever": "remem-fts5-rrf"
+  },
+  "multi-hop": {
+    "accuracy": 0.5806,
+    "correct": 18,
+    "total": 31
+  },
+  "temporal": {
+    "accuracy": 0.4231,
+    "correct": 11,
+    "total": 26
+  },
+  "open-domain": {
+    "accuracy": 0.5714,
+    "correct": 8,
+    "total": 14
+  },
+  "single-hop": {
+    "accuracy": 0.7477,
+    "correct": 80,
+    "total": 107
+  },
+  "overall": {
+    "accuracy": 0.6573,
+    "correct": 117,
+    "total": 178
+  }
+}

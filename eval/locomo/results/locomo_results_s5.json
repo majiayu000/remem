@@ -1,0 +1,988 @@
+{
+  "conv-44": [
+    {
+      "question": "Which year did Audrey adopt the first three of her dogs?",
+      "answer": "2020",
+      "response": "2020",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Andrew start his new job as a financial analyst?",
+      "answer": "The week before March 27, 2023",
+      "response": "the week of March 20, 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of indoor activities has Andrew pursued with his girlfriend?",
+      "answer": "boardgames, volunteering at pet shelter, wine tasting, growing flowers",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of places have Andrew and his girlfriend checked out around the city?",
+      "answer": "cafes, new places to eat, open space for hikes, pet shelter, wine tasting event, park",
+      "response": "new places to eat",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Audrey make muffins for herself?",
+      "answer": "The week of April 3rd to 9th",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Audrey see a hummingbird?",
+      "answer": "first week of May 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Audrey adopt Pixie?",
+      "answer": "around April 2, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many years passed between Audrey adopting Pixie and her other three dogs?",
+      "answer": "three years",
+      "response": "About 3 years",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Did Andrew have a pet dog during March 2023?",
+      "answer": "No",
+      "response": "No \u2014 he first mentions Toby on July 11, 2023.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of classes or groups has Audrey joined to take better care of her dogs?",
+      "answer": "positive reinforcement training workshop to bond with pets, dog training course, agility training course, grooming course, dog-owners group",
+      "response": "Agility classes, a pet-bonding workshop, and dog-owner meetups.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Audrey's positive reinforcement training course for dogs take place?",
+      "answer": "June, 2023",
+      "response": "3 July 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Andrew go rock climbing?",
+      "answer": "June 11, 2023",
+      "response": "11 June 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What outdoor activities has Andrew done other than hiking in nature?",
+      "answer": "rock climbing, fishing, camping",
+      "response": "Rock climbing, camping, biking, and nature photography.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Audrey move to a new place?",
+      "answer": "June 2023",
+      "response": "No information available.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is something that Andrew really misses while working in the city?",
+      "answer": "being in nature",
+      "response": "the peacefulness of a hike",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is a shared frustration regarding dog ownership for Audrey and Andrew?",
+      "answer": "Not being able to find pet friendly spots.",
+      "response": "finding dog-friendly housing",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When is Andrew going to go hiking with Audrey?",
+      "answer": "August",
+      "response": "next month",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many times did Audrey and Andew plan to hike together?",
+      "answer": "three times",
+      "response": "Four times.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Audrey get Pixie from?",
+      "answer": "breeder",
+      "response": "She adopted Pixie.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is an indoor activity that Andrew would enjoy doing while make his dog happy?",
+      "answer": "cook dog treats",
+      "response": "Making homemade dog treats",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which meat does Audrey prefer eating more than others?",
+      "answer": "chicken",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the classes that Audrey took for her dogs to?",
+      "answer": "Positive reinforcement training class for bonding, dog training course, agility class",
+      "response": "Agility classes",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Andrew go during the first weekend of August 2023?",
+      "answer": "camping with girlfriend",
+      "response": "a park outside the city",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are some problems that Andrew faces before he adopted Toby?",
+      "answer": "Finding the right dog and pet-friendly apartments close to open spaces",
+      "response": "Finding dog-friendly housing and missing hikes with a dog.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Did Audrey and Andrew grow up with a pet dog?",
+      "answer": "Yes",
+      "response": "Audrey did; Andrew unknown.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Andrew and his girlfriend go fishing?",
+      "answer": "weekend before August 24, 2023",
+      "response": "the weekend of August 19\u201320, 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the biggest stressor in Andrew's life besides not being able to hike frequently?",
+      "answer": "work",
+      "response": "Work piling up.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Andrew feel about his current work?",
+      "answer": "Stressful",
+      "response": "Stressed by the workload.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is something that Audrey often dresses up her dogs with?",
+      "answer": "Hats",
+      "response": "party hats",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the names of Audrey's dogs?",
+      "answer": "Pepper, Precious, Panda, and Pixie",
+      "response": "Pepper, Pixie, Precious, and Panda",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When is Andrew planning to go to the beach with his girlfriend?",
+      "answer": "November 2023",
+      "response": "November 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What has Andrew done with his dogs?",
+      "answer": "Taking walks and hiking",
+      "response": "A board game night and dog park visit with Toby.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of tattoo does Audrey have on her arm?",
+      "answer": "Tattoos of her four dogs.",
+      "response": "a tattoo of her four dogs",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What can Andrew potentially do to improve his stress and accomodate his living situation with his dogs?",
+      "answer": "Change to a hybrid or remote job so he can move away from the city to the suburbs to have a larger living space and be closer to nature.",
+      "response": "Prioritize self-care and find a dog-friendly place near a park.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many months passed between Andrew adopting Toby and Buddy?",
+      "answer": "three months",
+      "response": "About 3 months.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the names of Andrew's dogs?",
+      "answer": "Toby, Scout, Buddy",
+      "response": "Toby",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are some foods that Audrey likes eating?",
+      "answer": "chicken pot pie, chicken roast, blueberry muffins, sushi",
+      "response": "Sushi, chicken pot pie, and roasted chicken.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Audrey get into an accident in the park?",
+      "answer": "between October 19 and 24, 2023",
+      "response": "24 October 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Andrew and his girlfriend go on a wine tasting trip?",
+      "answer": "the weekend before October 24, 2023",
+      "response": "the weekend of October 21\u201322, 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey get wtih having so many dogs?",
+      "answer": "Companionship",
+      "response": "another tattoo of her four dogs",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is a good place for dogs to run around freely and meet new friends?",
+      "answer": "The dog park",
+      "response": "A dog park.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the breeds of Audrey's dogs?",
+      "answer": "Mongrel mixed with Lab for Pepper and Panda. Mongrel mixed with Chihuahua for Precious and Pixie.",
+      "response": "Mutts\u2014two Jack Russell mixes and two Chihuahua mixes.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What technique is Audrey using to discipline her dogs?",
+      "answer": "Positive reinforcement",
+      "response": "Positive reinforcement training",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which US state do Audrey and Andrew potentially live in?",
+      "answer": "Minnesota",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which national park could Audrey and Andrew be referring to in their conversations?",
+      "answer": "Voyageurs National Park",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many pets will Andrew have, as of December 2023?",
+      "answer": "three",
+      "response": "1 dog (Toby)",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many pets did Andrew have, as of September 2023?",
+      "answer": "one",
+      "response": "1 dog, Toby",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many months passed between Andrew adopting Buddy and Scout",
+      "answer": "one month",
+      "response": "About 1 month",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Andrew view his pets as?",
+      "answer": "Family",
+      "response": "friends and confidantes",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Audrey view her pets as?",
+      "answer": "Family",
+      "response": "part of her family",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is a skill that Audrey learned to take care of her dogs?",
+      "answer": "Grooming",
+      "response": "dog grooming",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What items has Audrey bought or made for her dogs?",
+      "answer": "dog tags, toys, dog beds, collars",
+      "response": "Personalized tags for her dogs.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is something that Andrew could do to make birdwatching hobby to fit in his city schedule?",
+      "answer": "Install a bird feeder outside where he can see the birds without going outdoors.",
+      "response": "Birdwatch along the river bike routes.",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is a career that Andrew could potentially pursue with his love for animals and nature?",
+      "answer": "Park ranger or a similar position working for the National Park Services.",
+      "response": "Wildlife photographer",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity do Audrey's dogs like to do in the dog park?",
+      "answer": "Play fetch with ball and frisbee, run around and meet other dogs",
+      "response": "Play fetch and Frisbee.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Andrew make his dogs a fun indoor area?",
+      "answer": "few days before November 22, 2023",
+      "response": "22 November 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Has Andrew moved into a new apartment for his dogs?",
+      "answer": "No",
+      "response": "No, still looking.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Andrew adopt Scout?",
+      "answer": "few days before November 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey eat for dinner on October 24, 2023?",
+      "answer": "sushi",
+      "response": "sushi",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long has it been since Andrew adopted his first pet, as of November 2023?",
+      "answer": "4 months",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many dogs does Andrew have?",
+      "answer": "3",
+      "response": "3 dogs",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which specific type of bird mesmerizes Andrew?",
+      "answer": "Eagles",
+      "response": "Eagles",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Andrew express missing about exploring nature trails with his family's dog?",
+      "answer": "The peaceful moments",
+      "response": "bonding and creating memories together",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of pastries did Andrew and his girlfriend have at the cafe?",
+      "answer": "croissants, muffins, and tarts",
+      "response": "amazing pastries",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of flowers does Audrey have a tattoo of?",
+      "answer": "sunflowers",
+      "response": "Peruvian lilies",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Audrey do during dog playdates in the park?",
+      "answer": "chat with people while dogs make new friends",
+      "response": "Plays fetch with a ball or frisbee.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of dog was Andrew looking to adopt based on his living space?",
+      "answer": "smaller dog",
+      "response": "a small, apartment-friendly dog",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where does Andrew want to live to give their dog a large, open space to run around?",
+      "answer": "near a park or woods",
+      "response": "Near a park or woods.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Audrey sign up for a workshop about bonding with pets?",
+      "answer": "Strengthen the bond with her pets",
+      "response": "To strengthen her bond with her dogs.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Audrey hear about the workshop on bonding with pets?",
+      "answer": "Saw a workshop flyer at the local pet store",
+      "response": "From a flyer at her local pet store.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of training was the workshop Audrey signed up for in May 2023?",
+      "answer": "Positive reinforcement training",
+      "response": "Positive reinforcement training",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Audrey describe she dog he met at the pet store?",
+      "answer": "Friendly and playful",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Audrey think positive reinforcement training is important for pets?",
+      "answer": "To have pets learn how to behave in a positive way",
+      "response": "Because rewards work better than punishment.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What challenge is Andrew facing in their search for a pet?",
+      "answer": "Finding a pet-friendly spot in the city",
+      "response": "Finding pet-friendly housing in the city",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Andrew feel about their search for a pet-friendly place?",
+      "answer": "Discouraged but determined",
+      "response": "Frustrated but determined.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What outdoor activities does Andrew plan on trying after the rock climbing class?",
+      "answer": "kayaking and bungee jumping",
+      "response": "Kayaking and maybe bungee jumping.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long does Audrey typically walk her dogs for?",
+      "answer": "about an hour",
+      "response": "About an hour.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey set up in the backyard for their dogs on June 26, 2023?",
+      "answer": "a doggy play area with agility stuff and toys",
+      "response": "a doggy play area with agility stuff and toys",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey and her friends stumble across during a hike a few years back, as mentioned on June 26, 2023?",
+      "answer": "a stunning lake in the mountains",
+      "response": "two puppies, Pepper and Panda",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Audrey's favorite recipe that she shares with Andrew on 3 July, 2023?",
+      "answer": "Chicken Pot Pie",
+      "response": "Chicken Pot Pie",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What dish is one of Audrey's favorite dishes that includes garlic and is shared with Andrew on 3 July, 2023?",
+      "answer": "Roasted Chicken",
+      "response": "Roasted Chicken",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Andrew and his GF do on the Monday before July 24, 2023?",
+      "answer": "volunteered at a pet shelter",
+      "response": "Volunteered at a pet shelter.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of Audrey's childhood dog?",
+      "answer": "Max",
+      "response": "Max",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What special memories does Audrey have with her childhood dog, Max?",
+      "answer": "Long walks in the neighborhood, exploring new paths, sharing worries and hopes",
+      "response": "the special bond they shared",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are some of the personalities of Audrey's four fur babies?",
+      "answer": "oldest is relaxed, second is playful, third can be naughty but loves cuddles, youngest is full of life",
+      "response": "Each is unique\u2014playful, cuddly, and social.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of classes did Audrey start with her pups recently on 4 August, 2023?",
+      "answer": "Agility classes",
+      "response": "agility classes",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How often does Audrey take her pups to the park for practice?",
+      "answer": "Twice a week",
+      "response": "Twice a week.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did the trail hike that Audrey went on with her pups take?",
+      "answer": "Two hours",
+      "response": "About an hour",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What advice did Audrey give to Andrew regarding grooming Toby?",
+      "answer": "Grooming slowly and gently, paying attention to sensitive areas like ears and paws. And remember to stay patient and positive throughout the grooming process.",
+      "response": "Regular brushing, baths, and nail trims.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is essential to keep the dogs looking good according to Audrey?",
+      "answer": "Daily brushing, regular baths, nail trims, and lots of love",
+      "response": "Regular grooming, daily brushing, baths, and nail trims.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey organize with the neighbors' dogs?",
+      "answer": "a doggy playdate",
+      "response": "a doggy playdate",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey do to give her dogs extra comfort as the weather cooled down?",
+      "answer": "Got new beds for them",
+      "response": "Got them new beds.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Audrey describe the new beds for her dogs?",
+      "answer": "Super cozy and comfy",
+      "response": "Cozy and comfortable.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Audrey calm down her dog after the leash incident?",
+      "answer": "Petted, hugged, spoke calmly and slowly walked the dog",
+      "response": "With calm petting and hugs.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How often does Audrey take her dogs for walks?",
+      "answer": "Multiple times a day",
+      "response": "Usually about an hour.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of flowers does Audrey take care of?",
+      "answer": "Peruvian Lilies",
+      "response": "Peruvian Lilies",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Andrew learn from reading books about ecological systems?",
+      "answer": "about animals, plants, and ecosystems and how they work together",
+      "response": "That nature is interconnected.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Andrew suggest as a way to reduce carbon footprint?",
+      "answer": "biking or using public transport",
+      "response": "Biking or using public transport.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Andrew suggest helping the planet while also training the body?",
+      "answer": "by biking",
+      "response": "Biking instead of driving.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey do with her pups over the weekend before 4th October, 2023?",
+      "answer": "Took them to the beach",
+      "response": "Took them for a stroll in the park.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the reason Audrey couldn't walk her dogs for a period of time?",
+      "answer": "Knee injury",
+      "response": "a knee injury",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of jewelry does Audrey make?",
+      "answer": "Jewelry made from recycled objects",
+      "response": "Jewelry from recycled objects",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why does Audrey make jewelry out of recycled objects?",
+      "answer": "To show love for creativity and sustainability",
+      "response": "As a hobby.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What organization does Audrey donate a portion of his profits to?",
+      "answer": "Animal shelter",
+      "response": "an animal shelter",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Audrey help out the animal shelter?",
+      "answer": "By donating a portion of his profits frmo selling jwelery",
+      "response": "By donating proceeds from her recycled jewelry sales.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of games do Audrey's dogs like to play at the park?",
+      "answer": "Fetch and Frisbee",
+      "response": "Fetch and Frisbee.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey make to thank her neighbors?",
+      "answer": "Goodies",
+      "response": "baked goodies",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How do Audrey's dogs react to snow?",
+      "answer": "Confused",
+      "response": "They dislike snow.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Audrey describe her dogs' response to snow?",
+      "answer": "They definitely prefer nice, sunny days in the grass.",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of experiences are Audrey's dogs the best companions for?",
+      "answer": "Exploring the great outdoors",
+      "response": "outdoor adventures",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity do Andrew and Buddy enjoy doing together?",
+      "answer": "Walking",
+      "response": "going on walks",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Andrew and Buddy like doing on walks?",
+      "answer": "Checking out new hiking trails",
+      "response": "exploring hiking trails",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What cuisine did Andrew recently try at a new spot in town?",
+      "answer": "sushi",
+      "response": "Sushi",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which type of sushi did Audrey suggest trying first to someone new to sushi?",
+      "answer": "California or salmon roll",
+      "response": "California or salmon roll",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of date is Andrew going on Sunday?",
+      "answer": "picnic date",
+      "response": "a picnic date",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Andrew and Audrey plan to do on the Saturday after October 28, 2023?",
+      "answer": "Go hiking",
+      "response": "go on a hike together",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What aspect of autumn does Andrew find beautiful?",
+      "answer": "The autumn colors",
+      "response": "the changing leaves",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey do in November 2023 to better take care of her dogs?",
+      "answer": "Joined a dog owners group",
+      "response": "Took them to a pet salon for grooming.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How often does Audrey meet up with other dog owners for tips and playdates?",
+      "answer": "Once a week",
+      "response": "Once a week.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Audrey share to show ways to keep dogs active in the city?",
+      "answer": "photography of a basket full of stuffed animals",
+      "response": "Puzzles, training, and hide-and-seek.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of activities does Audrey suggest for mental stimulation of the dogs?",
+      "answer": "puzzles, training, hide-and-seek",
+      "response": "Puzzles, training, and hide-and-seek.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Andrew planning to do with Scout, Toby, and Buddy?",
+      "answer": "Take them to a nearby park",
+      "response": "Take them to a park together.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Andrew get for Scout to create a safe and fun space for them?",
+      "answer": "essentials like a bed, toys, and puppy pads",
+      "response": "a bed, toys, and puppy pads",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    }
+  ]
+}

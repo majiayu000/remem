@@ -1,0 +1,1204 @@
+{
+  "conv-47": [
+    {
+      "question": "What are John's suspected health problems?",
+      "answer": "Obesity",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which recreational activity was James pursuing on March 16, 2022?",
+      "answer": "bowling",
+      "response": "video gaming",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which places or events have John and James planned to meet at?",
+      "answer": "VR Club, McGee's, baseball game",
+      "response": "VR gaming, McGee\u2019s Pub, and a baseball game.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Do both James and John have pets?",
+      "answer": "No",
+      "response": "No, only James does.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John resume playing drums in his adulthood?",
+      "answer": "February 2022",
+      "response": "ERROR: LLM call failed",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are John and James' favorite games?",
+      "answer": "John's favorite game is CS:GO, and James's is Apex Legends.",
+      "response": "James: Civilization and Total War; John: not specified.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does James live in Connecticut?",
+      "answer": "Likely yes",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "In which state is the shelter from which James adopted the puppy?",
+      "answer": "Connecticut.",
+      "response": "Connecticut",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many pets does James have?",
+      "answer": "Three dogs.",
+      "response": "Three dogs",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the names of James's dogs?",
+      "answer": "Ned, Daisy, Max",
+      "response": "Max, Daisy, and Ned",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James adopt Ned?",
+      "answer": "first week of April 2022",
+      "response": "the week before 12 April 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How was John feeling on April 10, 2022?",
+      "answer": "seeking solitude",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Did James have a girlfriend during April 2022?",
+      "answer": "Presumably not",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James visit Italy?",
+      "answer": "In 2021",
+      "response": "Before April 20, 2022.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James buy himself a new adventure book?",
+      "answer": "April 26, 2022",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James start playing Civilization VI?",
+      "answer": "March 2022",
+      "response": "Late March 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the game with different colored cards that was John talking about with James?",
+      "answer": "UNO",
+      "response": "UNO",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the board game where you have to find the imposter that John mentions to James?",
+      "answer": "Mafia",
+      "response": "Among Us",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which books has John recommended to James?",
+      "answer": "The Name of the Wind, Stormlight Archive, Kingkiller Chronicles, Expanse",
+      "response": "The Stormlight Archive, Kingkiller Chronicle, and The Name of the Wind.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Was James feeling lonely before meeting Samantha?",
+      "answer": "Most likely yes, because he mentioned that the only creatures that gave him joy are dogs and he was actively trying to date.",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many charity tournaments has John organized till date?",
+      "answer": "two",
+      "response": "One charity tournament.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John first organize a charity tournament with his friends?",
+      "answer": "May 7, 2022",
+      "response": "8 May 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who or which organizations have been the beneficiaries of John's charity tournaments?",
+      "answer": "animal shelter, homeless, children's hospital",
+      "response": "a dog shelter and the homeless",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When will John start his new job?",
+      "answer": "In July, 2022",
+      "response": "Next month",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of games has James tried to develop?",
+      "answer": "football simulator, virtual world inspired by Witcher 3",
+      "response": "strategy games",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Are John and James fans of the same football team?",
+      "answer": "No, James is a Liverpool fan and John is a Manchester City fan.",
+      "response": "No \u2014 John supports Manchester City, James supports Liverpool.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which countries has James visited?",
+      "answer": "Italy, Mexico, Turkey, Canada, Greenland",
+      "response": "Canada",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of classes has James joined?",
+      "answer": "game design course, cooking classes",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James volunteer at an organization?",
+      "answer": "May 2022",
+      "response": "May 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James depart for his trip to Canada?",
+      "answer": "July 11, 2022",
+      "response": "After July 9, 2022.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which country did James book tickets for in July 2022?",
+      "answer": "Canada",
+      "response": "Canada",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many days did James plan to spend on his trip in Canada?",
+      "answer": "19 days",
+      "response": "11 days",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where was James at on July 12, 2022?",
+      "answer": "Toronto, Canada",
+      "response": "Toronto",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Did John and James study together?",
+      "answer": "Yes",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which countries did James visit in July 2022?",
+      "answer": "Canada, Greenland",
+      "response": "Canada",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What additional country did James visit during his trip to Canada?",
+      "answer": "Greenland",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who is Jill?",
+      "answer": "Most likely John's partner.",
+      "response": "Someone James brought a souvenir for from Nuuk.",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John spend time with his sister and dogs?",
+      "answer": "July 21, 2022",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What happened to John's job situation in 2022?",
+      "answer": "quit his IT Job, secured his dream job, aspires to become an eSports competition organizer",
+      "response": "Left his IT job for a more fulfilling career.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John start his job in IT?",
+      "answer": "2019",
+      "response": "Around August 2019",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of tricks do James's pets know?",
+      "answer": "swimming, catching frisbees, balancing on a skateboard, sit, stay, paw, and rollover",
+      "response": "Balancing on a skateboard.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James meet Samantha?",
+      "answer": "August 9, 2022",
+      "response": "10 August 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James take his 3 dogs to the beach?",
+      "answer": "August 9, 2022",
+      "response": "10 August 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John plan his next meeting with his siblings?",
+      "answer": "In September, 2022",
+      "response": "September 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why didn't John want to go to Starbucks?",
+      "answer": "Possibly because he likes to drink beer on his days off.",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of beer does McGee's bar serve?",
+      "answer": "Stout, lager",
+      "response": "lager beer",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John and James meet at McGee's bar?",
+      "answer": "August 27, 2022",
+      "response": "27 August 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James ask Samantha to be his girlfriend?",
+      "answer": "September 3, 2022",
+      "response": "Between 10 August and 4 September 2022.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James, Samantha and John go to the baseball game together?",
+      "answer": "September 11, 2022",
+      "response": "4 September 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What gaming equipments did John buy or refurbish?",
+      "answer": "Sennheiser headphones, Logitech mouse, gaming desk",
+      "response": "new devices and his gaming desk",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James start taking cooking classes?",
+      "answer": "September 2, 2022",
+      "response": "September 2, 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which new games did John start play during the course of the conversation with James?",
+      "answer": "AC Valhalla, Witcher 3, FIFA 23, Dungeons of the Dragons, futuristic dystopian game",
+      "response": "Dungeons of the Dragon and FIFA 23",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John start working on his 2D Adventure mobile game?",
+      "answer": "approximately summer of 2022",
+      "response": "By 20 September 2022.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did it take for James to complete his Witcher-inspired game?",
+      "answer": "six months",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of programming-related events has John hosted?",
+      "answer": "online programming competition, programming seminar",
+      "response": "a charity CS:GO tournament",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John and his programming friends host an online programming competition?",
+      "answer": "Last week before 13 October 2022.",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which of James's family members have visited him in the last year?",
+      "answer": "mother, sister",
+      "response": "his mother",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James' mother and her friend visit him?",
+      "answer": "October 19, 2022",
+      "response": "21 October 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James try Cyberpunk 2077 game?",
+      "answer": "October 20, 2022",
+      "response": "20 October 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John and his gaming friends organize the charity tournament?",
+      "answer": "On the night of October 30 to 31, 2022",
+      "response": "8 May 2022",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What games has John played with his friends at charity tournaments?",
+      "answer": "CS:GO, Fortnite, Overwatch and Apex Legends",
+      "response": "CS:GO",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was James' big moment with Samantha in October 2023?",
+      "answer": "They decided to live together and rented an apartment not far from McGee's bar.",
+      "response": "Asked Samantha to be his girlfriend at the theater (Oct. 2022).",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did James and Samantha date for before deciding to move in together?",
+      "answer": "nearly three months",
+      "response": "About two months",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James, his family and his dogs start on a road trip together?",
+      "answer": "November 4, 2022",
+      "response": "4 November 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did John practice chess for before winning the chess tournament?",
+      "answer": "nearly four months",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James and his family visit Mark and Josh?",
+      "answer": "November 7, 2022",
+      "response": "Before November 7, 2022.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did John work with a game developer on a project?",
+      "answer": "November 5-6, 2022",
+      "response": "the weekend of 5\u20136 November 2022",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What programming languages has James worked with?",
+      "answer": "Python and C++",
+      "response": "Python and C++",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of mobile application does James plan to build with John?",
+      "answer": "An app for dog walking and pet care",
+      "response": "A dog-walking and pet-care app",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does James plan to make his dog-sitting app unique?",
+      "answer": "By allowing users to customize their pup's preferences/needs",
+      "response": "By connecting owners with reliable dog walkers.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What has John mostly found with the metal detector so far?",
+      "answer": "bottle caps",
+      "response": "Mostly bottle caps.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James offer to do for John regarding pets?",
+      "answer": "help find the perfect pet",
+      "response": "Help him find the perfect pet.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What instrument is John learning to play as of 27 March, 2022?",
+      "answer": "Drums",
+      "response": "drums",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long has John been playing the drums as of 27 March, 2022?",
+      "answer": "One month",
+      "response": "about a month",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What game did John play in an intense tournament at the gaming convention in March 2022?",
+      "answer": "CS:GO",
+      "response": "CS:GO",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What game was James playing in the online gaming tournament in April 2022?",
+      "answer": "Apex Legends",
+      "response": "Apex Legends",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does James communicate with his gaming team?",
+      "answer": "voice chat",
+      "response": "Using voice chat.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What advice did James receive from the famous players he met at the tournament?",
+      "answer": "never put your ego above team success",
+      "response": "Proper communication and teamwork over ego.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James adopt in April 2022?",
+      "answer": "a pup",
+      "response": "a pup named Ned",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of the pup that was adopted by James?",
+      "answer": "Ned",
+      "response": "Ned",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did James embody the appearance of the game character from the woman he saw during a walk?",
+      "answer": "He found her appearance and eyes amazing.",
+      "response": "Because she inspired him.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What inspired James to create the game character in the virtual world?",
+      "answer": "Appearance of a woman he saw during a walk",
+      "response": "a stranger he saw while walking his dogs",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which country did James visit in 2021?",
+      "answer": "Italy",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What impresses John about Japan?",
+      "answer": "Technologically advanced megacities and tasty street food",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of assignment was giving John a hard time at work?",
+      "answer": "Coding assignment",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What breed is Daisy, one of James' dogs?",
+      "answer": "Labrador",
+      "response": "Labrador",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of pizza is James' favorite?",
+      "answer": "Pepperoni",
+      "response": "Pepperoni pizza",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of pizza is John's favorite?",
+      "answer": "Hawaiian",
+      "response": "Hawaiian pizza",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John organize with his friends on May 8, 2022?",
+      "answer": "A tournament for CS:GO",
+      "response": "a CS:GO charity tournament",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John and his friends do with the remaining money after helping the dog shelter?",
+      "answer": "Bought groceries and cooked food for the homeless",
+      "response": "Bought groceries and cooked food for the homeless.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the main goal of the money raised from the charity tournament organized by John and his friends in May 2022?",
+      "answer": "Raise money for a dog shelter",
+      "response": "to help a local dog shelter",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did the system John created help the charitable foundation with?",
+      "answer": "tracking inventory, resources, and donations",
+      "response": "streamlining their operations",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John create for the charitable foundation that helped generate reports for analysis?",
+      "answer": "computer application on smartphones",
+      "response": "a software tool",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John receive for achieving second place in the tournament?",
+      "answer": "money and a trophy",
+      "response": "a trophy and prize money",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What project is James working on in his game design course?",
+      "answer": "a new part of the football simulator, collecting player databases",
+      "response": "a computer game based on his childhood sketches",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who does James support in football matches?",
+      "answer": "Liverpool",
+      "response": "Liverpool",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which football club does John support?",
+      "answer": "Manchester City",
+      "response": "Manchester City",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What disagreement do James and John have about their football teams?",
+      "answer": "debating on which team will perform better in the championship",
+      "response": "Who\u2019ll finish higher: Liverpool or Manchester City.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Max good at doing according to James?",
+      "answer": "catching frisbees in mid-air",
+      "response": "Swimming and playing fetch.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the main focus of the organization that James volunteered with?",
+      "answer": "providing necessary items to those who are less fortunate",
+      "response": "Providing essential items to those in need.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Will there be an interview required to volunteer with the organization James volunteered for?",
+      "answer": "No",
+      "response": "No, no interview required.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did John relax in his free time on 9 July, 2022?",
+      "answer": "Reading",
+      "response": "Metal detecting on the beach.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James enjoy doing on cold winter days?",
+      "answer": "Reading while snuggled under the covers",
+      "response": "Reading books",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What new hobby did James become interested in on 9 July, 2022?",
+      "answer": "Extreme sports",
+      "response": "learning a new instrument",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did James plan to visit after Toronto?",
+      "answer": "Vancouver",
+      "response": "Vancouver",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did James plan to return from his trip to Toronto and Vancouver?",
+      "answer": "July 20",
+      "response": "July 20",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What online game did John start playing recently for improving strategy?",
+      "answer": "Chess",
+      "response": "Chess",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What made John leave his IT job?",
+      "answer": "to focus on things that align with his values and passions",
+      "response": "Wanting to do something that made a difference.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which game tournaments does John plan to organize besides CS:GO?",
+      "answer": "Fortnite competitions",
+      "response": "Fortnite",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What happened to James's puppy during the recent visit to the clinic?",
+      "answer": "routine examination and vaccination",
+      "response": "A routine check-up and vaccination.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What game genre did John start exploring instead of shooters?",
+      "answer": "strategy and RPG games",
+      "response": "strategy and RPG games",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which RPG game is John playing and enjoying on 10 August, 2022?",
+      "answer": "The Witcher 3",
+      "response": "The Witcher 3",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What aspect of \"The Witcher 3\" does John find immersive?",
+      "answer": "shaping the world with choices",
+      "response": "its storytelling and character depth",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Whose phone number did James receive during the beach outing?",
+      "answer": "Samantha",
+      "response": "Samantha's phone number",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is James planning to do after receiving Samantha's phone number?",
+      "answer": "call her",
+      "response": "Ask Samantha out.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is John organizing with his siblings?",
+      "answer": "a gaming night",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of beer does John not like?",
+      "answer": "dark beer",
+      "response": "dark beers",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What were some difficulties James faced during the development of his game?",
+      "answer": "balancing mechanics and ensuring fairness",
+      "response": "Balancing mechanics and fairness.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What has John been teaching his siblings?",
+      "answer": "coding",
+      "response": "coding",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of programs are John's siblings making?",
+      "answer": "basic games and stories",
+      "response": "Basic games and stories",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which company's headphones did John choose for gaming?",
+      "answer": "Sennheiser",
+      "response": "Sennheiser",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James and Samantha discover they both enjoy at McGee's bar?",
+      "answer": "Lager beer",
+      "response": "lager beer",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How much does James pay per cooking class?",
+      "answer": "$10",
+      "response": "$10 per class",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James learn to make in the cooking class besides omelette and meringue?",
+      "answer": "Dough",
+      "response": "how to make dough",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did James sign up for a cooking class?",
+      "answer": "He wanted to learn something new",
+      "response": "To learn something new.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James prepare for the first time in the cooking class?",
+      "answer": "Omelette",
+      "response": "meringue",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of the board game John tried in September 2022?",
+      "answer": "Dungeons of the Dragon",
+      "response": "Dungeons of the Dragon",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where does James get his ideas from?",
+      "answer": "books, movies, dreams",
+      "response": "Books, movies, and dreams.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of dream did James have recently?",
+      "answer": "a dream with a medieval castle full of puzzles and traps",
+      "response": "A dream about a medieval castle with puzzles and traps.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of music does John like?",
+      "answer": "electronic and rock music",
+      "response": "electronic and rock music",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What instrument did James used to play when he was younger?",
+      "answer": "guitar",
+      "response": "the guitar",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John use to play when he was younger to let off steam?",
+      "answer": "drums",
+      "response": "the drums",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What career milestone did John achieve recently in September 2022?",
+      "answer": "making his first mobile game",
+      "response": "Creating his first mobile game",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of game is John's upcoming mobile game?",
+      "answer": "2D adventure",
+      "response": "A 2D adventure game with puzzles and exploration.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does John do to stay informed and constantly learn about game design?",
+      "answer": "watch tutorials and keep up with developer forums",
+      "response": "Reads game design books and magazines.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of gig was John offered at the game dev non-profit organization?",
+      "answer": "programming mentor for game developers",
+      "response": "a volunteer programming mentor role",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does John feel about starting the journey as a programming mentor for game developers?",
+      "answer": "excited and inspired",
+      "response": "Excited about the opportunity.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of games is James excited to play with his new video card?",
+      "answer": "RPGs",
+      "response": "RPGs",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What inspired James to create his game?",
+      "answer": "Witcher 3",
+      "response": "The Witcher 3, plus games like Civilization and Total War.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What sparked James' passion for gaming when he was a kid?",
+      "answer": "Super Mario and The Legend of Zelda games",
+      "response": "Playing Super Mario and Zelda on his first Nintendo.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did James lose progress on due to a power outage?",
+      "answer": "a game",
+      "response": "his game progress",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What games were played at the gaming tournament organized by John on 31 October, 2022?",
+      "answer": "Fortnite, Overwatch, Apex Legends",
+      "response": "Fortnite, Overwatch, and Apex Legends.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the purpose of the gaming tournament organized by John on 31 October, 2022?",
+      "answer": "To raise money for a children's hospital",
+      "response": "To raise funds for a children\u2019s hospital.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What decision did James and Samantha make on 31 October, 2022?",
+      "answer": "To move in together",
+      "response": "Move in together near McGee\u2019s bar.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did James and Samantha decide to live together on 31 October, 2022?",
+      "answer": "In an apartment not far from McGee's bar",
+      "response": "an apartment near McGee\u2019s bar",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did James and Samantha choose an apartment near McGee's bar?",
+      "answer": "They love spending time together at the bar",
+      "response": "Because they loved McGee's bar.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What game is John hooked on playing on 5 November, 2022?",
+      "answer": "FIFA 23",
+      "response": "The Witcher 3",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did John suggest James practice before playing FIFA 23 together?",
+      "answer": "Control with a gamepad and timing",
+      "response": "timing",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What project did John work on with a game developer by 7 November, 2022?",
+      "answer": "An online board game",
+      "response": "an online board game",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the name of John's cousin's dog?",
+      "answer": "Luna",
+      "response": "Luna",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    }
+  ]
+}

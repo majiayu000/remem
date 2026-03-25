@@ -1,0 +1,652 @@
+{
+  "conv-30": [
+    {
+      "question": "When Jon has lost his job as a banker?",
+      "answer": "19 January, 2023",
+      "response": "19 January 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When Gina has lost her job at Door Dash?",
+      "answer": "January, 2023",
+      "response": "January 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How do Jon and Gina both like to destress?",
+      "answer": "by dancing",
+      "response": "Dancing.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Jon and Gina both have in common?",
+      "answer": "They lost their jobs and decided to start their own businesses.",
+      "response": "a shared love of dance",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Jon decide to start his dance studio?",
+      "answer": "He lost his job and decided to start his own business to share his passion.",
+      "response": "His passion for dancing.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What Jon thinks the ideal dance studio should look like?",
+      "answer": "By the water, with natural light and Marley flooring",
+      "response": "A bright studio with Marley flooring.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When is Jon's group performing at a festival?",
+      "answer": "February, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina launch an ad campaign for her store?",
+      "answer": "29 January, 2023",
+      "response": "29 January 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Jon in Paris?",
+      "answer": "28 January 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which city have both Jean and John visited?",
+      "answer": "Rome",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina team up with a local artist for some cool designs?",
+      "answer": "February, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina get her tattoo?",
+      "answer": "A few years ago",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon start to go to the gym?",
+      "answer": "March, 2023",
+      "response": "16 March 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina open her online clothing store?",
+      "answer": "16 March, 2023",
+      "response": "16 March 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon start expanding his studio's social media presence?",
+      "answer": "April, 2023",
+      "response": "3 April 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon host a dance competition?",
+      "answer": "May, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon go to a fair to get more exposure for his dance studio?",
+      "answer": "24 April, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Gina decide to start her own clothing store?",
+      "answer": "She always loved fashion trends and finding unique pieces and she lost her job so decided it was time to start her own business.",
+      "response": "To pursue fashion after losing her DoorDash job.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Do Jon and Gina start businesses out of what they love?",
+      "answer": "Yes",
+      "response": "Yes\u2014both built businesses around their passions.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina interview for a design internship?",
+      "answer": "10 May, 2023",
+      "response": "11 May 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina get accepted for the design internship?",
+      "answer": "27 May, 2023",
+      "response": "27 May 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon start reading \"The Lean Startup\"?",
+      "answer": "May, 2023",
+      "response": "27 May 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina develop a video presentation to teach how to style her fashion pieces? ",
+      "answer": "June, 2023",
+      "response": "13 June 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Gina promote her clothes store?",
+      "answer": "worked with an artist to make unique fashion pieces, made limited-edition sweatshirts, got some new offers and promotions for online store, developed a video presentation showing how to style her pieces",
+      "response": "By working with influencers.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which events has Jon participated in to promote his business venture?",
+      "answer": "fair, networking events, dance competition",
+      "response": "networking events",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Jon's dance studio offer?",
+      "answer": "one-on-one metoring and training to dancers,  workshops and classes to local schools and centers",
+      "response": "Dance classes for all ages and backgrounds.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon receive mentorship to promote his venture?",
+      "answer": "15 June, 2023",
+      "response": "16 June 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Did Jon and Gina both participate in dance competitions?",
+      "answer": "Yes",
+      "response": "Yes\u2014both competed.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Jon in Rome?",
+      "answer": "June 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which cities has Jon visited?",
+      "answer": "Paris, Rome",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When Jon is planning to open his dance studio?",
+      "answer": "20 June, 2023",
+      "response": "20 June",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did it take for Jon to open his studio?",
+      "answer": "six months",
+      "response": "About five months",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina design a limited collection of hoodies?",
+      "answer": "June 2023",
+      "response": "21 June 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon visit networking events for his store?",
+      "answer": "20 June, 2023",
+      "response": "21 June 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina start being recognized by fashion editors?",
+      "answer": "July 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon start learning marketing and analytics tools?",
+      "answer": "July, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jon and Gina decide to collaborate to create dance content?",
+      "answer": "21 July 2023",
+      "response": "21 July 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina mention Shia Labeouf?",
+      "answer": " 23 July, 2023",
+      "response": "23 July, 2023",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Gina go to a dance class with a group of friends?",
+      "answer": "21 July 2023",
+      "response": "11 May 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Gina's favorite style of dance?",
+      "answer": "Contemporary",
+      "response": "Contemporary dance",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Jon's favorite style of dance?",
+      "answer": "Contemporary",
+      "response": "Contemporary",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Gina's favorite dancing memory?",
+      "answer": "Winning first place at a regionals dance competition",
+      "response": "Winning first place in a regional dance competition at 15.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of dance piece did Gina's team perform to win first place?",
+      "answer": "\"Finding Freedom\"",
+      "response": "a contemporary piece",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do the dancers in the photo represent?",
+      "answer": "They are performing at the festival",
+      "response": "Jon\u2019s dance crew winning a competition.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Gina say about the dancers in the photo?",
+      "answer": "They look graceful",
+      "response": "They look free and expressive.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Jon's attitude towards being part of the dance festival?",
+      "answer": "Glad",
+      "response": "Excited and enthusiastic.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of flooring is Jon looking for in his dance studio?",
+      "answer": "Marley flooring",
+      "response": "Marley flooring",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Gina find for her clothing store on 1 February, 2023?",
+      "answer": "The perfect spot for her store",
+      "response": "a wholesaler",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Gina design for her store?",
+      "answer": "the space, furniture, and decor",
+      "response": "a cozy, inviting store space",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Gina want her customers to feel in her store?",
+      "answer": "cozy and comfortable",
+      "response": "Cozy and welcomed",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jon say about Gina's progress with her store?",
+      "answer": "hard work's paying off",
+      "response": "He congratulated her on her store.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What made Gina choose the furniture and decor for her store?",
+      "answer": "personal style and customer comfort",
+      "response": "To create a cozy, inviting space.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jon say about creating a special experience for customers?",
+      "answer": "It's the key to making them feel welcome and coming back",
+      "response": "That it was important.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Gina say about creating an experience for her customers?",
+      "answer": "making them want to come back",
+      "response": "A cozy, inviting space.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How is Gina's store doing?",
+      "answer": "The store is doing great.",
+      "response": "Successful and growing.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Gina's tattoo symbolize?",
+      "answer": "Freedom and expressing herself through dance",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jon and Gina compare their entrepreneurial journeys to?",
+      "answer": "dancing together and supporting each other",
+      "response": "a dance routine",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What advice does Gina give to Jon about running a successful business?",
+      "answer": "build relationships with customers, create a strong brand image, stay positive",
+      "response": "Strong brand identity, customer relationships, and positivity.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Jon shut down his bank account?",
+      "answer": "for his business",
+      "response": "For business growth.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Gina combine her clothing business with dance?",
+      "answer": "she is passionate about dance and fashion",
+      "response": "Her passion for both.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Jon's dance make him?",
+      "answer": "happy",
+      "response": "feel most alive",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Gina receive from a dance contest?",
+      "answer": "a trophy",
+      "response": "a trophy",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Gina stay confident in her business?",
+      "answer": "By reminding herself of her successes and progress, having a support system, and focusing on why she started",
+      "response": "By focusing on her big goal and past successes.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of professional experience did Gina get accepted for on May 23, 2023?",
+      "answer": "fashion internship",
+      "response": "a fashion internship",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where is Gina's fashion internship?",
+      "answer": "fashion department of an international company",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What book is Jon currently reading?",
+      "answer": "The Lean Startup",
+      "response": "The Lean Startup",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Jon offering to the dancers at his dance studio?",
+      "answer": "One-on-one mentoring and training",
+      "response": "One-on-one mentoring and training",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jon use the clipboard with a notepad attached to it?",
+      "answer": "To set goals, track achievements, and find areas for improvement",
+      "response": "To jot down his dance studio plans.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Jon tell Gina he won't do?",
+      "answer": "quit",
+      "response": "give up",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jon take a trip to Rome for?",
+      "answer": "To clear his mind",
+      "response": "To clear his mind.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Jon working on opening?",
+      "answer": "a dance studio",
+      "response": "his own dance studio",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Gina describe the studio that Jon has opened?",
+      "answer": "amazing",
+      "response": "a dance studio",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jon feel about the opening night of his dance studio?",
+      "answer": "excited",
+      "response": "Excited and eager.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Gina describe the feeling that dance brings?",
+      "answer": "magical",
+      "response": "a sense of freedom",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Jon plan to do at the grand opening of his dance studio?",
+      "answer": "savor all the good vibes",
+      "response": "Make memories with Gina",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Gina say to Jon about the grand opening?",
+      "answer": "Let's live it up and make some great memories",
+      "response": "She congratulates him on his hard work.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the general sentiment about the upcoming grand opening?",
+      "answer": "excitement",
+      "response": "Eager excitement.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Gina make a limited edition line of?",
+      "answer": "Hoodies",
+      "response": "clothing",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "According to Gina, what makes Jon a perfect mentor and guide?",
+      "answer": "His positivity and determination",
+      "response": "His positivity and determination.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What plans does Jon have after receiving advice at the networking event?",
+      "answer": "Sprucing up his business plan, tweaking his pitch to investors, and working on an online platform.",
+      "response": "Collaborate with Gina on marketing his dance studio.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What offer does Gina make to Jon regarding social media?",
+      "answer": "Helping with making content and managing his social media accounts.",
+      "response": "Help create content and manage his social media.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    }
+  ]
+}

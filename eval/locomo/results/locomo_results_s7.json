@@ -1,0 +1,1532 @@
+{
+  "conv-48": [
+    {
+      "question": "What kind of project was Jolene working on in the beginning of January 2023?",
+      "answer": "electricity engineering project",
+      "response": "a robotics project",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which of Deborah`s family and friends have passed away?",
+      "answer": "mother, father, her friend Karlie",
+      "response": "Her mother and father.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah`s mother pass away?",
+      "answer": "a few years before 2023",
+      "response": "A few years before January 2023.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene`s mother pass away?",
+      "answer": "in 2022",
+      "response": "In 2022.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene's mom gift her a pendant?",
+      "answer": "in 2010",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "In what country did Jolene's mother buy her the pendant?",
+      "answer": "In France",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What symbolic gifts do Deborah and Jolene have from their mothers?",
+      "answer": "pendants",
+      "response": "Jolene\u2019s freedom pendant; Deborah\u2019s isn\u2019t specified.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which country were Jolene and her mother visiting in 2010?",
+      "answer": "France",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What helped Deborah find peace when grieving deaths of her loved ones?",
+      "answer": "yoga, old photos, the roses and dahlias in a flower garden, nature",
+      "response": "Yoga and meditation",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah's father pass away?",
+      "answer": "January 25, 2023",
+      "response": "Two days before the conversation.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Deborah's parents' wedding?",
+      "answer": "in 1993",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Is Deborah married?",
+      "answer": "yes",
+      "response": "Yes, she is married.",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah receive an appreciation letter from her community?",
+      "answer": "January 26, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What places give Deborah peace?",
+      "answer": "sitting in a spot by the window in her Mom's house, sitting by the beach, Bali, forest trail in a nearby park",
+      "response": "Her garden, Bali, and her favorite reflection spot.",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What were Deborah's mother's hobbies?",
+      "answer": "reading, traveling, art, cooking",
+      "response": "Reading and traveling.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What pets does Jolene have?",
+      "answer": "snakes",
+      "response": "Seraphim and Susie.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the names of Jolene's snakes?",
+      "answer": "Susie, Seraphim",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene buy her pet Seraphim?",
+      "answer": "in 2022",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "In what country did Jolene buy snake Seraphim?",
+      "answer": "In France",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How many times has Jolene been to France?",
+      "answer": "two times",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which games have Jolene and her partner played together?",
+      "answer": "Detroit, Walking Dead, Battlefield 1, It Takes Two, Overcooked 2",
+      "response": "Overcooked 2",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When do Jolene and her partner plan to complete the game \"Walking Dead\"?",
+      "answer": "Saturday after 27 January, 2023",
+      "response": "next Saturday",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah meet Anna?",
+      "answer": "31 January, 2023",
+      "response": "1 February 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Jolene sometimes put off doing yoga?",
+      "answer": "She's more interested in playing video games",
+      "response": "Being busy with engineering school.",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What new yoga poses did Deborah try?",
+      "answer": "Warrior II, Dancer Pose (Natarajasana), Tree pose",
+      "response": "Dancer Pose and Tree Pose.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are Jolene's favorite books?",
+      "answer": "Sapiens, Avalanche by Neal Stephenson",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which book did Jolene read in January 2023?",
+      "answer": "Avalanche by Neal Stephenson",
+      "response": "a self-discovery book",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Jolene in Bogota?",
+      "answer": "in summer 2022",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "In what country was Jolene during summer 2022?",
+      "answer": "Colombia",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene have a mini-retreat to reflect on her career?",
+      "answer": "Wednesday before 9 February, 2023",
+      "response": "Last Wednesday.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene have a dinner and drinks with her friends?",
+      "answer": "21 February, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was the last photo of Deborah and Karlie taken?",
+      "answer": "in summer 2022",
+      "response": "On their last hike together.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When was Deborah in Bali?",
+      "answer": "in 2022",
+      "response": "Last year.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long have Jolene and her partner been together?",
+      "answer": "for three years",
+      "response": "Three years.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which year did Jolene and her partner start dating?",
+      "answer": "2020",
+      "response": "2020",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah go for her first morning jog in a nearby park?",
+      "answer": "24 February, 2023",
+      "response": "25 February 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How old is Jolene?",
+      "answer": "likely no more than 30; since she's in school",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene take Seraphim to the park?",
+      "answer": "Sunday before 2 March, 2023",
+      "response": "Last Sunday, 26 February 2023.",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah start the yoga class in the neighborhood?",
+      "answer": "Friday before 13 March, 2023",
+      "response": "13 March 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What time management techniques do Deborah and Jolene use?",
+      "answer": "the Pomodoro Technique - 25 minutes work and 5-minute break, scheduler or to-do list, The Eisenhower Matrix, bullet journal",
+      "response": "Deborah: daily schedules/to-do lists; Jolene: Pomodoro and a bullet journal.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does Deborah live close to the beach or the mountains?",
+      "answer": "beach",
+      "response": "close to the beach",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What ways do Deborah and Jolene use to enhance their yoga practice?",
+      "answer": "candles, music, essential oils",
+      "response": "Props and candles, plus soothing scents and calming music.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What music pieces does Deborah listen to during her yoga practice?",
+      "answer": "Savana, Sleep",
+      "response": "Mellow instrumental tracks, especially the album \u201cSleep\u201d",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah go for a bicycle ride with Anna?",
+      "answer": "first week of April, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah go to an art show with Anna?",
+      "answer": "on 9 April, 2023",
+      "response": "the week before 9 April 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene finish her robotics project?",
+      "answer": "May 2023",
+      "response": "last week",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long did Jolene work on the robotics project given to her by her Professor?",
+      "answer": "four months",
+      "response": "At least 2 months (Feb 1\u2013Apr 9, 2023)",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene do yoga at Talkeetna?",
+      "answer": "on 5 June, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which US state did Jolene visit during her internship?",
+      "answer": "Alaska",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long has Jolene been doing yoga and meditation?",
+      "answer": "about 3 years",
+      "response": "About 3 years.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which year did Jolene start practicing yoga?",
+      "answer": "2020",
+      "response": "Around 2020",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene buy a new aquarium for Seraphim?",
+      "answer": "24 June, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene lose a lot of progress in her work?",
+      "answer": "last week of July 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene adopt her snake Susie?",
+      "answer": "in 2021",
+      "response": "Around August 2021",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which pet did Jolene adopt first - Susie or Seraphim?",
+      "answer": "Susie",
+      "response": "No information available.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which pet did Jolene adopt more recently - Susie or Seraphim?",
+      "answer": "Seraphim",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah lead a meditation session during the sunset?",
+      "answer": "week before 16 August, 2023",
+      "response": "No information available.",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene gift her partner a new console?",
+      "answer": "17 August, 2023",
+      "response": "the 17th",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What games does Jolene recommend for Deborah?",
+      "answer": "Zelda BOTW for Switch , Animal Crossing: New Horizons, Overcooked 2",
+      "response": "Zelda BOTW and Animal Crossing: New Horizons",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Deborah and her husband do together?",
+      "answer": "play detective games together, spend time outdoors and explore nature",
+      "response": "Play detective games together",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah go to a yoga retreat near her mom's place?",
+      "answer": "a week before 24 August,2023",
+      "response": "last week",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What projects is Jolene planning for next year?",
+      "answer": "developing renewable energy finding ways to supply clean water to those with limited access",
+      "response": "Renewable energy and clean water projects.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Deborah get her cats?",
+      "answer": "Luna is from the shelter and Max is her mother's cat",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How old are Deborah's cats?",
+      "answer": "Max is 8 years old and Luna is 5 years old",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Does Deborah like cats?",
+      "answer": "Yes",
+      "response": "Yes, she prefers cats.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which country was Jolene located in during the last week of August 2023?",
+      "answer": "Brazil",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene and her partner return home from Rio de Janeiro?",
+      "answer": "29 August, 2023",
+      "response": "No information available",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Jolene doing with her partner in Rio de Janeiro?",
+      "answer": "they went on excursions, checked out some cool yoga classes, visited a lot of delicious cafes, visited an old temple",
+      "response": "Attending yoga classes and visiting cafes.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah visit Brazil?",
+      "answer": "2020",
+      "response": "three years ago",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Have Deborah and Jolene been to Rio de Janeiro?",
+      "answer": "yes",
+      "response": "Yes\u2014both have been to Rio de Janeiro.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Is the friend who wrote Deborah the motivational quote no longer alive?",
+      "answer": "likely yes",
+      "response": "No information available",
+      "category": "3",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Deborah go to a community meetup?",
+      "answer": "last week of August 2023",
+      "response": "September 1, 2023",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene's parents give her first console?",
+      "answer": "when she was 10",
+      "response": "At age 10.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Did Jolene teach herself how to play the console?",
+      "answer": "yes",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Deborah and Jolene plan to try when they meet in a new cafe?",
+      "answer": "coffee and fresh pastries",
+      "response": "coffee",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What card game is Deborah talking about?",
+      "answer": "Exploding Kittens",
+      "response": "Exploding Kittens",
+      "category": "3",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene and her partner try scuba diving lessons?",
+      "answer": "Friday before 17 September, 2023",
+      "response": "last Friday",
+      "category": "2",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Jolene and her partner find a cool diving spot?",
+      "answer": "Phuket",
+      "response": "a waterfall oasis",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Jolene and her partner spend most of September 2023?",
+      "answer": "Phuket",
+      "response": "outdoors in nature",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Has Deborah tried surfing?",
+      "answer": "yes",
+      "response": "No information available",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Has Jolene tried surfing?",
+      "answer": "no",
+      "response": "No, not yet.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did the Deboran and Jolene agree to go surfing?",
+      "answer": "in October 2023",
+      "response": "next month",
+      "category": "2",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which locations does Deborah practice her yoga at?",
+      "answer": "at her mother's old home, park, yoga studio, beach",
+      "response": "her old home",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of professional activities does Jolene participate in to gain more experience in her field?",
+      "answer": "present work at virtual conference, attend workshops  and intern at firms",
+      "response": "Internships, workshops, and networking.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of engineering projects has Jolene worked on?",
+      "answer": "electrical engineering, robotics, sustainable water purifier, productive and affordable aerial surveillance system",
+      "response": "Electrical, robotics, and sustainable water-purifier projects.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which community activities have Deborah and Anna participated in?",
+      "answer": "yoga, running",
+      "response": "Yoga sessions and a running group.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What gifts has Deborah received?",
+      "answer": "an appreciate letter from her community, a flower bouqet from her friend, a motivational quote from a friend",
+      "response": "A bouquet from a friend, a little amulet from her mom, and an uplifting quote.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which countries has Deborah traveled to?",
+      "answer": "Thailand, Brazil",
+      "response": "Brazil and Indonesia",
+      "category": "1",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activities does Deborah pursue besides practicing and teaching yoga?",
+      "answer": "biking, going to art shows, running, organizing workshops to practice mindfulness and self-care, surfing, gardening",
+      "response": "Meditation and morning jogs.",
+      "category": "1",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are the names of Jolene's snakes?",
+      "answer": "Susie, Seraphim",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What are Jolene's favorite books?",
+      "answer": "Sapiens, Avalanche by Neal Stephenson",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What music pieces does Deborah listen to during her yoga practice?",
+      "answer": "Savana, Sleep",
+      "response": "Mellow instrumental tracks, especially the album *Sleep*.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What games does Jolene recommend for Deborah?",
+      "answer": "Zelda BOTW for Switch , Animal Crossing: New Horizons, Overcooked 2",
+      "response": "Zelda BOTW and Animal Crossing: New Horizons",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What projects is Jolene planning for next year?",
+      "answer": "developing renewable energy finding ways to supply clean water to those with limited access",
+      "response": "Renewable energy and clean water projects.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Deborah get her cats?",
+      "answer": "Luna is from the shelter and Max is her mother's cat",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How old are Deborah's cats?",
+      "answer": "Max is 8 years old and Luna is 5 years old",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Jolene doing with her partner in Rio de Janeiro?",
+      "answer": "they went on excursions, checked out some cool yoga classes, visited a lot of delicious cafes, visited an old temple",
+      "response": "Attending yoga classes and visiting cafes.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Have Deborah and Jolene been to Rio de Janeiro?",
+      "answer": "yes",
+      "response": "Yes\u2014both have.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene's parents give her first console?",
+      "answer": "when she was 10",
+      "response": "when she was 10",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What do Deborah and Jolene plan to try when they meet in a new cafe?",
+      "answer": "coffee and fresh pastries",
+      "response": "coffee at the hidden coffee shop",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What project did Jolene finish last week before 23 January, 2023?",
+      "answer": "an electrical engineering project",
+      "response": "an electrical engineering project",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "When did Jolene buy her pet snake?",
+      "answer": "A year ago",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What project was Jolene working on as of 1 February, 2023?",
+      "answer": "Robotics project",
+      "response": "a robotics project",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Deborah meet her new neighbor Anna?",
+      "answer": "yoga in the park",
+      "response": "At a yoga session in the park.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did Jolene and her partner plan to do together instead of resuming yoga?",
+      "answer": "play the console",
+      "response": "play console games",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What milestone did Jolene achieve recently on 4 February, 2023?",
+      "answer": "Design and build a sustainable water purifier for a rural community",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Jolene's favorite book which she mentioned on 4 February, 2023?",
+      "answer": "\"Sapiens\"",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Deborah bring with her whenever she comes to reflect on her mom?",
+      "answer": "amulet",
+      "response": "a little amulet from her mom",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What new outlook did Jolene gain after her mini retreat on 9 February, 2023?",
+      "answer": "A confidence boost",
+      "response": "A new outlook on life.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What cool stuff did Jolene accomplish at the retreat on 9 February, 2023?",
+      "answer": "Came up with neat solutions for her engineering project",
+      "response": "New life insights and a confidence boost.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What idea did Jolene have to help underprivileged kids learn about STEM subjects on 9 February, 2023?",
+      "answer": "A volunteer program where engineers teach STEM to underprivileged kids",
+      "response": "A volunteer program where engineers teach STEM to underprivileged kids.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jolene plan to involve local engineers in her idea of teaching STEM to underprivileged kids?",
+      "answer": "As guest speakers for workshops",
+      "response": "By inviting them as guest speakers at workshops.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What gave Deborah peace in the garden she visited?",
+      "answer": "Roses and dahlias",
+      "response": "Roses and dahlias.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Deborah spend time in the garden?",
+      "answer": "to find comfort after losing a friend",
+      "response": "To find peace and feel close to her mom.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Jolene and her partner initially meet?",
+      "answer": "In an engineering class in college",
+      "response": "In an engineering class in college.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity does Deborah incorporate into her daily routine after going for a morning jog in the park?",
+      "answer": "spending time with loved ones",
+      "response": "morning jogs in the park",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "According to Jolene, what does exercise help her to feel?",
+      "answer": "connected to her body",
+      "response": "calmer and clearer",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Deb share a photo of, which brought a smile to Jolene's face?",
+      "answer": "a yellow coffee cup with a handwritten message",
+      "response": "the last hike with her friend Karlie",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is one of Jolene's favorite dishes?",
+      "answer": "lasagna",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What picture did Jolene share related to feeling overwhelmed?",
+      "answer": "a photo of a desk with a notebook and a computer monitor",
+      "response": "ERROR: LLM call failed",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene and Deb discuss as a helpful strategy for studying and time management?",
+      "answer": "breaking tasks into smaller pieces and setting goals, using planners or schedulers",
+      "response": "Breaking tasks into smaller pieces and setting goals.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene ask Deb to help with on 13 March, 2023?",
+      "answer": "time management",
+      "response": "a study plan",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What method does Deb suggest Jolene to try for organizing tasks based on importance and urgency?",
+      "answer": "The Eisenhower Matrix",
+      "response": "The Eisenhower Matrix",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene and Anna discuss while watching the sunset by the sea?",
+      "answer": "They realized they inspire each other",
+      "response": "how they inspired each other",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jolene plan to pursue her dream of learning to surf?",
+      "answer": "gathering information, watching videos, getting a beginners' guide",
+      "response": "By gathering information and using a beginner\u2019s guide.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Deborah buy to enhance her yoga practice besides the props?",
+      "answer": "candle",
+      "response": "a candle",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of music does Deborah find helpful during her yoga practice?",
+      "answer": "instrumental tracks with mellow melodies and rhythms",
+      "response": "Instrumental tracks with mellow melodies and rhythms.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Who are the musicians mentioned by Jolene that she enjoys listening to during her yoga practice?",
+      "answer": "Nils Frahm and Olafur Arnalds",
+      "response": "Nils Frahm and Olafur Arnalds",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What album does Deborah recommend for meditation and deep relaxation?",
+      "answer": "'Sleep'",
+      "response": "Sleep",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which show did Deborah go to with a friend on 9 April, 2023?",
+      "answer": "an art show",
+      "response": "an art show",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Deborah find comforting about going to art shows?",
+      "answer": "It makes her feel like she's still experiencing it with her mom",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jolene describe the time spent with her snakes and partner?",
+      "answer": "Valuable and relaxing",
+      "response": "a source of comfort and joy",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does Jolene enjoy doing with her partner after a long day?",
+      "answer": "Playing video games",
+      "response": "Playing video games together.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is Jolene currently doing in June 2023?",
+      "answer": "interning at a well-known engineering firm",
+      "response": "Interning at an engineering firm.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "For how long has Jolene had Seraphim as a pet?",
+      "answer": "one year",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jolene feel when spending time with Seraphim?",
+      "answer": "comforted",
+      "response": "Comforted and cheered up.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which new yoga pose did Deborah share a photo of?",
+      "answer": "tree pose",
+      "response": "Tree Pose",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What group activity did Deborah start with Anna?",
+      "answer": "running group",
+      "response": "a running group",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What made being part of the running group easy for Deborah to stay motivated?",
+      "answer": "helping and pushing each other during runs",
+      "response": "Being around fitness-minded people.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Jolene decide to get a snake as a pet?",
+      "answer": "fascinated by reptiles and it felt like the perfect pet",
+      "response": "For calm and a connection with nature.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is the favorite game Jolene plays with her partner?",
+      "answer": "It takes two",
+      "response": "Overcooked 2",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity does Deborah do with her cats?",
+      "answer": "take them out for a run in the park every morning and evening",
+      "response": "Takes them for a run in the park.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jolene describe the feeling of finding her snake snuggled under the bed after it got out?",
+      "answer": "It really showed how much she loves her.",
+      "response": "A huge relief.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why does Deborah take her cats out for a run in the park every day?",
+      "answer": "Exercise and nature are important to her",
+      "response": "For exercise and fitness.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Jolene come to have her pet, Susie?",
+      "answer": "She adopted her two years ago when feeling lonely.",
+      "response": "Adopted Susie two years ago for companionship.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activities have been helping Jolene stay distracted during tough times?",
+      "answer": "Video games and spending time with her pet, Susie",
+      "response": "Spending time with Susie and playing video games.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of yoga routine does Deborah recommend to Jolene?",
+      "answer": "A gentle flow routine focused on breathing and grounding",
+      "response": "A gentle flow yoga routine.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene design inspired by their love for space and engines?",
+      "answer": "Notebooks",
+      "response": "Notebooks inspired by space and engines",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What journal has Jolene been using to help track tasks and stay organized?",
+      "answer": "bullet journal",
+      "response": "a bullet journal",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What game did Jolene recommend for being calming and cute?",
+      "answer": "Animal Crossing: New Horizons",
+      "response": "Animal Crossing: New Horizons",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What game did Jolene suggest as an awesome open-world game for the Nintendo Switch?",
+      "answer": "Zelda BOTW",
+      "response": "Zelda: Breath of the Wild",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Deborah and her husband use to play to bond and make memories?",
+      "answer": "video games",
+      "response": "detective games",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What is special about the bench at the park near Deborah's house?",
+      "answer": "It holds special memories of conversations with her mom",
+      "response": "A cherished spot where she watched a sunset with her mom.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Deborah and her mom chat about at their special bench in the park?",
+      "answer": "dreams and life",
+      "response": "about life",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What feeling does Deborah get when she thinks about the time spent with her mom at their special spot?",
+      "answer": "peace and gratitude",
+      "response": "Comforted and close to her mom.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What habits does Jolene practice to feel balanced?",
+      "answer": "yoga, meditation, walks, and mindfulness",
+      "response": "Yoga and meditation",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Which yoga pose is Jolene a fan of for rest and calmness?",
+      "answer": "savasana (the corpse pose)",
+      "response": "Child's Pose",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How long has Jolene been doing yoga?",
+      "answer": "3 years",
+      "response": "About 3 years.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene participate in recently that provided her with a rewarding experience?",
+      "answer": "presenting at a virtual conference",
+      "response": "ERROR: LLM call failed",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Jolene feel after receiving positive feedback at the virtual conference?",
+      "answer": "thrilled and rewarded",
+      "response": "Reassured she was on the right track.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of event did Jolene present at recently?",
+      "answer": "virtual conference",
+      "response": "a virtual conference",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene's mom stress the value of, which she wants to keep in mind for her engineering projects?",
+      "answer": "Helping others",
+      "response": "ERROR: LLM call failed",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of projects is Jolene interested in getting involved in the future?",
+      "answer": "Sustainable initiatives and developing innovative solutions for environmental issues",
+      "response": "Renewable energy and clean-water projects.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Deborah get Luna, one of her cats?",
+      "answer": "From the shelter",
+      "response": "Adopted her from a shelter.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How old is Max?",
+      "answer": "8 years old",
+      "response": "10 years old",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of classes did Jolene and her partner check out during their trip to Rio de Janeiro on 30 August, 2023?",
+      "answer": "Yoga classes",
+      "response": "Yoga classes",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What type of place does Jolene visit to meditate?",
+      "answer": "A tranquil spot by a pond",
+      "response": "a nearby tranquil spot",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the new plant Jolene got used as a reminder for on 30 August, 2023?",
+      "answer": "To nurture herself and embrace fresh starts",
+      "response": "to nurture herself and embrace fresh starts",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Jolene get the new plant on 30 August, 2023?",
+      "answer": "As a reminder to nurture herself and embrace fresh starts",
+      "response": "A reminder of self-care and fresh starts.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What has Jolene been focusing on lately besides studying?",
+      "answer": "relationship with her partner",
+      "response": "her relationship with her partner",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Deborah's mom support her yoga practice when she first started?",
+      "answer": "attended classes with her",
+      "response": "By being a big fan and motivating her.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the video game console that Jolene's parents got her at age 10?",
+      "answer": "nintendo game console",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was one of Jolene's favorite games to play with her mom on the nintendo wii game system?",
+      "answer": "Monster Hunter: World",
+      "response": "Monster Hunter: World",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What course did Jolene sign up for on 6 September 2023?",
+      "answer": "meditation",
+      "response": "a meditation course",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Why did Jolene have to reschedule their meeting with Deborah on September 8, 2023?",
+      "answer": "Jolene already had plans",
+      "response": "Conflicting prior plans.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Jolene and her partner travel for a few weeks in September 2023?",
+      "answer": "Phuket",
+      "response": "a meditation retreat in Phuket",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was the main focus of the session that stood out to Jolene during the retreat?",
+      "answer": "releasing expectations and judgments and savoring the present",
+      "response": "Relaxation, self-care, and balance",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How did Jolene feel about her progress in practicing mindfulness and gratitude?",
+      "answer": "experiencing a new level of joy and happiness",
+      "response": "A new level of joy and happiness.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What positive change did Jolene experience during the retreat?",
+      "answer": "finding inner peace",
+      "response": "Greater peace and connection to nature and herself.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Jolene recently play that she described to Deb?",
+      "answer": "a card game about cats",
+      "response": "Overcooked 2",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Deborah do with their mom's old friends?",
+      "answer": "reminisced and looked through photos",
+      "response": "Reconnected with her late mom\u2019s friends.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "Where did Deborah get married?",
+      "answer": "on the beach",
+      "response": "No information available",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What does yoga on the beach provide for Deborah?",
+      "answer": "a peaceful atmosphere",
+      "response": "peace and self-care",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "How does Jolene describe their home room?",
+      "answer": "little haven for peace and rest",
+      "response": "a haven of peace",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What new activity did Deborah and her neighbor organize for the community on 16 September, 2023?",
+      "answer": "Free gardening class",
+      "response": "a running group",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What was Deborah's mom passionate about?",
+      "answer": "Cooking",
+      "response": "travel and cooking",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What food did Deborah's mom make for her on birthdays?",
+      "answer": "Pineapple cakes",
+      "response": "pineapple birthday cakes",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What kind of cookies did Jolene used to bake with someone close to her?",
+      "answer": "Chocolate chip cookies",
+      "response": "Chocolate chip cookies",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What outdoor activity did Jolene suggest doing together with Deborah?",
+      "answer": "Surfing",
+      "response": "Visiting the peaceful spot by the lake.",
+      "category": "4",
+      "llm_score": 0,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What activity did Deborah enjoy at the music festival with their pals on September 20, 2023?",
+      "answer": "Dancing and bopping around",
+      "response": "Dancing to the music",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    },
+    {
+      "question": "What did Deborah find freeing at the music festival?",
+      "answer": "Dancing and bopping around",
+      "response": "Dancing to the music.",
+      "category": "4",
+      "llm_score": 1,
+      "retrieved_count": 10
+    }
+  ]
+}
