@@ -89,7 +89,23 @@ Additional search enhancements:
 - **Hybrid routing** — long tokens → FTS5, short tokens → LIKE, merged with dedup
 - **Core-token LIKE** — LIKE channel uses CJK-segmented original tokens (no synonym noise)
 
-### Search Quality (eval on 1001 real memories, 30 queries)
+### LoCoMo Benchmark (standard, comparable with Mem0/Hindsight)
+
+Evaluated on the full [LoCoMo](https://github.com/snap-research/locomo) benchmark — 10 conversations, 1540 QA pairs (skipping adversarial category, same as Mem0):
+
+| System | Overall | Single-hop | Multi-hop | Temporal | Open-domain |
+|--------|---------|------------|-----------|----------|-------------|
+| Hindsight | 89.6% | — | — | — | — |
+| Letta filesystem | 74.0% | — | — | — | — |
+| Mem0 (self-reported) | 68.5% | — | — | — | — |
+| Mem0 (third-party) | ~58% | — | — | — | — |
+| **remem v0.3.0** | **56.8%** | **67.1%** | **39.0%** | **53.9%** | **28.1%** |
+| RAG baseline | ~55% | — | — | — | — |
+| Full-context | ~39% | — | — | — | — |
+
+No vector search — pure FTS5 + SQLite + RRF fusion. Run `python eval/locomo/run_locomo.py` to reproduce.
+
+### Internal Search Quality (eval on 1001 real memories, 30 queries)
 
 | Metric | Value |
 |--------|-------|
@@ -98,7 +114,7 @@ Additional search enhancements:
 | Recall@5 | 0.628 |
 | Hit Rate@5 | 1.000 |
 
-Measured with `remem eval` against a [calibrated golden dataset](eval/golden.json) (v1.1, 24 queries with ground truth). No vector search — pure FTS5 + SQLite.
+Measured with `remem eval` against a [calibrated golden dataset](eval/golden.json).
 
 ## Commands
 
