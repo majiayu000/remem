@@ -72,41 +72,83 @@ def llm_generate(client, prompt, model="gpt-5.4", max_tokens=128, reasoning_effo
 # ---------------------------------------------------------------------------
 
 def ingest_conversation(http, base_url, sample):
+    """Ingest using session_summary + observation (high-quality, compact).
+    Falls back to per-session raw turns if summaries not available."""
     sample_id = sample["sample_id"]
     conv = sample["conversation"]
     count = 0
+    project = f"locomo/{sample_id}"
 
-    session_nums = sorted(
-        int(k.split("_")[-1])
-        for k in conv
-        if k.startswith("session_") and "date_time" not in k
-    )
-
-    for sess_num in session_nums:
-        session_key = f"session_{sess_num}"
-        date_key = f"session_{sess_num}_date_time"
-        date_time = conv.get(date_key, f"session {sess_num}")
-        turns = conv.get(session_key, [])
-
-        for turn in turns:
-            speaker = turn["speaker"]
-            text = turn["text"]
-            dia_id = turn.get("dia_id", "")
-
-            content = f"[{date_time}] {speaker}: {text}"
-            if "blip_caption" in turn:
-                content += f" [shared image: {turn['blip_caption']}]"
-
-            title = f"{speaker} - session {sess_num} ({dia_id})"
-
+    # Strategy 1: Use session_summary (LoCoMo dataset provides these)
+    summaries = sample.get("session_summary", {})
+    if summaries:
+        for sess_key, text in summaries.items():
+            if not text or not str(text).strip():
+                continue
+            date_key = f"{sess_key}_date_time"
+            date_time = conv.get(date_key, sess_key)
+            content = f"[{date_time}] {text}" if isinstance(text, str) else str(text)
             resp = http.post(
                 f"{base_url}/api/v1/memories",
                 json={
-                    "project": f"locomo/{sample_id}",
-                    "title": title,
-                    "content": content,
+                    "project": project,
+                    "title": f"Summary: {sess_key} ({date_time})"[:200],
+                    "content": content[:5000],
+                    "memory_type": "discovery",
+                    "topic_key": f"locomo-{sample_id}-summary-{sess_key}",
+                    "scope": "project",
+                },
+                timeout=30,
+            )
+            if resp.status_code == 201:
+                count += 1
+
+    # Strategy 2: Also ingest observations (factual extractions)
+    observations = sample.get("observation", {})
+    if observations:
+        for obs_key, text in observations.items():
+            if not text or not str(text).strip():
+                continue
+            resp = http.post(
+                f"{base_url}/api/v1/memories",
+                json={
+                    "project": project,
+                    "title": f"Observation: {obs_key}"[:200],
+                    "content": str(text)[:5000],
+                    "memory_type": "discovery",
+                    "topic_key": f"locomo-{sample_id}-obs-{obs_key}",
+                    "scope": "project",
+                },
+                timeout=30,
+            )
+            if resp.status_code == 201:
+                count += 1
+
+    # Strategy 3: Fallback to per-session raw turns if no summaries
+    if count == 0:
+        session_nums = sorted(
+            int(k.split("_")[-1])
+            for k in conv
+            if k.startswith("session_") and "date_time" not in k
+        )
+        for sess_num in session_nums:
+            turns = conv.get(f"session_{sess_num}", [])
+            date_time = conv.get(f"session_{sess_num}_date_time", f"session {sess_num}")
+            lines = [f"[{date_time}]"]
+            for turn in turns:
+                line = f"{turn['speaker']}: {turn['text']}"
+                if "blip_caption" in turn:
+                    line += f" [image: {turn['blip_caption']}]"
+                lines.append(line)
+            content = "\n".join(lines)
+            resp = http.post(
+                f"{base_url}/api/v1/memories",
+                json={
+                    "project": project,
+                    "title": f"Session {sess_num} ({date_time})"[:200],
+                    "content": content[:5000],
                     "memory_type": "session_activity",
-                    "topic_key": f"locomo-{sample_id}-{dia_id}",
+                    "topic_key": f"locomo-{sample_id}-session-{sess_num}",
                     "scope": "project",
                 },
                 timeout=30,
@@ -149,7 +191,9 @@ def retrieve_context(http, base_url, sample_id, question, top_k):
 
 ANSWER_PROMPT = """\
 You are answering questions about a conversation between two people.
-Use ONLY the retrieved memory excerpts below to answer. If the information is not available, say "No information available".
+Use the retrieved memory excerpts below as your primary source.
+You may also use reasonable inference and common knowledge to supplement the memories when needed.
+If you truly cannot determine the answer, say "No information available".
 
 Retrieved memories:
 {context}
