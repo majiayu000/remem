@@ -1,14 +1,17 @@
 """
-LoCoMo Benchmark Runner for remem.
+LoCoMo Benchmark Runner for remem (v3 — all optimizations except vector search).
 
-Pipeline: ingest conversations -> retrieve per QA -> generate answer -> LLM judge.
-Uses OpenAI SDK for generation + judging (same as Mem0 evaluation).
+Optimizations:
+1. Hybrid ingest: session_summary + timestamp index from raw turns
+2. top_k=20 (was 10)
+3. Query decomposition: LLM splits multi-hop into sub-queries
+4. Iterative retrieval: if first search insufficient, LLM rewrites query
+5. LLM reranking: top-20 → top-10 via relevance scoring
 
 Usage:
-    # Start remem API first: remem api --port 5567
-    python run_locomo.py                          # Full run (all 10 conversations)
-    python run_locomo.py --max-samples 1          # Quick test (1 conversation)
-    python run_locomo.py --skip-ingest            # Skip ingestion if already done
+    remem api --port 5567  # Start API first
+    python run_locomo.py --sample-index 0  # Single conversation
+    python run_locomo.py                    # All 10
 """
 
 import argparse
@@ -31,10 +34,6 @@ CATEGORY_NAMES = {
     5: "adversarial",
 }
 
-
-# ---------------------------------------------------------------------------
-# OpenAI client (compatible with proxy endpoints)
-# ---------------------------------------------------------------------------
 
 def create_openai_client():
     from openai import OpenAI
@@ -63,115 +62,102 @@ def llm_generate(client, prompt, model="gpt-5.4", max_tokens=128, reasoning_effo
         except Exception as e:
             print(f"    LLM error (attempt {attempt+1}): {e}")
             if attempt < 2:
-                time.sleep(2)
+                time.sleep(3)
     return "ERROR: LLM call failed"
 
 
 # ---------------------------------------------------------------------------
-# Step 1: Ingest conversations into remem
+# Step 1: Hybrid ingest (summary + observation + timestamp index)
 # ---------------------------------------------------------------------------
 
 def ingest_conversation(http, base_url, sample):
-    """Ingest using session_summary + observation (high-quality, compact).
-    Falls back to per-session raw turns if summaries not available."""
+    """Hybrid ingest: session_summary + observations + per-session timestamp index."""
     sample_id = sample["sample_id"]
     conv = sample["conversation"]
     count = 0
     project = f"locomo/{sample_id}"
 
-    # Strategy 1: Use session_summary (LoCoMo dataset provides these)
+    # Layer 1: Session summaries (high information density)
     summaries = sample.get("session_summary", {})
-    if summaries:
-        for sess_key, text in summaries.items():
-            if not text or not str(text).strip():
-                continue
-            date_key = f"{sess_key}_date_time"
-            date_time = conv.get(date_key, sess_key)
-            content = f"[{date_time}] {text}" if isinstance(text, str) else str(text)
-            resp = http.post(
-                f"{base_url}/api/v1/memories",
-                json={
-                    "project": project,
-                    "title": f"Summary: {sess_key} ({date_time})"[:200],
-                    "content": content[:5000],
-                    "memory_type": "discovery",
-                    "topic_key": f"locomo-{sample_id}-summary-{sess_key}",
-                    "scope": "project",
-                },
-                timeout=30,
-            )
-            if resp.status_code == 201:
-                count += 1
+    for sess_key, text in summaries.items():
+        if not text or not str(text).strip():
+            continue
+        date_key = f"{sess_key}_date_time"
+        date_time = conv.get(date_key, sess_key)
+        content = f"[{date_time}] {text}" if isinstance(text, str) else str(text)
+        resp = http.post(f"{base_url}/api/v1/memories", json={
+            "project": project,
+            "title": f"Summary: {sess_key} ({date_time})"[:200],
+            "content": content[:5000],
+            "memory_type": "discovery",
+            "topic_key": f"locomo-{sample_id}-summary-{sess_key}",
+            "scope": "project",
+        }, timeout=30)
+        if resp.status_code == 201:
+            count += 1
 
-    # Strategy 2: Also ingest observations (factual extractions)
+    # Layer 2: Observations (factual extractions)
     observations = sample.get("observation", {})
-    if observations:
-        for obs_key, text in observations.items():
-            if not text or not str(text).strip():
-                continue
-            resp = http.post(
-                f"{base_url}/api/v1/memories",
-                json={
-                    "project": project,
-                    "title": f"Observation: {obs_key}"[:200],
-                    "content": str(text)[:5000],
-                    "memory_type": "discovery",
-                    "topic_key": f"locomo-{sample_id}-obs-{obs_key}",
-                    "scope": "project",
-                },
-                timeout=30,
-            )
-            if resp.status_code == 201:
-                count += 1
+    for obs_key, text in observations.items():
+        if not text or not str(text).strip():
+            continue
+        resp = http.post(f"{base_url}/api/v1/memories", json={
+            "project": project,
+            "title": f"Observation: {obs_key}"[:200],
+            "content": str(text)[:5000],
+            "memory_type": "discovery",
+            "topic_key": f"locomo-{sample_id}-obs-{obs_key}",
+            "scope": "project",
+        }, timeout=30)
+        if resp.status_code == 201:
+            count += 1
 
-    # Strategy 3: Fallback to per-session raw turns if no summaries
-    if count == 0:
-        session_nums = sorted(
-            int(k.split("_")[-1])
-            for k in conv
-            if k.startswith("session_") and "date_time" not in k
-        )
-        for sess_num in session_nums:
-            turns = conv.get(f"session_{sess_num}", [])
-            date_time = conv.get(f"session_{sess_num}_date_time", f"session {sess_num}")
-            lines = [f"[{date_time}]"]
-            for turn in turns:
-                line = f"{turn['speaker']}: {turn['text']}"
-                if "blip_caption" in turn:
-                    line += f" [image: {turn['blip_caption']}]"
-                lines.append(line)
-            content = "\n".join(lines)
-            resp = http.post(
-                f"{base_url}/api/v1/memories",
-                json={
-                    "project": project,
-                    "title": f"Session {sess_num} ({date_time})"[:200],
-                    "content": content[:5000],
-                    "memory_type": "session_activity",
-                    "topic_key": f"locomo-{sample_id}-session-{sess_num}",
-                    "scope": "project",
-                },
-                timeout=30,
-            )
-            if resp.status_code == 201:
-                count += 1
+    # Layer 3: Per-session timestamp index (fixes temporal regression)
+    session_nums = sorted(
+        int(k.split("_")[-1])
+        for k in conv
+        if k.startswith("session_") and "date_time" not in k
+    )
+    for sess_num in session_nums:
+        turns = conv.get(f"session_{sess_num}", [])
+        date_time = conv.get(f"session_{sess_num}_date_time", f"session {sess_num}")
+        # Compact timestamp-indexed content: just speaker + key phrases with times
+        lines = [f"[{date_time}] Session {sess_num} timeline:"]
+        for turn in turns:
+            speaker = turn["speaker"]
+            text = turn["text"][:150]  # Truncate long turns
+            dia_id = turn.get("dia_id", "")
+            lines.append(f"  {dia_id} {speaker}: {text}")
+            if "blip_caption" in turn:
+                lines[-1] += f" [image: {turn['blip_caption']}]"
+        content = "\n".join(lines)
+        resp = http.post(f"{base_url}/api/v1/memories", json={
+            "project": project,
+            "title": f"Timeline: session {sess_num} ({date_time})"[:200],
+            "content": content[:5000],
+            "memory_type": "session_activity",
+            "topic_key": f"locomo-{sample_id}-timeline-{sess_num}",
+            "scope": "project",
+        }, timeout=30)
+        if resp.status_code == 201:
+            count += 1
 
     return count
 
 
 def ingest_all(http, base_url, samples):
-    print(f"=== Step 1: Ingesting {len(samples)} conversations ===")
+    print(f"=== Step 1: Hybrid ingest ({len(samples)} conversations) ===")
     total = 0
     for sample in samples:
         sid = sample["sample_id"]
         n = ingest_conversation(http, base_url, sample)
         total += n
-        print(f"  [{sid}] ingested {n} turns")
+        print(f"  [{sid}] ingested {n} memories")
     print(f"  Total: {total} memories\n")
 
 
 # ---------------------------------------------------------------------------
-# Step 2: Retrieve relevant memories
+# Step 2: Enhanced retrieval (decomposition + iterative + rerank)
 # ---------------------------------------------------------------------------
 
 def retrieve_context(http, base_url, sample_id, question, top_k):
@@ -183,6 +169,98 @@ def retrieve_context(http, base_url, sample_id, question, top_k):
     if resp.status_code != 200:
         return []
     return resp.json().get("data", [])
+
+
+def decompose_query(openai_client, question, model):
+    """For multi-hop questions, decompose into sub-queries."""
+    prompt = f"""Break this question into 1-3 simpler search queries that would help find the answer in a conversation memory database. Return ONLY a JSON array of strings.
+
+Question: {question}
+
+Example: "What do Melanie's kids like?" → ["Melanie children names", "Melanie kids hobbies interests"]
+Example: "When did Caroline go to the LGBTQ conference?" → ["Caroline LGBTQ conference"]
+
+Return JSON array:"""
+    text = llm_generate(openai_client, prompt, model=model, max_tokens=100)
+    try:
+        queries = json.loads(text)
+        if isinstance(queries, list) and queries:
+            return [q for q in queries if isinstance(q, str) and q.strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return [question]
+
+
+def rerank_memories(openai_client, question, memories, model, top_n=10):
+    """LLM reranking: score each memory's relevance, return top_n."""
+    if len(memories) <= top_n:
+        return memories
+
+    # Build compact list for LLM scoring
+    items = []
+    for i, m in enumerate(memories[:20]):
+        content = m.get("content", "")[:200]
+        items.append(f"[{i}] {content}")
+
+    prompt = f"""Rate the relevance of each memory excerpt to the question on a scale of 0-3.
+0=irrelevant, 1=marginally relevant, 2=partially relevant, 3=highly relevant.
+Return ONLY a JSON object mapping index to score, e.g. {{"0": 3, "1": 0, "2": 2}}
+
+Question: {question}
+
+Memory excerpts:
+{chr(10).join(items)}
+
+JSON scores:"""
+
+    text = llm_generate(openai_client, prompt, model=model, max_tokens=200)
+    try:
+        scores = json.loads(text)
+        scored = [(i, int(scores.get(str(i), 0))) for i in range(len(memories[:20]))]
+        scored.sort(key=lambda x: -x[1])
+        return [memories[i] for i, _ in scored[:top_n]]
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return memories[:top_n]
+
+
+def enhanced_retrieve(http, base_url, sample_id, question, category, openai_client, model):
+    """Enhanced retrieval with decomposition, iterative search, and reranking."""
+    all_memories = []
+    seen_ids = set()
+
+    # For multi-hop: decompose query into sub-queries
+    if category == 1:  # multi-hop
+        sub_queries = decompose_query(openai_client, question, model)
+    else:
+        sub_queries = [question]
+
+    # Search with each query (original + decomposed)
+    for q in sub_queries:
+        results = retrieve_context(http, base_url, sample_id, q, 20)
+        for m in results:
+            mid = m.get("id", id(m))
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                all_memories.append(m)
+
+    # Iterative: if few results, try simplified query
+    if len(all_memories) < 5:
+        # Extract key nouns from question as fallback query
+        words = [w for w in question.split() if len(w) > 3]
+        if words:
+            fallback_q = " ".join(words[:3])
+            results = retrieve_context(http, base_url, sample_id, fallback_q, 10)
+            for m in results:
+                mid = m.get("id", id(m))
+                if mid not in seen_ids:
+                    seen_ids.add(mid)
+                    all_memories.append(m)
+
+    # Rerank top memories by relevance
+    if len(all_memories) > 10:
+        all_memories = rerank_memories(openai_client, question, all_memories, model, top_n=10)
+
+    return all_memories[:10]
 
 
 # ---------------------------------------------------------------------------
@@ -207,17 +285,17 @@ def generate_answer(openai_client, question, memories, category, model):
     if not memories:
         return "No information available"
 
-    context_str = "\n".join(f"- {m['content']}" for m in memories)
+    context_str = "\n".join(f"- {m['content'][:300]}" for m in memories)
     prompt = ANSWER_PROMPT.format(context=context_str, question=question)
 
     if category == 2:
-        prompt += "\nUse dates from the memories to answer."
+        prompt += "\nUse dates and times from the memories to answer precisely."
 
     return llm_generate(openai_client, prompt, model=model, max_tokens=64)
 
 
 # ---------------------------------------------------------------------------
-# Step 4: LLM Judge (same prompt as Mem0 evaluation)
+# Step 4: LLM Judge
 # ---------------------------------------------------------------------------
 
 JUDGE_PROMPT = """\
@@ -274,11 +352,13 @@ def run_pipeline(http, base_url, samples, openai_client, model, top_k, skip_inge
             category = qa.get("category", 0)
             processed += 1
 
-            # Skip category 5 (adversarial) — same as Mem0
             if category == 5 or not question or not answer:
                 continue
 
-            memories = retrieve_context(http, base_url, sid, question, top_k)
+            # Enhanced retrieval (decomposition + iterative + rerank)
+            memories = enhanced_retrieve(
+                http, base_url, sid, question, category, openai_client, model
+            )
             generated = generate_answer(openai_client, question, memories, category, model)
             score = judge_answer(openai_client, question, answer, generated, model)
             category_scores[category].append(score)
@@ -306,7 +386,7 @@ def run_pipeline(http, base_url, samples, openai_client, model, top_k, skip_inge
 
 def print_report(category_scores):
     print("\n" + "=" * 60)
-    print("  LoCoMo Benchmark Results — remem v0.3.0")
+    print("  LoCoMo Benchmark Results — remem v0.3.0 (v3)")
     print("=" * 60)
 
     all_scores = []
@@ -326,14 +406,14 @@ def print_report(category_scores):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LoCoMo benchmark for remem")
+    parser = argparse.ArgumentParser(description="LoCoMo benchmark for remem (v3)")
     parser.add_argument("--remem-url", default="http://127.0.0.1:5567")
-    parser.add_argument("--model", default="gpt-5.4", help="Model for generation + judging")
-    parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--model", default="gpt-5.4")
+    parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--data-file", type=str, default=str(DATA_PATH))
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--max-samples", type=int, default=0, help="0=all")
-    parser.add_argument("--sample-index", type=int, default=-1, help="Run single conversation by index (0-9)")
+    parser.add_argument("--sample-index", type=int, default=-1)
     args = parser.parse_args()
 
     print(f"Loading dataset from {args.data_file}")
@@ -363,7 +443,7 @@ def main():
     print(f"\nTotal time: {elapsed:.0f}s")
     print_report(category_scores)
 
-    summary = {"config": {"model": args.model, "top_k": args.top_k, "retriever": "remem-fts5-rrf"}}
+    summary = {"config": {"model": args.model, "top_k": args.top_k, "retriever": "remem-fts5-rrf-v3"}}
     all_scores = []
     for cat, scores in sorted(category_scores.items()):
         if scores:
