@@ -71,6 +71,19 @@ def llm_generate(client, prompt, model="gpt-5.4", max_tokens=128, reasoning_effo
 # Step 1: Hybrid ingest (summary + observation + timestamp index)
 # ---------------------------------------------------------------------------
 
+PERSONA_EXTRACTION_PROMPT = """\
+Extract 2-5 facts about people's personality, preferences, habits, and values from this conversation.
+Focus on: what people like/dislike, recurring behaviors, personal traits, relationships between people.
+
+Conversation ({date_time}):
+{conversation}
+
+Return ONLY a JSON array of fact strings. If no personality/preference facts exist, return [].
+Example: ["Caroline enjoys outdoor activities like hiking", "Melanie values family time above career"]
+
+JSON array:"""
+
+
 FACT_EXTRACTION_PROMPT = """\
 Extract 3-8 key facts from this conversation session. Each fact should be:
 - A specific, searchable statement about what happened, who was involved, when, and where
@@ -117,6 +130,25 @@ def extract_facts_from_session(openai_client, turns, date_time, model):
     return all_facts
 
 
+def extract_persona_from_session(openai_client, turns, date_time, model):
+    """Extract personality/preference facts for Open-domain QA."""
+    lines = []
+    for turn in turns[:20]:  # first 20 turns enough for persona signals
+        speaker = turn.get("speaker", "?")
+        text = turn.get("text", "")[:200]
+        lines.append(f"{speaker}: {text}")
+    conversation_text = "\n".join(lines)
+    prompt = PERSONA_EXTRACTION_PROMPT.format(date_time=date_time, conversation=conversation_text)
+    text = llm_generate(openai_client, prompt, model=model, max_tokens=200)
+    try:
+        facts = json.loads(text)
+        if isinstance(facts, list):
+            return [f for f in facts if isinstance(f, str) and len(f) > 10]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return []
+
+
 def ingest_conversation(http, base_url, sample, openai_client=None, model="gpt-5.4"):
     """v4 ingest: LLM fact extraction from raw conversations (fair, like Hindsight).
     No session_summary (that's human-annotated, unfair). Instead, LLM extracts facts."""
@@ -159,6 +191,24 @@ def ingest_conversation(http, base_url, sample, openai_client=None, model="gpt-5
                 }
                 if session_epoch is not None:
                     payload["created_at_epoch"] = session_epoch + i  # slight offset to preserve order
+                resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
+                if resp.status_code == 201:
+                    count += 1
+
+        # Layer 1b: Persona/preference extraction (for Open-domain QA)
+        if openai_client is not None:
+            persona_facts = extract_persona_from_session(openai_client, turns, date_time, model)
+            for i, fact in enumerate(persona_facts):
+                payload = {
+                    "project": project,
+                    "title": fact[:200],
+                    "content": f"[{date_time}] {fact}",
+                    "memory_type": "preference",
+                    "topic_key": f"locomo-{sample_id}-persona-s{sess_num}-{i}",
+                    "scope": "project",
+                }
+                if session_epoch is not None:
+                    payload["created_at_epoch"] = session_epoch
                 resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
                 if resp.status_code == 201:
                     count += 1
