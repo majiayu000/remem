@@ -58,9 +58,38 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         }
     };
 
-    let mut memories = memory::get_recent_memories(&conn, &project, 50).unwrap_or_default();
+    // Smart context: search by project name for relevance, then fill with recent
+    let mut memories = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
 
-    // Sort: current branch memories first, then branchless (old data), then main/master, then others
+    // Layer 1: Search using project name as query (finds project-relevant memories)
+    let project_query = project.split('/').last().unwrap_or(&project);
+    if let Ok(searched) = crate::search::search(
+        &conn,
+        Some(project_query),
+        Some(&project),
+        None,
+        20,
+        0,
+        false,
+    ) {
+        for m in searched {
+            seen_ids.insert(m.id);
+            memories.push(m);
+        }
+    }
+
+    // Layer 2: Fill with recent memories (time-based, catches things search missed)
+    let recent = memory::get_recent_memories(&conn, &project, 50).unwrap_or_default();
+    for m in recent {
+        if seen_ids.insert(m.id) {
+            memories.push(m);
+        }
+    }
+
+    memories.truncate(50);
+
+    // Sort: current branch first, then branchless, then main, then others
     if let Some(ref branch) = current_branch {
         memories.sort_by(|a, b| {
             let score = |m: &Memory| -> u8 {

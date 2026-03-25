@@ -273,7 +273,11 @@ impl MemoryServer {
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let start = std::time::Instant::now();
-        let multi_hop = params.multi_hop.unwrap_or(false);
+        // Auto-enable multi_hop when query mentions multiple entities
+        let auto_multi_hop = params.query.as_deref().map_or(false, |q| {
+            crate::entity::extract_entities(q, "").len() >= 2
+        });
+        let multi_hop = params.multi_hop.unwrap_or(auto_multi_hop);
         crate::log::info(
             "mcp",
             &format!(
