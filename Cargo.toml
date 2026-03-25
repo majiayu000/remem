@@ -1,5 +1,5 @@
 [package]
-name = "r-mem"
+name = "remem-ai"
 version = "0.3.0"
 edition = "2021"
 description = "Persistent memory for Claude Code — single binary, zero subprocesses"
@@ -10,6 +10,13 @@ readme = "README.md"
 keywords = ["claude-code", "memory", "mcp", "ai", "persistent-memory"]
 categories = ["command-line-utilities", "database"]
 exclude = ["eval/locomo/locomo10.json", "eval/locomo/results/", "docs/", "SPEC-*.md"]
+
+[lib]
+name = "remem"
+
+[[bin]]
+name = "remem"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
