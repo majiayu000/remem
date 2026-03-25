@@ -298,6 +298,7 @@ pub fn promote_summary_to_memories(
                 None,
                 None,
                 "global",
+                None,
             )?;
             count += 1;
         }

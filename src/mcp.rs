@@ -571,6 +571,7 @@ impl MemoryServer {
                 files_json.as_deref(),
                 None,
                 scope,
+                None,
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));

@@ -75,6 +75,8 @@ struct SaveMemoryRequest {
     topic_key: Option<String>,
     #[serde(default)]
     scope: Option<String>,
+    #[serde(default)]
+    created_at_epoch: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -200,6 +202,7 @@ async fn handle_save_memory(
         None,
         None,
         scope,
+        req.created_at_epoch,
     ) {
         Ok(id) => (
             StatusCode::CREATED,

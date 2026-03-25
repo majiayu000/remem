@@ -85,7 +85,7 @@ pub fn insert_memory_with_branch(
 ) -> Result<i64> {
     insert_memory_full(
         conn, session_id, project, topic_key, title, content, memory_type, files, branch,
-        "project",
+        "project", None,
     )
 }
 
@@ -100,8 +100,10 @@ pub fn insert_memory_full(
     files: Option<&str>,
     branch: Option<&str>,
     scope: &str,
+    created_at_override: Option<i64>,
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
+    let created_at = created_at_override.unwrap_or(now);
 
     if let Some(tk) = topic_key {
         if !tk.is_empty() {
@@ -136,9 +138,9 @@ pub fn insert_memory_full(
         "INSERT INTO memories \
          (session_id, project, topic_key, title, content, memory_type, files, \
           created_at_epoch, updated_at_epoch, status, branch, scope) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'active', ?9, ?10)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'active', ?10, ?11)",
         params![
-            session_id, project, topic_key, title, content, memory_type, files, now, branch, scope
+            session_id, project, topic_key, title, content, memory_type, files, created_at, now, branch, scope
         ],
     )?;
     let id = conn.last_insert_rowid();

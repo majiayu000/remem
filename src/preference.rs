@@ -153,6 +153,7 @@ pub fn add_preference(conn: &Connection, project: &str, text: &str, global: bool
         None,
         None,
         scope,
+        None,
     )
 }
 

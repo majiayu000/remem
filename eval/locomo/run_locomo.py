@@ -19,6 +19,7 @@ import json
 import os
 import time
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -70,87 +71,131 @@ def llm_generate(client, prompt, model="gpt-5.4", max_tokens=128, reasoning_effo
 # Step 1: Hybrid ingest (summary + observation + timestamp index)
 # ---------------------------------------------------------------------------
 
-def ingest_conversation(http, base_url, sample):
-    """Hybrid ingest: session_summary + observations + per-session timestamp index."""
+FACT_EXTRACTION_PROMPT = """\
+Extract 3-8 key facts from this conversation session. Each fact should be:
+- A specific, searchable statement about what happened, who was involved, when, and where
+- Self-contained (understandable without the full conversation)
+- Include names, dates, locations, and specific details
+
+Conversation ({date_time}):
+{conversation}
+
+Return ONLY a JSON array of fact strings. Example:
+["Caroline attended a pride parade on May 15, 2023", "Melanie's son Tom loves dinosaurs and space"]
+
+JSON array:"""
+
+
+def extract_facts_from_session(openai_client, turns, date_time, model):
+    """Use LLM to extract key facts from a conversation session (Hindsight approach).
+    Processes in batches of 10 turns to avoid timeout on long sessions."""
+    all_facts = []
+    batch_size = 10
+
+    for start in range(0, len(turns), batch_size):
+        batch = turns[start:start + batch_size]
+        lines = []
+        for turn in batch:
+            speaker = turn.get("speaker", "?")
+            text = turn.get("text", "")[:200]
+            lines.append(f"{speaker}: {text}")
+            if "blip_caption" in turn:
+                lines[-1] += f" [image: {turn['blip_caption']}]"
+
+        conversation_text = "\n".join(lines)
+        prompt = FACT_EXTRACTION_PROMPT.format(
+            date_time=date_time, conversation=conversation_text
+        )
+        text = llm_generate(openai_client, prompt, model=model, max_tokens=300)
+        try:
+            facts = json.loads(text)
+            if isinstance(facts, list):
+                all_facts.extend(f for f in facts if isinstance(f, str) and len(f) > 10)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return all_facts
+
+
+def ingest_conversation(http, base_url, sample, openai_client=None, model="gpt-5.4"):
+    """v4 ingest: LLM fact extraction from raw conversations (fair, like Hindsight).
+    No session_summary (that's human-annotated, unfair). Instead, LLM extracts facts."""
     sample_id = sample["sample_id"]
     conv = sample["conversation"]
     count = 0
     project = f"locomo/{sample_id}"
 
-    # Layer 1: Session summaries (high information density)
-    summaries = sample.get("session_summary", {})
-    for sess_key, text in summaries.items():
-        if not text or not str(text).strip():
-            continue
-        date_key = f"{sess_key}_date_time"
-        date_time = conv.get(date_key, sess_key)
-        content = f"[{date_time}] {text}" if isinstance(text, str) else str(text)
-        resp = http.post(f"{base_url}/api/v1/memories", json={
-            "project": project,
-            "title": f"Summary: {sess_key} ({date_time})"[:200],
-            "content": content[:5000],
-            "memory_type": "discovery",
-            "topic_key": f"locomo-{sample_id}-summary-{sess_key}",
-            "scope": "project",
-        }, timeout=30)
-        if resp.status_code == 201:
-            count += 1
-
-    # Layer 2: Observations (factual extractions)
-    observations = sample.get("observation", {})
-    for obs_key, text in observations.items():
-        if not text or not str(text).strip():
-            continue
-        resp = http.post(f"{base_url}/api/v1/memories", json={
-            "project": project,
-            "title": f"Observation: {obs_key}"[:200],
-            "content": str(text)[:5000],
-            "memory_type": "discovery",
-            "topic_key": f"locomo-{sample_id}-obs-{obs_key}",
-            "scope": "project",
-        }, timeout=30)
-        if resp.status_code == 201:
-            count += 1
-
-    # Layer 3: Per-session timestamp index (fixes temporal regression)
     session_nums = sorted(
         int(k.split("_")[-1])
         for k in conv
         if k.startswith("session_") and "date_time" not in k
     )
+
     for sess_num in session_nums:
         turns = conv.get(f"session_{sess_num}", [])
         date_time = conv.get(f"session_{sess_num}_date_time", f"session {sess_num}")
-        # Compact timestamp-indexed content: just speaker + key phrases with times
-        lines = [f"[{date_time}] Session {sess_num} timeline:"]
+
+        # Parse session date to epoch for correct temporal ordering
+        session_epoch = None
+        try:
+            session_epoch = int(datetime.strptime(date_time, "%B %d, %Y").timestamp())
+        except ValueError:
+            try:
+                session_epoch = int(datetime.fromisoformat(date_time).timestamp())
+            except ValueError:
+                pass
+
+        # Layer 1: LLM fact extraction (like Hindsight's retain pipeline)
+        if openai_client is not None:
+            facts = extract_facts_from_session(openai_client, turns, date_time, model)
+            for i, fact in enumerate(facts):
+                payload = {
+                    "project": project,
+                    "title": fact[:200],
+                    "content": f"[{date_time}] {fact}",
+                    "memory_type": "discovery",
+                    "topic_key": f"locomo-{sample_id}-fact-s{sess_num}-{i}",
+                    "scope": "project",
+                }
+                if session_epoch is not None:
+                    payload["created_at_epoch"] = session_epoch + i  # slight offset to preserve order
+                resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
+                if resp.status_code == 201:
+                    count += 1
+
+        # Layer 2: Per-session timeline with timestamps (for temporal queries)
+        lines = [f"[{date_time}] Session {sess_num} conversation:"]
         for turn in turns:
             speaker = turn["speaker"]
-            text = turn["text"][:150]  # Truncate long turns
+            text = turn["text"][:150]
             dia_id = turn.get("dia_id", "")
             lines.append(f"  {dia_id} {speaker}: {text}")
             if "blip_caption" in turn:
                 lines[-1] += f" [image: {turn['blip_caption']}]"
         content = "\n".join(lines)
-        resp = http.post(f"{base_url}/api/v1/memories", json={
+        payload = {
             "project": project,
-            "title": f"Timeline: session {sess_num} ({date_time})"[:200],
+            "title": f"Session {sess_num} ({date_time})"[:200],
             "content": content[:5000],
             "memory_type": "session_activity",
-            "topic_key": f"locomo-{sample_id}-timeline-{sess_num}",
+            "topic_key": f"locomo-{sample_id}-session-{sess_num}",
             "scope": "project",
-        }, timeout=30)
+        }
+        if session_epoch is not None:
+            payload["created_at_epoch"] = session_epoch
+        resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
         if resp.status_code == 201:
             count += 1
 
     return count
 
 
-def ingest_all(http, base_url, samples):
-    print(f"=== Step 1: Hybrid ingest ({len(samples)} conversations) ===")
+def ingest_all(http, base_url, samples, openai_client=None, model="gpt-5.4"):
+    print(f"=== Step 1: LLM fact extraction + timeline ingest ({len(samples)} conversations) ===")
     total = 0
     for sample in samples:
         sid = sample["sample_id"]
-        n = ingest_conversation(http, base_url, sample)
+        n = ingest_conversation(http, base_url, sample, openai_client, model)
         total += n
         print(f"  [{sid}] ingested {n} memories")
     print(f"  Total: {total} memories\n")
@@ -333,7 +378,7 @@ def judge_answer(openai_client, question, gold_answer, generated_answer, model):
 
 def run_pipeline(http, base_url, samples, openai_client, model, top_k, skip_ingest):
     if not skip_ingest:
-        ingest_all(http, base_url, samples)
+        ingest_all(http, base_url, samples, openai_client, model)
 
     print(f"=== Step 2-4: QA pipeline (top_k={top_k}, model={model}) ===")
 
