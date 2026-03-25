@@ -267,13 +267,16 @@ def retrieve_context(http, base_url, sample_id, question, top_k):
 
 
 def decompose_query(openai_client, question, model):
-    """For multi-hop questions, decompose into sub-queries."""
-    prompt = f"""Break this question into 1-3 simpler search queries that would help find the answer in a conversation memory database. Return ONLY a JSON array of strings.
+    """For multi-hop questions, decompose into sub-queries covering different hop types."""
+    prompt = f"""Break this question into 1-3 simpler search queries for a conversation memory database. Return ONLY a JSON array of strings.
 
 Question: {question}
 
-Example: "What do Melanie's kids like?" → ["Melanie children names", "Melanie kids hobbies interests"]
-Example: "When did Caroline go to the LGBTQ conference?" → ["Caroline LGBTQ conference"]
+Examples:
+"What do Melanie's kids like?" → ["Melanie children names", "Melanie kids hobbies interests"]
+"When did Caroline go to the LGBTQ conference?" → ["Caroline LGBTQ conference date"]
+"What activity did both Caroline and Tom participate in?" → ["Caroline activities events", "Tom activities events"]
+"What is the relationship between Sarah and Marcus?" → ["Sarah Marcus relationship", "Sarah friends family", "Marcus friends family"]
 
 Return JSON array:"""
     text = llm_generate(openai_client, prompt, model=model, max_tokens=100)
@@ -284,6 +287,31 @@ Return JSON array:"""
     except (json.JSONDecodeError, TypeError):
         pass
     return [question]
+
+
+def extract_entities_from_memories(openai_client, question, memories, model):
+    """M1: Extract intermediate entities from hop-1 results for hop-2 search."""
+    if not memories:
+        return []
+    context = "\n".join(f"- {m.get('content', '')[:200]}" for m in memories[:5])
+    prompt = f"""Given this question and memory excerpts, extract 1-3 specific names/entities
+that appear in the memories and would help answer the question if searched further.
+Return ONLY a JSON array of short search strings (names, places, activities).
+If no useful entities found, return [].
+
+Question: {question}
+Memories:
+{context}
+
+JSON array:"""
+    text = llm_generate(openai_client, prompt, model=model, max_tokens=80)
+    try:
+        entities = json.loads(text)
+        if isinstance(entities, list):
+            return [e for e in entities if isinstance(e, str) and e.strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return []
 
 
 def rerank_memories(openai_client, question, memories, model, top_n=10):
@@ -319,9 +347,16 @@ JSON scores:"""
 
 
 def enhanced_retrieve(http, base_url, sample_id, question, category, openai_client, model):
-    """Enhanced retrieval with decomposition, iterative search, and reranking."""
+    """Enhanced retrieval: decompose → hop-1 → LLM entity extraction → hop-2 → rerank."""
     all_memories = []
     seen_ids = set()
+
+    def add_results(results):
+        for m in results:
+            mid = m.get("id", id(m))
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                all_memories.append(m)
 
     # For multi-hop: decompose query into sub-queries
     if category == 1:  # multi-hop
@@ -329,27 +364,21 @@ def enhanced_retrieve(http, base_url, sample_id, question, category, openai_clie
     else:
         sub_queries = [question]
 
-    # Search with each query (original + decomposed)
+    # Hop 1: search with each sub-query
     for q in sub_queries:
-        results = retrieve_context(http, base_url, sample_id, q, 20)
-        for m in results:
-            mid = m.get("id", id(m))
-            if mid not in seen_ids:
-                seen_ids.add(mid)
-                all_memories.append(m)
+        add_results(retrieve_context(http, base_url, sample_id, q, 20))
 
-    # Iterative: if few results, try simplified query
+    # M2: Hop 2 — extract intermediate entities from hop-1 results and search again
+    if category == 1 and all_memories:
+        hop2_entities = extract_entities_from_memories(openai_client, question, all_memories, model)
+        for entity in hop2_entities:
+            add_results(retrieve_context(http, base_url, sample_id, entity, 10))
+
+    # Fallback: if still few results, extract key words
     if len(all_memories) < 5:
-        # Extract key nouns from question as fallback query
-        words = [w for w in question.split() if len(w) > 3]
+        words = [w for w in question.split() if len(w) > 4]
         if words:
-            fallback_q = " ".join(words[:3])
-            results = retrieve_context(http, base_url, sample_id, fallback_q, 10)
-            for m in results:
-                mid = m.get("id", id(m))
-                if mid not in seen_ids:
-                    seen_ids.add(mid)
-                    all_memories.append(m)
+            add_results(retrieve_context(http, base_url, sample_id, " ".join(words[:4]), 10))
 
     # Rerank top memories by relevance
     if len(all_memories) > 10:
