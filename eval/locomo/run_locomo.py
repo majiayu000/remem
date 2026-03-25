@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import time
 from collections import defaultdict
@@ -23,6 +24,11 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
 
 DATA_PATH = Path(__file__).parent / "locomo10.json"
 RESULTS_DIR = Path(__file__).parent / "results"
@@ -65,6 +71,80 @@ def llm_generate(client, prompt, model="gpt-5.4", max_tokens=128, reasoning_effo
             if attempt < 2:
                 time.sleep(3)
     return "ERROR: LLM call failed"
+
+
+# ---------------------------------------------------------------------------
+# Vector search helpers (OpenAI embeddings + cosine similarity)
+# ---------------------------------------------------------------------------
+
+_embedding_cache: dict = {}
+
+
+def get_embedding(openai_client, text: str) -> list:
+    """Get OpenAI embedding for text, with in-memory cache."""
+    key = text[:500]
+    if key in _embedding_cache:
+        return _embedding_cache[key]
+    for attempt in range(3):
+        try:
+            resp = openai_client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text[:8000],
+            )
+            emb = resp.data[0].embedding
+            _embedding_cache[key] = emb
+            return emb
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(2)
+    return []
+
+
+def cosine_similarity(a: list, b: list) -> float:
+    """Cosine similarity between two embedding vectors."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    if NUMPY_AVAILABLE:
+        va, vb = np.array(a), np.array(b)
+        denom = np.linalg.norm(va) * np.linalg.norm(vb)
+        return float(np.dot(va, vb) / denom) if denom > 0 else 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na * nb > 0 else 0.0
+
+
+def vector_retrieve(openai_client, memories: list, query: str, top_k: int = 20) -> list:
+    """Re-rank memories by cosine similarity to query embedding."""
+    if not memories or not openai_client:
+        return memories
+    q_emb = get_embedding(openai_client, query)
+    if not q_emb:
+        return memories
+    scored = []
+    for m in memories:
+        text = m.get("content", "") + " " + m.get("title", "")
+        m_emb = get_embedding(openai_client, text[:500])
+        score = cosine_similarity(q_emb, m_emb)
+        scored.append((score, m))
+    scored.sort(key=lambda x: -x[0])
+    return [m for _, m in scored[:top_k]]
+
+
+def rrf_fuse(fts_memories: list, vec_memories: list, k: int = 60) -> list:
+    """Reciprocal Rank Fusion of FTS5 and vector results."""
+    scores: dict = {}
+    id_to_mem: dict = {}
+    for rank, m in enumerate(fts_memories):
+        mid = m.get("id", id(m))
+        scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
+        id_to_mem[mid] = m
+    for rank, m in enumerate(vec_memories):
+        mid = m.get("id", id(m))
+        scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
+        id_to_mem[mid] = m
+    sorted_ids = sorted(scores, key=lambda x: -scores[x])
+    return [id_to_mem[mid] for mid in sorted_ids]
 
 
 # ---------------------------------------------------------------------------
@@ -364,15 +444,32 @@ def enhanced_retrieve(http, base_url, sample_id, question, category, openai_clie
     else:
         sub_queries = [question]
 
-    # Hop 1: search with each sub-query
+    # Hop 1: FTS5 search with each sub-query
+    fts_memories = []
     for q in sub_queries:
-        add_results(retrieve_context(http, base_url, sample_id, q, 20))
+        for m in retrieve_context(http, base_url, sample_id, q, 20):
+            mid = m.get("id", id(m))
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                fts_memories.append(m)
+                all_memories.append(m)
+
+    # Vector search: re-score FTS results + retrieve by semantic similarity
+    vec_memories = vector_retrieve(openai_client, fts_memories, question, top_k=20)
+
+    # RRF fusion of FTS5 and vector results
+    all_memories = rrf_fuse(fts_memories, vec_memories)
+    seen_ids = {m.get("id", id(m)) for m in all_memories}
 
     # M2: Hop 2 — extract intermediate entities from hop-1 results and search again
     if category == 1 and all_memories:
-        hop2_entities = extract_entities_from_memories(openai_client, question, all_memories, model)
+        hop2_entities = extract_entities_from_memories(openai_client, question, all_memories[:5], model)
         for entity in hop2_entities:
-            add_results(retrieve_context(http, base_url, sample_id, entity, 10))
+            for m in retrieve_context(http, base_url, sample_id, entity, 10):
+                mid = m.get("id", id(m))
+                if mid not in seen_ids:
+                    seen_ids.add(mid)
+                    all_memories.append(m)
 
     # Fallback: if still few results, extract key words
     if len(all_memories) < 5:
