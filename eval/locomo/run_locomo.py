@@ -330,11 +330,15 @@ def generate_answer(openai_client, question, memories, category, model):
     if not memories:
         return "No information available"
 
+    # For temporal questions, sort memories chronologically so LLM sees timeline in order
+    if category == 2:
+        memories = sorted(memories, key=lambda m: m.get("created_at_epoch", 0))
+
     context_str = "\n".join(f"- {m['content'][:300]}" for m in memories)
     prompt = ANSWER_PROMPT.format(context=context_str, question=question)
 
     if category == 2:
-        prompt += "\nUse dates and times from the memories to answer precisely."
+        prompt += "\nMemories are sorted chronologically. Use dates and session order to answer precisely."
 
     return llm_generate(openai_client, prompt, model=model, max_tokens=64)
 
