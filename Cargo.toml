@@ -9,6 +9,7 @@ homepage = "https://github.com/majiayu000/remem"
 readme = "README.md"
 keywords = ["claude-code", "memory", "mcp", "ai", "persistent-memory"]
 categories = ["command-line-utilities", "database"]
+exclude = ["eval/locomo/locomo10.json", "eval/locomo/results/", "docs/", "SPEC-*.md"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
