@@ -289,12 +289,15 @@ def main():
     parser.add_argument("--data-file", type=str, default=str(DATA_PATH))
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--max-samples", type=int, default=0, help="0=all")
+    parser.add_argument("--sample-index", type=int, default=-1, help="Run single conversation by index (0-9)")
     args = parser.parse_args()
 
     print(f"Loading dataset from {args.data_file}")
     with open(args.data_file) as f:
         samples = json.load(f)
-    if args.max_samples > 0:
+    if args.sample_index >= 0:
+        samples = [samples[args.sample_index]]
+    elif args.max_samples > 0:
         samples = samples[:args.max_samples]
     total_qa = sum(len(s["qa"]) for s in samples)
     print(f"  {len(samples)} conversations, {total_qa} QA pairs\n")
@@ -309,7 +312,8 @@ def main():
     elapsed = time.time() - t0
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    with open(RESULTS_DIR / "locomo_results.json", "w") as f:
+    suffix = f"_s{args.sample_index}" if args.sample_index >= 0 else ""
+    with open(RESULTS_DIR / f"locomo_results{suffix}.json", "w") as f:
         json.dump(results, f, indent=2)
 
     print(f"\nTotal time: {elapsed:.0f}s")
@@ -329,7 +333,7 @@ def main():
             "accuracy": round(sum(all_scores) / len(all_scores), 4),
             "correct": sum(all_scores), "total": len(all_scores)
         }
-    with open(RESULTS_DIR / "locomo_scores.json", "w") as f:
+    with open(RESULTS_DIR / f"locomo_scores{suffix}.json", "w") as f:
         json.dump(summary, f, indent=2)
     print(f"Scores saved to {RESULTS_DIR / 'locomo_scores.json'}")
 
