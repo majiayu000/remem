@@ -89,21 +89,34 @@ Additional search enhancements:
 - **Hybrid routing** — long tokens → FTS5, short tokens → LIKE, merged with dedup
 - **Core-token LIKE** — LIKE channel uses CJK-segmented original tokens (no synonym noise)
 
-### LoCoMo Benchmark (standard, comparable with Mem0/Hindsight)
+### LoCoMo Benchmark
 
-Evaluated on the full [LoCoMo](https://github.com/snap-research/locomo) benchmark — 10 conversations, 1540 QA pairs (skipping adversarial category, same as Mem0):
+Evaluated on the full [LoCoMo](https://github.com/snap-research/locomo) benchmark — 10 conversations, 1540 QA pairs (skipping adversarial category, same as Mem0). All results and raw outputs are in [`eval/locomo/results/`](eval/locomo/results/).
 
-| System | Overall | Single-hop | Multi-hop | Temporal | Open-domain |
-|--------|---------|------------|-----------|----------|-------------|
-| Hindsight | 89.6% | — | — | — | — |
-| Letta filesystem | 74.0% | — | — | — | — |
-| Mem0 (self-reported) | 68.5% | — | — | — | — |
-| Mem0 (third-party) | ~58% | — | — | — | — |
-| **remem v0.3.0** | **56.8%** | **67.1%** | **39.0%** | **53.9%** | **28.1%** |
-| RAG baseline | ~55% | — | — | — | — |
-| Full-context | ~39% | — | — | — | — |
+**remem results (two configurations):**
 
-No vector search — pure FTS5 + SQLite + RRF fusion. Run `python eval/locomo/run_locomo.py` to reproduce.
+| Config | Overall | Single-hop | Multi-hop | Temporal | Open-domain | Ingest | Gen/Judge Model |
+|--------|---------|------------|-----------|----------|-------------|--------|-----------------|
+| **v1** (fair) | **56.8%** | 67.1% | 39.0% | 53.9% | 28.1% | per-turn | gpt-5.4 |
+| **v2** (optimized) | **62.7%** | 72.3% | 61.3% | 40.5% | 56.2% | session_summary | gpt-5.4 |
+
+**Competitor comparison:**
+
+| System | Overall | Gen Model | Judge Model | Ingest Strategy | Source |
+|--------|---------|-----------|-------------|-----------------|--------|
+| Hindsight | 89.6% | Gemini-3 | GPT-4o-mini | LLM fact extraction | [paper](https://arxiv.org/abs/2512.12818) |
+| Letta filesystem | 74.0% | GPT-4o-mini | GPT-4o-mini | per-session files | [blog](https://www.letta.com/blog/benchmarking-ai-agent-memory) |
+| Mem0 (self-reported) | 68.5% | GPT-4o | GPT-4o-mini | LLM memory extraction | [paper](https://arxiv.org/abs/2504.19413) |
+| Mem0 (third-party) | ~58% | — | — | — | [issue](https://github.com/getzep/zep-papers/issues/5) |
+| **remem v1** | **56.8%** | gpt-5.4 | gpt-5.4 | per-turn raw | this repo |
+| RAG baseline | ~55% | GPT-4o | GPT-4o-mini | chunk+embed | Mem0 paper |
+| Full-context | ~39% | GPT-4o | GPT-4o-mini | all in context | LoCoMo paper |
+
+> **Fairness notes:**
+> - **v1 (56.8%)** is the fair comparison — per-turn ingest is closest to Mem0's method. remem uses gpt-5.4 (stronger than Mem0's gpt-4o), which may inflate scores by ~2-5pp.
+> - **v2 (62.7%)** uses LoCoMo's pre-built `session_summary` (human-annotated), which other systems don't use. This shows search ceiling with ideal ingest quality, not real-world performance.
+> - All systems use different LLM models for generation and judging, making exact comparison imprecise. Run the benchmark yourself for apples-to-apples: `python eval/locomo/run_locomo.py`
+> - remem uses no vector search — pure FTS5 + SQLite + RRF fusion.
 
 ### Internal Search Quality (eval on 1001 real memories, 30 queries)
 
