@@ -101,34 +101,42 @@ pub fn search_with_branch(
             if channels.is_empty() {
                 vec![]
             } else {
-                // First-pass RRF fusion
+                // First-pass RRF fusion (over-fetch to account for post-filtering)
                 let fused = rrf_fuse(&channels, 60.0);
-                let first_hop_ids: Vec<i64> = fused.iter().take(limit as usize).map(|(id, _)| *id).collect();
+                let over_limit = (limit * 3) as usize; // over-fetch for type filter
+                let first_hop_ids: Vec<i64> = fused.iter().take(over_limit).map(|(id, _)| *id).collect();
 
                 // Channel 5: Entity graph expansion (multi-hop)
-                // From first-hop results, find co-occurring entities, then find
-                // other memories sharing those entities. This enables chains like:
-                // "Melanie" → memory mentions "Melanie's son Tom" → "Tom likes dinosaurs"
                 let graph_ids = crate::entity::expand_via_entity_graph(
                     conn,
                     &first_hop_ids,
-                    &first_hop_ids, // exclude already-found
+                    &first_hop_ids,
                     fetch,
                 )?;
-                if !graph_ids.is_empty() {
+
+                let final_ids = if !graph_ids.is_empty() {
                     channels.push(graph_ids);
-                    // Re-fuse with the new channel
                     let fused2 = rrf_fuse(&channels, 60.0);
-                    let top_ids: Vec<i64> = fused2.iter().take(limit as usize).map(|(id, _)| *id).collect();
-                    let loaded = memory::get_memories_by_ids(conn, &top_ids, None)?;
-                    let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
-                    top_ids.iter().filter_map(|id| id_to_mem.get(id).cloned()).collect()
+                    fused2.iter().take(over_limit).map(|(id, _)| *id).collect::<Vec<_>>()
                 } else {
-                    // No graph expansion available, use first-pass results
-                    let loaded = memory::get_memories_by_ids(conn, &first_hop_ids, None)?;
-                    let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
-                    first_hop_ids.iter().filter_map(|id| id_to_mem.get(id).cloned()).collect()
+                    first_hop_ids
+                };
+
+                // Load memories and apply memory_type post-filter
+                let loaded = memory::get_memories_by_ids(conn, &final_ids, None)?;
+                let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
+                let mut results: Vec<Memory> = final_ids
+                    .iter()
+                    .filter_map(|id| id_to_mem.get(id).cloned())
+                    .collect();
+
+                // Post-filter by memory_type (entity/graph channels don't filter by type)
+                if let Some(mt) = memory_type {
+                    results.retain(|m| m.memory_type == mt);
                 }
+
+                results.truncate(limit as usize);
+                results
             }
         }
         _ => {

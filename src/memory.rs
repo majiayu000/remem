@@ -120,6 +120,13 @@ pub fn insert_memory_full(
                      scope = ?8 WHERE id = ?9",
                     params![session_id, title, content, memory_type, files, now, branch, scope, id],
                 )?;
+                // Refresh entity links on upsert
+                let entities = crate::entity::extract_entities(title, content);
+                if !entities.is_empty() {
+                    if let Err(e) = crate::entity::link_entities(conn, id, &entities) {
+                        crate::log::warn("memory", &format!("entity link refresh failed: {}", e));
+                    }
+                }
                 return Ok(id);
             }
         }
@@ -134,7 +141,17 @@ pub fn insert_memory_full(
             session_id, project, topic_key, title, content, memory_type, files, now, branch, scope
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+
+    // Auto-link entities on every memory insert
+    let entities = crate::entity::extract_entities(title, content);
+    if !entities.is_empty() {
+        if let Err(e) = crate::entity::link_entities(conn, id, &entities) {
+            crate::log::warn("memory", &format!("entity link failed for id={}: {}", id, e));
+        }
+    }
+
+    Ok(id)
 }
 
 pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Memory>> {
