@@ -1,5 +1,5 @@
 [package]
-name = "remem"
+name = "r-mem"
 version = "0.3.0"
 edition = "2021"
 description = "Persistent memory for Claude Code — single binary, zero subprocesses"
