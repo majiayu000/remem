@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.5] - 2026-03-26
+
+### Packaging
+- Switched SQLCipher build to `rusqlite` feature `bundled-sqlcipher-vendored-openssl`, so release builds no longer depend on runner-provided ARM64 OpenSSL packages.
+- Simplified ARM64 release job back to `gcc-aarch64-linux-gnu` linker setup only.
+
 ## [0.3.4] - 2026-03-26
 
 ### Packaging
