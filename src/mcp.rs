@@ -269,7 +269,7 @@ fn write_local_note(path: &Path, content: &str) -> Result<(), String> {
 impl MemoryServer {
     /// Search memories by keyword/project/type.
     #[tool(
-        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key, 300-char preview). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details. Use when: user asks about past work, you need implementation context, or debugging a previously-fixed issue. Set multi_hop=true for questions spanning multiple people/topics (e.g. 'What do X's kids like?')."
+        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key, 300-char preview). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details.\n\n**Multi-step retrieval strategy** (follow this for complex questions):\n1. **Decompose**: Break complex questions into 2-3 focused sub-queries and search each separately. E.g. 'What do Melanie's kids like?' → search('Melanie children names') + search('Melanie kids hobbies').\n2. **Iterate**: If first search returns <5 results, extract key entities/names from results and search again with those entities.\n3. **Multi-hop**: Set multi_hop=true when the question spans multiple people/topics — this triggers entity graph expansion automatically.\n\nUse when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let start = std::time::Instant::now();
@@ -711,6 +711,10 @@ impl ServerHandler for MemoryServer {
                  - You need implementation details for code you're about to modify\n\
                  - Debugging an issue that may have been fixed before\n\
                  - Looking for architecture decisions or rationale\n\n\
+                 ## Search strategy for complex questions\n\
+                 - **Decompose** complex questions into 2-3 focused sub-queries and call search() for each\n\
+                 - **Iterate**: if <5 results, extract names/entities from results and search again\n\
+                 - **Multi-hop**: set multi_hop=true when spanning multiple people or topics\n\n\
                  ## When to save memory (MUST follow)\n\
                  Call `save_memory` immediately when:\n\
                  1. **Making a technical decision** → type=decision, record what was chosen, why, what was rejected\n\
