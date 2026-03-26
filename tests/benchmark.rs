@@ -37,10 +37,7 @@ fn recall_at_k(result_ids: &[i64], relevant_ids: &[i64], k: usize) -> f64 {
         return 1.0;
     }
     let top_k: Vec<i64> = result_ids.iter().copied().take(k).collect();
-    let hits = relevant_ids
-        .iter()
-        .filter(|id| top_k.contains(id))
-        .count();
+    let hits = relevant_ids.iter().filter(|id| top_k.contains(id)).count();
     hits as f64 / relevant_ids.len() as f64
 }
 
@@ -168,11 +165,7 @@ fn bench_search_precision_and_recall_fts() -> Result<()> {
         p5,
         results.iter().map(|m| &m.title).collect::<Vec<_>>()
     );
-    assert!(
-        r10 >= 0.5,
-        "Recall@10 {:.2} below threshold 0.5",
-        r10
-    );
+    assert!(r10 >= 0.5, "Recall@10 {:.2} below threshold 0.5", r10);
 
     Ok(())
 }
@@ -352,7 +345,10 @@ fn bench_context_score_prefers_decisions_and_recent() -> Result<()> {
         .filter(|s| s.2 == "decision" || s.2 == "bugfix")
         .count();
     let context_score = top3_high_value as f64 / 3.0;
-    eprintln!("[Context Score] high_value_in_top3={}/3 = {:.2}", top3_high_value, context_score);
+    eprintln!(
+        "[Context Score] high_value_in_top3={}/3 = {:.2}",
+        top3_high_value, context_score
+    );
     assert!(
         context_score >= 0.6,
         "Context relevance {:.2} below threshold 0.6",
@@ -504,7 +500,10 @@ fn bench_global_scope_cross_project() -> Result<()> {
         project_leaked
     );
 
-    assert!(global_visible, "Global preference should be visible in Project B");
+    assert!(
+        global_visible,
+        "Global preference should be visible in Project B"
+    );
     assert!(
         !project_leaked,
         "Project-scoped memory should NOT leak to Project B"
@@ -625,7 +624,9 @@ fn bench_summary_parse_full() -> Result<()> {
     let p = parsed.unwrap();
 
     assert!(
-        p.request.as_ref().is_some_and(|r| r.contains("global memory scope")),
+        p.request
+            .as_ref()
+            .is_some_and(|r| r.contains("global memory scope")),
         "request field should be extracted"
     );
     assert!(
@@ -637,7 +638,9 @@ fn bench_summary_parse_full() -> Result<()> {
         "learned field should be extracted"
     );
     assert!(
-        p.preferences.as_ref().is_some_and(|pref| pref.contains("English")),
+        p.preferences
+            .as_ref()
+            .is_some_and(|pref| pref.contains("English")),
         "preferences field should be extracted"
     );
     assert!(p.completed.is_some(), "completed field should be extracted");
@@ -713,7 +716,10 @@ fn bench_summary_promote_creates_memories() -> Result<()> {
     let all = memory::get_recent_memories(&conn, project, 50)?;
 
     let decisions: Vec<_> = all.iter().filter(|m| m.memory_type == "decision").collect();
-    let discoveries: Vec<_> = all.iter().filter(|m| m.memory_type == "discovery").collect();
+    let discoveries: Vec<_> = all
+        .iter()
+        .filter(|m| m.memory_type == "discovery")
+        .collect();
     let preferences: Vec<_> = all
         .iter()
         .filter(|m| m.memory_type == "preference")
@@ -741,10 +747,7 @@ fn bench_summary_promote_creates_memories() -> Result<()> {
     );
 
     // Verify preference is auto-scoped as global
-    let global_prefs: Vec<_> = preferences
-        .iter()
-        .filter(|m| m.scope == "global")
-        .collect();
+    let global_prefs: Vec<_> = preferences.iter().filter(|m| m.scope == "global").collect();
     eprintln!(
         "[Promote] global preferences: {}/{}",
         global_prefs.len(),
@@ -804,7 +807,11 @@ fn bench_search_filter_by_type() -> Result<()> {
         0,
         true,
     )?;
-    assert_eq!(decisions.len(), 1, "Type filter should return only decisions");
+    assert_eq!(
+        decisions.len(),
+        1,
+        "Type filter should return only decisions"
+    );
     assert_eq!(decisions[0].memory_type, "decision");
 
     let bugfixes = search::search(
@@ -819,15 +826,7 @@ fn bench_search_filter_by_type() -> Result<()> {
     assert_eq!(bugfixes.len(), 1, "Type filter should return only bugfixes");
 
     // No filter: all 3
-    let all = search::search(
-        &conn,
-        Some("FTS5"),
-        Some("tools/remem"),
-        None,
-        10,
-        0,
-        true,
-    )?;
+    let all = search::search(&conn, Some("FTS5"), Some("tools/remem"), None, 10, 0, true)?;
     assert_eq!(all.len(), 3, "Without type filter should return all 3");
 
     Ok(())
@@ -949,28 +948,41 @@ fn bench_multi_hop_entity_graph_retrieval() -> Result<()> {
     )?;
 
     // Link entities to memories
-    entity::link_entities(&conn, id1, &[
-        "Melanie".to_string(), "Tom".to_string(), "Sarah".to_string(),
-    ])?;
+    entity::link_entities(
+        &conn,
+        id1,
+        &[
+            "Melanie".to_string(),
+            "Tom".to_string(),
+            "Sarah".to_string(),
+        ],
+    )?;
     entity::link_entities(&conn, id2, &["Tom".to_string(), "Lego".to_string()])?;
     entity::link_entities(&conn, id3, &["Sarah".to_string()])?;
 
     // Standard search: "Melanie's kids" — should find memory about Melanie
     let standard = search::search(
-        &conn, Some("Melanie kids"), Some("personal"), None, 10, 0, true,
+        &conn,
+        Some("Melanie kids"),
+        Some("personal"),
+        None,
+        10,
+        0,
+        true,
     )?;
     let standard_ids: Vec<i64> = standard.iter().map(|m| m.id).collect();
 
     // Multi-hop search: should find Melanie + Tom's hobbies + Sarah's activities
-    let multi = search_multihop::search_multi_hop(
-        &conn, "Melanie kids", Some("personal"), 10,
-    )?;
+    let multi = search_multihop::search_multi_hop(&conn, "Melanie kids", Some("personal"), 10)?;
     let multi_ids: Vec<i64> = multi.memories.iter().map(|m| m.id).collect();
 
     eprintln!("[Multi-hop] Standard search found: {:?}", standard_ids);
     eprintln!("[Multi-hop] Multi-hop search found: {:?}", multi_ids);
     eprintln!("[Multi-hop] Hops: {}", multi.hops);
-    eprintln!("[Multi-hop] Entities discovered: {:?}", multi.entities_discovered);
+    eprintln!(
+        "[Multi-hop] Entities discovered: {:?}",
+        multi.entities_discovered
+    );
 
     // Standard search should find at least the Melanie memory
     assert!(
@@ -1018,24 +1030,43 @@ fn bench_entity_graph_expansion_finds_related() -> Result<()> {
 
     // Memory A mentions entities X and Y
     let id_a = memory::insert_memory(
-        &conn, Some("s1"), "proj", None,
+        &conn,
+        Some("s1"),
+        "proj",
+        None,
         "Project setup with React and TypeScript",
-        "Configured React with TypeScript template.", "architecture", None,
+        "Configured React with TypeScript template.",
+        "architecture",
+        None,
     )?;
     // Memory B mentions entity Y and Z (related to A via Y)
     let id_b = memory::insert_memory(
-        &conn, Some("s2"), "proj", None,
+        &conn,
+        Some("s2"),
+        "proj",
+        None,
         "TypeScript strict mode config",
-        "Enabled strict mode in tsconfig.", "decision", None,
+        "Enabled strict mode in tsconfig.",
+        "decision",
+        None,
     )?;
     // Memory C mentions entity Z only (related to B via Z, 2-hop from A)
     let id_c = memory::insert_memory(
-        &conn, Some("s3"), "proj", None,
+        &conn,
+        Some("s3"),
+        "proj",
+        None,
         "ESLint config for strict mode",
-        "Added eslint-config-strict rules.", "decision", None,
+        "Added eslint-config-strict rules.",
+        "decision",
+        None,
     )?;
 
-    entity::link_entities(&conn, id_a, &["React".to_string(), "TypeScript".to_string()])?;
+    entity::link_entities(
+        &conn,
+        id_a,
+        &["React".to_string(), "TypeScript".to_string()],
+    )?;
     entity::link_entities(&conn, id_b, &["TypeScript".to_string()])?;
     entity::link_entities(&conn, id_c, &["ESLint".to_string()])?;
 

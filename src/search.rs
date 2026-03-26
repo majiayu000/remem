@@ -44,7 +44,16 @@ pub fn search(
     offset: i64,
     _include_stale: bool,
 ) -> Result<Vec<Memory>> {
-    search_with_branch(conn, query, project, memory_type, limit, offset, _include_stale, None)
+    search_with_branch(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        _include_stale,
+        None,
+    )
 }
 
 pub fn search_with_branch(
@@ -62,7 +71,11 @@ pub fn search_with_branch(
             let fetch = limit * 2; // Over-fetch for RRF fusion
             let expanded = crate::query_expand::expand_query(q);
             let exp_strs: Vec<&str> = expanded.iter().map(|s| s.as_str()).collect();
-            let long_tokens: Vec<&str> = exp_strs.iter().filter(|t| t.chars().count() >= 3).copied().collect();
+            let long_tokens: Vec<&str> = exp_strs
+                .iter()
+                .filter(|t| t.chars().count() >= 3)
+                .copied()
+                .collect();
 
             // Core tokens: segmented from original query (no synonym expansion).
             // Used for LIKE fallback with AND semantics.
@@ -74,7 +87,8 @@ pub fn search_with_branch(
             // Channel 1: FTS5 with expanded OR query (includes synonyms)
             if !long_tokens.is_empty() {
                 let safe_query = sanitize_fts_query(&long_tokens.join(" "));
-                let fts = memory::search_memories_fts(conn, &safe_query, project, memory_type, fetch, 0)?;
+                let fts =
+                    memory::search_memories_fts(conn, &safe_query, project, memory_type, fetch, 0)?;
                 channels.push(fts.iter().map(|m| m.id).collect());
             }
 
@@ -93,7 +107,8 @@ pub fn search_with_branch(
             }
 
             // Channel 4: LIKE fallback with core tokens (AND semantics, no synonyms)
-            let like = memory::search_memories_like(conn, &core_refs, project, memory_type, fetch, 0)?;
+            let like =
+                memory::search_memories_like(conn, &core_refs, project, memory_type, fetch, 0)?;
             if !like.is_empty() {
                 channels.push(like.iter().map(|m| m.id).collect());
             }
@@ -104,7 +119,8 @@ pub fn search_with_branch(
                 // First-pass RRF fusion (over-fetch to account for post-filtering)
                 let fused = rrf_fuse(&channels, 60.0);
                 let over_limit = (limit * 3) as usize; // over-fetch for type filter
-                let first_hop_ids: Vec<i64> = fused.iter().take(over_limit).map(|(id, _)| *id).collect();
+                let first_hop_ids: Vec<i64> =
+                    fused.iter().take(over_limit).map(|(id, _)| *id).collect();
 
                 // Channel 5: Entity graph expansion (multi-hop)
                 let graph_ids = crate::entity::expand_via_entity_graph(
@@ -118,14 +134,19 @@ pub fn search_with_branch(
                 let final_ids = if !graph_ids.is_empty() {
                     channels.push(graph_ids);
                     let fused2 = rrf_fuse(&channels, 60.0);
-                    fused2.iter().take(over_limit).map(|(id, _)| *id).collect::<Vec<_>>()
+                    fused2
+                        .iter()
+                        .take(over_limit)
+                        .map(|(id, _)| *id)
+                        .collect::<Vec<_>>()
                 } else {
                     first_hop_ids
                 };
 
                 // Load memories and apply memory_type post-filter
                 let loaded = memory::get_memories_by_ids(conn, &final_ids, None)?;
-                let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
+                let id_to_mem: HashMap<i64, Memory> =
+                    loaded.into_iter().map(|m| (m.id, m)).collect();
                 let mut results: Vec<Memory> = final_ids
                     .iter()
                     .filter_map(|id| id_to_mem.get(id).cloned())
@@ -182,10 +203,26 @@ pub fn search_observations(
             let has_short_token = tokens.iter().any(|t| t.chars().count() < 3);
 
             if has_short_token {
-                db_query::search_observations_like(conn, &tokens, project, obs_type, limit, offset, include_stale)?
+                db_query::search_observations_like(
+                    conn,
+                    &tokens,
+                    project,
+                    obs_type,
+                    limit,
+                    offset,
+                    include_stale,
+                )?
             } else {
                 let safe_query = sanitize_fts_query(q);
-                db_query::search_observations_fts(conn, &safe_query, project, obs_type, limit, offset, include_stale)?
+                db_query::search_observations_fts(
+                    conn,
+                    &safe_query,
+                    project,
+                    obs_type,
+                    limit,
+                    offset,
+                    include_stale,
+                )?
             }
         }
         _ => {
@@ -200,9 +237,7 @@ pub fn search_observations(
     };
 
     if let Some(proj) = project {
-        results.retain(|o| {
-            o.project.as_deref().is_some_and(|p| p == proj || p.ends_with(&format!("/{proj}")))
-        });
+        results.retain(|o| crate::project_id::project_matches(o.project.as_deref(), proj));
     }
 
     let start = offset as usize;

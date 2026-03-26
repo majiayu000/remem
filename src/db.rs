@@ -37,57 +37,13 @@ pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
     &s[..end]
 }
 
-fn project_label_from_path(path: &std::path::Path) -> String {
-    let components: Vec<&std::ffi::OsStr> = path
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(n) => Some(n),
-            _ => None,
-        })
-        .collect();
-    let raw = match components.len() {
-        0 => path.to_string_lossy().to_string(),
-        1 => components[0].to_string_lossy().to_string(),
-        n => format!(
-            "{}/{}",
-            components[n - 2].to_string_lossy(),
-            components[n - 1].to_string_lossy()
-        ),
-    };
-    // Strip worktree @hash suffixes (e.g., "tools/remem@d431465db16f" → "tools/remem")
-    if let Some(at_pos) = raw.rfind('@') {
-        let after = &raw[at_pos + 1..];
-        if !after.is_empty() && after.chars().all(|c| c.is_ascii_hexdigit()) {
-            return raw[..at_pos].to_string();
-        }
-    }
-    raw
-}
-
 pub fn canonical_project_path(cwd: &str) -> PathBuf {
-    let path = std::path::Path::new(cwd);
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    };
-    std::fs::canonicalize(&abs).unwrap_or_else(|e| {
-        crate::log::warn(
-            "db",
-            &format!("canonicalize {:?} failed (using abs): {}", abs, e),
-        );
-        abs
-    })
+    crate::project_id::canonical_project_path(cwd)
 }
 
-/// Build a stable project key from cwd.
-/// Format: "<last2>", where last2 is the last 2 path components.
-/// Example: "tools/remem"
+/// Build canonical project key from cwd.
 pub fn project_from_cwd(cwd: &str) -> String {
-    let canonical = canonical_project_path(cwd);
-    project_label_from_path(&canonical)
+    crate::project_id::project_from_cwd(cwd)
 }
 
 pub fn data_dir() -> PathBuf {
@@ -105,7 +61,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 /// Load SQLCipher encryption key from env var or key file.
 /// Returns None if no encryption is configured (backward compatible).
@@ -133,9 +89,7 @@ fn load_cipher_key() -> Option<String> {
 /// Returns the generated key.
 pub fn generate_cipher_key() -> Result<String> {
     use std::io::Write;
-    let key: String = (0..32)
-        .map(|_| format!("{:02x}", rand_byte()))
-        .collect();
+    let key: String = (0..32).map(|_| format!("{:02x}", rand_byte())).collect();
     let key_path = data_dir().join(".key");
     let mut f = std::fs::File::create(&key_path)?;
     f.write_all(key.as_bytes())?;
@@ -192,12 +146,7 @@ pub fn encrypt_database(key: &str) -> Result<()> {
         [],
     )?;
     conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
-    conn.execute(
-        &format!(
-            "DETACH DATABASE encrypted"
-        ),
-        [],
-    )?;
+    conn.execute(&format!("DETACH DATABASE encrypted"), [])?;
     drop(conn);
 
     // Replace original with encrypted version
@@ -207,10 +156,7 @@ pub fn encrypt_database(key: &str) -> Result<()> {
 
     crate::log::info(
         "encrypt",
-        &format!(
-            "database encrypted, backup at {}",
-            backup_path.display()
-        ),
+        &format!("database encrypted, backup at {}", backup_path.display()),
     );
     Ok(())
 }
@@ -344,6 +290,11 @@ fn ensure_pending_table(conn: &Connection) -> Result<()> {
             tool_response TEXT,
             cwd TEXT,
             created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_epoch INTEGER,
+            last_error TEXT,
             lease_owner TEXT,
             lease_expires_epoch INTEGER
         )",
@@ -383,6 +334,31 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
             "lease_expires_epoch",
             "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER",
         ),
+        (
+            "pending_observations",
+            "updated_at_epoch",
+            "ALTER TABLE pending_observations ADD COLUMN updated_at_epoch INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))",
+        ),
+        (
+            "pending_observations",
+            "status",
+            "ALTER TABLE pending_observations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+        ),
+        (
+            "pending_observations",
+            "attempt_count",
+            "ALTER TABLE pending_observations ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "pending_observations",
+            "next_retry_epoch",
+            "ALTER TABLE pending_observations ADD COLUMN next_retry_epoch INTEGER",
+        ),
+        (
+            "pending_observations",
+            "last_error",
+            "ALTER TABLE pending_observations ADD COLUMN last_error TEXT",
+        ),
     ];
     for (table, col, sql) in migrations {
         if !column_exists(conn, table, col)? {
@@ -413,6 +389,10 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
            ON pending_observations(session_id, lease_expires_epoch, id);
          CREATE INDEX IF NOT EXISTS idx_pending_project_lease
            ON pending_observations(project, lease_expires_epoch, created_at_epoch);
+         CREATE INDEX IF NOT EXISTS idx_pending_claim_v2
+           ON pending_observations(status, session_id, next_retry_epoch, lease_expires_epoch, id);
+         CREATE INDEX IF NOT EXISTS idx_pending_project_v2
+           ON pending_observations(status, project, next_retry_epoch, created_at_epoch);
          CREATE INDEX IF NOT EXISTS idx_sdk_sessions_msid
            ON sdk_sessions(memory_session_id);
 
@@ -540,6 +520,20 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
             );
             CREATE INDEX IF NOT EXISTS idx_entity_name ON entities(canonical_name COLLATE NOCASE);
             CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_id);",
+        )?;
+    }
+
+    // v13: Recoverable pending queue state machine.
+    if old_version < 13 {
+        conn.execute_batch(
+            "UPDATE pending_observations
+             SET status = 'pending'
+             WHERE status IS NULL OR status = '';
+             UPDATE pending_observations
+             SET attempt_count = COALESCE(attempt_count, 0),
+                 updated_at_epoch = COALESCE(updated_at_epoch, created_at_epoch),
+                 next_retry_epoch = COALESCE(next_retry_epoch, created_at_epoch)
+             WHERE 1=1;",
         )?;
     }
 

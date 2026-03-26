@@ -216,9 +216,18 @@ fn check_pending_queue() -> Check {
     };
 
     let pending: i64 = conn
-        .query_row("SELECT COUNT(*) FROM pending_observations", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let failed_pending: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
 
     let stuck_jobs: i64 = conn
@@ -235,21 +244,33 @@ fn check_pending_queue() -> Check {
             name: "Pending queue",
             status: Status::Warn,
             detail: format!(
-                "{} pending, {} stuck jobs (will auto-recover)",
-                pending, stuck_jobs
+                "{} pending, {} failed, {} stuck jobs (will auto-recover)",
+                pending, failed_pending, stuck_jobs
+            ),
+        }
+    } else if failed_pending > 0 {
+        Check {
+            name: "Pending queue",
+            status: Status::Warn,
+            detail: format!(
+                "{} pending, {} failed (inspect parsing/AI failures)",
+                pending, failed_pending
             ),
         }
     } else if pending > 100 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!("{} pending (backlog building up)", pending),
+            detail: format!(
+                "{} pending, {} failed (backlog building up)",
+                pending, failed_pending
+            ),
         }
     } else {
         Check {
             name: "Pending queue",
             status: Status::Ok,
-            detail: format!("{} pending", pending),
+            detail: format!("{} pending, {} failed", pending, failed_pending),
         }
     }
 }

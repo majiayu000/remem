@@ -68,7 +68,15 @@ pub fn insert_memory(
     files: Option<&str>,
 ) -> Result<i64> {
     insert_memory_with_branch(
-        conn, session_id, project, topic_key, title, content, memory_type, files, None,
+        conn,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        None,
     )
 }
 
@@ -84,8 +92,17 @@ pub fn insert_memory_with_branch(
     branch: Option<&str>,
 ) -> Result<i64> {
     insert_memory_full(
-        conn, session_id, project, topic_key, title, content, memory_type, files, branch,
-        "project", None,
+        conn,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        branch,
+        "project",
+        None,
     )
 }
 
@@ -120,7 +137,17 @@ pub fn insert_memory_full(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
                      scope = ?8 WHERE id = ?9",
-                    params![session_id, title, content, memory_type, files, now, branch, scope, id],
+                    params![
+                        session_id,
+                        title,
+                        content,
+                        memory_type,
+                        files,
+                        now,
+                        branch,
+                        scope,
+                        id
+                    ],
                 )?;
                 // Refresh entity links on upsert
                 let entities = crate::entity::extract_entities(title, content);
@@ -140,7 +167,17 @@ pub fn insert_memory_full(
           created_at_epoch, updated_at_epoch, status, branch, scope) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'active', ?10, ?11)",
         params![
-            session_id, project, topic_key, title, content, memory_type, files, created_at, now, branch, scope
+            session_id,
+            project,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            files,
+            created_at,
+            now,
+            branch,
+            scope
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -149,7 +186,10 @@ pub fn insert_memory_full(
     let entities = crate::entity::extract_entities(title, content);
     if !entities.is_empty() {
         if let Err(e) = crate::entity::link_entities(conn, id, &entities) {
-            crate::log::warn("memory", &format!("entity link failed for id={}: {}", id, e));
+            crate::log::warn(
+                "memory",
+                &format!("entity link failed for id={}: {}", id, e),
+            );
         }
     }
 
@@ -447,10 +487,14 @@ mod tests {
         setup_memory_schema(&conn);
 
         let id = insert_memory(
-            &conn, Some("session-1"), "test/proj", None,
+            &conn,
+            Some("session-1"),
+            "test/proj",
+            None,
             "FTS5 supports CJK",
             "Switched from unicode61 to trigram tokenizer for Chinese text search.",
-            "decision", Some(r#"["src/db.rs"]"#),
+            "decision",
+            Some(r#"["src/db.rs"]"#),
         )
         .unwrap();
         assert!(id > 0);
@@ -465,10 +509,28 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         setup_memory_schema(&conn);
 
-        let id1 = insert_memory(&conn, Some("s1"), "test/proj", Some("fts5-search-strategy"),
-            "FTS5 trigram v1", "Initial implementation using trigram.", "decision", None).unwrap();
-        let id2 = insert_memory(&conn, Some("s2"), "test/proj", Some("fts5-search-strategy"),
-            "FTS5 trigram v2", "Added LIKE fallback for short tokens.", "decision", None).unwrap();
+        let id1 = insert_memory(
+            &conn,
+            Some("s1"),
+            "test/proj",
+            Some("fts5-search-strategy"),
+            "FTS5 trigram v1",
+            "Initial implementation using trigram.",
+            "decision",
+            None,
+        )
+        .unwrap();
+        let id2 = insert_memory(
+            &conn,
+            Some("s2"),
+            "test/proj",
+            Some("fts5-search-strategy"),
+            "FTS5 trigram v2",
+            "Added LIKE fallback for short tokens.",
+            "decision",
+            None,
+        )
+        .unwrap();
 
         assert_eq!(id1, id2);
         let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
@@ -481,12 +543,28 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         setup_memory_schema(&conn);
 
-        insert_memory(&conn, Some("s1"), "proj", None,
+        insert_memory(
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
             "FTS5 trigram tokenizer 支持 CJK",
-            "Switched to trigram for Chinese search support.", "decision", None).unwrap();
-        insert_memory(&conn, Some("s1"), "proj", None,
+            "Switched to trigram for Chinese search support.",
+            "decision",
+            None,
+        )
+        .unwrap();
+        insert_memory(
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
             "Auth middleware rewrite",
-            "Rewrote auth middleware for compliance.", "architecture", None).unwrap();
+            "Rewrote auth middleware for compliance.",
+            "architecture",
+            None,
+        )
+        .unwrap();
 
         let results = search_memories_fts(&conn, "trigram", Some("proj"), None, 10, 0).unwrap();
         assert_eq!(results.len(), 1);
@@ -498,8 +576,17 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         setup_memory_schema(&conn);
 
-        insert_memory(&conn, Some("s1"), "proj", None,
-            "DB schema migration", "Updated schema from v7 to v8.", "decision", None).unwrap();
+        insert_memory(
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
+            "DB schema migration",
+            "Updated schema from v7 to v8.",
+            "decision",
+            None,
+        )
+        .unwrap();
 
         let results = search_memories_like(&conn, &["DB"], Some("proj"), None, 10, 0).unwrap();
         assert_eq!(results.len(), 1);
@@ -511,15 +598,41 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         setup_memory_schema(&conn);
 
-        insert_memory(&conn, Some("s1"), "proj", None,
+        insert_memory(
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
             "Bug: unicode61 fails CJK",
-            "Root cause: unicode61 tokenizer doesn't segment Chinese.", "bugfix", None).unwrap();
-        insert_memory(&conn, Some("s1"), "proj", None,
+            "Root cause: unicode61 tokenizer doesn't segment Chinese.",
+            "bugfix",
+            None,
+        )
+        .unwrap();
+        insert_memory(
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
             "Use trigram tokenizer",
-            "Decided to use trigram for CJK support.", "decision", None).unwrap();
+            "Decided to use trigram for CJK support.",
+            "decision",
+            None,
+        )
+        .unwrap();
 
-        assert_eq!(get_memories_by_type(&conn, "proj", "bugfix", 10).unwrap().len(), 1);
-        assert_eq!(get_memories_by_type(&conn, "proj", "decision", 10).unwrap().len(), 1);
+        assert_eq!(
+            get_memories_by_type(&conn, "proj", "bugfix", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            get_memories_by_type(&conn, "proj", "decision", 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -527,10 +640,28 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         setup_memory_schema(&conn);
 
-        insert_event(&conn, "session-1", "proj", "file_edit", "Edit src/db.rs",
-            None, Some(r#"["src/db.rs"]"#), None).unwrap();
-        insert_event(&conn, "session-1", "proj", "bash", "Run `cargo test` (exit 0)",
-            None, None, Some(0)).unwrap();
+        insert_event(
+            &conn,
+            "session-1",
+            "proj",
+            "file_edit",
+            "Edit src/db.rs",
+            None,
+            Some(r#"["src/db.rs"]"#),
+            None,
+        )
+        .unwrap();
+        insert_event(
+            &conn,
+            "session-1",
+            "proj",
+            "bash",
+            "Run `cargo test` (exit 0)",
+            None,
+            None,
+            Some(0),
+        )
+        .unwrap();
 
         let events = get_session_events(&conn, "session-1").unwrap();
         assert_eq!(events.len(), 2);
@@ -547,13 +678,21 @@ mod tests {
         let old = now - (31 * 86400);
         conn.execute(
             "INSERT INTO events (session_id, project, event_type, summary, created_at_epoch)
-             VALUES ('s1', 'proj', 'file_edit', 'old edit', ?1)", params![old]).unwrap();
+             VALUES ('s1', 'proj', 'file_edit', 'old edit', ?1)",
+            params![old],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO events (session_id, project, event_type, summary, created_at_epoch)
-             VALUES ('s2', 'proj', 'file_edit', 'new edit', ?1)", params![now]).unwrap();
+             VALUES ('s2', 'proj', 'file_edit', 'new edit', ?1)",
+            params![now],
+        )
+        .unwrap();
 
         assert_eq!(cleanup_old_events(&conn, 30).unwrap(), 1);
-        let remaining: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(remaining, 1);
     }
 
@@ -568,16 +707,25 @@ mod tests {
             "INSERT INTO memories (session_id, project, title, content, memory_type, \
              created_at_epoch, updated_at_epoch, status)
              VALUES ('s1', 'proj', 'old', 'old content', 'decision', ?1, ?1, 'active')",
-            params![old]).unwrap();
+            params![old],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO memories (session_id, project, title, content, memory_type, \
              created_at_epoch, updated_at_epoch, status)
              VALUES ('s2', 'proj', 'new', 'new content', 'decision', ?1, ?1, 'active')",
-            params![now]).unwrap();
+            params![now],
+        )
+        .unwrap();
 
         assert_eq!(archive_stale_memories(&conn, 180).unwrap(), 1);
-        let active: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE status = 'active'", [], |r| r.get(0)).unwrap();
+        let active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(active, 1);
     }
 
@@ -588,18 +736,33 @@ mod tests {
 
         let custom_epoch: i64 = 1_700_000_000; // 2023-11-14
         let id = insert_memory_full(
-            &conn, Some("s1"), "proj", None,
-            "Old event", "Something from the past", "discovery",
-            None, None, "project", Some(custom_epoch),
-        ).unwrap();
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
+            "Old event",
+            "Something from the past",
+            "discovery",
+            None,
+            None,
+            "project",
+            Some(custom_epoch),
+        )
+        .unwrap();
 
-        let row: (i64, i64) = conn.query_row(
-            "SELECT created_at_epoch, updated_at_epoch FROM memories WHERE id = ?1",
-            params![id], |r| Ok((r.get(0)?, r.get(1)?)),
-        ).unwrap();
+        let row: (i64, i64) = conn
+            .query_row(
+                "SELECT created_at_epoch, updated_at_epoch FROM memories WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
 
         assert_eq!(row.0, custom_epoch, "created_at_epoch should use override");
-        assert_ne!(row.1, custom_epoch, "updated_at_epoch should use current time");
+        assert_ne!(
+            row.1, custom_epoch,
+            "updated_at_epoch should use current time"
+        );
     }
 
     #[test]
@@ -609,19 +772,33 @@ mod tests {
 
         let before = chrono::Utc::now().timestamp();
         let id = insert_memory_full(
-            &conn, Some("s1"), "proj", None,
-            "Recent event", "Something now", "discovery",
-            None, None, "project", None,
-        ).unwrap();
+            &conn,
+            Some("s1"),
+            "proj",
+            None,
+            "Recent event",
+            "Something now",
+            "discovery",
+            None,
+            None,
+            "project",
+            None,
+        )
+        .unwrap();
         let after = chrono::Utc::now().timestamp();
 
-        let created: i64 = conn.query_row(
-            "SELECT created_at_epoch FROM memories WHERE id = ?1",
-            params![id], |r| r.get(0),
-        ).unwrap();
+        let created: i64 = conn
+            .query_row(
+                "SELECT created_at_epoch FROM memories WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
 
-        assert!(created >= before && created <= after,
-            "created_at_epoch should be current time when no override");
+        assert!(
+            created >= before && created <= after,
+            "created_at_epoch should be current time when no override"
+        );
     }
 
     // promote tests are in memory_promote::tests

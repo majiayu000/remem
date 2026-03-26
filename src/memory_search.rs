@@ -4,10 +4,9 @@ use rusqlite::Connection;
 use crate::db;
 use crate::memory::{map_memory_row_pub, Memory};
 
-/// Push project suffix-match filter into SQL conditions.
-/// "harness" matches exact "harness" OR ends with "/harness".
+/// Push exact project filter into SQL conditions.
 /// Returns the next parameter index.
-pub fn push_project_suffix_filter(
+pub fn push_project_filter(
     column: &str,
     project: Option<&str>,
     mut idx: usize,
@@ -15,10 +14,9 @@ pub fn push_project_suffix_filter(
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
 ) -> usize {
     if let Some(p) = project {
-        conditions.push(format!("({column} = ?{idx} OR {column} LIKE ?{})", idx + 1));
-        params.push(Box::new(p.to_string()));
-        params.push(Box::new(format!("%/{p}")));
-        idx += 2;
+        let (clause, next_idx) = crate::project_id::push_project_filter(column, p, idx, params);
+        conditions.push(clause);
+        idx = next_idx;
     }
     idx
 }
@@ -39,7 +37,13 @@ pub fn search_memories_fts(
     let mut idx = 2;
     conditions.push("m.status = 'active'".to_string());
 
-    idx = push_project_suffix_filter("m.project", project, idx, &mut conditions, &mut param_values);
+    idx = push_project_filter(
+        "m.project",
+        project,
+        idx,
+        &mut conditions,
+        &mut param_values,
+    );
     if let Some(t) = memory_type {
         conditions.push(format!("m.memory_type = ?{idx}"));
         param_values.push(Box::new(t.to_string()));
@@ -97,7 +101,13 @@ pub fn search_memories_like(
         idx += 1;
     }
 
-    idx = push_project_suffix_filter("m.project", project, idx, &mut conditions, &mut param_values);
+    idx = push_project_filter(
+        "m.project",
+        project,
+        idx,
+        &mut conditions,
+        &mut param_values,
+    );
     if let Some(t) = memory_type {
         conditions.push(format!("m.memory_type = ?{idx}"));
         param_values.push(Box::new(t.to_string()));

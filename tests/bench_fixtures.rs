@@ -140,7 +140,14 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             tool_input TEXT,
             tool_response TEXT,
             cwd TEXT,
-            created_at_epoch INTEGER NOT NULL
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_epoch INTEGER,
+            last_error TEXT,
+            lease_owner TEXT,
+            lease_expires_epoch INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS workstreams (
@@ -215,9 +222,7 @@ pub fn coding_session_fixtures() -> Vec<SessionFixture> {
                 EventFixture {
                     event_type: "file_edit".into(),
                     summary: "Fixed time decay scoring to prefer recent memories".into(),
-                    detail: Some(
-                        "Changed decay curve: 7d=1.0, 30d=0.7, older=0.4".into(),
-                    ),
+                    detail: Some("Changed decay curve: 7d=1.0, 30d=0.7, older=0.4".into()),
                     files: Some("[\"src/context.rs\"]".into()),
                 },
                 EventFixture {
@@ -301,16 +306,46 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
 
     // --- 10 relevant to "FTS5 search" ---
     let relevant = vec![
-        ("FTS5 search LIKE fallback", "Added LIKE fallback for short tokens that FTS5 cannot handle"),
-        ("FTS5 trigram tokenizer setup", "Configured FTS5 with trigram tokenizer for Chinese character support in search"),
-        ("Search query sanitization", "Wrapped each token in quotes for FTS5 MATCH safety to handle special characters"),
-        ("FTS5 search ranking with time decay", "Search results now ranked by FTS5 relevance score multiplied by time decay factor"),
-        ("Memory search API endpoint", "REST API /search endpoint delegates to FTS5 search with project filter"),
-        ("FTS5 index rebuild after migration", "Schema v9 migration rebuilds FTS5 index to include new scope column"),
-        ("Search precision improvement", "Improved FTS5 search precision by using exact phrase matching for multi-word queries"),
-        ("Full-text search across observations", "Extended FTS5 search to cover observation title, subtitle, narrative, facts, concepts"),
-        ("Search result deduplication", "Deduplicated FTS5 search results by topic_key to avoid showing same memory twice"),
-        ("FTS5 search performance benchmark", "FTS5 search completes in under 5ms for 10k memories on M1 Mac"),
+        (
+            "FTS5 search LIKE fallback",
+            "Added LIKE fallback for short tokens that FTS5 cannot handle",
+        ),
+        (
+            "FTS5 trigram tokenizer setup",
+            "Configured FTS5 with trigram tokenizer for Chinese character support in search",
+        ),
+        (
+            "Search query sanitization",
+            "Wrapped each token in quotes for FTS5 MATCH safety to handle special characters",
+        ),
+        (
+            "FTS5 search ranking with time decay",
+            "Search results now ranked by FTS5 relevance score multiplied by time decay factor",
+        ),
+        (
+            "Memory search API endpoint",
+            "REST API /search endpoint delegates to FTS5 search with project filter",
+        ),
+        (
+            "FTS5 index rebuild after migration",
+            "Schema v9 migration rebuilds FTS5 index to include new scope column",
+        ),
+        (
+            "Search precision improvement",
+            "Improved FTS5 search precision by using exact phrase matching for multi-word queries",
+        ),
+        (
+            "Full-text search across observations",
+            "Extended FTS5 search to cover observation title, subtitle, narrative, facts, concepts",
+        ),
+        (
+            "Search result deduplication",
+            "Deduplicated FTS5 search results by topic_key to avoid showing same memory twice",
+        ),
+        (
+            "FTS5 search performance benchmark",
+            "FTS5 search completes in under 5ms for 10k memories on M1 Mac",
+        ),
     ];
     for (i, (title, content)) in relevant.iter().enumerate() {
         seeds.push(MemorySeed {
@@ -328,11 +363,26 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
 
     // --- 5 relevant to "time decay" ---
     let decay_relevant = vec![
-        ("Time decay scoring formula", "Memory score = type_weight * time_decay where decay is 1.0/0.7/0.4 for 7d/30d/older"),
-        ("Context core memory selection", "Top 6 memories selected by score which includes time decay factor"),
-        ("Decay curve tuning decision", "Decided on 7/30 day thresholds for decay curve after testing with real session data"),
-        ("Time-based observation compression", "Old observations beyond 30 days compressed by AI to save context window budget"),
-        ("Recent memory boost in ranking", "Memories updated within 7 days get full weight 1.0 in time decay calculation"),
+        (
+            "Time decay scoring formula",
+            "Memory score = type_weight * time_decay where decay is 1.0/0.7/0.4 for 7d/30d/older",
+        ),
+        (
+            "Context core memory selection",
+            "Top 6 memories selected by score which includes time decay factor",
+        ),
+        (
+            "Decay curve tuning decision",
+            "Decided on 7/30 day thresholds for decay curve after testing with real session data",
+        ),
+        (
+            "Time-based observation compression",
+            "Old observations beyond 30 days compressed by AI to save context window budget",
+        ),
+        (
+            "Recent memory boost in ranking",
+            "Memories updated within 7 days get full weight 1.0 in time decay calculation",
+        ),
     ];
     for (i, (title, content)) in decay_relevant.iter().enumerate() {
         seeds.push(MemorySeed {
@@ -350,21 +400,66 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
 
     // --- 15 noise memories ---
     let noise = vec![
-        ("Git branch detection", "Detect current git branch via git rev-parse for branch-scoped memories"),
-        ("SQLite WAL mode enabled", "Enabled WAL journal mode for better concurrent read performance"),
-        ("MCP server stdio transport", "Using rmcp crate for MCP stdio transport with JSON-RPC"),
-        ("Session summary cooldown", "300 second cooldown between summary generations for same project"),
-        ("Preference auto-promotion", "Preferences from session summaries auto-promoted to global scope"),
-        ("Docker build optimization", "Multi-stage Docker build reduces image size to 15MB"),
-        ("CI workflow with cargo test", "GitHub Actions CI runs cargo test on every push to main"),
-        ("Log rotation strategy", "Logs rotated daily with 7-day retention in ~/.remem/logs/"),
-        ("API rate limiting design", "Token bucket rate limiter for AI calls: 10 req/min per project"),
-        ("Database encryption setup", "SQLCipher encryption with key stored in ~/.remem/.key"),
-        ("Hook installation flow", "remem install patches Claude Code hooks.json to add observe/summarize hooks"),
-        ("Workstream auto-creation", "Workstreams auto-created from session summary request field"),
-        ("Memory deduplication logic", "Dedup by topic_key: same key updates existing instead of creating new"),
-        ("Observation flush pipeline", "Pending observations flushed to observation table via LLM extraction"),
-        ("REST API CORS configuration", "tower-http CORS layer allows all origins for local development"),
+        (
+            "Git branch detection",
+            "Detect current git branch via git rev-parse for branch-scoped memories",
+        ),
+        (
+            "SQLite WAL mode enabled",
+            "Enabled WAL journal mode for better concurrent read performance",
+        ),
+        (
+            "MCP server stdio transport",
+            "Using rmcp crate for MCP stdio transport with JSON-RPC",
+        ),
+        (
+            "Session summary cooldown",
+            "300 second cooldown between summary generations for same project",
+        ),
+        (
+            "Preference auto-promotion",
+            "Preferences from session summaries auto-promoted to global scope",
+        ),
+        (
+            "Docker build optimization",
+            "Multi-stage Docker build reduces image size to 15MB",
+        ),
+        (
+            "CI workflow with cargo test",
+            "GitHub Actions CI runs cargo test on every push to main",
+        ),
+        (
+            "Log rotation strategy",
+            "Logs rotated daily with 7-day retention in ~/.remem/logs/",
+        ),
+        (
+            "API rate limiting design",
+            "Token bucket rate limiter for AI calls: 10 req/min per project",
+        ),
+        (
+            "Database encryption setup",
+            "SQLCipher encryption with key stored in ~/.remem/.key",
+        ),
+        (
+            "Hook installation flow",
+            "remem install patches Claude Code hooks.json to add observe/summarize hooks",
+        ),
+        (
+            "Workstream auto-creation",
+            "Workstreams auto-created from session summary request field",
+        ),
+        (
+            "Memory deduplication logic",
+            "Dedup by topic_key: same key updates existing instead of creating new",
+        ),
+        (
+            "Observation flush pipeline",
+            "Pending observations flushed to observation table via LLM extraction",
+        ),
+        (
+            "REST API CORS configuration",
+            "tower-http CORS layer allows all origins for local development",
+        ),
     ];
     for (i, (title, content)) in noise.iter().enumerate() {
         seeds.push(MemorySeed {

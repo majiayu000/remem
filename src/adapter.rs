@@ -39,9 +39,8 @@ pub trait ToolAdapter: Send + Sync {
     fn classify_event(&self, event: &ParsedHookEvent) -> Option<EventSummary>;
 }
 
-static ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
-    vec![Box::new(crate::adapter_claude::ClaudeCodeAdapter)]
-});
+static ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> =
+    LazyLock::new(|| vec![Box::new(crate::adapter_claude::ClaudeCodeAdapter)]);
 
 /// Auto-detect adapter from raw hook JSON and parse the event.
 pub fn detect_adapter(raw_json: &str) -> Option<(&'static dyn ToolAdapter, ParsedHookEvent)> {

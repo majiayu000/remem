@@ -1,16 +1,15 @@
 use anyhow::Result;
-use chrono::Utc;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::db;
 use crate::memory;
+use crate::memory_service;
 use crate::search;
 
 #[derive(Clone)]
@@ -159,112 +158,6 @@ struct SearchResult {
     status: String,
 }
 
-const LOCAL_SAVE_ENABLE_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_COPY";
-const LOCAL_SAVE_DIR_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_DIR";
-
-fn env_enabled(key: &str, default: bool) -> bool {
-    match std::env::var(key) {
-        Ok(v) => {
-            let lower = v.trim().to_ascii_lowercase();
-            !matches!(lower.as_str(), "0" | "false" | "no" | "off")
-        }
-        Err(_) => default,
-    }
-}
-
-fn remem_data_dir() -> PathBuf {
-    db::data_dir()
-}
-
-fn sanitize_segment(raw: &str, fallback: &str, limit: usize) -> String {
-    let mut out = String::with_capacity(raw.len().min(limit));
-    let mut last_underscore = false;
-    for ch in raw.chars() {
-        let mapped = if ch.is_ascii_alphanumeric() || ch == '_' {
-            ch.to_ascii_lowercase()
-        } else {
-            '_'
-        };
-        if mapped == '_' {
-            if last_underscore {
-                continue;
-            }
-            last_underscore = true;
-        } else {
-            last_underscore = false;
-        }
-        out.push(mapped);
-        if out.len() >= limit {
-            break;
-        }
-    }
-    let trimmed = out.trim_matches('_');
-    if trimmed.is_empty() {
-        fallback.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn default_local_note_path(project: &str, title: Option<&str>) -> PathBuf {
-    let base = std::env::var(LOCAL_SAVE_DIR_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| remem_data_dir().join("manual-notes"));
-    let project_dir = sanitize_segment(project, "manual", 64);
-    let title_slug = sanitize_segment(title.unwrap_or("memory"), "memory", 64);
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    base.join(project_dir)
-        .join(format!("{}-{}.md", ts, title_slug))
-}
-
-fn resolve_local_note_path(
-    project: &str,
-    title: Option<&str>,
-    local_path: Option<&str>,
-) -> PathBuf {
-    if let Some(raw) = local_path.and_then(|s| {
-        let t = s.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
-    }) {
-        let p = PathBuf::from(raw);
-        if p.is_absolute() {
-            p
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(p)
-        }
-    } else {
-        default_local_note_path(project, title)
-    }
-}
-
-fn build_local_note_content(project: &str, title: &str, text: &str) -> String {
-    let now = Utc::now().to_rfc3339();
-    format!(
-        "---\nsource: remem.save_memory\nsaved_at: {}\nproject: {}\n---\n\n# {}\n\n{}\n",
-        now, project, title, text
-    )
-}
-
-fn write_local_note(path: &Path, content: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "create local note directory failed {}: {}",
-                parent.display(),
-                e
-            )
-        })?;
-    }
-    std::fs::write(path, content)
-        .map_err(|e| format!("write local note failed {}: {}", path.display(), e))
-}
-
 #[tool_router]
 impl MemoryServer {
     /// Search memories by keyword/project/type.
@@ -273,11 +166,7 @@ impl MemoryServer {
     )]
     fn search(&self, Parameters(params): Parameters<SearchParams>) -> Result<String, String> {
         let start = std::time::Instant::now();
-        // Auto-enable multi_hop when query mentions multiple entities
-        let auto_multi_hop = params.query.as_deref().map_or(false, |q| {
-            crate::entity::extract_entities(q, "").len() >= 2
-        });
-        let multi_hop = params.multi_hop.unwrap_or(auto_multi_hop);
+        let requested_multi_hop = params.multi_hop.unwrap_or(false);
         crate::log::info(
             "mcp",
             &format!(
@@ -286,49 +175,32 @@ impl MemoryServer {
                 params.project,
                 params.r#type,
                 params.branch,
-                multi_hop,
+                requested_multi_hop,
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
             ),
         );
         self.with_conn(|conn| {
-            let limit = params.limit.unwrap_or(20);
-            let (results, hop_meta) = if multi_hop {
-                if let Some(q) = params.query.as_deref().filter(|q| !q.is_empty()) {
-                    let mh = crate::search_multihop::search_multi_hop(
-                        conn,
-                        q,
-                        params.project.as_deref(),
-                        limit,
-                    )
-                    .map_err(|e| {
-                        crate::log::warn("mcp", &format!("multi_hop search failed: {}", e));
-                        e.to_string()
-                    })?;
-                    let meta = Some((mh.hops, mh.entities_discovered));
-                    (mh.memories, meta)
-                } else {
-                    (vec![], None)
-                }
-            } else {
-                let r = search::search_with_branch(
-                    conn,
-                    params.query.as_deref(),
-                    params.project.as_deref(),
-                    params.r#type.as_deref(),
-                    limit,
-                    params.offset.unwrap_or(0),
-                    params.include_stale.unwrap_or(true),
-                    params.branch.as_deref(),
-                )
-                .map_err(|e| {
-                    crate::log::warn("mcp", &format!("search failed: {}", e));
-                    e.to_string()
-                })?;
-                (r, None)
+            let req = memory_service::SearchRequest {
+                query: params.query.clone(),
+                project: params.project.clone(),
+                memory_type: params.r#type.clone(),
+                limit: params.limit.unwrap_or(20),
+                offset: params.offset.unwrap_or(0),
+                include_stale: params.include_stale.unwrap_or(true),
+                branch: params.branch.clone(),
+                multi_hop: requested_multi_hop,
             };
+            let search_set = memory_service::search_memories(conn, &req).map_err(|e| {
+                crate::log::warn("mcp", &format!("search failed: {}", e));
+                e.to_string()
+            })?;
+            let memory_service::SearchResultSet {
+                memories,
+                multi_hop,
+            } = search_set;
 
-            let search_results: Vec<SearchResult> = results
+            let search_results: Vec<SearchResult> = memories
                 .into_iter()
                 .map(|m| {
                     let updated = chrono::DateTime::from_timestamp(m.updated_at_epoch, 0)
@@ -349,8 +221,12 @@ impl MemoryServer {
                 })
                 .collect();
 
-            let hop_info = if let Some((hops, entities)) = &hop_meta {
-                format!(" hops={} entities_discovered={}", hops, entities.len())
+            let hop_info = if let Some(meta) = &multi_hop {
+                format!(
+                    " hops={} entities_discovered={}",
+                    meta.hops,
+                    meta.entities_discovered.len()
+                )
             } else {
                 String::new()
             };
@@ -365,12 +241,12 @@ impl MemoryServer {
             );
 
             // For multi-hop, include metadata about discovered entities
-            if let Some((hops, entities)) = hop_meta {
+            if let Some(meta) = multi_hop {
                 let response = serde_json::json!({
                     "results": search_results,
                     "multi_hop": {
-                        "hops": hops,
-                        "entities_discovered": entities,
+                        "hops": meta.hops,
+                        "entities_discovered": meta.entities_discovered,
                     }
                 });
                 serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
@@ -520,79 +396,43 @@ impl MemoryServer {
                 params.text.len(),
             ),
         );
-        let project = params.project.as_deref().unwrap_or("manual");
-        let title = params.title.as_deref().unwrap_or("Memory");
-        let memory_type = params.memory_type.as_deref().unwrap_or("discovery");
-        let files_json = params
-            .files
-            .as_ref()
-            .and_then(|f| serde_json::to_string(f).ok());
-
-        let local_copy_enabled = env_enabled(LOCAL_SAVE_ENABLE_ENV, true);
-        let mut local_path_str: Option<String> = None;
-        let local_status: &str = if local_copy_enabled {
-            "saved"
-        } else {
-            "disabled"
-        };
-
-        if local_copy_enabled {
-            let local_path = resolve_local_note_path(
-                project,
-                params.title.as_deref(),
-                params.local_path.as_deref(),
-            );
-            let content = build_local_note_content(project, title, &params.text);
-            write_local_note(&local_path, &content).map_err(|e| {
-                crate::log::warn("mcp", &format!("save_memory local copy failed: {}", e));
-                e
-            })?;
-            local_path_str = Some(local_path.display().to_string());
-        }
-
         self.with_conn(|conn| {
-            // Auto-detect scope: preference type defaults to global, others to project
-            let scope = params
-                .scope
-                .as_deref()
-                .unwrap_or(if memory_type == "preference" {
-                    "global"
-                } else {
-                    "project"
-                });
-            let id = memory::insert_memory_full(
-                conn,
-                None,
-                project,
-                params.topic_key.as_deref(),
-                title,
-                &params.text,
-                memory_type,
-                files_json.as_deref(),
-                None,
-                scope,
-                None,
-            )
-            .map_err(|e| {
+            let req = memory_service::SaveMemoryRequest {
+                text: params.text.clone(),
+                title: params.title.clone(),
+                project: params.project.clone(),
+                topic_key: params.topic_key.clone(),
+                memory_type: params.memory_type.clone(),
+                files: params.files.clone(),
+                scope: params.scope.clone(),
+                created_at_epoch: None,
+                branch: None,
+                local_path: params.local_path.clone(),
+                local_copy_enabled: None,
+            };
+            let saved = memory_service::save_memory(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
                 e.to_string()
             })?;
 
-            let upserted = params.topic_key.is_some();
             crate::log::info(
                 "mcp",
                 &format!(
                     "save_memory done id={} type={} upserted={} local_status={} local_path={:?}",
-                    id, memory_type, upserted, local_status, local_path_str
+                    saved.id,
+                    saved.memory_type,
+                    saved.upserted,
+                    saved.local_status,
+                    saved.local_path
                 ),
             );
             serde_json::to_string(&json!({
-                "id": id,
-                "status": "saved",
-                "memory_type": memory_type,
-                "upserted": upserted,
-                "local_status": local_status,
-                "local_path": local_path_str,
+                "id": saved.id,
+                "status": saved.status,
+                "memory_type": saved.memory_type,
+                "upserted": saved.upserted,
+                "local_status": saved.local_status,
+                "local_path": saved.local_path,
             }))
             .map_err(|e| e.to_string())
         })
@@ -783,7 +623,7 @@ pub async fn run_mcp_server() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_local_note_path, sanitize_segment};
+    use crate::memory_service::{resolve_local_note_path, sanitize_segment};
 
     #[test]
     fn sanitize_segment_collapses_invalid_chars() {

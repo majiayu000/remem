@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use remem::{
-    api, claude_memory, context, db, doctor, install, mcp, memory, observe, preference, summarize,
-    worker,
+    api, claude_memory, context, db, doctor, install, mcp, memory, observe, pending_admin,
+    preference, summarize, worker,
 };
 
 #[derive(Parser)]
@@ -56,6 +56,11 @@ enum Commands {
     Preferences {
         #[command(subcommand)]
         action: PreferenceAction,
+    },
+    /// Manage failed pending observations (dead-letter queue)
+    Pending {
+        #[command(subcommand)]
+        action: PendingAction,
     },
     /// Show system status and statistics
     Status,
@@ -125,6 +130,37 @@ enum PreferenceAction {
     },
 }
 
+#[derive(Subcommand)]
+enum PendingAction {
+    /// List failed pending observations
+    ListFailed {
+        /// Filter by project
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Max rows to show
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+    },
+    /// Move failed observations back to pending for retry
+    RetryFailed {
+        /// Filter by project
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Max rows to retry
+        #[arg(long, short = 'n', default_value = "100")]
+        limit: i64,
+    },
+    /// Delete old failed observations
+    PurgeFailed {
+        /// Filter by project
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Delete failed rows older than N days
+        #[arg(long, default_value = "7")]
+        older_than_days: i64,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -179,6 +215,9 @@ async fn main() -> Result<()> {
         }
         Commands::Preferences { action } => {
             run_preferences(action)?;
+        }
+        Commands::Pending { action } => {
+            run_pending(action)?;
         }
         Commands::Status => {
             run_status()?;
@@ -258,6 +297,52 @@ fn run_preferences(action: PreferenceAction) -> Result<()> {
     Ok(())
 }
 
+fn run_pending(action: PendingAction) -> Result<()> {
+    let conn = db::open_db()?;
+    match action {
+        PendingAction::ListFailed { project, limit } => {
+            let rows = pending_admin::list_failed(&conn, project.as_deref(), limit)?;
+            if rows.is_empty() {
+                println!("No failed pending observations.");
+                return Ok(());
+            }
+            println!("Failed pending observations ({}):", rows.len());
+            for r in rows {
+                let ts = chrono::DateTime::from_timestamp(r.updated_at_epoch, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_default();
+                let err = r
+                    .last_error
+                    .as_deref()
+                    .map(|e| db::truncate_str(e, 120).to_string())
+                    .unwrap_or_default();
+                println!(
+                    "  [{}] {} | {} | {} | attempt={} | {}",
+                    r.id, r.project, r.session_id, r.tool_name, r.attempt_count, ts
+                );
+                if !err.is_empty() {
+                    println!("      error: {}", err);
+                }
+            }
+        }
+        PendingAction::RetryFailed { project, limit } => {
+            let n = pending_admin::retry_failed(&conn, project.as_deref(), limit)?;
+            println!("Moved {} failed rows back to pending.", n);
+        }
+        PendingAction::PurgeFailed {
+            project,
+            older_than_days,
+        } => {
+            let n = pending_admin::purge_failed(&conn, project.as_deref(), older_than_days)?;
+            println!(
+                "Purged {} failed rows older than {} day(s).",
+                n, older_than_days
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Show system status and statistics.
 fn run_status() -> Result<()> {
     let conn = db::open_db()?;
@@ -284,9 +369,18 @@ fn run_status() -> Result<()> {
         .query_row("SELECT COUNT(*) FROM session_summaries", [], |r| r.get(0))
         .unwrap_or(0);
     let pending_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM pending_observations", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let failed_pending_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
 
     // Today's stats
@@ -336,6 +430,7 @@ fn run_status() -> Result<()> {
     println!("  Observations:  {:>6}", observation_count);
     println!("  Sessions:      {:>6}", session_count);
     println!("  Pending:       {:>6}", pending_count);
+    println!("  Pending failed:{:>6}", failed_pending_count);
     println!();
     println!("Today:");
     println!("  New memories:      {:>4}", today_memories);
@@ -372,7 +467,14 @@ fn run_search(
         let date = chrono::DateTime::from_timestamp(m.created_at_epoch, 0)
             .map(|dt| dt.format("%Y-%m-%d").to_string())
             .unwrap_or_default();
-        let preview = m.text.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+        let preview = m
+            .text
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(80)
+            .collect::<String>();
         println!(
             "  [{}] {} | {} | {} | {}",
             m.id, m.memory_type, m.project, date, m.title
@@ -426,15 +528,22 @@ fn run_show(id: i64) -> Result<()> {
 fn run_backfill_entities() -> Result<()> {
     let conn = db::open_db()?;
     let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM memories WHERE status = 'active'", [], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(0);
     println!("Backfilling entities from {} active memories...", count);
 
-    let mut stmt = conn.prepare(
-        "SELECT id, title, content FROM memories WHERE status = 'active'",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, title, content FROM memories WHERE status = 'active'")?;
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     })?;
 
     let mut total_entities = 0usize;
@@ -518,7 +627,11 @@ fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
         let hit = eval_metrics::hit_at_k(&result_ids, &q.relevant_ids, k);
 
         let status = if q.relevant_ids.is_empty() {
-            if results.is_empty() { "PASS" } else { "---" }
+            if results.is_empty() {
+                "PASS"
+            } else {
+                "---"
+            }
         } else if hit > 0.0 {
             "HIT"
         } else {
@@ -541,7 +654,10 @@ fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
 
     if evaluated > 0 {
         let n = evaluated as f64;
-        println!("\n--- Aggregate ({} queries with ground truth) ---", evaluated);
+        println!(
+            "\n--- Aggregate ({} queries with ground truth) ---",
+            evaluated
+        );
         println!("  MRR:          {:.3}", total_rr / n);
         println!("  Precision@{}:  {:.3}", k, total_p / n);
         println!("  Recall@{}:     {:.3}", k, total_r / n);
@@ -555,7 +671,10 @@ fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
 fn run_encrypt() -> Result<()> {
     let key_path = db::data_dir().join(".key");
     if key_path.exists() {
-        println!("Database is already encrypted (key file exists at {})", key_path.display());
+        println!(
+            "Database is already encrypted (key file exists at {})",
+            key_path.display()
+        );
         return Ok(());
     }
 

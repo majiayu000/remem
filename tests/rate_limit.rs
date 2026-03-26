@@ -137,9 +137,14 @@ fn bash_skip_filter_stays_in_observe_module() {
 fn project_key_is_stable_and_collision_resistant() {
     let a = db::project_from_cwd("/tmp/work/api");
     let b = db::project_from_cwd("/tmp/personal/api");
-    // After v9 migration: no @hash suffix, just last 2 components
-    assert_eq!(a, "work/api");
-    assert_eq!(b, "personal/api");
+    let expected_a = db::canonical_project_path("/tmp/work/api")
+        .to_string_lossy()
+        .to_string();
+    let expected_b = db::canonical_project_path("/tmp/personal/api")
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(a, expected_a);
+    assert_eq!(b, expected_b);
     assert_ne!(a, b);
     // Stability: same path always produces same key
     assert_eq!(a, db::project_from_cwd("/tmp/work/api"));
@@ -258,7 +263,10 @@ fn search_chinese_2char_via_like_fallback() -> Result<()> {
 
     let results = search::search(&conn, Some("竞品"), None, None, 10, 0, true)?;
     assert!(!results.is_empty(), "should find at least 1 result");
-    assert!(results[0].title.contains("竞品"), "first result should be most relevant");
+    assert!(
+        results[0].title.contains("竞品"),
+        "first result should be most relevant"
+    );
     Ok(())
 }
 
@@ -282,7 +290,10 @@ fn search_english_short_token_via_like_fallback() -> Result<()> {
 
     let results = search::search(&conn, Some("DB"), None, None, 10, 0, true)?;
     assert!(!results.is_empty(), "should find at least 1 result");
-    assert!(results[0].title.contains("DB"), "first result should be most relevant");
+    assert!(
+        results[0].title.contains("DB"),
+        "first result should be most relevant"
+    );
     Ok(())
 }
 
@@ -297,7 +308,10 @@ fn search_mixed_chinese_english() -> Result<()> {
     let results = search::search(&conn, Some("Letta 框架"), None, None, 10, 0, true)?;
     assert!(!results.is_empty(), "should find at least 1 result");
     // With OR semantics + synonym expansion, both "Letta 框架分析" and "Letta overview" may match
-    assert!(results[0].title.contains("Letta"), "first result should contain query term");
+    assert!(
+        results[0].title.contains("Letta"),
+        "first result should contain query term"
+    );
     Ok(())
 }
 

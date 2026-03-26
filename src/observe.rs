@@ -30,10 +30,7 @@ pub async fn session_init() -> Result<()> {
 
     crate::log::info(
         "session-init",
-        &format!(
-            "project={} session={}",
-            event.project, event.session_id
-        ),
+        &format!("project={} session={}", event.project, event.session_id),
     );
 
     let conn = db::open_db()?;
@@ -57,7 +54,11 @@ pub async fn observe() -> Result<()> {
 
     // Bash-specific filter
     if event.tool_name == "Bash" {
-        if let Some(cmd) = event.tool_input.as_ref().and_then(|v| v["command"].as_str()) {
+        if let Some(cmd) = event
+            .tool_input
+            .as_ref()
+            .and_then(|v| v["command"].as_str())
+        {
             if adapter.should_skip_bash(cmd) {
                 return Ok(());
             }
@@ -110,7 +111,8 @@ pub async fn observe() -> Result<()> {
             .as_ref()
             .and_then(|v| v["file_path"].as_str())
         {
-            if let Err(e) = sync_native_memory(&conn, &event.session_id, file_path, branch.as_deref())
+            if let Err(e) =
+                sync_native_memory(&conn, &event.session_id, file_path, branch.as_deref())
             {
                 crate::log::warn("observe", &format!("native memory sync failed: {}", e));
             }
@@ -226,16 +228,17 @@ fn extract_project_from_memory_path(file_path: &str) -> String {
         return "unknown".to_string();
     };
     let after_projects = &file_path[projects_pos + "/projects/".len()..];
-    let slug = after_projects.split('/').next().unwrap_or("unknown");
-
-    let parts: Vec<&str> = slug.split('-').filter(|s| !s.is_empty()).collect();
-    if parts.len() >= 2 {
-        format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
-    } else if parts.len() == 1 {
-        parts[0].to_string()
-    } else {
-        "unknown".to_string()
+    let slug = after_projects.split('/').next().unwrap_or("");
+    if slug.is_empty() {
+        return "unknown".to_string();
     }
+    let mut decoded = slug.replace('-', "/");
+    if !decoded.starts_with('/') {
+        decoded = format!("/{decoded}");
+    }
+    crate::project_id::canonical_project_path(&decoded)
+        .to_string_lossy()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -272,13 +275,13 @@ mod tests {
     fn extract_project_from_path() {
         let path = "/Users/lifcc/.claude/projects/-Users-lifcc-Desktop-code-AI-tools-remem/memory/feedback_quality.md";
         let project = extract_project_from_memory_path(path);
-        assert_eq!(project, "tools/remem");
+        assert_eq!(project, "/Users/lifcc/Desktop/code/AI/tools/remem");
     }
 
     #[test]
     fn extract_project_short_slug() {
         let path = "/Users/x/.claude/projects/-myproject/memory/foo.md";
         let project = extract_project_from_memory_path(path);
-        assert_eq!(project, "myproject");
+        assert_eq!(project, "/myproject");
     }
 }

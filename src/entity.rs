@@ -15,7 +15,11 @@ pub fn extract_entities(title: &str, content: &str) -> Vec<String> {
             continue;
         }
         // Capitalized English words (FTS5, SQLCipher, Rust, Claude, etc.)
-        if clean.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+        if clean
+            .chars()
+            .next()
+            .map(|c| c.is_uppercase())
+            .unwrap_or(false)
             && clean.chars().any(|c| c.is_lowercase())
             && clean.len() >= 3
         {
@@ -27,7 +31,9 @@ pub fn extract_entities(title: &str, content: &str) -> Vec<String> {
         // ALL-CAPS acronyms (FTS5, API, MCP, RRF, etc.)
         if clean.len() >= 2
             && clean.len() <= 8
-            && clean.chars().all(|c| c.is_uppercase() || c.is_ascii_digit())
+            && clean
+                .chars()
+                .all(|c| c.is_uppercase() || c.is_ascii_digit())
         {
             let lower = clean.to_lowercase();
             if seen.insert(lower) {
@@ -38,9 +44,27 @@ pub fn extract_entities(title: &str, content: &str) -> Vec<String> {
 
     // Extract known technical terms
     let tech_terms = [
-        "remem", "sqlite", "sqlcipher", "fts5", "trigram", "axum", "tokio",
-        "claude", "codex", "cursor", "aider", "mem0", "zep", "letta", "engram",
-        "hindsight", "mcp", "hook", "ToolAdapter", "REST", "API",
+        "remem",
+        "sqlite",
+        "sqlcipher",
+        "fts5",
+        "trigram",
+        "axum",
+        "tokio",
+        "claude",
+        "codex",
+        "cursor",
+        "aider",
+        "mem0",
+        "zep",
+        "letta",
+        "engram",
+        "hindsight",
+        "mcp",
+        "hook",
+        "ToolAdapter",
+        "REST",
+        "API",
     ];
     let lower_combined = combined.to_lowercase();
     for term in &tech_terms {
@@ -81,13 +105,10 @@ pub fn link_entities(conn: &Connection, memory_id: i64, entities: &[String]) -> 
     Ok(())
 }
 
-/// Build a project filter SQL fragment: matches exact project or suffix.
+/// Build exact project filter SQL fragment.
 /// Returns (sql_fragment, param_value) for use in WHERE clauses.
 fn project_filter_sql(param_idx: usize) -> String {
-    format!(
-        "(m.project = ?{idx} OR m.project LIKE '%/' || ?{idx})",
-        idx = param_idx
-    )
+    format!("m.project = ?{idx}", idx = param_idx)
 }
 
 /// Search memories by entity name. Returns memory IDs sorted by relevance.
@@ -216,7 +237,9 @@ pub fn expand_via_entity_graph(
     }
 
     // Step 1: Get all entity IDs linked to seed memories
-    let placeholders: Vec<String> = (1..=seed_memory_ids.len()).map(|i| format!("?{i}")).collect();
+    let placeholders: Vec<String> = (1..=seed_memory_ids.len())
+        .map(|i| format!("?{i}"))
+        .collect();
     let sql = format!(
         "SELECT DISTINCT entity_id FROM memory_entities WHERE memory_id IN ({})",
         placeholders.join(", ")
@@ -309,11 +332,42 @@ pub fn expand_via_entity_graph(
 fn is_stop_word(word: &str) -> bool {
     matches!(
         word,
-        "the" | "and" | "for" | "with" | "from" | "that" | "this" | "into"
-            | "when" | "what" | "how" | "not" | "are" | "was" | "has" | "had"
-            | "will" | "can" | "all" | "but" | "use" | "new" | "add" | "set"
-            | "run" | "get" | "let" | "some" | "none" | "used" | "using"
-            | "session" | "request" | "context" | "decisions" | "learned"
+        "the"
+            | "and"
+            | "for"
+            | "with"
+            | "from"
+            | "that"
+            | "this"
+            | "into"
+            | "when"
+            | "what"
+            | "how"
+            | "not"
+            | "are"
+            | "was"
+            | "has"
+            | "had"
+            | "will"
+            | "can"
+            | "all"
+            | "but"
+            | "use"
+            | "new"
+            | "add"
+            | "set"
+            | "run"
+            | "get"
+            | "let"
+            | "some"
+            | "none"
+            | "used"
+            | "using"
+            | "session"
+            | "request"
+            | "context"
+            | "decisions"
+            | "learned"
     )
 }
 
@@ -323,7 +377,10 @@ mod tests {
 
     #[test]
     fn extract_tool_names() {
-        let entities = extract_entities("FTS5 trigram tokenizer for SQLCipher", "Using Rust and Axum");
+        let entities = extract_entities(
+            "FTS5 trigram tokenizer for SQLCipher",
+            "Using Rust and Axum",
+        );
         assert!(entities.iter().any(|e| e.contains("FTS5")));
         assert!(entities.iter().any(|e| e.to_lowercase() == "sqlcipher"));
         assert!(entities.iter().any(|e| e.to_lowercase() == "axum"));

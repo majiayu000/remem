@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::{db, memory, search};
+use crate::{db, memory, memory_service};
 
 type DbState = Arc<Mutex<rusqlite::Connection>>;
 
@@ -21,12 +21,23 @@ struct SearchParams {
     memory_type: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
+    include_stale: Option<bool>,
+    branch: Option<String>,
+    multi_hop: Option<bool>,
 }
 
 #[derive(Serialize)]
 struct SearchResponse {
     data: Vec<MemoryItem>,
     meta: Meta,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multi_hop: Option<MultiHopInfo>,
+}
+
+#[derive(Serialize)]
+struct MultiHopInfo {
+    hops: u8,
+    entities_discovered: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -67,22 +78,38 @@ struct ErrorDetail {
 
 #[derive(Deserialize)]
 struct SaveMemoryRequest {
-    project: String,
-    title: String,
-    content: String,
-    memory_type: String,
+    text: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
     #[serde(default)]
     topic_key: Option<String>,
+    #[serde(default)]
+    memory_type: Option<String>,
+    #[serde(default)]
+    files: Option<Vec<String>>,
     #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
     created_at_epoch: Option<i64>,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    local_path: Option<String>,
+    #[serde(default)]
+    local_copy_enabled: Option<bool>,
 }
 
 #[derive(Serialize)]
 struct SaveMemoryResponse {
     id: i64,
     status: String,
+    memory_type: String,
+    upserted: bool,
+    local_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -123,24 +150,33 @@ async fn handle_search(
     Query(params): Query<SearchParams>,
 ) -> impl IntoResponse {
     let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let offset = params.offset.unwrap_or(0).max(0);
 
     let Ok(conn) = db.lock() else {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_failed",
+            "database lock poisoned",
+        )
+        .into_response();
     };
-    match search::search(
-        &conn,
-        params.query.as_deref(),
-        params.project.as_deref(),
-        params.memory_type.as_deref(),
+
+    let req = memory_service::SearchRequest {
+        query: params.query,
+        project: params.project,
+        memory_type: params.memory_type,
         limit,
         offset,
-        false,
-    ) {
+        include_stale: params.include_stale.unwrap_or(false),
+        branch: params.branch,
+        multi_hop: params.multi_hop.unwrap_or(false),
+    };
+
+    match memory_service::search_memories(&conn, &req) {
         Ok(results) => {
-            let count = results.len();
+            let count = results.memories.len();
             let has_more = count as i64 >= limit;
-            let items: Vec<MemoryItem> = results.iter().map(memory_to_item).collect();
+            let items: Vec<MemoryItem> = results.memories.iter().map(memory_to_item).collect();
             Json(SearchResponse {
                 data: items,
                 meta: Meta {
@@ -149,6 +185,10 @@ async fn handle_search(
                     limit,
                     offset,
                 },
+                multi_hop: results.multi_hop.map(|m| MultiHopInfo {
+                    hops: m.hops,
+                    entities_discovered: m.entities_discovered,
+                }),
             })
             .into_response()
         }
@@ -166,14 +206,18 @@ async fn handle_get_memory(
     Query(params): Query<ShowParams>,
 ) -> impl IntoResponse {
     let Ok(conn) = db.lock() else {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_failed",
+            "database lock poisoned",
+        )
+        .into_response();
     };
     match memory::get_memories_by_ids(&conn, &[params.id], None) {
-        Ok(results) if !results.is_empty() => {
-            Json(memory_to_item(&results[0])).into_response()
+        Ok(results) if !results.is_empty() => Json(memory_to_item(&results[0])).into_response(),
+        Ok(_) => {
+            error_response(StatusCode::NOT_FOUND, "not_found", "Memory not found").into_response()
         }
-        Ok(_) => error_response(StatusCode::NOT_FOUND, "not_found", "Memory not found")
-            .into_response(),
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "db_error",
@@ -187,28 +231,39 @@ async fn handle_save_memory(
     State(db): State<DbState>,
     Json(req): Json<SaveMemoryRequest>,
 ) -> impl IntoResponse {
-    let scope = req.scope.as_deref().unwrap_or("project");
     let Ok(conn) = db.lock() else {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_failed",
+            "database lock poisoned",
+        )
+        .into_response();
     };
-    match memory::insert_memory_full(
-        &conn,
-        None,
-        &req.project,
-        req.topic_key.as_deref(),
-        &req.title,
-        &req.content,
-        &req.memory_type,
-        None,
-        None,
-        scope,
-        req.created_at_epoch,
-    ) {
-        Ok(id) => (
+
+    let save_req = memory_service::SaveMemoryRequest {
+        text: req.text,
+        title: req.title,
+        project: req.project,
+        topic_key: req.topic_key,
+        memory_type: req.memory_type,
+        files: req.files,
+        scope: req.scope,
+        created_at_epoch: req.created_at_epoch,
+        branch: req.branch,
+        local_path: req.local_path,
+        local_copy_enabled: req.local_copy_enabled,
+    };
+
+    match memory_service::save_memory(&conn, &save_req) {
+        Ok(saved) => (
             StatusCode::CREATED,
             Json(SaveMemoryResponse {
-                id,
-                status: "created".into(),
+                id: saved.id,
+                status: saved.status,
+                memory_type: saved.memory_type,
+                upserted: saved.upserted,
+                local_status: saved.local_status,
+                local_path: saved.local_path,
             }),
         )
             .into_response(),
@@ -223,7 +278,12 @@ async fn handle_save_memory(
 
 async fn handle_status(State(db): State<DbState>) -> impl IntoResponse {
     let Ok(conn) = db.lock() else {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "lock_failed", "database lock poisoned").into_response();
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_failed",
+            "database lock poisoned",
+        )
+        .into_response();
     };
     let memory_count: i64 = conn
         .query_row(
@@ -254,7 +314,12 @@ pub fn build_router() -> Router<DbState> {
         .route("/api/v1/memory", get(handle_get_memory))
         .route("/api/v1/memories", post(handle_save_memory))
         .route("/api/v1/status", get(handle_status))
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
 }
 
 pub async fn run_api_server(port: u16) -> anyhow::Result<()> {
@@ -265,7 +330,11 @@ pub async fn run_api_server(port: u16) -> anyhow::Result<()> {
     let addr = format!("127.0.0.1:{}", port);
 
     crate::log::info("api", &format!("REST API listening on http://{}", addr));
-    println!("remem REST API v{} on http://{}", env!("CARGO_PKG_VERSION"), addr);
+    println!(
+        "remem REST API v{} on http://{}",
+        env!("CARGO_PKG_VERSION"),
+        addr
+    );
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;

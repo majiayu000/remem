@@ -63,54 +63,13 @@ pub fn collect_rows<T>(
     Ok(result)
 }
 
-/// Escape LIKE wildcards so literal `%` and `_` in labels are not treated as patterns.
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
-fn project_lookup_terms(project: &str) -> (Vec<String>, Vec<String>) {
-    let mut exact = vec![project.to_string()];
-    let mut like = Vec::new();
-
-    if let Some((label, _)) = project.rsplit_once('@') {
-        if !label.is_empty() {
-            exact.push(label.to_string());
-            like.push(format!("{}@%", escape_like(label)));
-        }
-    } else if !project.is_empty() {
-        like.push(format!("{}@%", escape_like(project)));
-    }
-
-    exact.sort();
-    exact.dedup();
-    like.sort();
-    like.dedup();
-    (exact, like)
-}
-
 pub fn push_project_filter(
     column: &str,
     project: &str,
-    mut idx: usize,
+    idx: usize,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
 ) -> (String, usize) {
-    let (exact, like) = project_lookup_terms(project);
-    let mut clauses = Vec::new();
-
-    for key in exact {
-        clauses.push(format!("{column} = ?{idx}"));
-        params.push(Box::new(key));
-        idx += 1;
-    }
-    for pat in like {
-        clauses.push(format!("{column} LIKE ?{idx} ESCAPE '\\'"));
-        params.push(Box::new(pat));
-        idx += 1;
-    }
-
-    (format!("({})", clauses.join(" OR ")), idx)
+    crate::project_id::push_project_filter(column, project, idx, params)
 }
 
 pub fn query_observations(

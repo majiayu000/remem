@@ -41,11 +41,20 @@ pub struct SelfRetrievalReport {
 
 impl std::fmt::Display for EvalReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "=== remem eval-local ({} memories) ===\n", self.total_memories)?;
+        writeln!(
+            f,
+            "=== remem eval-local ({} memories) ===\n",
+            self.total_memories
+        )?;
 
         // Dedup
-        writeln!(f, "[dedup] {} duplicates in {} groups ({:.1}%)",
-            self.dedup.duplicate_count, self.dedup.duplicate_groups, self.dedup.duplicate_rate * 100.0)?;
+        writeln!(
+            f,
+            "[dedup] {} duplicates in {} groups ({:.1}%)",
+            self.dedup.duplicate_count,
+            self.dedup.duplicate_groups,
+            self.dedup.duplicate_rate * 100.0
+        )?;
         if !self.dedup.worst_groups.is_empty() {
             writeln!(f, "  worst:")?;
             for (preview, count) in &self.dedup.worst_groups {
@@ -54,22 +63,35 @@ impl std::fmt::Display for EvalReport {
         }
 
         // Project leak
-        writeln!(f, "\n[project_filter] tested {} entities, {} leaked ({:.1}%)",
-            self.project_leak.total_tested, self.project_leak.leaked,
-            self.project_leak.leak_rate * 100.0)?;
+        writeln!(
+            f,
+            "\n[project_filter] tested {} entities, {} leaked ({:.1}%)",
+            self.project_leak.total_tested,
+            self.project_leak.leaked,
+            self.project_leak.leak_rate * 100.0
+        )?;
 
         // Title quality
-        writeln!(f, "\n[title_quality] {:.1}% start with bullet, {:.1}% too long (>{} chars)",
+        writeln!(
+            f,
+            "\n[title_quality] {:.1}% start with bullet, {:.1}% too long (>{} chars)",
             self.title_quality.bullet_rate * 100.0,
             if self.title_quality.total > 0 {
                 self.title_quality.too_long as f64 / self.title_quality.total as f64 * 100.0
-            } else { 0.0 },
-            MAX_GOOD_TITLE_LEN)?;
+            } else {
+                0.0
+            },
+            MAX_GOOD_TITLE_LEN
+        )?;
 
         // Self-retrieval
-        writeln!(f, "\n[self_retrieval] {}/{} ({:.1}%)",
-            self.self_retrieval.found, self.self_retrieval.total_tested,
-            self.self_retrieval.retrieval_rate * 100.0)?;
+        writeln!(
+            f,
+            "\n[self_retrieval] {}/{} ({:.1}%)",
+            self.self_retrieval.found,
+            self.self_retrieval.total_tested,
+            self.self_retrieval.retrieval_rate * 100.0
+        )?;
 
         // Overall score
         let score = self.overall_score();
@@ -96,7 +118,8 @@ impl EvalReport {
 pub fn run_eval(conn: &Connection) -> Result<EvalReport> {
     let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
 
     let dedup = check_dedup(conn)?;
@@ -117,9 +140,8 @@ pub fn run_eval(conn: &Connection) -> Result<EvalReport> {
 fn check_dedup(conn: &Connection) -> Result<DedupReport> {
     use std::hash::{Hash, Hasher};
 
-    let mut stmt = conn.prepare(
-        "SELECT id, title, content FROM memories WHERE status = 'active'"
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, title, content FROM memories WHERE status = 'active'")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,
@@ -162,9 +184,14 @@ fn check_dedup(conn: &Connection) -> Result<DedupReport> {
 
     let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
-    let rate = if total > 0 { duplicate_count as f64 / total as f64 } else { 0.0 };
+    let rate = if total > 0 {
+        duplicate_count as f64 / total as f64
+    } else {
+        0.0
+    };
 
     Ok(DedupReport {
         duplicate_groups,
@@ -180,7 +207,7 @@ fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport> {
     let mut stmt = conn.prepare(
         "SELECT project, COUNT(*) as cnt FROM memories
          WHERE status = 'active' AND project != ''
-         GROUP BY project ORDER BY cnt DESC LIMIT 5"
+         GROUP BY project ORDER BY cnt DESC LIMIT 5",
     )?;
     let projects: Vec<String> = stmt
         .query_map([], |r| r.get::<_, String>(0))?
@@ -188,7 +215,11 @@ fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport> {
         .collect();
 
     if projects.len() < 2 {
-        return Ok(ProjectLeakReport { total_tested: 0, leaked: 0, leak_rate: 0.0 });
+        return Ok(ProjectLeakReport {
+            total_tested: 0,
+            leaked: 0,
+            leak_rate: 0.0,
+        });
     }
 
     let mut total_tested = 0;
@@ -202,7 +233,7 @@ fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport> {
              JOIN entities e ON e.id = me.entity_id
              JOIN memories m ON m.id = me.memory_id
              WHERE m.project = ?1 AND m.status = 'active'
-             LIMIT 3"
+             LIMIT 3",
         )?;
         let entities: Vec<String> = estmt
             .query_map(params![proj], |r| r.get::<_, String>(0))?
@@ -214,12 +245,14 @@ fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport> {
             let results = crate::entity::search_by_entity(conn, entity, Some(proj), 20)?;
             // Check if any returned memory is from a different project
             for mid in &results {
-                let mem_proj: String = conn.query_row(
-                    "SELECT project FROM memories WHERE id = ?1",
-                    params![mid],
-                    |r| r.get(0),
-                ).unwrap_or_default();
-                if mem_proj != *proj && !mem_proj.ends_with(&format!("/{}", proj)) {
+                let mem_proj: String = conn
+                    .query_row(
+                        "SELECT project FROM memories WHERE id = ?1",
+                        params![mid],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_default();
+                if !crate::project_id::project_matches(Some(&mem_proj), proj) {
                     leaked += 1;
                 }
             }
@@ -227,22 +260,32 @@ fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport> {
         }
     }
 
-    let rate = if total_tested > 0 { leaked as f64 / total_tested.max(1) as f64 } else { 0.0 };
-    Ok(ProjectLeakReport { total_tested, leaked, leak_rate: rate })
+    let rate = if total_tested > 0 {
+        leaked as f64 / total_tested.max(1) as f64
+    } else {
+        0.0
+    };
+    Ok(ProjectLeakReport {
+        total_tested,
+        leaked,
+        leak_rate: rate,
+    })
 }
 
 /// Check title quality: bullet-prefixed titles are bad for FTS.
 fn check_title_quality(conn: &Connection) -> Result<TitleQualityReport> {
     let total: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
 
     let bullet_prefix: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE status = 'active'
          AND (title LIKE '• %' OR title LIKE '- %' OR title LIKE '* %'
               OR title LIKE 'Preference: %')",
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
 
     let too_long: i64 = conn.query_row(
@@ -250,11 +293,21 @@ fn check_title_quality(conn: &Connection) -> Result<TitleQualityReport> {
             "SELECT COUNT(*) FROM memories WHERE status = 'active' AND LENGTH(title) > {}",
             MAX_GOOD_TITLE_LEN
         ),
-        [], |r| r.get(0),
+        [],
+        |r| r.get(0),
     )?;
 
-    let rate = if total > 0 { bullet_prefix as f64 / total as f64 } else { 0.0 };
-    Ok(TitleQualityReport { total, bullet_prefix, too_long, bullet_rate: rate })
+    let rate = if total > 0 {
+        bullet_prefix as f64 / total as f64
+    } else {
+        0.0
+    };
+    Ok(TitleQualityReport {
+        total,
+        bullet_prefix,
+        too_long,
+        bullet_rate: rate,
+    })
 }
 
 /// Self-retrieval: search for recent memories by their own key terms.
@@ -262,7 +315,7 @@ fn check_self_retrieval(conn: &Connection) -> Result<SelfRetrievalReport> {
     let mut stmt = conn.prepare(
         "SELECT id, title, project FROM memories
          WHERE status = 'active' AND LENGTH(title) > 20
-         ORDER BY updated_at_epoch DESC LIMIT 20"
+         ORDER BY updated_at_epoch DESC LIMIT 20",
     )?;
     let recent: Vec<(i64, String, String)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
@@ -283,14 +336,20 @@ fn check_self_retrieval(conn: &Connection) -> Result<SelfRetrievalReport> {
             continue;
         }
         let query = words.join(" ");
-        let results = crate::search::search(
-            conn, Some(&query), Some(project), None, 20, 0, true,
-        )?;
+        let results = crate::search::search(conn, Some(&query), Some(project), None, 20, 0, true)?;
         if results.iter().any(|m| m.id == *id) {
             found += 1;
         }
     }
 
-    let rate = if total > 0 { found as f64 / total as f64 } else { 0.0 };
-    Ok(SelfRetrievalReport { total_tested: total, found, retrieval_rate: rate })
+    let rate = if total > 0 {
+        found as f64 / total as f64
+    } else {
+        0.0
+    };
+    Ok(SelfRetrievalReport {
+        total_tested: total,
+        found,
+        retrieval_rate: rate,
+    })
 }

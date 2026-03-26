@@ -83,7 +83,14 @@ fn parse_n_days_ago(lower: &str) -> Option<i64> {
     if lower.contains("天前") {
         let before_tian = lower.split("天前").next()?;
         // Try parsing the last number/character
-        let num_str: String = before_tian.chars().rev().take_while(|c| c.is_ascii_digit()).collect::<String>().chars().rev().collect();
+        let num_str: String = before_tian
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         if let Ok(n) = num_str.parse::<i64>() {
             return Some(n);
         }
@@ -145,7 +152,7 @@ pub fn search_by_time(
         let mut stmt = conn.prepare(
             "SELECT id FROM memories
              WHERE status = 'active'
-             AND (project = ?3 OR project LIKE '%/' || ?3)
+             AND project = ?3
              AND updated_at_epoch BETWEEN ?1 AND ?2
              ORDER BY updated_at_epoch DESC LIMIT ?4",
         )?;

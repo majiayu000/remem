@@ -14,6 +14,7 @@ const FLUSH_BATCH_SIZE: usize = 15;
 const FLUSH_RETRY_MIN_BATCH_SIZE: usize = 1;
 /// Pending lease duration for a single flush worker.
 const PENDING_LEASE_SECS: i64 = 240;
+const PENDING_RETRY_MAX_SECS: i64 = 1800;
 
 /// Min Task response length worth processing (skip empty/error results).
 const MIN_TASK_RESPONSE_LEN: usize = 100;
@@ -83,6 +84,17 @@ fn build_session_events_xml(batch: &[db::PendingObservation]) -> String {
 
 fn is_ai_timeout_error(err: &anyhow::Error) -> bool {
     err.to_string().to_lowercase().contains("timed out")
+}
+
+fn pending_retry_backoff_secs(attempt_count: i64) -> i64 {
+    let secs = match attempt_count {
+        i64::MIN..=1 => 30,
+        2 => 120,
+        3 => 300,
+        4 => 900,
+        _ => 1800,
+    };
+    secs.min(PENDING_RETRY_MAX_SECS)
 }
 
 fn persist_flush_batch(
@@ -192,16 +204,16 @@ async fn flush_single_task(
 ) -> Result<usize> {
     let response_text = pending.tool_response.as_deref().unwrap_or("");
     if response_text.len() < MIN_TASK_RESPONSE_LEN {
-        crate::log::info(
-            "flush-task",
-            &format!(
-                "skip Task id={} (response {}B < {}B)",
-                pending.id,
-                response_text.len(),
-                MIN_TASK_RESPONSE_LEN
-            ),
+        let reason = format!(
+            "task response too short: {}B < {}B",
+            response_text.len(),
+            MIN_TASK_RESPONSE_LEN
         );
-        db::delete_pending_claimed(conn, lease_owner, &[pending.id])?;
+        crate::log::warn(
+            "flush-task",
+            &format!("mark failed Task id={} ({})", pending.id, reason),
+        );
+        db::fail_pending_claimed(conn, lease_owner, &[pending.id], &reason)?;
         return Ok(0);
     }
 
@@ -231,8 +243,9 @@ async fn flush_single_task(
 
     let observations = memory_format::parse_observations(&response);
     if observations.is_empty() {
-        crate::log::info("flush-task", "no observations extracted from Task result");
-        db::delete_pending_claimed(conn, lease_owner, &[pending.id])?;
+        let reason = "no observations extracted from task response";
+        crate::log::warn("flush-task", reason);
+        db::fail_pending_claimed(conn, lease_owner, &[pending.id], reason)?;
         return Ok(0);
     }
 
@@ -306,15 +319,21 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
                 }
             }
             Err(e) => {
+                let backoff = pending_retry_backoff_secs(p.attempt_count);
+                let err_msg = format!("task flush failed: {}", e);
                 crate::log::warn(
                     "flush-task",
-                    &format!("Task id={} flush failed (continuing): {}", p.id, e),
+                    &format!(
+                        "Task id={} flush failed (retry in {}s): {}",
+                        p.id, backoff, e
+                    ),
                 );
-                // Delete the pending on failure to avoid infinite retry
-                if let Err(del_err) = db::delete_pending_claimed(&conn, &lease_owner, &[p.id]) {
+                if let Err(retry_err) =
+                    db::retry_pending_claimed(&conn, &lease_owner, &[p.id], &err_msg, backoff)
+                {
                     crate::log::warn(
                         "flush-task",
-                        &format!("delete failed id={}: {}", p.id, del_err),
+                        &format!("retry mark failed id={}: {}", p.id, retry_err),
                     );
                 }
             }
@@ -359,6 +378,11 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
                     tool_response: p.tool_response.clone(),
                     cwd: p.cwd.clone(),
                     created_at_epoch: p.created_at_epoch,
+                    updated_at_epoch: p.updated_at_epoch,
+                    status: p.status.clone(),
+                    attempt_count: p.attempt_count,
+                    next_retry_epoch: p.next_retry_epoch,
+                    last_error: p.last_error.clone(),
                 })
                 .collect();
             let events = build_session_events_xml(&batch_owned);
@@ -401,11 +425,14 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
                         }
                     }
 
-                    if let Err(release_err) = db::release_pending_claims(&conn, &lease_owner) {
-                        crate::log::warn(
-                            "flush",
-                            &format!("release claim failed: {}", release_err),
-                        );
+                    let ids: Vec<i64> = batch.iter().map(|p| p.id).collect();
+                    let max_attempt = batch.iter().map(|p| p.attempt_count).max().unwrap_or(1);
+                    let backoff = pending_retry_backoff_secs(max_attempt);
+                    let err_msg = format!("action flush ai call failed: {}", e);
+                    if let Err(retry_err) =
+                        db::retry_pending_claimed(&conn, &lease_owner, &ids, &err_msg, backoff)
+                    {
+                        crate::log::warn("flush", &format!("retry mark failed: {}", retry_err));
                     }
                     crate::log::warn("flush", &format!("AI call failed: {}", e));
                     timer.done(&format!("AI error: {}", e));
@@ -433,7 +460,12 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
                     ),
                 );
                 let ids: Vec<i64> = batch.iter().map(|p| p.id).collect();
-                db::delete_pending_claimed(&conn, &lease_owner, &ids)?;
+                db::fail_pending_claimed(
+                    &conn,
+                    &lease_owner,
+                    &ids,
+                    "no observations extracted from action batch",
+                )?;
                 continue;
             }
 

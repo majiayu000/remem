@@ -142,6 +142,9 @@ remem backfill-entities    # Populate entity index from existing memories
 remem encrypt              # Encrypt database with SQLCipher
 remem api --port 5567      # Start REST API server
 remem status               # Show system health and statistics
+remem pending list-failed  # Show failed pending observations
+remem pending retry-failed # Requeue failed pending observations
+remem pending purge-failed # Purge old failed pending observations
 remem preferences list     # View all preferences
 remem preferences add "text"  # Add a preference manually
 remem preferences remove 42   # Remove a preference by ID
@@ -161,10 +164,60 @@ remem api --port 5567
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/search?query=&project=&limit=` | GET | Search memories |
+| `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=` | GET | Search memories |
 | `/api/v1/memory?id=` | GET | Get single memory |
 | `/api/v1/memories` | POST | Save a memory |
 | `/api/v1/status` | GET | System status |
+
+### `POST /api/v1/memories` body
+
+```json
+{
+  "text": "Switched tokenizer to FTS5 trigram for CJK retrieval.",
+  "title": "FTS5 trigram decision",
+  "project": "/Users/lifcc/Desktop/code/AI/tools/remem",
+  "topic_key": "fts5-trigram-search",
+  "memory_type": "decision",
+  "files": ["src/search.rs", "src/db_query.rs"],
+  "scope": "project",
+  "created_at_epoch": 1774500000,
+  "branch": "main",
+  "local_path": "docs/notes/fts5.md",
+  "local_copy_enabled": true
+}
+```
+
+### `GET /api/v1/search` response shape
+
+```json
+{
+  "data": [
+    {
+      "id": 101,
+      "title": "FTS5 trigram decision",
+      "content": "Switched tokenizer...",
+      "memory_type": "decision",
+      "project": "/Users/lifcc/Desktop/code/AI/tools/remem",
+      "scope": "project",
+      "status": "active",
+      "topic_key": "fts5-trigram-search",
+      "branch": "main",
+      "created_at_epoch": 1774500000,
+      "updated_at_epoch": 1774500000
+    }
+  ],
+  "meta": {
+    "count": 1,
+    "has_more": false,
+    "limit": 20,
+    "offset": 0
+  },
+  "multi_hop": {
+    "hops": 2,
+    "entities_discovered": ["FTS5", "SQLite"]
+  }
+}
+```
 
 ## Security
 
@@ -211,7 +264,7 @@ Currently supports Claude Code. Future: Codex, Cursor, Aider — implement the t
 After 1 month of production use:
 
 ```
-remem v0.3.0
+remem v0.3.1
   Memories:      1001
   Observations:  1834
   Entities:      1599
@@ -235,7 +288,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed documentation incl
 - MCP Server (7 tools)
 - REST API (Axum)
 - Environment variables (full list)
-- Database schema (v12)
+- Database schema (v13)
 - Design decisions
 
 ## Uninstall

@@ -123,7 +123,11 @@ pub fn search_multi_hop(
     let mut ranked: Vec<(i64, f64)> = scores.into_iter().collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    let top_ids: Vec<i64> = ranked.iter().take(limit as usize).map(|(id, _)| *id).collect();
+    let top_ids: Vec<i64> = ranked
+        .iter()
+        .take(limit as usize)
+        .map(|(id, _)| *id)
+        .collect();
     let loaded = memory::get_memories_by_ids(conn, &top_ids, None)?;
     let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
     let memories = top_ids

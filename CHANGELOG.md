@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.1] - 2026-03-26
+
+### Architecture
+- Introduced canonical `ProjectId` normalization and removed ad-hoc project matching paths.
+- Added `MemoryService` to unify save/search behavior across MCP and REST API.
+- Added `pending_admin` module and CLI commands for failed pending operations.
+
+### Reliability
+- Replaced destructive pending deletion on flush errors with recoverable pending state machine:
+  `pending` / `processing` / `failed` plus retry metadata.
+- Added DB migration to schema v13 for pending retry/failure fields and indexes.
+
+### API / UX
+- Unified memory write contract (`text`, `title`, `project`, `scope`, `memory_type`, etc.) for MCP and REST.
+- Updated README command/API examples for failed pending inspection and retry.
+
 ## [0.3.0] - 2026-03-24
 
 ### Search

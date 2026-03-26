@@ -76,7 +76,11 @@ fn content_hash(text: &str) -> String {
 /// Build a keyword-rich title from the content itself.
 /// Falls back to request prefix only if content is too short.
 fn build_title(content: &str, request: &str, label: &str) -> String {
-    let source = if content.len() >= 20 { content } else { request };
+    let source = if content.len() >= 20 {
+        content
+    } else {
+        request
+    };
     if source.is_empty() {
         return format!("Session {label}");
     }
@@ -117,7 +121,11 @@ fn build_content(body: &str, request: &str) -> String {
     if request.is_empty() {
         body.to_string()
     } else {
-        format!("[Context: {}]\n\n{}", truncate_at_boundary(request, 150), body)
+        format!(
+            "[Context: {}]\n\n{}",
+            truncate_at_boundary(request, 150),
+            body
+        )
     }
 }
 
@@ -345,7 +353,8 @@ mod tests {
 
     #[test]
     fn test_split_into_items_dashes() {
-        let text = "- First decision about architecture\n- Second decision about testing\n- Third one";
+        let text =
+            "- First decision about architecture\n- Second decision about testing\n- Third one";
         let items = split_into_items(text);
         assert_eq!(items.len(), 3);
     }
@@ -514,20 +523,34 @@ mod tests {
 
         // Session 1: different request text
         promote_summary_to_memories(
-            &conn, "session-1", "test/proj",
+            &conn,
+            "session-1",
+            "test/proj",
             Some("Optimize search"),
-            Some(decision), None, None,
-        ).unwrap();
+            Some(decision),
+            None,
+            None,
+        )
+        .unwrap();
 
         // Session 2: same decision, different request
         promote_summary_to_memories(
-            &conn, "session-2", "test/proj",
+            &conn,
+            "session-2",
+            "test/proj",
             Some("Database performance tuning"),
-            Some(decision), None, None,
-        ).unwrap();
+            Some(decision),
+            None,
+            None,
+        )
+        .unwrap();
 
         // Should have only 1 memory (upserted, not duplicated)
         let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
-        assert_eq!(memories.len(), 1, "same decision should dedup across sessions");
+        assert_eq!(
+            memories.len(),
+            1,
+            "same decision should dedup across sessions"
+        );
     }
 }
