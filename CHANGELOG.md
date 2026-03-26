@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] - 2026-03-26
+
+### Packaging
+- Fixed GitHub Release ARM64 Linux cross-compilation for SQLCipher by installing ARM64 OpenSSL toolchain (`libssl-dev:arm64`) and setting target-specific include/lib env vars in `release.yml`.
+- Kept `reqwest` on `rustls-tls` to avoid unnecessary `native-tls` OpenSSL coupling in release builds.
+
 ## [0.3.2] - 2026-03-26
 
 ### Packaging
