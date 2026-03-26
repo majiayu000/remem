@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.4] - 2026-03-26
+
+### Packaging
+- Fixed ARM64 Linux toolchain install on GitHub Ubuntu runners by switching from multi-arch `libssl-dev:arm64` to cross package `libssl-dev-arm64-cross`.
+- Updated ARM64 OpenSSL include/lib env paths (`/usr/aarch64-linux-gnu/...`) to match cross toolchain layout.
+
 ## [0.3.3] - 2026-03-26
 
 ### Packaging

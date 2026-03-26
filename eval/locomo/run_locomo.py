@@ -612,7 +612,7 @@ def run_pipeline(http, base_url, samples, openai_client, model, top_k, skip_inge
 
 def print_report(category_scores):
     print("\n" + "=" * 60)
-    print("  LoCoMo Benchmark Results — remem v0.3.3 (v3)")
+    print("  LoCoMo Benchmark Results — remem v0.3.4 (v3)")
     print("=" * 60)
 
     all_scores = []
