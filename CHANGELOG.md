@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] - 2026-03-26
+
+### Packaging
+- Switched `reqwest` to `rustls-tls` (disabled default features) to remove `native-tls`/OpenSSL cross-build dependency.
+- Fixed Linux ARM64 release build path in GitHub Actions by avoiding target OpenSSL toolchain requirement.
+
 ## [0.3.1] - 2026-03-26
 
 ### Architecture

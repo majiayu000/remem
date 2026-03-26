@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Persistent memory for Claude Code — single binary, zero subprocesses"
 license = "MIT"
@@ -28,7 +28,7 @@ dirs = "6"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 rmcp = { version = "0.15", features = ["server", "transport-io", "macros"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 axum = { version = "0.8.8", features = ["json"] }
 tower-http = { version = "0.6.8", features = ["cors"] }
 

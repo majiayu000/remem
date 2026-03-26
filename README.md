@@ -264,7 +264,7 @@ Currently supports Claude Code. Future: Codex, Cursor, Aider — implement the t
 After 1 month of production use:
 
 ```
-remem v0.3.1
+remem v0.3.2
   Memories:      1001
   Observations:  1834
   Entities:      1599
