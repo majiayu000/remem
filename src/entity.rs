@@ -81,9 +81,23 @@ pub fn link_entities(conn: &Connection, memory_id: i64, entities: &[String]) -> 
     Ok(())
 }
 
+/// Build a project filter SQL fragment: matches exact project or suffix.
+/// Returns (sql_fragment, param_value) for use in WHERE clauses.
+fn project_filter_sql(param_idx: usize) -> String {
+    format!(
+        "(m.project = ?{idx} OR m.project LIKE '%/' || ?{idx})",
+        idx = param_idx
+    )
+}
+
 /// Search memories by entity name. Returns memory IDs sorted by relevance.
-pub fn search_by_entity(conn: &Connection, query: &str, limit: i64) -> Result<Vec<i64>> {
-    // Extract potential entity names from query
+/// When project is Some, only returns memories from that project.
+pub fn search_by_entity(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    limit: i64,
+) -> Result<Vec<i64>> {
     let query_entities = extract_entities(query, "");
 
     if query_entities.is_empty() {
@@ -94,13 +108,41 @@ pub fn search_by_entity(conn: &Connection, query: &str, limit: i64) -> Result<Ve
                 continue;
             }
             let pattern = format!("%{}%", word);
-            let mut stmt = conn.prepare(
-                "SELECT DISTINCT me.memory_id FROM memory_entities me
-                 JOIN entities e ON e.id = me.entity_id
-                 WHERE e.canonical_name LIKE ?1 COLLATE NOCASE
-                 LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![pattern, limit], |r| r.get::<_, i64>(0))?;
+            let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+                if let Some(proj) = project {
+                    (
+                        format!(
+                            "SELECT DISTINCT me.memory_id FROM memory_entities me
+                             JOIN entities e ON e.id = me.entity_id
+                             JOIN memories m ON m.id = me.memory_id
+                             WHERE e.canonical_name LIKE ?1 COLLATE NOCASE
+                             AND {}
+                             LIMIT ?3",
+                            project_filter_sql(2)
+                        ),
+                        vec![
+                            Box::new(pattern) as Box<dyn rusqlite::types::ToSql>,
+                            Box::new(proj.to_string()),
+                            Box::new(limit),
+                        ],
+                    )
+                } else {
+                    (
+                        "SELECT DISTINCT me.memory_id FROM memory_entities me
+                         JOIN entities e ON e.id = me.entity_id
+                         WHERE e.canonical_name LIKE ?1 COLLATE NOCASE
+                         LIMIT ?2"
+                            .to_string(),
+                        vec![
+                            Box::new(pattern) as Box<dyn rusqlite::types::ToSql>,
+                            Box::new(limit),
+                        ],
+                    )
+                };
+            let refs: Vec<&dyn rusqlite::types::ToSql> =
+                params_vec.iter().map(|b| b.as_ref()).collect();
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, i64>(0))?;
             for row in rows {
                 let id = row?;
                 if !ids.contains(&id) {
@@ -113,13 +155,41 @@ pub fn search_by_entity(conn: &Connection, query: &str, limit: i64) -> Result<Ve
 
     let mut all_ids = Vec::new();
     for entity_name in &query_entities {
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT me.memory_id FROM memory_entities me
-             JOIN entities e ON e.id = me.entity_id
-             WHERE e.canonical_name = ?1 COLLATE NOCASE
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![entity_name, limit], |r| r.get::<_, i64>(0))?;
+        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+            if let Some(proj) = project {
+                (
+                    format!(
+                        "SELECT DISTINCT me.memory_id FROM memory_entities me
+                         JOIN entities e ON e.id = me.entity_id
+                         JOIN memories m ON m.id = me.memory_id
+                         WHERE e.canonical_name = ?1 COLLATE NOCASE
+                         AND {}
+                         LIMIT ?3",
+                        project_filter_sql(2)
+                    ),
+                    vec![
+                        Box::new(entity_name.clone()) as Box<dyn rusqlite::types::ToSql>,
+                        Box::new(proj.to_string()),
+                        Box::new(limit),
+                    ],
+                )
+            } else {
+                (
+                    "SELECT DISTINCT me.memory_id FROM memory_entities me
+                     JOIN entities e ON e.id = me.entity_id
+                     WHERE e.canonical_name = ?1 COLLATE NOCASE
+                     LIMIT ?2"
+                        .to_string(),
+                    vec![
+                        Box::new(entity_name.clone()) as Box<dyn rusqlite::types::ToSql>,
+                        Box::new(limit),
+                    ],
+                )
+            };
+        let refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, i64>(0))?;
         for row in rows {
             let id = row?;
             if !all_ids.contains(&id) {
@@ -133,11 +203,12 @@ pub fn search_by_entity(conn: &Connection, query: &str, limit: i64) -> Result<Ve
 /// Entity graph expansion for multi-hop retrieval.
 /// Given a set of memory IDs (first-hop results), find co-occurring entities
 /// in those memories, then find OTHER memories that mention those entities.
-/// This enables "Melanie → Tom (her kid) → Tom likes dinosaurs" chains.
+/// When project is Some, only expands within that project.
 pub fn expand_via_entity_graph(
     conn: &Connection,
     seed_memory_ids: &[i64],
     exclude_ids: &[i64],
+    project: Option<&str>,
     limit: i64,
 ) -> Result<Vec<i64>> {
     if seed_memory_ids.is_empty() {
@@ -163,31 +234,62 @@ pub fn expand_via_entity_graph(
         return Ok(vec![]);
     }
 
-    // Step 2: Find memories linked to these entities, excluding already-seen ones
+    // Step 2: Find memories linked to these entities, with project filter
     let entity_placeholders: Vec<String> =
         (1..=entity_ids.len()).map(|i| format!("?{i}")).collect();
 
     let exclude_set: std::collections::HashSet<i64> = exclude_ids.iter().copied().collect();
     let seed_set: std::collections::HashSet<i64> = seed_memory_ids.iter().copied().collect();
 
-    let sql2 = format!(
-        "SELECT me.memory_id, COUNT(DISTINCT me.entity_id) as shared_count
-         FROM memory_entities me
-         WHERE me.entity_id IN ({})
-         GROUP BY me.memory_id
-         ORDER BY shared_count DESC
-         LIMIT ?{}",
-        entity_placeholders.join(", "),
-        entity_ids.len() + 1
-    );
+    let next_param = entity_ids.len() + 1;
+    let (sql2, limit_param_idx) = if let Some(_proj) = project {
+        let proj_idx = next_param;
+        let limit_idx = next_param + 1;
+        (
+            format!(
+                "SELECT me.memory_id, COUNT(DISTINCT me.entity_id) as shared_count
+                 FROM memory_entities me
+                 JOIN memories m ON m.id = me.memory_id
+                 WHERE me.entity_id IN ({})
+                 AND {}
+                 GROUP BY me.memory_id
+                 ORDER BY shared_count DESC
+                 LIMIT ?{}",
+                entity_placeholders.join(", "),
+                project_filter_sql(proj_idx),
+                limit_idx
+            ),
+            limit_idx,
+        )
+    } else {
+        let limit_idx = next_param;
+        (
+            format!(
+                "SELECT me.memory_id, COUNT(DISTINCT me.entity_id) as shared_count
+                 FROM memory_entities me
+                 WHERE me.entity_id IN ({})
+                 GROUP BY me.memory_id
+                 ORDER BY shared_count DESC
+                 LIMIT ?{}",
+                entity_placeholders.join(", "),
+                limit_idx
+            ),
+            limit_idx,
+        )
+    };
+    let _ = limit_param_idx; // used in SQL format string
+
     let mut stmt2 = conn.prepare(&sql2)?;
     let mut param_values2: Vec<Box<dyn rusqlite::types::ToSql>> = entity_ids
         .iter()
         .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
         .collect();
-    // Over-fetch to account for filtering
-    param_values2.push(Box::new(limit * 3));
-    let refs2: Vec<&dyn rusqlite::types::ToSql> = param_values2.iter().map(|b| b.as_ref()).collect();
+    if let Some(proj) = project {
+        param_values2.push(Box::new(proj.to_string()));
+    }
+    param_values2.push(Box::new(limit * 3)); // Over-fetch for filtering
+    let refs2: Vec<&dyn rusqlite::types::ToSql> =
+        param_values2.iter().map(|b| b.as_ref()).collect();
 
     let rows2 = stmt2.query_map(refs2.as_slice(), |r| r.get::<_, i64>(0))?;
     let mut expanded_ids = Vec::new();

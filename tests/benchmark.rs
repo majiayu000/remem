@@ -1040,7 +1040,7 @@ fn bench_entity_graph_expansion_finds_related() -> Result<()> {
     entity::link_entities(&conn, id_c, &["ESLint".to_string()])?;
 
     // From seed [id_a], entity graph should find id_b (shares TypeScript)
-    let expanded = entity::expand_via_entity_graph(&conn, &[id_a], &[], 10)?;
+    let expanded = entity::expand_via_entity_graph(&conn, &[id_a], &[], None, 10)?;
     assert!(
         expanded.contains(&id_b),
         "Graph expansion from A should find B (shared entity: TypeScript). Got: {:?}",

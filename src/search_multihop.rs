@@ -74,7 +74,7 @@ pub fn search_multi_hop(
     let mut second_hop_ids: Vec<i64> = Vec::new();
 
     for entity_name in &discovered_entities {
-        let entity_results = crate::entity::search_by_entity(conn, entity_name, fetch)?;
+        let entity_results = crate::entity::search_by_entity(conn, entity_name, project, fetch)?;
         for id in entity_results {
             if !first_hop_set.contains(&id) && !second_hop_ids.contains(&id) {
                 second_hop_ids.push(id);

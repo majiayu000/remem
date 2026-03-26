@@ -19,6 +19,7 @@ pub mod db_usage;
 pub mod dedup;
 pub mod doctor;
 pub mod entity;
+pub mod eval_local;
 pub mod eval_metrics;
 pub mod install;
 pub mod log;

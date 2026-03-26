@@ -89,6 +89,8 @@ enum Commands {
         #[arg(long, short = 'k', default_value = "5")]
         k: usize,
     },
+    /// Run local memory quality eval (dedup, project filter, title, self-retrieval)
+    EvalLocal,
     /// Backfill entity index from existing memories
     BackfillEntities,
     /// Encrypt the database with SQLCipher
@@ -197,6 +199,9 @@ async fn main() -> Result<()> {
         }
         Commands::Eval { dataset, k } => {
             run_eval(&dataset, k)?;
+        }
+        Commands::EvalLocal => {
+            run_eval_local()?;
         }
         Commands::BackfillEntities => {
             run_backfill_entities()?;
@@ -454,6 +459,14 @@ fn run_backfill_entities() -> Result<()> {
         "Done. {} entities extracted, {} unique entities, {} memories processed.",
         total_entities, unique, memories_processed
     );
+    Ok(())
+}
+
+fn run_eval_local() -> Result<()> {
+    use remem::eval_local;
+    let conn = db::open_db()?;
+    let report = eval_local::run_eval(&conn)?;
+    print!("{}", report);
     Ok(())
 }
 

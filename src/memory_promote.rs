@@ -53,11 +53,29 @@ fn slugify(text: &str, max_len: usize) -> String {
     }
 }
 
+/// Generate a stable content-based hash for topic_key dedup.
+/// Uses first 200 chars of content to produce a short hex prefix,
+/// so the same decision across different sessions gets the same key.
+fn content_hash(text: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let normalized: String = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ')
+        .collect();
+    let trimmed = if normalized.len() > 200 {
+        &normalized[..200]
+    } else {
+        &normalized
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    trimmed.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 /// Build a keyword-rich title from the content itself.
 /// Falls back to request prefix only if content is too short.
 fn build_title(content: &str, request: &str, label: &str) -> String {
-    // Use the content itself as the title source (not request).
-    // Truncate to MAX_TITLE_LEN with word-boundary awareness.
     let source = if content.len() >= 20 { content } else { request };
     if source.is_empty() {
         return format!("Session {label}");
@@ -78,9 +96,7 @@ fn truncate_at_boundary(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         return text.to_string();
     }
-    // Find a good break point: prefer sentence-end, then word boundary.
     let slice = &text[..max_len];
-    // Try to break at sentence end.
     for sep in ['。', '；', ';', '.', '，', ','] {
         if let Some(pos) = slice.rfind(sep) {
             if pos > max_len / 2 {
@@ -88,29 +104,24 @@ fn truncate_at_boundary(text: &str, max_len: usize) -> String {
             }
         }
     }
-    // Break at word boundary (space or CJK char boundary).
     if let Some(pos) = slice.rfind(' ') {
         if pos > max_len / 2 {
             return text[..pos].to_string();
         }
     }
-    // Hard truncate at char boundary.
     text.chars().take(max_len).collect()
 }
 
-/// Build content with request as lightweight context, not the primary text.
-/// The content body is the decision/learned text itself, with request as a one-line header.
+/// Build content with request as lightweight context.
 fn build_content(body: &str, request: &str) -> String {
     if request.is_empty() {
         body.to_string()
     } else {
-        // Request as a compact context line, body is the primary content.
         format!("[Context: {}]\n\n{}", truncate_at_boundary(request, 150), body)
     }
 }
 
 /// Split a multi-line text block into individual items.
-/// Recognizes bullet points, numbered lists, and semicolons.
 fn split_into_items(text: &str) -> Vec<String> {
     let mut items = Vec::new();
     let mut current = String::new();
@@ -182,6 +193,9 @@ fn split_into_items(text: &str) -> Vec<String> {
 /// Auto-promote session summary fields to memories.
 /// Splits multi-item decisions/learned into individual memories.
 /// Returns number of memories created/updated.
+///
+/// topic_key is now based on content hash (not request prefix),
+/// so the same decision across different sessions deduplicates correctly.
 pub fn promote_summary_to_memories(
     conn: &Connection,
     session_id: &str,
@@ -205,8 +219,8 @@ pub fn promote_summary_to_memories(
                     }
                     let title = build_item_title(item, "decision", i);
                     let content = build_content(item, request_text);
-                    let topic_key =
-                        format!("auto-decision-{}-{}", slugify(request_text, 40), i + 1);
+                    // Content-based hash: same decision text → same topic_key
+                    let topic_key = format!("decision-{}", content_hash(item));
                     insert_memory(
                         conn,
                         Some(session_id),
@@ -222,7 +236,7 @@ pub fn promote_summary_to_memories(
             } else {
                 let title = build_title(text, request_text, "decisions");
                 let content = build_content(text, request_text);
-                let topic_key = format!("auto-decision-{}", slugify(request_text, 50));
+                let topic_key = format!("decision-{}", content_hash(text));
                 insert_memory(
                     conn,
                     Some(session_id),
@@ -249,8 +263,7 @@ pub fn promote_summary_to_memories(
                     }
                     let title = build_item_title(item, "learned", i);
                     let content = build_content(item, request_text);
-                    let topic_key =
-                        format!("auto-discovery-{}-{}", slugify(request_text, 40), i + 1);
+                    let topic_key = format!("discovery-{}", content_hash(item));
                     insert_memory(
                         conn,
                         Some(session_id),
@@ -266,7 +279,7 @@ pub fn promote_summary_to_memories(
             } else {
                 let title = build_title(text, request_text, "learned");
                 let content = build_content(text, request_text);
-                let topic_key = format!("auto-discovery-{}", slugify(request_text, 50));
+                let topic_key = format!("discovery-{}", content_hash(text));
                 insert_memory(
                     conn,
                     Some(session_id),
@@ -286,7 +299,7 @@ pub fn promote_summary_to_memories(
         let text = text.trim();
         if text.len() >= MIN_PREFERENCE_LEN {
             let title = build_title(text, "", "preference");
-            let topic_key = format!("auto-preference-{}", slugify(text, 50));
+            let topic_key = format!("preference-{}", content_hash(text));
             insert_memory_full(
                 conn,
                 Some(session_id),
@@ -358,7 +371,6 @@ mod tests {
             "Optimize search and concurrency",
             "decision",
         );
-        // Title should be derived from content, not request
         assert!(title.contains("RwLock"));
         assert!(title.contains("— decision"));
     }
@@ -366,7 +378,6 @@ mod tests {
     #[test]
     fn test_build_title_fallback_to_request() {
         let title = build_title("short", "Optimize search and concurrency", "decision");
-        // Short content falls back to request
         assert!(title.contains("Optimize"));
     }
 
@@ -376,10 +387,8 @@ mod tests {
             "Use RwLock instead of Mutex for concurrent read support",
             "Optimize search",
         );
-        // Content should NOT have **Request**: or **Decisions**: boilerplate
         assert!(!content.contains("**Request**"));
         assert!(!content.contains("**Decisions**"));
-        // Should have compact context header
         assert!(content.contains("[Context:"));
         assert!(content.contains("RwLock"));
     }
@@ -388,7 +397,7 @@ mod tests {
     fn test_truncate_at_boundary() {
         let text = "Use RwLock instead of Mutex for concurrent read support in the database layer";
         let truncated = truncate_at_boundary(text, 40);
-        assert!(truncated.len() <= 45); // Allow slight overshoot for word boundary
+        assert!(truncated.len() <= 45);
         assert!(!truncated.ends_with(' '));
     }
 
@@ -396,7 +405,6 @@ mod tests {
     fn test_truncate_cjk() {
         let text = "使用 RwLock 替代 Mutex 实现并发读支持。数据库层需要高并发";
         let truncated = truncate_at_boundary(text, 30);
-        // Should break at sentence boundary '。'
         assert!(truncated.contains("。") || truncated.len() <= 35);
     }
 
@@ -420,7 +428,6 @@ mod tests {
         .unwrap();
         assert_eq!(count, 3);
 
-        // Verify titles are content-derived, not request-derived
         let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
         let titles: Vec<&str> = memories.iter().map(|m| m.title.as_str()).collect();
         assert!(
@@ -474,7 +481,6 @@ mod tests {
 
         let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
         assert_eq!(memories.len(), 1);
-        // Content should use compact format, not **Request**/**Decisions** boilerplate
         assert!(
             !memories[0].text.contains("**Request**"),
             "content should not have boilerplate: {}",
@@ -485,5 +491,43 @@ mod tests {
             "content should have compact context: {}",
             memories[0].text
         );
+    }
+
+    #[test]
+    fn test_content_hash_dedup() {
+        // Same decision text from different requests should get the same topic_key
+        let hash1 = content_hash("Use FTS5 trigram tokenizer for CJK support");
+        let hash2 = content_hash("Use FTS5 trigram tokenizer for CJK support");
+        assert_eq!(hash1, hash2);
+
+        // Different content should get different keys
+        let hash3 = content_hash("Switch to WAL mode for concurrent reads");
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_cross_session_dedup() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let decision = "Use FTS5 trigram tokenizer for CJK text search support";
+
+        // Session 1: different request text
+        promote_summary_to_memories(
+            &conn, "session-1", "test/proj",
+            Some("Optimize search"),
+            Some(decision), None, None,
+        ).unwrap();
+
+        // Session 2: same decision, different request
+        promote_summary_to_memories(
+            &conn, "session-2", "test/proj",
+            Some("Database performance tuning"),
+            Some(decision), None, None,
+        ).unwrap();
+
+        // Should have only 1 memory (upserted, not duplicated)
+        let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+        assert_eq!(memories.len(), 1, "same decision should dedup across sessions");
     }
 }

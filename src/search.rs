@@ -78,8 +78,8 @@ pub fn search_with_branch(
                 channels.push(fts.iter().map(|m| m.id).collect());
             }
 
-            // Channel 2: Entity search
-            let entity_ids = crate::entity::search_by_entity(conn, q, fetch)?;
+            // Channel 2: Entity search (project-scoped)
+            let entity_ids = crate::entity::search_by_entity(conn, q, project, fetch)?;
             if !entity_ids.is_empty() {
                 channels.push(entity_ids);
             }
@@ -111,6 +111,7 @@ pub fn search_with_branch(
                     conn,
                     &first_hop_ids,
                     &first_hop_ids,
+                    project,
                     fetch,
                 )?;
 
