@@ -82,7 +82,8 @@ _embedding_cache: dict = {}
 
 def get_embedding(openai_client, text: str) -> list:
     """Get OpenAI embedding for text, with in-memory cache."""
-    key = text[:500]
+    import hashlib
+    key = hashlib.sha256(text[:8000].encode()).hexdigest()
     if key in _embedding_cache:
         return _embedding_cache[key]
     for attempt in range(3):
@@ -136,11 +137,11 @@ def rrf_fuse(fts_memories: list, vec_memories: list, k: int = 60) -> list:
     scores: dict = {}
     id_to_mem: dict = {}
     for rank, m in enumerate(fts_memories):
-        mid = m.get("id", id(m))
+        mid = m.get("id", hash(m.get("content", "")[:80]))
         scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
         id_to_mem[mid] = m
     for rank, m in enumerate(vec_memories):
-        mid = m.get("id", id(m))
+        mid = m.get("id", hash(m.get("content", "")[:80]))
         scores[mid] = scores.get(mid, 0.0) + 1.0 / (k + rank + 1)
         id_to_mem[mid] = m
     sorted_ids = sorted(scores, key=lambda x: -scores[x])
@@ -433,7 +434,7 @@ def enhanced_retrieve(http, base_url, sample_id, question, category, openai_clie
 
     def add_results(results):
         for m in results:
-            mid = m.get("id", id(m))
+            mid = m.get("id", hash(m.get("content", "")[:80]))
             if mid not in seen_ids:
                 seen_ids.add(mid)
                 all_memories.append(m)
@@ -448,7 +449,7 @@ def enhanced_retrieve(http, base_url, sample_id, question, category, openai_clie
     fts_memories = []
     for q in sub_queries:
         for m in retrieve_context(http, base_url, sample_id, q, 20):
-            mid = m.get("id", id(m))
+            mid = m.get("id", hash(m.get("content", "")[:80]))
             if mid not in seen_ids:
                 seen_ids.add(mid)
                 fts_memories.append(m)
@@ -459,14 +460,14 @@ def enhanced_retrieve(http, base_url, sample_id, question, category, openai_clie
 
     # RRF fusion of FTS5 and vector results
     all_memories = rrf_fuse(fts_memories, vec_memories)
-    seen_ids = {m.get("id", id(m)) for m in all_memories}
+    seen_ids = {m.get("id", hash(m.get("content", "")[:80])) for m in all_memories}
 
     # M2: Hop 2 — extract intermediate entities from hop-1 results and search again
     if category == 1 and all_memories:
         hop2_entities = extract_entities_from_memories(openai_client, question, all_memories[:5], model)
         for entity in hop2_entities:
             for m in retrieve_context(http, base_url, sample_id, entity, 10):
-                mid = m.get("id", id(m))
+                mid = m.get("id", hash(m.get("content", "")[:80]))
                 if mid not in seen_ids:
                     seen_ids.add(mid)
                     all_memories.append(m)

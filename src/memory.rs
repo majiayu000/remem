@@ -581,5 +581,48 @@ mod tests {
         assert_eq!(active, 1);
     }
 
+    #[test]
+    fn test_created_at_override() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let custom_epoch: i64 = 1_700_000_000; // 2023-11-14
+        let id = insert_memory_full(
+            &conn, Some("s1"), "proj", None,
+            "Old event", "Something from the past", "discovery",
+            None, None, "project", Some(custom_epoch),
+        ).unwrap();
+
+        let row: (i64, i64) = conn.query_row(
+            "SELECT created_at_epoch, updated_at_epoch FROM memories WHERE id = ?1",
+            params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+
+        assert_eq!(row.0, custom_epoch, "created_at_epoch should use override");
+        assert_ne!(row.1, custom_epoch, "updated_at_epoch should use current time");
+    }
+
+    #[test]
+    fn test_created_at_default_when_no_override() {
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memory_schema(&conn);
+
+        let before = chrono::Utc::now().timestamp();
+        let id = insert_memory_full(
+            &conn, Some("s1"), "proj", None,
+            "Recent event", "Something now", "discovery",
+            None, None, "project", None,
+        ).unwrap();
+        let after = chrono::Utc::now().timestamp();
+
+        let created: i64 = conn.query_row(
+            "SELECT created_at_epoch FROM memories WHERE id = ?1",
+            params![id], |r| r.get(0),
+        ).unwrap();
+
+        assert!(created >= before && created <= after,
+            "created_at_epoch should be current time when no override");
+    }
+
     // promote tests are in memory_promote::tests
 }
