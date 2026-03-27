@@ -25,6 +25,7 @@ pub mod install;
 pub mod log;
 pub mod mcp;
 pub mod memory;
+pub mod migrate;
 pub mod memory_format;
 pub mod memory_promote;
 pub mod memory_search;
