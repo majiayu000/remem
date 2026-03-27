@@ -302,65 +302,70 @@ fn ensure_pending_table(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Column-based migrations: (table, column, ALTER TABLE SQL).
+/// Every SQL here MUST use only constant DEFAULT values — SQLite rejects
+/// expressions like `strftime()` in ALTER TABLE ADD COLUMN.
+/// See: https://www.sqlite.org/lang_altertable.html
+const COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
+    (
+        "observations",
+        "status",
+        "ALTER TABLE observations ADD COLUMN status TEXT DEFAULT 'active'",
+    ),
+    (
+        "observations",
+        "last_accessed_epoch",
+        "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER",
+    ),
+    (
+        "session_summaries",
+        "decisions",
+        "ALTER TABLE session_summaries ADD COLUMN decisions TEXT",
+    ),
+    (
+        "session_summaries",
+        "preferences",
+        "ALTER TABLE session_summaries ADD COLUMN preferences TEXT",
+    ),
+    (
+        "pending_observations",
+        "lease_owner",
+        "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT",
+    ),
+    (
+        "pending_observations",
+        "lease_expires_epoch",
+        "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER",
+    ),
+    (
+        "pending_observations",
+        "updated_at_epoch",
+        "ALTER TABLE pending_observations ADD COLUMN updated_at_epoch INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "pending_observations",
+        "status",
+        "ALTER TABLE pending_observations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+    ),
+    (
+        "pending_observations",
+        "attempt_count",
+        "ALTER TABLE pending_observations ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "pending_observations",
+        "next_retry_epoch",
+        "ALTER TABLE pending_observations ADD COLUMN next_retry_epoch INTEGER",
+    ),
+    (
+        "pending_observations",
+        "last_error",
+        "ALTER TABLE pending_observations ADD COLUMN last_error TEXT",
+    ),
+];
+
 fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
-    let migrations: &[(&str, &str, &str)] = &[
-        (
-            "observations",
-            "status",
-            "ALTER TABLE observations ADD COLUMN status TEXT DEFAULT 'active'",
-        ),
-        (
-            "observations",
-            "last_accessed_epoch",
-            "ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER",
-        ),
-        (
-            "session_summaries",
-            "decisions",
-            "ALTER TABLE session_summaries ADD COLUMN decisions TEXT",
-        ),
-        (
-            "session_summaries",
-            "preferences",
-            "ALTER TABLE session_summaries ADD COLUMN preferences TEXT",
-        ),
-        (
-            "pending_observations",
-            "lease_owner",
-            "ALTER TABLE pending_observations ADD COLUMN lease_owner TEXT",
-        ),
-        (
-            "pending_observations",
-            "lease_expires_epoch",
-            "ALTER TABLE pending_observations ADD COLUMN lease_expires_epoch INTEGER",
-        ),
-        (
-            "pending_observations",
-            "updated_at_epoch",
-            "ALTER TABLE pending_observations ADD COLUMN updated_at_epoch INTEGER NOT NULL DEFAULT 0",
-        ),
-        (
-            "pending_observations",
-            "status",
-            "ALTER TABLE pending_observations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
-        ),
-        (
-            "pending_observations",
-            "attempt_count",
-            "ALTER TABLE pending_observations ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
-        ),
-        (
-            "pending_observations",
-            "next_retry_epoch",
-            "ALTER TABLE pending_observations ADD COLUMN next_retry_epoch INTEGER",
-        ),
-        (
-            "pending_observations",
-            "last_error",
-            "ALTER TABLE pending_observations ADD COLUMN last_error TEXT",
-        ),
-    ];
-    for (table, col, sql) in migrations {
+    for (table, col, sql) in COLUMN_MIGRATIONS {
         if !column_exists(conn, table, col)? {
             conn.execute_batch(sql)?;
         }
@@ -1273,6 +1278,82 @@ mod tests {
             |r| r.get(0),
         )?;
         assert_eq!(hash, "hash-1");
+        Ok(())
+    }
+
+    // --- Migration regression tests ---
+
+    /// SQLite ALTER TABLE ADD COLUMN does not support non-constant DEFAULT
+    /// expressions like `strftime('now')`. This test catches the exact bug
+    /// from v0.3.6 where `DEFAULT (strftime('%s','now'))` broke all hooks.
+    #[test]
+    fn column_migration_defaults_are_sqlite_constant() {
+        for (table, col, sql) in COLUMN_MIGRATIONS {
+            let upper = sql.to_uppercase();
+            assert!(
+                !upper.contains("DEFAULT ("),
+                "Migration for {}.{} uses non-constant DEFAULT (unsupported by SQLite ALTER TABLE ADD COLUMN): {}",
+                table, col, sql
+            );
+        }
+    }
+
+    /// Apply all column migrations to tables that lack the new columns,
+    /// simulating a real upgrade from an old schema version.
+    #[test]
+    fn column_migrations_apply_to_old_schema() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+
+        // Create tables with MINIMAL columns (pre-migration state)
+        conn.execute_batch(
+            "CREATE TABLE observations (
+                id INTEGER PRIMARY KEY,
+                memory_session_id TEXT NOT NULL,
+                project TEXT,
+                type TEXT NOT NULL,
+                title TEXT,
+                created_at_epoch INTEGER
+            );
+            CREATE TABLE session_summaries (
+                id INTEGER PRIMARY KEY,
+                memory_session_id TEXT NOT NULL,
+                project TEXT,
+                request TEXT,
+                created_at TEXT,
+                created_at_epoch INTEGER
+            );
+            CREATE TABLE pending_observations (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                tool_input TEXT,
+                tool_response TEXT,
+                cwd TEXT,
+                created_at_epoch INTEGER NOT NULL
+            );",
+        )?;
+
+        // Run column migrations — this must not fail
+        for (table, col, sql) in COLUMN_MIGRATIONS {
+            if !column_exists(&conn, table, col)? {
+                conn.execute_batch(sql)
+                    .map_err(|e| anyhow::anyhow!(
+                        "Migration failed for {}.{}: {} — SQL: {}",
+                        table, col, e, sql
+                    ))?;
+            }
+        }
+
+        // Verify every column now exists
+        for (table, col, _) in COLUMN_MIGRATIONS {
+            assert!(
+                column_exists(&conn, table, col)?,
+                "Column {}.{} missing after migration",
+                table, col
+            );
+        }
+
         Ok(())
     }
 }
