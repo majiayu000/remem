@@ -337,7 +337,7 @@ fn ensure_schema_migrations(conn: &Connection, old_version: i64) -> Result<()> {
         (
             "pending_observations",
             "updated_at_epoch",
-            "ALTER TABLE pending_observations ADD COLUMN updated_at_epoch INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))",
+            "ALTER TABLE pending_observations ADD COLUMN updated_at_epoch INTEGER NOT NULL DEFAULT 0",
         ),
         (
             "pending_observations",
