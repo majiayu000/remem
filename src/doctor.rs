@@ -32,6 +32,7 @@ pub fn run_doctor() -> Result<()> {
 
     let checks = vec![
         check_binary(),
+        check_schema_migration(),
         check_database(),
         check_hooks(),
         check_mcp(),
@@ -273,6 +274,103 @@ fn check_pending_queue() -> Check {
             detail: format!("{} pending, {} failed", pending, failed_pending),
         }
     }
+}
+
+/// Dry-run migration check: copy real table schemas into an in-memory DB,
+/// then execute pending ALTER TABLE migrations. Catches SQLite-incompatible
+/// SQL before it breaks hooks at runtime.
+fn check_schema_migration() -> Check {
+    let db_path = db::db_path();
+    if !db_path.exists() {
+        return Check {
+            name: "Schema",
+            status: Status::Ok,
+            detail: "no database yet (will create on first use)".into(),
+        };
+    }
+
+    // Open raw connection (no migrations)
+    let real_conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return Check {
+                name: "Schema",
+                status: Status::Fail,
+                detail: format!("cannot open DB: {}", e),
+            }
+        }
+    };
+    if let Err(e) = real_conn.execute_batch("PRAGMA busy_timeout=5000;") {
+        return Check {
+            name: "Schema",
+            status: Status::Fail,
+            detail: format!("cannot set busy_timeout: {}", e),
+        };
+    }
+
+    let version: i64 = real_conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    if version >= db::SCHEMA_VERSION {
+        return Check {
+            name: "Schema",
+            status: Status::Ok,
+            detail: format!("v{} (up to date)", version),
+        };
+    }
+
+    // Migration needed — dry-run on in-memory DB with real table schemas
+    match dry_run_column_migrations(&real_conn) {
+        Ok(()) => Check {
+            name: "Schema",
+            status: Status::Ok,
+            detail: format!("v{} -> v{} (migration dry-run passed)", version, db::SCHEMA_VERSION),
+        },
+        Err(e) => Check {
+            name: "Schema",
+            status: Status::Fail,
+            detail: format!(
+                "v{} -> v{} migration will FAIL: {}",
+                version, db::SCHEMA_VERSION, e
+            ),
+        },
+    }
+}
+
+fn dry_run_column_migrations(real_conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    let test_conn = rusqlite::Connection::open_in_memory()?;
+
+    // Collect unique table names from migrations
+    let tables: std::collections::HashSet<&str> = db::COLUMN_MIGRATIONS
+        .iter()
+        .map(|(table, _, _)| *table)
+        .collect();
+
+    // Copy real table schemas into the test DB
+    for table in &tables {
+        let create_sql: Option<String> = real_conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |r| r.get(0),
+            )
+            .ok();
+        if let Some(sql) = create_sql {
+            test_conn.execute_batch(&sql)?;
+        }
+    }
+
+    // Run column migrations on the test DB
+    for (table, col, sql) in db::COLUMN_MIGRATIONS {
+        if !db::column_exists(&test_conn, table, col)? {
+            test_conn
+                .execute_batch(sql)
+                .map_err(|e| anyhow::anyhow!("{}.{}: {} — SQL: {}", table, col, e, sql))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn check_disk_space() -> Check {

@@ -61,7 +61,7 @@ pub fn db_path() -> PathBuf {
 }
 
 /// Current schema version — bump when adding migrations.
-const SCHEMA_VERSION: i64 = 13;
+pub(crate) const SCHEMA_VERSION: i64 = 13;
 
 /// Load SQLCipher encryption key from env var or key file.
 /// Returns None if no encryption is configured (backward compatible).
@@ -306,7 +306,7 @@ fn ensure_pending_table(conn: &Connection) -> Result<()> {
 /// Every SQL here MUST use only constant DEFAULT values — SQLite rejects
 /// expressions like `strftime()` in ALTER TABLE ADD COLUMN.
 /// See: https://www.sqlite.org/lang_altertable.html
-const COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
+pub(crate) const COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
     (
         "observations",
         "status",
@@ -756,7 +756,7 @@ fn migrate_fts_trigram(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+pub(crate) fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
