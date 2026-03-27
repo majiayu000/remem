@@ -61,7 +61,7 @@ def create_openai_client():
             "OPENAI_API_KEY not set. Create .env in project root with:\n"
             "  OPENAI_API_KEY=your-key\n"
             "  OPENAI_BASE_URL=your-base-url  # optional\n"
-            "  OPENAI_MODEL=gpt-4o            # optional"
+            "  OPENAI_MODEL=gpt-5.4           # optional"
         )
     kwargs = {"api_key": api_key}
     if base_url:
