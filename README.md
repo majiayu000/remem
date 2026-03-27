@@ -83,11 +83,14 @@ Query: "数据库加密"
 ```
 
 Additional search enhancements:
+- **Entity graph expansion** — 2-hop multi-hop: first-hop results → extract entities → search related memories
+- **Project-scoped entity search** — entity and graph channels respect project filter (no cross-project contamination)
 - **CJK dictionary segmentation** — "数据库加密" → "数据库" + "加密" → database + encrypt
 - **Chinese↔English synonym expansion** (90+ term mappings)
 - **Title-weighted BM25** (`bm25(fts, 10.0, 1.0)` — title matches 10x)
 - **Hybrid routing** — long tokens → FTS5, short tokens → LIKE, merged with dedup
-- **Core-token LIKE** — LIKE channel uses CJK-segmented original tokens (no synonym noise)
+- **Content-hash dedup** — same decision across sessions generates same topic_key, upserted instead of duplicated
+- **Multi-step retrieval guidance** — MCP search tool description guides Claude to decompose complex queries and iterate on sparse results
 
 ### LoCoMo Benchmark
 
@@ -118,16 +121,33 @@ Evaluated on the full [LoCoMo](https://github.com/snap-research/locomo) benchmar
 > - All systems use different LLM models for generation and judging, making exact comparison imprecise. Run the benchmark yourself for apples-to-apples: `python eval/locomo/run_locomo.py`
 > - remem uses no vector search — pure FTS5 + SQLite + RRF fusion.
 
-### Internal Search Quality (eval on 1001 real memories, 30 queries)
+### Internal Search Quality (eval on 1777 real memories)
 
-| Metric | Value |
+| Metric | Value | Source |
+|--------|-------|--------|
+| MRR | 0.858 | `remem eval` (golden dataset, 30 queries) |
+| Hit Rate@5 | 1.000 | `remem eval` |
+| Dedup rate | 1.0% | `remem eval-local` (structural health) |
+| Project leak | 0% | `remem eval-local` |
+| Self-retrieval | 100% | `remem eval-local` |
+
+### Local QA Eval (end-to-end, real data)
+
+Samples N memories from the real database → LLM generates questions → remem searches → LLM answers → LLM judges. Same pipeline as LoCoMo but on your actual data.
+
+```bash
+python3 eval/local/run_local_eval.py --n 20
+```
+
+| Metric | Score |
 |--------|-------|
-| MRR | 0.858 |
-| Precision@5 | 0.460 |
-| Recall@5 | 0.628 |
-| Hit Rate@5 | 1.000 |
+| Overall | **85.0%** |
+| decision | 77.8% |
+| discovery | 87.5% |
+| preference | 100% |
+| Source in top-20 | 90.0% |
 
-Measured with `remem eval` against a [calibrated golden dataset](eval/golden.json).
+Requires `.env` in project root with `OPENAI_API_KEY` (and optional `OPENAI_BASE_URL`, `OPENAI_MODEL`).
 
 ## Commands
 
@@ -137,7 +157,8 @@ remem uninstall            # Remove hooks + MCP (data preserved)
 remem doctor               # System health check (6 checks)
 remem search "query"       # Search memories from CLI
 remem show <id>            # Show memory details
-remem eval                 # Run search quality benchmark
+remem eval                 # Run search quality benchmark (golden dataset)
+remem eval-local           # Run memory health check (dedup, project filter, titles)
 remem backfill-entities    # Populate entity index from existing memories
 remem encrypt              # Encrypt database with SQLCipher
 remem api --port 5567      # Start REST API server
@@ -265,13 +286,16 @@ After 1 month of production use:
 
 ```
 remem v0.3.5
-  Memories:      1001
-  Observations:  1834
-  Entities:      1599
-  Database:     138 MB
-  Tests:         128 passing
-  Search MRR:    0.858
-  Hit Rate@5:    1.000
+  Memories:        1777
+  Observations:    1834
+  Entities:        1600+
+  Database:        202 MB
+  Tests:           120 passing
+  Search MRR:      0.858
+  Hit Rate@5:      1.000
+  Local QA Eval:   85.0%
+  Dedup rate:      1.0%
+  Project leak:    0%
 ```
 
 ## Architecture
