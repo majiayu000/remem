@@ -32,12 +32,37 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # LLM helpers (same as LoCoMo eval)
 # ---------------------------------------------------------------------------
 
+def _load_env_file(path):
+    """Load key=value pairs from a .env file into os.environ (no override)."""
+    if not os.path.isfile(path):
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+
+# Project root .env (two levels up from eval/local/)
+_PROJECT_ENV = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+
+
 def create_openai_client():
     from openai import OpenAI
+
+    _load_env_file(_PROJECT_ENV)
+
     api_key = os.environ.get("OPENAI_API_KEY", "")
     base_url = os.environ.get("OPENAI_BASE_URL", None)
     if not api_key:
-        raise ValueError("OPENAI_API_KEY not set")
+        raise ValueError(
+            "OPENAI_API_KEY not set. Create .env in project root with:\n"
+            "  OPENAI_API_KEY=your-key\n"
+            "  OPENAI_BASE_URL=your-base-url  # optional\n"
+            "  OPENAI_MODEL=gpt-4o            # optional"
+        )
     kwargs = {"api_key": api_key}
     if base_url:
         kwargs["base_url"] = base_url
@@ -331,7 +356,11 @@ def main():
     parser = argparse.ArgumentParser(description="Local eval: real-data QA benchmark for remem")
     parser.add_argument("--remem-url", default="http://127.0.0.1:5567")
     parser.add_argument("--db", default=str(Path.home() / ".remem" / "remem.db"))
-    parser.add_argument("--model", default="gpt-5.4")
+    _load_env_file(_PROJECT_ENV)
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("OPENAI_MODEL", "gpt-5.4"),
+    )
     parser.add_argument("--n", type=int, default=30, help="Number of memories to sample")
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--project", default=None, help="Filter by project")
