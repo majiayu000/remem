@@ -143,7 +143,7 @@ pub fn encrypt_database(key: &str) -> Result<()> {
         [],
     )?;
     conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
-    conn.execute(&format!("DETACH DATABASE encrypted"), [])?;
+    conn.execute("DETACH DATABASE encrypted", [])?;
     drop(conn);
 
     // Replace original with encrypted version
@@ -631,5 +631,4 @@ mod tests {
         assert_eq!(hash, "hash-1");
         Ok(())
     }
-
 }

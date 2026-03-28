@@ -155,7 +155,7 @@ fn split_into_items(text: &str) -> Vec<String> {
                 items.push(current.trim().to_string());
             }
             let content = trimmed
-                .trim_start_matches(|c: char| c == '•' || c == '-' || c == '*' || c == '·')
+                .trim_start_matches(['•', '-', '*', '·'])
                 .trim_start();
             let content = if content
                 .chars()

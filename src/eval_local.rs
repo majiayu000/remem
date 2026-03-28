@@ -170,7 +170,7 @@ fn check_dedup(conn: &Connection) -> Result<DedupReport> {
     let mut duplicate_groups = 0;
     let mut worst: Vec<(String, i64)> = Vec::new();
 
-    for (_hash, entries) in &hash_groups {
+    for entries in hash_groups.values() {
         if entries.len() > 1 {
             let count = entries.len() as i64;
             duplicate_groups += 1;

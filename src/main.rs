@@ -131,6 +131,7 @@ enum PreferenceAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::enum_variant_names)]
 enum PendingAction {
     /// List failed pending observations
     ListFailed {
@@ -556,7 +557,7 @@ fn run_backfill_entities() -> Result<()> {
             total_entities += entities.len();
         }
         memories_processed += 1;
-        if memories_processed % 100 == 0 {
+        if memories_processed.is_multiple_of(100) {
             println!("  processed {}/{}", memories_processed, count);
         }
     }

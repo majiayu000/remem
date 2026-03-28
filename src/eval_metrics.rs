@@ -1,5 +1,3 @@
-/// Information Retrieval metrics for memory search quality evaluation.
-
 /// NDCG@k (Normalized Discounted Cumulative Gain).
 /// Measures ranking quality: are relevant results near the top?
 /// `relevance` is an ordered list of relevance grades for the returned results.

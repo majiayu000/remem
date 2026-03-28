@@ -157,7 +157,7 @@ fn write_local_note(path: &Path, content: &str) -> Result<()> {
 pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchResultSet> {
     let limit = req.limit.max(1);
     let query = req.query.as_deref();
-    let auto_multi_hop = query.map_or(false, |q| crate::entity::extract_entities(q, "").len() >= 2);
+    let auto_multi_hop = query.is_some_and(|q| crate::entity::extract_entities(q, "").len() >= 2);
     let multi_hop = req.multi_hop || auto_multi_hop;
 
     if multi_hop {

@@ -63,7 +63,7 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
     let mut seen_ids = std::collections::HashSet::new();
 
     // Layer 1: Search using project name as query (finds project-relevant memories)
-    let project_query = project.split('/').last().unwrap_or(&project);
+    let project_query = project.rsplit('/').next().unwrap_or(&project);
     if let Ok(searched) = crate::search::search(
         &conn,
         Some(project_query),
