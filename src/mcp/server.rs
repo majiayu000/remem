@@ -1,29 +1,27 @@
 use anyhow::Result;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{ServerCapabilities, ServerInfo};
-use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler, ServiceExt};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
 
+use super::types::{
+    GetObservationsParams, SaveMemoryParams, SearchParams, SearchResult, TimelineParams,
+    TimelineReportParams, UpdateWorkStreamParams, WorkStreamsParams,
+};
 use crate::db;
 use crate::memory;
 use crate::memory_service;
 use crate::search;
 
 #[derive(Clone)]
-pub struct MemoryServer {
+pub(super) struct MemoryServer {
     tool_router: ToolRouter<Self>,
-    conn: Arc<Mutex<rusqlite::Connection>>,
 }
 
 impl MemoryServer {
-    pub fn new() -> Result<Self> {
-        let conn = db::open_db()?;
+    fn new() -> Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
-            conn: Arc::new(Mutex::new(conn)),
         })
     }
 
@@ -31,131 +29,9 @@ impl MemoryServer {
     where
         F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
     {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| format!("DB lock poisoned: {}", e))?;
+        let conn = db::open_db().map_err(|e| format!("DB open failed: {}", e))?;
         f(&conn)
     }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct SearchParams {
-    #[schemars(description = "Search query (semantic search)")]
-    query: Option<String>,
-    #[schemars(description = "Max results to return (default 20)")]
-    limit: Option<i64>,
-    #[schemars(description = "Project name filter")]
-    project: Option<String>,
-    #[schemars(description = "Observation type filter")]
-    r#type: Option<String>,
-    #[schemars(description = "Result offset for pagination")]
-    offset: Option<i64>,
-    #[schemars(description = "Include stale observations (default true, stale ranked lower)")]
-    include_stale: Option<bool>,
-    #[schemars(
-        description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included."
-    )]
-    branch: Option<String>,
-    #[schemars(
-        description = "Enable multi-hop search (default false). When true, performs entity graph expansion: finds entities in first-hop results, then searches for memories mentioning those entities. Use for questions that span multiple topics/people, e.g. 'What do Melanie\\'s kids like?' or 'What events has Caroline participated in?'"
-    )]
-    multi_hop: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct TimelineParams {
-    #[schemars(description = "Anchor observation ID")]
-    anchor: Option<i64>,
-    #[schemars(description = "Search query to find anchor")]
-    query: Option<String>,
-    #[schemars(description = "Observations before anchor (default 5)")]
-    depth_before: Option<i64>,
-    #[schemars(description = "Observations after anchor (default 5)")]
-    depth_after: Option<i64>,
-    #[schemars(description = "Project name filter")]
-    project: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct GetObservationsParams {
-    #[schemars(description = "List of observation IDs to fetch")]
-    ids: Vec<i64>,
-    #[schemars(description = "Project name filter")]
-    project: Option<String>,
-    #[schemars(description = "Source type: 'memory' or 'observation' (default: 'memory')")]
-    source: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct SaveMemoryParams {
-    #[schemars(description = "Memory text content")]
-    text: String,
-    #[schemars(description = "Optional title")]
-    title: Option<String>,
-    #[schemars(description = "Project name")]
-    project: Option<String>,
-    #[schemars(
-        description = "Stable topic identifier for cross-session dedup. Same project+topic_key updates existing memory instead of creating new one. Format: kebab-case descriptive key, e.g. 'fts5-search-strategy', 'auth-middleware-design'."
-    )]
-    topic_key: Option<String>,
-    #[schemars(
-        description = "Memory type: decision, discovery, bugfix, architecture, preference. Defaults to 'discovery'."
-    )]
-    memory_type: Option<String>,
-    #[schemars(description = "List of related file paths")]
-    files: Option<Vec<String>>,
-    #[schemars(
-        description = "Optional local markdown path for backup copy. Relative paths are resolved from current working directory."
-    )]
-    local_path: Option<String>,
-    #[schemars(
-        description = "Memory scope: 'project' (default, only this project) or 'global' (visible in all projects). Use 'global' for user preferences and cross-project knowledge."
-    )]
-    scope: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct TimelineReportParams {
-    #[schemars(description = "Project name (required)")]
-    project: String,
-    #[schemars(description = "Full report with timeline and monthly breakdown (default false)")]
-    full: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct WorkStreamsParams {
-    #[schemars(description = "Project name filter")]
-    project: Option<String>,
-    #[schemars(description = "Status filter: active, paused, completed, abandoned")]
-    status: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-struct UpdateWorkStreamParams {
-    #[schemars(description = "WorkStream ID to update")]
-    id: i64,
-    #[schemars(description = "New status: active, paused, completed, abandoned")]
-    status: Option<String>,
-    #[schemars(description = "Next action to take")]
-    next_action: Option<String>,
-    #[schemars(description = "Current blockers")]
-    blockers: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct SearchResult {
-    id: i64,
-    r#type: String,
-    title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    topic_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    preview: Option<String>,
-    source: String,
-    updated_at: String,
-    project: String,
-    status: String,
 }
 
 #[tool_router]
@@ -198,6 +74,7 @@ impl MemoryServer {
             let memory_service::SearchResultSet {
                 memories,
                 multi_hop,
+                has_more: _,
             } = search_set;
 
             let search_results: Vec<SearchResult> = memories
@@ -600,7 +477,7 @@ pub async fn run_mcp_server() -> Result<()> {
     );
     let server = MemoryServer::new()?;
     // Quick sanity check: count memories + observations
-    if let Ok(conn) = server.conn.lock() {
+    if let Ok(conn) = db::open_db() {
         let mem_count: i64 = conn
             .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
             .unwrap_or(-1);
@@ -623,7 +500,10 @@ pub async fn run_mcp_server() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
     use crate::memory_service::{resolve_local_note_path, sanitize_segment};
+    use rmcp::handler::server::wrapper::Parameters;
 
     #[test]
     fn sanitize_segment_collapses_invalid_chars() {
@@ -636,5 +516,50 @@ mod tests {
         let got = resolve_local_note_path("manual", Some("x"), Some("docs/test.md"));
         assert!(got.is_absolute());
         assert!(got.ends_with("docs/test.md"));
+    }
+
+    #[test]
+    fn memory_server_new_does_not_open_database_eagerly() {
+        let test_dir = ScopedTestDataDir::new("mcp-new");
+        let db_path = test_dir.db_path();
+        assert!(!db_path.exists());
+
+        let _server = MemoryServer::new().expect("memory server should initialize");
+        assert!(!db_path.exists());
+    }
+
+    #[test]
+    fn search_reopens_database_after_file_removal() {
+        let test_dir = ScopedTestDataDir::new("mcp-search");
+        let server = MemoryServer::new().expect("memory server should initialize");
+
+        let first = server.search(Parameters(SearchParams {
+            query: None,
+            limit: Some(5),
+            project: None,
+            r#type: None,
+            offset: Some(0),
+            include_stale: Some(true),
+            branch: None,
+            multi_hop: Some(false),
+        }));
+        assert!(first.is_ok());
+        assert!(test_dir.db_path().exists());
+
+        test_dir.remove_db_files();
+        assert!(!test_dir.db_path().exists());
+
+        let second = server.search(Parameters(SearchParams {
+            query: None,
+            limit: Some(5),
+            project: None,
+            r#type: None,
+            offset: Some(0),
+            include_stale: Some(true),
+            branch: None,
+            multi_hop: Some(false),
+        }));
+        assert!(second.is_ok());
+        assert!(test_dir.db_path().exists());
     }
 }

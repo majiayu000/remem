@@ -36,36 +36,40 @@
 └───────────────────────────────────────────────────────────┘
 ```
 
-## Module Overview (~8200 lines Rust)
+## Module Overview (~9000 lines Rust)
 
 | Module | Lines | Responsibility |
 |--------|-------|----------------|
-| `db.rs` | 1132 | Data model + write ops + rate limiting + cleanup |
-| `memory.rs` | 1008 | Memory CRUD, auto-promotion from summaries, FTS search |
-| `mcp.rs` | 727 | MCP Server: search / timeline / get_observations / save_memory / workstreams |
+| `memory.rs` | 838 | Memory CRUD, auto-promotion from summaries, FTS search |
+| `db.rs` | 728 | Data model + write ops + encryption + cleanup |
+| `db_query.rs` | 680 | Read queries: FTS search, timeline, shared status stats |
+| `observe_flush.rs` | 609 | Batch flush: pending→observations via AI |
 | `workstream.rs` | 581 | WorkStream tracking across sessions (auto-create + fuzzy match) |
-| `observe.rs` | 567 | Bash filter + event queuing + type checks |
-| `db_query.rs` | 512 | Read queries: FTS search, timeline, get by ID |
-| `summarize.rs` | 499 | 3-gate + background worker + session summary + compression |
-| `timeline.rs` | 487 | Timeline report with monthly aggregation |
-| `observe_flush.rs` | 487 | Batch flush: pending→observations via AI |
-| `context.rs` | 346 | Context rendering: preferences + core + index + workstreams + sessions |
-| `preference.rs` | 321 | Preference management: query, render, CLI ops |
-| `main.rs` | 270 | CLI entry: 13 subcommands |
+| `mcp/server.rs` | 565 | MCP service runtime: tools, server lifecycle, tests |
+| `summarize.rs` | 501 | 3-gate + background worker + session summary + compression |
+| `timeline.rs` | 493 | Timeline report with monthly aggregation |
+| `cli/actions.rs` | 385 | CLI command implementations and formatted output |
+| `context.rs` | 368 | Context rendering: preferences + core + index + workstreams + sessions |
+| `preference.rs` | 352 | Preference management: query, render, CLI ops |
+| `observe.rs` | 287 | Bash filter + event queuing + type checks |
+| `db_pending.rs` | 261 | Pending observations management |
+| `search.rs` | 251 | Search entry: filtered retrieval + pagination |
 | `ai.rs` | 244 | AI calls: HTTP-first + CLI fallback + model mapping |
+| `db_job.rs` | 244 | Background job queue |
 | `install.rs` | 243 | Auto-configure hooks + MCP to settings.json |
-| `db_job.rs` | 227 | Background job queue |
-| `claude_memory.rs` | 194 | Sync summaries to Claude Code native memory directory |
-| `dedup.rs` | 176 | Hash-based deduplication |
-| `search.rs` | 172 | Search entry: FTS full-text / type filter |
+| `claude_memory.rs` | 195 | Sync summaries to Claude Code native memory directory |
+| `dedup.rs` | 179 | Hash-based deduplication |
+| `cli/mod.rs` | 172 | CLI args + command dispatch |
+| `log.rs` | 147 | Logging: file + stderr, Timer |
 | `memory_format.rs` | 148 | XML memory format parsing |
-| `db_pending.rs` | 144 | Pending observations management |
-| `log.rs` | 142 | Logging: file + stderr, Timer |
 | `db_models.rs` | 123 | Shared data models |
-| `worker.rs` | 109 | Background worker loop |
+| `mcp/types.rs` | 121 | MCP parameter/result DTOs |
+| `worker.rs` | 110 | Background worker loop |
 | `vector.rs` | 80 | Vector similarity (SQLite vec extension) |
+| `lib.rs` | 47 | Module declarations |
 | `db_usage.rs` | 39 | AI usage statistics |
-| `lib.rs` | 24 | Module declarations |
+| `main.rs` | 6 | Binary entry: delegate to `cli::run()` |
+| `mcp/mod.rs` | 4 | MCP public entry: export `run_mcp_server` |
 
 ## Data Flow
 
