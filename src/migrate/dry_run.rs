@@ -1,0 +1,78 @@
+use anyhow::Result;
+use rusqlite::Connection;
+
+use super::state::{applied_versions, has_migration_table};
+use super::types::{DryRunResult, Migration, MIGRATIONS, OLD_BASELINE_VERSION};
+
+pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
+    let current_version: i64 = real_conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+    let applied = infer_applied_versions(real_conn, current_version)?;
+    let pending: Vec<&Migration> = MIGRATIONS
+        .iter()
+        .filter(|migration| !applied.contains(&migration.version))
+        .collect();
+
+    if pending.is_empty() {
+        return Ok(DryRunResult {
+            current_version,
+            pending_count: 0,
+            error: None,
+        });
+    }
+
+    let test_conn = Connection::open_in_memory()?;
+    clone_schema(real_conn, &test_conn)?;
+    for migration in &pending {
+        if let Err(error) = test_conn.execute_batch(migration.sql) {
+            return Ok(DryRunResult {
+                current_version,
+                pending_count: pending.len(),
+                error: Some(format!(
+                    "v{:03}_{}: {}",
+                    migration.version, migration.name, error
+                )),
+            });
+        }
+    }
+
+    Ok(DryRunResult {
+        current_version,
+        pending_count: pending.len(),
+        error: None,
+    })
+}
+
+fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec<i64>> {
+    if has_migration_table(conn) {
+        return applied_versions(conn);
+    }
+    if current_version >= OLD_BASELINE_VERSION {
+        return Ok(vec![1]);
+    }
+    Ok(Vec::new())
+}
+
+fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
+    let mut stmt = src.prepare(
+        "SELECT sql FROM sqlite_master
+         WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')",
+    )?;
+    let sqls: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|row| row.ok())
+        .collect();
+
+    for sql in &sqls {
+        if sql.contains("fts5") || sql.starts_with("CREATE TABLE IF NOT EXISTS '_") {
+            continue;
+        }
+        let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
+        let safe = safe.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
+        if let Err(error) = dst.execute_batch(&safe) {
+            crate::log::debug("migrate", &format!("clone_schema skip: {}", error));
+        }
+    }
+    Ok(())
+}
