@@ -3,6 +3,7 @@ use rusqlite::{params, Connection};
 use super::support::setup_entity_schema;
 use crate::entity::{
     expand_via_entity_graph, expand_via_entity_graph_filtered, link_entities, search_by_entity,
+    search_by_entity_filtered,
 };
 
 #[test]
@@ -83,6 +84,44 @@ fn expand_via_entity_graph_filtered_respects_branch_and_status() {
     assert!(ids.contains(&2));
     assert!(ids.contains(&4));
     assert!(!ids.contains(&1));
+    assert!(!ids.contains(&3));
+    assert!(!ids.contains(&5));
+}
+
+#[test]
+fn search_by_entity_filtered_respects_branch_and_status() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_entity_schema(&conn);
+
+    for (id, branch, status) in [
+        (1_i64, Some("main"), "active"),
+        (2_i64, Some("main"), "active"),
+        (3_i64, Some("feature"), "active"),
+        (4_i64, None, "active"),
+        (5_i64, Some("main"), "archived"),
+    ] {
+        conn.execute(
+            "INSERT INTO memories (id, project, memory_type, branch, status) VALUES (?1, ?2, 'discovery', ?3, ?4)",
+            params![id, "test/proj", branch, status],
+        )
+        .unwrap();
+        link_entities(&conn, id, &["Tom".to_string()]).unwrap();
+    }
+
+    let ids = search_by_entity_filtered(
+        &conn,
+        "Tom",
+        Some("test/proj"),
+        None,
+        Some("main"),
+        10,
+        false,
+    )
+    .unwrap();
+
+    assert!(ids.contains(&1));
+    assert!(ids.contains(&2));
+    assert!(ids.contains(&4));
     assert!(!ids.contains(&3));
     assert!(!ids.contains(&5));
 }
