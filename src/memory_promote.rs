@@ -63,11 +63,7 @@ fn content_hash(text: &str) -> String {
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == ' ')
         .collect();
-    let trimmed = if normalized.len() > 200 {
-        &normalized[..200]
-    } else {
-        &normalized
-    };
+    let trimmed = crate::db::truncate_str(&normalized, 200);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     trimmed.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
@@ -100,16 +96,17 @@ fn truncate_at_boundary(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         return text.to_string();
     }
-    let slice = &text[..max_len];
+    let safe_end = crate::db::truncate_str(text, max_len).len();
+    let slice = &text[..safe_end];
     for sep in ['。', '；', ';', '.', '，', ','] {
         if let Some(pos) = slice.rfind(sep) {
-            if pos > max_len / 2 {
+            if pos > safe_end / 2 {
                 return text[..pos + sep.len_utf8()].trim().to_string();
             }
         }
     }
     if let Some(pos) = slice.rfind(' ') {
-        if pos > max_len / 2 {
+        if pos > safe_end / 2 {
             return text[..pos].to_string();
         }
     }
@@ -415,6 +412,16 @@ mod tests {
         let text = "使用 RwLock 替代 Mutex 实现并发读支持。数据库层需要高并发";
         let truncated = truncate_at_boundary(text, 30);
         assert!(truncated.contains("。") || truncated.len() <= 35);
+    }
+
+    #[test]
+    fn test_truncate_cjk_exact_boundary_panic_regression() {
+        // Regression: byte index 107 landed inside '扣' (bytes 106..109)
+        let text = "预扣计费模型：整条 DAG 在 Execute 前一次性 reserveAsyncMedia，避免每个 API 节点独立扣费，LLM 节点成本由平台承担";
+        let truncated = truncate_at_boundary(text, 107);
+        assert!(!truncated.is_empty());
+        // content_hash must also not panic on CJK
+        let _ = content_hash(text);
     }
 
     #[test]

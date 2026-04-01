@@ -39,6 +39,7 @@ git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
+codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
 
 # Configure Claude Code hooks + MCP
 remem install
