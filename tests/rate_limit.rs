@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{db, memory, observe, search};
+use remem::{db, entity, memory, memory_service, search};
 
 fn setup_observation_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -239,6 +239,275 @@ fn insert_mem(conn: &Connection, project: &str, title: &str, content: &str) -> R
         "discovery",
         None,
     )
+}
+
+fn insert_memory_row(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    title: &str,
+    updated_at_epoch: i64,
+    status: &str,
+    branch: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (?1, 's1', ?2, ?3, ?4, 'discovery', ?5, ?5, ?6, ?7, 'project')",
+        params![id, project, title, title, updated_at_epoch, status, branch],
+    )?;
+    Ok(())
+}
+
+#[test]
+fn search_offset_applies_to_memory_pages() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    insert_memory_row(&conn, 1, "proj", "oldest", 100, "active", None)?;
+    insert_memory_row(&conn, 2, "proj", "middle", 200, "active", None)?;
+    insert_memory_row(&conn, 3, "proj", "newest", 300, "active", None)?;
+
+    let results = search::search(&conn, None, Some("proj"), None, 1, 1, false)?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].title, "middle");
+    Ok(())
+}
+
+#[test]
+fn search_include_stale_controls_archived_memories() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    insert_memory_row(&conn, 1, "proj", "archived", 300, "archived", None)?;
+    insert_memory_row(&conn, 2, "proj", "active", 200, "active", None)?;
+
+    let active_only = search::search(&conn, None, Some("proj"), None, 10, 0, false)?;
+    assert_eq!(active_only.len(), 1);
+    assert_eq!(active_only[0].title, "active");
+
+    let with_archived = search::search(&conn, None, Some("proj"), None, 10, 0, true)?;
+    assert_eq!(with_archived.len(), 2);
+    assert_eq!(with_archived[0].title, "archived");
+    Ok(())
+}
+
+#[test]
+fn branch_filter_happens_before_pagination_for_query_search() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    insert_memory_row(
+        &conn,
+        1,
+        "proj",
+        "shared query newest",
+        300,
+        "active",
+        Some("main"),
+    )?;
+    insert_memory_row(
+        &conn,
+        2,
+        "proj",
+        "shared query target",
+        200,
+        "active",
+        Some("feat/x"),
+    )?;
+    insert_memory_row(
+        &conn,
+        3,
+        "proj",
+        "shared query branchless",
+        100,
+        "active",
+        None,
+    )?;
+
+    let results = search::search_with_branch(
+        &conn,
+        Some("shared query"),
+        Some("proj"),
+        None,
+        1,
+        0,
+        false,
+        Some("feat/x"),
+    )?;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].title, "shared query target");
+    Ok(())
+}
+
+#[test]
+fn memory_service_reports_exact_has_more() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    insert_memory_row(&conn, 1, "proj", "first", 300, "active", None)?;
+    insert_memory_row(&conn, 2, "proj", "second", 200, "active", None)?;
+
+    let first_page = memory_service::search_memories(
+        &conn,
+        &memory_service::SearchRequest {
+            project: Some("proj".to_string()),
+            limit: 1,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(first_page.memories.len(), 1);
+    assert!(first_page.has_more);
+
+    let second_page = memory_service::search_memories(
+        &conn,
+        &memory_service::SearchRequest {
+            project: Some("proj".to_string()),
+            limit: 1,
+            offset: 1,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(second_page.memories.len(), 1);
+    assert!(!second_page.has_more);
+    assert_eq!(second_page.memories[0].title, "second");
+    Ok(())
+}
+
+#[test]
+fn standard_search_does_not_implicitly_expand_multi_hop() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    let melanie = memory::insert_memory(
+        &conn,
+        Some("s1"),
+        "personal",
+        None,
+        "Family update from Melanie",
+        "Melanie mentioned her son Tom and daughter Sarah.",
+        "discovery",
+        None,
+    )?;
+    let tom = memory::insert_memory(
+        &conn,
+        Some("s2"),
+        "personal",
+        None,
+        "Tom's hobbies",
+        "Tom loves dinosaurs and Lego.",
+        "discovery",
+        None,
+    )?;
+    let sarah = memory::insert_memory(
+        &conn,
+        Some("s3"),
+        "personal",
+        None,
+        "Sarah's school activities",
+        "Sarah is on the swim team.",
+        "discovery",
+        None,
+    )?;
+
+    entity::link_entities(
+        &conn,
+        melanie,
+        &[
+            "Melanie".to_string(),
+            "Tom".to_string(),
+            "Sarah".to_string(),
+        ],
+    )?;
+    entity::link_entities(&conn, tom, &["Tom".to_string()])?;
+    entity::link_entities(&conn, sarah, &["Sarah".to_string()])?;
+
+    let standard = memory_service::search_memories(
+        &conn,
+        &memory_service::SearchRequest {
+            query: Some("Melanie kids".to_string()),
+            project: Some("personal".to_string()),
+            limit: 10,
+            multi_hop: false,
+            include_stale: false,
+            ..Default::default()
+        },
+    )?;
+    let ids: Vec<i64> = standard.memories.iter().map(|m| m.id).collect();
+
+    assert!(ids.contains(&melanie));
+    assert!(!ids.contains(&tom));
+    assert!(!ids.contains(&sarah));
+    assert!(standard.multi_hop.is_none());
+    Ok(())
+}
+
+#[test]
+fn explicit_multi_hop_returns_related_memories() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    let melanie = memory::insert_memory(
+        &conn,
+        Some("s1"),
+        "personal",
+        None,
+        "Family update from Melanie",
+        "Melanie mentioned her son Tom and daughter Sarah.",
+        "discovery",
+        None,
+    )?;
+    let tom = memory::insert_memory(
+        &conn,
+        Some("s2"),
+        "personal",
+        None,
+        "Tom's hobbies",
+        "Tom loves dinosaurs and Lego.",
+        "discovery",
+        None,
+    )?;
+    let sarah = memory::insert_memory(
+        &conn,
+        Some("s3"),
+        "personal",
+        None,
+        "Sarah's school activities",
+        "Sarah is on the swim team.",
+        "discovery",
+        None,
+    )?;
+
+    entity::link_entities(
+        &conn,
+        melanie,
+        &[
+            "Melanie".to_string(),
+            "Tom".to_string(),
+            "Sarah".to_string(),
+        ],
+    )?;
+    entity::link_entities(&conn, tom, &["Tom".to_string()])?;
+    entity::link_entities(&conn, sarah, &["Sarah".to_string()])?;
+
+    let multi = memory_service::search_memories(
+        &conn,
+        &memory_service::SearchRequest {
+            query: Some("Melanie kids".to_string()),
+            project: Some("personal".to_string()),
+            limit: 10,
+            multi_hop: true,
+            include_stale: false,
+            ..Default::default()
+        },
+    )?;
+    let ids: Vec<i64> = multi.memories.iter().map(|m| m.id).collect();
+
+    assert!(ids.contains(&melanie));
+    assert!(ids.contains(&tom));
+    assert!(ids.contains(&sarah));
+    assert!(multi.multi_hop.is_some());
+    Ok(())
 }
 
 #[test]

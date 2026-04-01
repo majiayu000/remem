@@ -6,7 +6,10 @@ use crate::db;
 
 // Re-export search and promote functions so existing callers don't break.
 pub use crate::memory_promote::{promote_summary_to_memories, slugify_for_topic};
-pub use crate::memory_search::{search_memories_fts, search_memories_like};
+pub use crate::memory_search::{
+    search_memories_fts, search_memories_fts_filtered, search_memories_like,
+    search_memories_like_filtered,
+};
 
 // --- Data Models ---
 
@@ -197,15 +200,7 @@ pub fn insert_memory_full(
 }
 
 pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Memory>> {
-    let sql = format!(
-        "SELECT {} FROM memories \
-         WHERE (project = ?1 OR scope = 'global') AND status = 'active' \
-         ORDER BY updated_at_epoch DESC LIMIT ?2",
-        MEMORY_COLS,
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![project, limit], map_memory_row)?;
-    crate::db_query::collect_rows(rows)
+    list_memories(conn, project, None, limit, 0, false, None)
 }
 
 pub fn get_memories_by_type(
@@ -214,14 +209,52 @@ pub fn get_memories_by_type(
     memory_type: &str,
     limit: i64,
 ) -> Result<Vec<Memory>> {
+    list_memories(conn, project, Some(memory_type), limit, 0, false, None)
+}
+
+pub fn list_memories(
+    conn: &Connection,
+    project: &str,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+) -> Result<Vec<Memory>> {
+    let mut conditions = vec!["(project = ?1 OR scope = 'global')".to_string()];
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+        vec![Box::new(project.to_string())];
+    let mut idx = 2;
+
+    if !include_inactive {
+        conditions.push("status = 'active'".to_string());
+    }
+    if let Some(memory_type) = memory_type {
+        conditions.push(format!("memory_type = ?{idx}"));
+        param_values.push(Box::new(memory_type.to_string()));
+        idx += 1;
+    }
+    if let Some(branch) = branch {
+        conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
+        param_values.push(Box::new(branch.to_string()));
+        idx += 1;
+    }
+
+    param_values.push(Box::new(limit));
+    param_values.push(Box::new(offset.max(0)));
+
     let sql = format!(
         "SELECT {} FROM memories \
-         WHERE (project = ?1 OR scope = 'global') AND memory_type = ?2 AND status = 'active' \
-         ORDER BY updated_at_epoch DESC LIMIT ?3",
+         WHERE {} \
+         ORDER BY updated_at_epoch DESC LIMIT ?{} OFFSET ?{}",
         MEMORY_COLS,
+        conditions.join(" AND "),
+        idx,
+        idx + 1,
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![project, memory_type, limit], map_memory_row)?;
+    let refs = db::to_sql_refs(&param_values);
+    let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
     crate::db_query::collect_rows(rows)
 }
 

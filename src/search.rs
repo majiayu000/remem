@@ -35,6 +35,15 @@ fn rrf_fuse(channels: &[Vec<i64>], k: f64) -> Vec<(i64, f64)> {
     results
 }
 
+fn paginate_memories(memories: Vec<Memory>, limit: i64, offset: i64) -> Vec<Memory> {
+    let start = offset.max(0) as usize;
+    if start >= memories.len() {
+        return vec![];
+    }
+    let end = (start + limit.max(0) as usize).min(memories.len());
+    memories[start..end].to_vec()
+}
+
 pub fn search(
     conn: &Connection,
     query: Option<&str>,
@@ -42,7 +51,7 @@ pub fn search(
     memory_type: Option<&str>,
     limit: i64,
     offset: i64,
-    _include_stale: bool,
+    include_stale: bool,
 ) -> Result<Vec<Memory>> {
     search_with_branch(
         conn,
@@ -51,7 +60,7 @@ pub fn search(
         memory_type,
         limit,
         offset,
-        _include_stale,
+        include_stale,
         None,
     )
 }
@@ -62,13 +71,15 @@ pub fn search_with_branch(
     project: Option<&str>,
     memory_type: Option<&str>,
     limit: i64,
-    _offset: i64,
-    _include_stale: bool,
+    offset: i64,
+    include_stale: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
-    let mut results = match query {
+    let page_target = (limit.max(1) + offset.max(0) + 1).max(2);
+
+    match query {
         Some(q) if !q.is_empty() => {
-            let fetch = limit * 2; // Over-fetch for RRF fusion
+            let fetch = page_target * 3;
             let expanded = crate::query_expand::expand_query(q);
             let exp_strs: Vec<&str> = expanded.iter().map(|s| s.as_str()).collect();
             let long_tokens: Vec<&str> = exp_strs
@@ -77,111 +88,102 @@ pub fn search_with_branch(
                 .copied()
                 .collect();
 
-            // Core tokens: segmented from original query (no synonym expansion).
-            // Used for LIKE fallback with AND semantics.
             let core_tokens = crate::query_expand::core_tokens(q);
             let core_refs: Vec<&str> = core_tokens.iter().map(|s| s.as_str()).collect();
 
             let mut channels: Vec<Vec<i64>> = Vec::new();
 
-            // Channel 1: FTS5 with expanded OR query (includes synonyms)
             if !long_tokens.is_empty() {
                 let safe_query = sanitize_fts_query(&long_tokens.join(" "));
-                let fts =
-                    memory::search_memories_fts(conn, &safe_query, project, memory_type, fetch, 0)?;
+                let fts = memory::search_memories_fts_filtered(
+                    conn,
+                    &safe_query,
+                    project,
+                    memory_type,
+                    fetch,
+                    0,
+                    include_stale,
+                    branch,
+                )?;
                 channels.push(fts.iter().map(|m| m.id).collect());
             }
 
-            // Channel 2: Entity search (project-scoped)
-            let entity_ids = crate::entity::search_by_entity(conn, q, project, fetch)?;
+            let entity_ids = crate::entity::search_by_entity_filtered(
+                conn,
+                q,
+                project,
+                memory_type,
+                branch,
+                fetch,
+                include_stale,
+            )?;
             if !entity_ids.is_empty() {
                 channels.push(entity_ids);
             }
 
-            // Channel 3: Temporal search
             if let Some(tc) = crate::temporal::extract_temporal(q) {
-                let temporal_ids = crate::temporal::search_by_time(conn, &tc, project, fetch)?;
+                let temporal_ids = crate::temporal::search_by_time_filtered(
+                    conn,
+                    &tc,
+                    project,
+                    memory_type,
+                    branch,
+                    fetch,
+                    include_stale,
+                )?;
                 if !temporal_ids.is_empty() {
                     channels.push(temporal_ids);
                 }
             }
 
-            // Channel 4: LIKE fallback with core tokens (AND semantics, no synonyms)
-            let like =
-                memory::search_memories_like(conn, &core_refs, project, memory_type, fetch, 0)?;
+            let like = memory::search_memories_like_filtered(
+                conn,
+                &core_refs,
+                project,
+                memory_type,
+                fetch,
+                0,
+                include_stale,
+                branch,
+            )?;
             if !like.is_empty() {
                 channels.push(like.iter().map(|m| m.id).collect());
             }
 
             if channels.is_empty() {
-                vec![]
-            } else {
-                // First-pass RRF fusion (over-fetch to account for post-filtering)
-                let fused = rrf_fuse(&channels, 60.0);
-                let over_limit = (limit * 3) as usize; // over-fetch for type filter
-                let first_hop_ids: Vec<i64> =
-                    fused.iter().take(over_limit).map(|(id, _)| *id).collect();
-
-                // Channel 5: Entity graph expansion (multi-hop)
-                let graph_ids = crate::entity::expand_via_entity_graph(
-                    conn,
-                    &first_hop_ids,
-                    &first_hop_ids,
-                    project,
-                    fetch,
-                )?;
-
-                let final_ids = if !graph_ids.is_empty() {
-                    channels.push(graph_ids);
-                    let fused2 = rrf_fuse(&channels, 60.0);
-                    fused2
-                        .iter()
-                        .take(over_limit)
-                        .map(|(id, _)| *id)
-                        .collect::<Vec<_>>()
-                } else {
-                    first_hop_ids
-                };
-
-                // Load memories and apply memory_type post-filter
-                let loaded = memory::get_memories_by_ids(conn, &final_ids, None)?;
-                let id_to_mem: HashMap<i64, Memory> =
-                    loaded.into_iter().map(|m| (m.id, m)).collect();
-                let mut results: Vec<Memory> = final_ids
-                    .iter()
-                    .filter_map(|id| id_to_mem.get(id).cloned())
-                    .collect();
-
-                // Post-filter by memory_type (entity/graph channels don't filter by type)
-                if let Some(mt) = memory_type {
-                    results.retain(|m| m.memory_type == mt);
-                }
-
-                results.truncate(limit as usize);
-                results
+                return Ok(vec![]);
             }
+
+            let final_ids: Vec<i64> = rrf_fuse(&channels, 60.0)
+                .iter()
+                .map(|(id, _)| *id)
+                .collect();
+
+            let loaded = memory::get_memories_by_ids(conn, &final_ids, None)?;
+            let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|m| (m.id, m)).collect();
+            let ordered: Vec<Memory> = final_ids
+                .iter()
+                .filter_map(|id| id_to_mem.get(id).cloned())
+                .collect();
+            Ok(paginate_memories(ordered, limit, offset))
         }
         _ => {
             let proj = project.unwrap_or("");
             if proj.is_empty() {
-                return Ok(vec![]);
-            } else if let Some(t) = memory_type {
-                memory::get_memories_by_type(conn, proj, t, limit)?
+                Ok(vec![])
             } else {
-                memory::get_recent_memories(conn, proj, limit)?
+                memory::list_memories(
+                    conn,
+                    proj,
+                    memory_type,
+                    limit,
+                    offset,
+                    include_stale,
+                    branch,
+                )
             }
         }
-    };
-
-    // Post-filter by branch
-    if let Some(br) = branch {
-        results.retain(|m| match &m.branch {
-            Some(b) => b == br,
-            None => true,
-        });
     }
-
-    Ok(results)
 }
 
 /// Search observations (used by get_observations MCP tool).

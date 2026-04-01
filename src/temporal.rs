@@ -145,37 +145,57 @@ pub fn search_by_time(
     project: Option<&str>,
     limit: i64,
 ) -> anyhow::Result<Vec<i64>> {
-    let mut ids = Vec::new();
+    search_by_time_filtered(conn, constraint, project, None, None, limit, false)
+}
 
-    if let Some(proj) = project {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM memories
-             WHERE status = 'active'
-             AND project = ?3
-             AND updated_at_epoch BETWEEN ?1 AND ?2
-             ORDER BY updated_at_epoch DESC LIMIT ?4",
-        )?;
-        let rows = stmt.query_map(
-            rusqlite::params![constraint.start_epoch, constraint.end_epoch, proj, limit],
-            |r| r.get::<_, i64>(0),
-        )?;
-        for row in rows {
-            ids.push(row?);
-        }
-    } else {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM memories
-             WHERE status = 'active'
-             AND updated_at_epoch BETWEEN ?1 AND ?2
-             ORDER BY updated_at_epoch DESC LIMIT ?3",
-        )?;
-        let rows = stmt.query_map(
-            rusqlite::params![constraint.start_epoch, constraint.end_epoch, limit],
-            |r| r.get::<_, i64>(0),
-        )?;
-        for row in rows {
-            ids.push(row?);
-        }
+pub fn search_by_time_filtered(
+    conn: &rusqlite::Connection,
+    constraint: &TemporalConstraint,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    branch: Option<&str>,
+    limit: i64,
+    include_inactive: bool,
+) -> anyhow::Result<Vec<i64>> {
+    let mut ids = Vec::new();
+    let mut conditions = vec!["updated_at_epoch BETWEEN ?1 AND ?2".to_string()];
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+        Box::new(constraint.start_epoch),
+        Box::new(constraint.end_epoch),
+    ];
+    let mut idx = 3;
+
+    if !include_inactive {
+        conditions.push("status = 'active'".to_string());
+    }
+    if let Some(project) = project {
+        conditions.push(format!("project = ?{idx}"));
+        params_vec.push(Box::new(project.to_string()));
+        idx += 1;
+    }
+    if let Some(memory_type) = memory_type {
+        conditions.push(format!("memory_type = ?{idx}"));
+        params_vec.push(Box::new(memory_type.to_string()));
+        idx += 1;
+    }
+    if let Some(branch) = branch {
+        conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
+        params_vec.push(Box::new(branch.to_string()));
+        idx += 1;
+    }
+    let sql = format!(
+        "SELECT id FROM memories
+         WHERE {}
+         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+        conditions.join(" AND "),
+        idx
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    params_vec.push(Box::new(limit));
+    let refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(refs.as_slice(), |r| r.get::<_, i64>(0))?;
+    for row in rows {
+        ids.push(row?);
     }
 
     Ok(ids)

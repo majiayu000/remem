@@ -30,6 +30,7 @@ pub struct MultiHopMeta {
 pub struct SearchResultSet {
     pub memories: Vec<memory::Memory>,
     pub multi_hop: Option<MultiHopMeta>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -157,19 +158,25 @@ fn write_local_note(path: &Path, content: &str) -> Result<()> {
 pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchResultSet> {
     let limit = req.limit.max(1);
     let query = req.query.as_deref();
-    let auto_multi_hop = query.is_some_and(|q| crate::entity::extract_entities(q, "").len() >= 2);
-    let multi_hop = req.multi_hop || auto_multi_hop;
+    let multi_hop = req.multi_hop;
 
     if multi_hop {
         if let Some(q) = query.filter(|q| !q.is_empty()) {
-            let mh =
-                crate::search_multihop::search_multi_hop(conn, q, req.project.as_deref(), limit)?;
+            let mut mh = crate::search_multihop::search_multi_hop(
+                conn,
+                q,
+                req.project.as_deref(),
+                limit + 1,
+            )?;
+            let has_more = mh.memories.len() as i64 > limit;
+            mh.memories.truncate(limit as usize);
             Ok(SearchResultSet {
                 memories: mh.memories,
                 multi_hop: Some(MultiHopMeta {
                     hops: mh.hops,
                     entities_discovered: mh.entities_discovered,
                 }),
+                has_more,
             })
         } else {
             Ok(SearchResultSet {
@@ -178,22 +185,26 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
                     hops: 1,
                     entities_discovered: vec![],
                 }),
+                has_more: false,
             })
         }
     } else {
-        let memories = search::search_with_branch(
+        let mut memories = search::search_with_branch(
             conn,
             query,
             req.project.as_deref(),
             req.memory_type.as_deref(),
-            limit,
+            limit + 1,
             req.offset.max(0),
             req.include_stale,
             req.branch.as_deref(),
         )?;
+        let has_more = memories.len() as i64 > limit;
+        memories.truncate(limit as usize);
         Ok(SearchResultSet {
             memories,
             multi_hop: None,
+            has_more,
         })
     }
 }

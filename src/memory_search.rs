@@ -21,6 +21,21 @@ pub fn push_project_filter(
     idx
 }
 
+fn push_branch_filter(
+    column: &str,
+    branch: Option<&str>,
+    mut idx: usize,
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+) -> usize {
+    if let Some(branch) = branch {
+        conditions.push(format!("({column} = ?{idx} OR {column} IS NULL)"));
+        params.push(Box::new(branch.to_string()));
+        idx += 1;
+    }
+    idx
+}
+
 /// FTS5 trigram search on memories.
 pub fn search_memories_fts(
     conn: &Connection,
@@ -30,12 +45,36 @@ pub fn search_memories_fts(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Memory>> {
+    search_memories_fts_filtered(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        false,
+        None,
+    )
+}
+
+pub fn search_memories_fts_filtered(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+) -> Result<Vec<Memory>> {
     let mut conditions = vec!["memories_fts MATCH ?1".to_string()];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     param_values.push(Box::new(query.to_string()));
 
     let mut idx = 2;
-    conditions.push("m.status = 'active'".to_string());
+    if !include_inactive {
+        conditions.push("m.status = 'active'".to_string());
+    }
 
     idx = push_project_filter(
         "m.project",
@@ -44,6 +83,7 @@ pub fn search_memories_fts(
         &mut conditions,
         &mut param_values,
     );
+    idx = push_branch_filter("m.branch", branch, idx, &mut conditions, &mut param_values);
     if let Some(t) = memory_type {
         conditions.push(format!("m.memory_type = ?{idx}"));
         param_values.push(Box::new(t.to_string()));
@@ -81,13 +121,39 @@ pub fn search_memories_like(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Memory>> {
+    search_memories_like_filtered(
+        conn,
+        tokens,
+        project,
+        memory_type,
+        limit,
+        offset,
+        false,
+        None,
+    )
+}
+
+pub fn search_memories_like_filtered(
+    conn: &Connection,
+    tokens: &[&str],
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+) -> Result<Vec<Memory>> {
     if tokens.is_empty() {
         return Ok(vec![]);
     }
 
-    let mut conditions = vec!["m.status = 'active'".to_string()];
+    let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
+
+    if !include_inactive {
+        conditions.push("m.status = 'active'".to_string());
+    }
 
     for token in tokens {
         let like_pattern = format!("%{token}%");
@@ -108,6 +174,7 @@ pub fn search_memories_like(
         &mut conditions,
         &mut param_values,
     );
+    idx = push_branch_filter("m.branch", branch, idx, &mut conditions, &mut param_values);
     if let Some(t) = memory_type {
         conditions.push(format!("m.memory_type = ?{idx}"));
         param_values.push(Box::new(t.to_string()));
