@@ -47,6 +47,10 @@ curl -fsSL "${URL}" -o "${TMPDIR}/remem.tar.gz"
 tar xzf "${TMPDIR}/remem.tar.gz" -C "${TMPDIR}"
 mv "${TMPDIR}/remem" "${INSTALL_DIR}/remem"
 chmod +x "${INSTALL_DIR}/remem"
+# macOS ARM requires ad-hoc codesign after replacing binary
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+  codesign -s - -f "${INSTALL_DIR}/remem" 2>/dev/null || true
+fi
 
 echo "Installed to ${INSTALL_DIR}/remem"
 
