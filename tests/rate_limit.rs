@@ -293,6 +293,41 @@ fn search_include_stale_controls_archived_memories() -> Result<()> {
 }
 
 #[test]
+fn search_queryless_with_branch_filters_memories() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    insert_memory_row(&conn, 1, "proj", "main branch", 300, "active", Some("main"))?;
+    insert_memory_row(
+        &conn,
+        2,
+        "proj",
+        "feature branch",
+        200,
+        "active",
+        Some("feature"),
+    )?;
+    insert_memory_row(&conn, 3, "proj", "branchless", 100, "active", None)?;
+
+    let results = search::search_with_branch(
+        &conn,
+        None,
+        Some("proj"),
+        None,
+        10,
+        0,
+        false,
+        Some("main"),
+    )?;
+    let ids: Vec<i64> = results.iter().map(|memory| memory.id).collect();
+
+    assert!(ids.contains(&1));
+    assert!(ids.contains(&3));
+    assert!(!ids.contains(&2));
+    Ok(())
+}
+
+#[test]
 fn branch_filter_happens_before_pagination_for_query_search() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn)?;
