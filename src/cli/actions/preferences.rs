@@ -2,8 +2,8 @@ use anyhow::Result;
 
 use crate::{db, preference};
 
-use super::super::PreferenceAction;
 use super::shared::resolve_cwd_project;
+use crate::cli::types::PreferenceAction;
 
 pub(in crate::cli) fn run_preferences(action: PreferenceAction) -> Result<()> {
     let conn = db::open_db()?;

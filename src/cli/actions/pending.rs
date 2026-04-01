@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::{db, pending_admin};
 
-use super::super::PendingAction;
+use crate::cli::types::PendingAction;
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     let conn = db::open_db()?;
