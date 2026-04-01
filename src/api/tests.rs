@@ -5,12 +5,55 @@ use serde_json::Value;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
-use super::handlers::handle_status;
+use super::handlers::{handle_status, search_request_from_params};
+use super::types::SearchParams;
 use super::DbState;
 
 #[test]
 fn db_state_is_stateless() {
     assert_eq!(std::mem::size_of::<DbState>(), 0);
+}
+
+#[test]
+fn search_request_from_params_clamps_limit_and_offset() {
+    let request = search_request_from_params(SearchParams {
+        query: Some("hello".to_string()),
+        project: None,
+        memory_type: None,
+        limit: Some(999),
+        offset: Some(-5),
+        include_stale: None,
+        branch: None,
+        multi_hop: None,
+    });
+
+    assert_eq!(request.limit, 100);
+    assert_eq!(request.offset, 0);
+    assert!(!request.include_stale);
+    assert!(!request.multi_hop);
+}
+
+#[test]
+fn search_request_from_params_preserves_filters() {
+    let request = search_request_from_params(SearchParams {
+        query: Some("hello".to_string()),
+        project: Some("proj".to_string()),
+        memory_type: Some("decision".to_string()),
+        limit: Some(8),
+        offset: Some(3),
+        include_stale: Some(true),
+        branch: Some("main".to_string()),
+        multi_hop: Some(true),
+    });
+
+    assert_eq!(request.query.as_deref(), Some("hello"));
+    assert_eq!(request.project.as_deref(), Some("proj"));
+    assert_eq!(request.memory_type.as_deref(), Some("decision"));
+    assert_eq!(request.limit, 8);
+    assert_eq!(request.offset, 3);
+    assert!(request.include_stale);
+    assert_eq!(request.branch.as_deref(), Some("main"));
+    assert!(request.multi_hop);
 }
 
 #[tokio::test]
