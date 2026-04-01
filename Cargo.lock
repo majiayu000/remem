@@ -1152,6 +1152,7 @@ dependencies = [
  "chrono",
  "clap",
  "dirs",
+ "getrandom 0.3.4",
  "reqwest",
  "rmcp",
  "rusqlite",

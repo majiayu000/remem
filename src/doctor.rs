@@ -91,25 +91,23 @@ fn check_database() -> Check {
 
     let size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
     match db::open_db() {
-        Ok(conn) => {
-            let memory_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-            Check {
+        Ok(conn) => match db::query_system_stats(&conn) {
+            Ok(stats) => Check {
                 name: "Database",
                 status: Status::Ok,
                 detail: format!(
                     "{} ({:.1} MB, {} memories)",
                     db_path.display(),
                     size as f64 / 1_048_576.0,
-                    memory_count
+                    stats.active_memories
                 ),
-            }
-        }
+            },
+            Err(e) => Check {
+                name: "Database",
+                status: Status::Fail,
+                detail: format!("{} (stats error: {})", db_path.display(), e),
+            },
+        },
         Err(e) => Check {
             name: "Database",
             status: Status::Fail,
@@ -216,29 +214,19 @@ fn check_pending_queue() -> Check {
         }
     };
 
-    let pending: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
-    let failed_pending: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
-
-    let stuck_jobs: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM jobs WHERE state = 'running' \
-             AND lease_expires_epoch < strftime('%s', 'now')",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
+    let stats = match db::query_system_stats(&conn) {
+        Ok(stats) => stats,
+        Err(e) => {
+            return Check {
+                name: "Pending queue",
+                status: Status::Warn,
+                detail: format!("cannot load queue stats: {}", e),
+            }
+        }
+    };
+    let pending = stats.pending_observations;
+    let failed_pending = stats.failed_pending_observations;
+    let stuck_jobs = stats.stuck_jobs;
 
     if stuck_jobs > 0 {
         Check {
@@ -273,6 +261,99 @@ fn check_pending_queue() -> Check {
             status: Status::Ok,
             detail: format!("{} pending, {} failed", pending, failed_pending),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+    use crate::memory;
+    use rusqlite::params;
+
+    #[test]
+    fn check_database_reports_shared_active_memory_count() {
+        let _test_dir = ScopedTestDataDir::new("doctor-db");
+        let conn = db::open_db().expect("db should open");
+        memory::insert_memory(
+            &conn,
+            Some("session-1"),
+            "proj-a",
+            None,
+            "active",
+            "kept",
+            "decision",
+            None,
+        )
+        .expect("active memory insert should succeed");
+        let archived_id = memory::insert_memory(
+            &conn,
+            Some("session-2"),
+            "proj-a",
+            None,
+            "archived",
+            "hidden",
+            "decision",
+            None,
+        )
+        .expect("archived memory insert should succeed");
+        conn.execute(
+            "UPDATE memories SET status = 'archived' WHERE id = ?1",
+            params![archived_id],
+        )
+        .expect("archive update should succeed");
+
+        let stats = db::query_system_stats(&conn).expect("system stats should load");
+        drop(conn);
+
+        let check = check_database();
+        assert_eq!(check.icon(), "ok");
+        assert!(check
+            .detail
+            .contains(&format!("{} memories", stats.active_memories)));
+    }
+
+    #[test]
+    fn check_pending_queue_reports_shared_counts() {
+        let _test_dir = ScopedTestDataDir::new("doctor-pending");
+        let conn = db::open_db().expect("db should open");
+        db::enqueue_pending(&conn, "session-1", "proj-a", "tool", None, None, None)
+            .expect("pending row insert should succeed");
+        let failed_id = db::enqueue_pending(&conn, "session-2", "proj-a", "tool", None, None, None)
+            .expect("failed row insert should succeed");
+        conn.execute(
+            "UPDATE pending_observations SET status = 'failed' WHERE id = ?1",
+            params![failed_id],
+        )
+        .expect("failed status update should succeed");
+
+        let job_id = db::enqueue_job(
+            &conn,
+            db::JobType::Observation,
+            "proj-a",
+            Some("session-3"),
+            "{}",
+            1,
+        )
+        .expect("job insert should succeed");
+        conn.execute(
+            "UPDATE jobs SET state = 'running', lease_expires_epoch = ?2 WHERE id = ?1",
+            params![job_id, chrono::Utc::now().timestamp() - 1],
+        )
+        .expect("job update should succeed");
+
+        let stats = db::query_system_stats(&conn).expect("system stats should load");
+        drop(conn);
+
+        let check = check_pending_queue();
+        assert_eq!(check.icon(), "WARN");
+        assert_eq!(
+            check.detail,
+            format!(
+                "{} pending, {} failed, {} stuck jobs (will auto-recover)",
+                stats.pending_observations, stats.failed_pending_observations, stats.stuck_jobs
+            )
+        );
     }
 }
 

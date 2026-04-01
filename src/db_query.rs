@@ -63,6 +63,94 @@ pub fn collect_rows<T>(
     Ok(result)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemStats {
+    pub active_memories: i64,
+    pub active_observations: i64,
+    pub session_summaries: i64,
+    pub pending_observations: i64,
+    pub failed_pending_observations: i64,
+    pub stuck_jobs: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DailyActivityStats {
+    pub memories: i64,
+    pub observations: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectCount {
+    pub project: String,
+    pub count: i64,
+}
+
+pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
+    Ok(SystemStats {
+        active_memories: conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+            [],
+            |row| row.get(0),
+        )?,
+        active_observations: conn.query_row(
+            "SELECT COUNT(*) FROM observations WHERE status = 'active'",
+            [],
+            |row| row.get(0),
+        )?,
+        session_summaries: conn.query_row("SELECT COUNT(*) FROM session_summaries", [], |row| {
+            row.get(0)
+        })?,
+        pending_observations: conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )?,
+        failed_pending_observations: conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
+            [],
+            |row| row.get(0),
+        )?,
+        stuck_jobs: conn.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE state = 'running' \
+             AND lease_expires_epoch < strftime('%s', 'now')",
+            [],
+            |row| row.get(0),
+        )?,
+    })
+}
+
+pub fn query_daily_activity_stats(
+    conn: &Connection,
+    since_epoch: i64,
+) -> Result<DailyActivityStats> {
+    Ok(DailyActivityStats {
+        memories: conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE created_at_epoch >= ?1",
+            params![since_epoch],
+            |row| row.get(0),
+        )?,
+        observations: conn.query_row(
+            "SELECT COUNT(*) FROM observations WHERE created_at_epoch >= ?1",
+            params![since_epoch],
+            |row| row.get(0),
+        )?,
+    })
+}
+
+pub fn query_top_projects(conn: &Connection, limit: i64) -> Result<Vec<ProjectCount>> {
+    let mut stmt = conn.prepare(
+        "SELECT project, COUNT(*) as cnt FROM memories WHERE status = 'active' \
+         GROUP BY project ORDER BY cnt DESC, project ASC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| {
+        Ok(ProjectCount {
+            project: row.get(0)?,
+            count: row.get(1)?,
+        })
+    })?;
+    collect_rows(rows)
+}
+
 pub fn push_project_filter(
     column: &str,
     project: &str,
@@ -468,4 +556,125 @@ pub fn get_timeline_around(
     result.push(anchor);
     result.sort_by_key(|o| o.created_at_epoch);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_stats_schema(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY,
+                project TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at_epoch INTEGER NOT NULL
+            );
+            CREATE TABLE observations (
+                id INTEGER PRIMARY KEY,
+                project TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at_epoch INTEGER NOT NULL
+            );
+            CREATE TABLE session_summaries (
+                id INTEGER PRIMARY KEY
+            );
+            CREATE TABLE pending_observations (
+                id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE jobs (
+                id INTEGER PRIMARY KEY,
+                state TEXT NOT NULL,
+                lease_expires_epoch INTEGER
+            );",
+        )
+        .expect("schema should be created");
+    }
+
+    #[test]
+    fn query_system_stats_and_related_views_share_one_definition() {
+        let conn = Connection::open_in_memory().expect("in-memory db should open");
+        setup_stats_schema(&conn);
+
+        conn.execute(
+            "INSERT INTO memories (project, status, created_at_epoch) VALUES ('alpha', 'active', 200)",
+            [],
+        )
+        .expect("active memory insert should succeed");
+        conn.execute(
+            "INSERT INTO memories (project, status, created_at_epoch) VALUES ('alpha', 'archived', 150)",
+            [],
+        )
+        .expect("archived memory insert should succeed");
+        conn.execute(
+            "INSERT INTO memories (project, status, created_at_epoch) VALUES ('beta', 'active', 300)",
+            [],
+        )
+        .expect("second active memory insert should succeed");
+        conn.execute(
+            "INSERT INTO observations (project, status, created_at_epoch) VALUES ('alpha', 'active', 220)",
+            [],
+        )
+        .expect("active observation insert should succeed");
+        conn.execute(
+            "INSERT INTO observations (project, status, created_at_epoch) VALUES ('beta', 'stale', 140)",
+            [],
+        )
+        .expect("stale observation insert should succeed");
+        conn.execute("INSERT INTO session_summaries (id) VALUES (1)", [])
+            .expect("summary insert should succeed");
+        conn.execute(
+            "INSERT INTO pending_observations (status) VALUES ('pending')",
+            [],
+        )
+        .expect("pending insert should succeed");
+        conn.execute(
+            "INSERT INTO pending_observations (status) VALUES ('failed')",
+            [],
+        )
+        .expect("failed pending insert should succeed");
+        conn.execute(
+            "INSERT INTO jobs (state, lease_expires_epoch) VALUES ('running', 0)",
+            [],
+        )
+        .expect("stuck job insert should succeed");
+
+        let system = query_system_stats(&conn).expect("system stats should load");
+        assert_eq!(
+            system,
+            SystemStats {
+                active_memories: 2,
+                active_observations: 1,
+                session_summaries: 1,
+                pending_observations: 1,
+                failed_pending_observations: 1,
+                stuck_jobs: 1,
+            }
+        );
+
+        let daily = query_daily_activity_stats(&conn, 180).expect("daily stats should load");
+        assert_eq!(
+            daily,
+            DailyActivityStats {
+                memories: 2,
+                observations: 1,
+            }
+        );
+
+        let top_projects = query_top_projects(&conn, 5).expect("top projects should load");
+        assert_eq!(
+            top_projects,
+            vec![
+                ProjectCount {
+                    project: "alpha".to_string(),
+                    count: 1,
+                },
+                ProjectCount {
+                    project: "beta".to_string(),
+                    count: 1,
+                },
+            ]
+        );
+    }
 }

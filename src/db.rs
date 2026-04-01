@@ -85,8 +85,27 @@ fn load_cipher_key() -> Option<String> {
 /// Generate a random encryption key and save to key file.
 /// Returns the generated key.
 pub fn generate_cipher_key() -> Result<String> {
+    generate_cipher_key_with(getrandom::fill)
+}
+
+fn generate_cipher_key_with<F>(fill_random: F) -> Result<String>
+where
+    F: FnOnce(&mut [u8]) -> std::result::Result<(), getrandom::Error>,
+{
     use std::io::Write;
-    let key: String = (0..32).map(|_| format!("{:02x}", rand_byte())).collect();
+    let mut key_bytes = [0u8; 32];
+    fill_random(&mut key_bytes).map_err(|e| {
+        anyhow::anyhow!(
+            "OS randomness unavailable while generating cipher key: {}",
+            e
+        )
+    })?;
+    let key: String = key_bytes
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+
+    std::fs::create_dir_all(data_dir())?;
     let key_path = data_dir().join(".key");
     let mut f = std::fs::File::create(&key_path)?;
     f.write_all(key.as_bytes())?;
@@ -100,23 +119,6 @@ pub fn generate_cipher_key() -> Result<String> {
         }
     }
     Ok(key)
-}
-
-/// Simple random byte from /dev/urandom or fallback to time-based.
-fn rand_byte() -> u8 {
-    use std::io::Read;
-    let mut buf = [0u8; 1];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        if f.read_exact(&mut buf).is_ok() {
-            return buf[0];
-        }
-    }
-    // Fallback: time-based (not cryptographically secure, but functional)
-    (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos()
-        & 0xFF) as u8
 }
 
 /// Encrypt an existing unencrypted database.
@@ -258,6 +260,72 @@ pub fn is_summarize_on_cooldown(
         Ok(last_epoch) => Ok(now - last_epoch < cooldown_secs),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
         Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(test)]
+pub mod test_support {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    pub struct ScopedTestDataDir {
+        _guard: MutexGuard<'static, ()>,
+        previous: Option<OsString>,
+        pub path: PathBuf,
+    }
+
+    impl ScopedTestDataDir {
+        pub fn new(label: &str) -> Self {
+            let guard = env_lock().lock().expect("test env lock poisoned");
+            let previous = std::env::var_os("REMEM_DATA_DIR");
+            let unique = format!(
+                "remem-test-{}-{}-{}",
+                label,
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("system time before unix epoch")
+                    .as_nanos()
+            );
+            let path = std::env::temp_dir().join(unique);
+            let _ = std::fs::remove_dir_all(&path);
+            std::env::set_var("REMEM_DATA_DIR", &path);
+            Self {
+                _guard: guard,
+                previous,
+                path,
+            }
+        }
+
+        pub fn db_path(&self) -> PathBuf {
+            self.path.join("remem.db")
+        }
+
+        pub fn remove_db_files(&self) {
+            let db_path = self.db_path();
+            let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
+            let shm_path = PathBuf::from(format!("{}-shm", db_path.display()));
+            for path in [db_path, wal_path, shm_path] {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+
+    impl Drop for ScopedTestDataDir {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_ref() {
+                std::env::set_var("REMEM_DATA_DIR", previous);
+            } else {
+                std::env::remove_var("REMEM_DATA_DIR");
+            }
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }
 
@@ -630,5 +698,31 @@ mod tests {
         )?;
         assert_eq!(hash, "hash-1");
         Ok(())
+    }
+
+    #[test]
+    fn generate_cipher_key_writes_64_hex_chars() -> Result<()> {
+        let test_dir = test_support::ScopedTestDataDir::new("cipher-key");
+        std::fs::create_dir_all(&test_dir.path)?;
+
+        let key = generate_cipher_key()?;
+        assert_eq!(key.len(), 64);
+        assert!(key.chars().all(|ch| ch.is_ascii_hexdigit()));
+
+        let saved = std::fs::read_to_string(test_dir.path.join(".key"))?;
+        assert_eq!(saved, key);
+        Ok(())
+    }
+
+    #[test]
+    fn generate_cipher_key_fails_when_os_randomness_is_unavailable() {
+        let test_dir = test_support::ScopedTestDataDir::new("cipher-key-fail");
+        std::fs::create_dir_all(&test_dir.path).expect("test data dir should exist");
+
+        let err = generate_cipher_key_with(|_| Err(getrandom::Error::UNSUPPORTED))
+            .expect_err("cipher key generation should fail without OS randomness");
+
+        assert!(err.to_string().contains("OS randomness unavailable"));
+        assert!(!test_dir.path.join(".key").exists());
     }
 }
