@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.8] - 2026-04-03
+
+### Packaging
+- Excluded local-only artifacts from published package: `eval/local/results/` and `plan/`.
+- Published `remem-ai` v0.3.8 to crates.io.
+
+### Docs
+- Fixed Cargo install command to `cargo install remem-ai --bin remem` in English and Chinese README files.
+
 ## [0.3.5] - 2026-03-26
 
 ### Packaging

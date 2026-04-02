@@ -32,7 +32,7 @@ Persistent memory for Claude Code. A single Rust binary that automatically captu
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # Option 2: Cargo
-cargo install remem
+cargo install remem-ai --bin remem
 
 # Option 3: Build from source
 git clone https://github.com/majiayu000/remem.git

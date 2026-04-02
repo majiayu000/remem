@@ -32,7 +32,7 @@
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # 方式 2：Cargo 安装
-cargo install remem
+cargo install remem-ai --bin remem
 
 # 方式 3：源码构建
 git clone https://github.com/majiayu000/remem.git
