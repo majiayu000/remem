@@ -33,6 +33,7 @@ async fn process_job(job: &db::Job) -> Result<()> {
         }
         db::JobType::Summary => summarize::process_summary_job_input(&job.payload_json).await,
         db::JobType::Compress => summarize::process_compress_job(&job.project).await,
+        db::JobType::Dream => crate::dream::process_dream_job(&job.project).await,
     }
 }
 

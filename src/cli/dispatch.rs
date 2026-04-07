@@ -3,8 +3,8 @@ use anyhow::Result;
 use crate::{api, claude_memory, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
-    run_backfill_entities, run_cleanup, run_encrypt, run_eval, run_eval_local, run_pending,
-    run_preferences, run_search, run_show, run_status,
+    run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval, run_eval_local,
+    run_pending, run_preferences, run_search, run_show, run_status,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -48,6 +48,9 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::BackfillEntities => run_backfill_entities()?,
         Commands::Encrypt => run_encrypt()?,
         Commands::Api { port } => api::run_api_server(port).await?,
+        Commands::Dream { project, dry_run } => {
+            run_dream(project.as_deref(), dry_run).await?;
+        }
     }
 
     Ok(())

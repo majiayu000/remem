@@ -58,6 +58,7 @@ pub enum JobType {
     Observation,
     Summary,
     Compress,
+    Dream,
 }
 
 impl JobType {
@@ -66,6 +67,7 @@ impl JobType {
             Self::Observation => "observation",
             Self::Summary => "summary",
             Self::Compress => "compress",
+            Self::Dream => "dream",
         }
     }
 
@@ -74,6 +76,7 @@ impl JobType {
             "observation" => Ok(Self::Observation),
             "summary" => Ok(Self::Summary),
             "compress" => Ok(Self::Compress),
+            "dream" => Ok(Self::Dream),
             _ => anyhow::bail!("unknown job_type: {}", raw),
         }
     }

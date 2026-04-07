@@ -67,6 +67,13 @@ pub(super) enum Commands {
         #[arg(long, short, default_value = "5567")]
         port: u16,
     },
+    Dream {
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Print what would be merged without writing to DB
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]

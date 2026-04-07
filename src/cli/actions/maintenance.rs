@@ -2,6 +2,29 @@ use anyhow::Result;
 
 use crate::{db, memory};
 
+pub(in crate::cli) async fn run_dream(project: Option<&str>, dry_run: bool) -> Result<()> {
+    let cwd = crate::cli::cwd::resolve_cwd_arg(None);
+    let project = project
+        .map(str::to_owned)
+        .unwrap_or_else(|| db::project_from_cwd(&cwd));
+
+    if dry_run {
+        let clusters = crate::dream::list_clusters(&project)?;
+        println!("project={} clusters={} (dry-run, no changes)", project, clusters.len());
+        for (i, c) in clusters.iter().enumerate() {
+            println!("  cluster[{}] size={}", i, c.members.len());
+            for m in &c.members {
+                println!("    id={} title={}", m.id, m.title);
+            }
+        }
+        return Ok(());
+    }
+
+    crate::dream::process_dream_job(&project).await?;
+    println!("dream complete for project={}", project);
+    Ok(())
+}
+
 pub(in crate::cli) fn run_encrypt() -> Result<()> {
     let key_path = db::data_dir().join(".key");
     if key_path.exists() {
