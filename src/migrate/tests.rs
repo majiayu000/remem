@@ -82,19 +82,45 @@ fn transition_from_old_system_skips_baseline() -> Result<()> {
 }
 
 #[test]
-fn rejects_old_schema_version() -> Result<()> {
+fn auto_upgrades_old_schema_version() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 10;")?;
-    conn.execute_batch("CREATE TABLE observations (id INTEGER PRIMARY KEY);")?;
+    // Simulate a v10 database with minimal tables
+    conn.execute_batch(
+        "CREATE TABLE sdk_sessions (id INTEGER PRIMARY KEY, content_session_id TEXT UNIQUE NOT NULL, memory_session_id TEXT NOT NULL, project TEXT, user_prompt TEXT, started_at TEXT, started_at_epoch INTEGER, status TEXT DEFAULT 'active', prompt_counter INTEGER DEFAULT 1);
+         CREATE TABLE observations (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, type TEXT NOT NULL, title TEXT, subtitle TEXT, narrative TEXT, facts TEXT, concepts TEXT, files_read TEXT, files_modified TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER);
+         CREATE TABLE session_summaries (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, request TEXT, completed TEXT, decisions TEXT, learned TEXT, next_steps TEXT, preferences TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER);
+         CREATE TABLE pending_observations (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, tool_name TEXT NOT NULL, tool_input TEXT, tool_response TEXT, cwd TEXT, created_at_epoch INTEGER NOT NULL, lease_owner TEXT, lease_expires_epoch INTEGER);
+         CREATE TABLE memories (id INTEGER PRIMARY KEY, session_id TEXT, project TEXT NOT NULL, topic_key TEXT, title TEXT NOT NULL, content TEXT NOT NULL, memory_type TEXT NOT NULL, files TEXT, created_at_epoch INTEGER NOT NULL, updated_at_epoch INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active');
+         CREATE TABLE events (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, event_type TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT, files TEXT, exit_code INTEGER, created_at_epoch INTEGER NOT NULL);
+         CREATE TABLE summarize_cooldown (project TEXT PRIMARY KEY, last_summarize_epoch INTEGER NOT NULL, last_message_hash TEXT);
+         CREATE TABLE summarize_locks (project TEXT PRIMARY KEY, lock_epoch INTEGER NOT NULL);",
+    )?;
 
-    let result = run_migrations(&conn);
-    assert!(result.is_err());
-    let error = format!("{}", result.unwrap_err());
-    assert!(
-        error.contains("v0.3.7"),
-        "error should mention v0.3.7: {}",
-        error
-    );
+    run_migrations(&conn)?;
+
+    // Should have auto-upgraded and marked baseline as applied
+    let applied = applied_versions(&conn)?;
+    assert_eq!(applied, vec![1]);
+
+    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    assert_eq!(user_version, 13);
+
+    // Verify missing columns were added
+    let has_status: bool = conn
+        .prepare("SELECT status FROM pending_observations LIMIT 0")
+        .is_ok();
+    assert!(has_status, "pending_observations.status should exist");
+
+    // Verify missing tables were created
+    let has_entities: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(has_entities, "entities table should exist after backfill");
     Ok(())
 }
 
