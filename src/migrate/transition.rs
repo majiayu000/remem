@@ -6,6 +6,10 @@ use super::types::OLD_BASELINE_VERSION;
 
 pub(super) fn transition_from_old_system(conn: &Connection) -> Result<()> {
     if has_existing_migration_entries(conn) {
+        // Always run backfill even when migrations are already recorded.
+        // backfill is idempotent (ADD COLUMN IF missing, CREATE IF NOT EXISTS)
+        // and catches columns added to the baseline SQL after initial migration.
+        backfill_to_baseline(conn)?;
         return Ok(());
     }
 
@@ -18,6 +22,7 @@ pub(super) fn transition_from_old_system(conn: &Connection) -> Result<()> {
                 old_version
             ),
         );
+        backfill_to_baseline(conn)?;
         mark_applied(conn, 1, "baseline")?;
     } else if old_version > 0 {
         crate::log::info(
