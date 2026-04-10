@@ -152,6 +152,7 @@ remem preferences add "text"
 remem preferences remove 42
 remem context --cwd .
 remem cleanup
+remem dream [--project X] [--dry-run]
 remem mcp
 remem sync-memory --cwd .
 ```
