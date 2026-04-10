@@ -6,7 +6,7 @@ mod merge;
 use anyhow::Result;
 use candidates::load_clusters;
 pub(crate) use candidates::Cluster;
-use merge::{MergeDecision, merge_cluster};
+use merge::{merge_cluster, MergeDecision};
 
 pub(crate) fn list_clusters(project: &str) -> Result<Vec<Cluster>> {
     let conn = crate::db::open_db()?;
@@ -18,7 +18,10 @@ pub async fn process_dream_job(project: &str) -> Result<()> {
     let clusters = load_clusters(&conn, project)?;
 
     if clusters.is_empty() {
-        crate::log::info("dream", &format!("project={} no clusters to merge", project));
+        crate::log::info(
+            "dream",
+            &format!("project={} no clusters to merge", project),
+        );
         return Ok(());
     }
 

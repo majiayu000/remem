@@ -1,9 +1,9 @@
 mod actions;
 mod cwd;
 mod dispatch;
-mod types;
 #[cfg(test)]
 mod tests;
+mod types;
 
 use anyhow::Result;
 use clap::Parser;

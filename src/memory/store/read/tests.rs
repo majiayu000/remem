@@ -109,7 +109,12 @@ fn test_memory_type_filter() {
     )
     .unwrap();
 
-    assert_eq!(get_memories_by_type(&conn, "proj", "bugfix", 10).unwrap().len(), 1);
+    assert_eq!(
+        get_memories_by_type(&conn, "proj", "bugfix", 10)
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(
         get_memories_by_type(&conn, "proj", "decision", 10)
             .unwrap()

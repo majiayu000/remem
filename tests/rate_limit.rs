@@ -309,16 +309,8 @@ fn search_queryless_with_branch_filters_memories() -> Result<()> {
     )?;
     insert_memory_row(&conn, 3, "proj", "branchless", 100, "active", None)?;
 
-    let results = search::search_with_branch(
-        &conn,
-        None,
-        Some("proj"),
-        None,
-        10,
-        0,
-        false,
-        Some("main"),
-    )?;
+    let results =
+        search::search_with_branch(&conn, None, Some("proj"), None, 10, 0, false, Some("main"))?;
     let ids: Vec<i64> = results.iter().map(|memory| memory.id).collect();
 
     assert!(ids.contains(&1));

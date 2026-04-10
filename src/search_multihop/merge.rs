@@ -3,7 +3,11 @@ use std::collections::HashMap;
 const RRF_K: f64 = 60.0;
 const SECOND_HOP_WEIGHT: f64 = 0.5;
 
-pub(crate) fn rank_merged_ids(first_hop_ids: &[i64], second_hop_ids: &[i64], limit: i64) -> Vec<i64> {
+pub(crate) fn rank_merged_ids(
+    first_hop_ids: &[i64],
+    second_hop_ids: &[i64],
+    limit: i64,
+) -> Vec<i64> {
     if limit <= 0 {
         return vec![];
     }

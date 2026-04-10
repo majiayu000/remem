@@ -2,7 +2,10 @@ use super::cwd::resolve_cwd_arg;
 
 #[test]
 fn cli_resolve_cwd_arg_prefers_explicit_value() {
-    assert_eq!(resolve_cwd_arg(Some("/tmp/remem".to_string())), "/tmp/remem");
+    assert_eq!(
+        resolve_cwd_arg(Some("/tmp/remem".to_string())),
+        "/tmp/remem"
+    );
 }
 
 #[test]

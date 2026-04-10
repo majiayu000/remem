@@ -1,7 +1,9 @@
 use crate::db;
 use crate::memory_format::ParsedObservation;
 
-pub(crate) fn clone_pending_batch(batch: &[&db::PendingObservation]) -> Vec<db::PendingObservation> {
+pub(crate) fn clone_pending_batch(
+    batch: &[&db::PendingObservation],
+) -> Vec<db::PendingObservation> {
     batch
         .iter()
         .map(|pending| db::PendingObservation {
@@ -22,7 +24,11 @@ pub(crate) fn clone_pending_batch(batch: &[&db::PendingObservation]) -> Vec<db::
         .collect()
 }
 
-pub(crate) fn split_timeout_range(start: usize, end: usize, min_batch_size: usize) -> Option<[(usize, usize); 2]> {
+pub(crate) fn split_timeout_range(
+    start: usize,
+    end: usize,
+    min_batch_size: usize,
+) -> Option<[(usize, usize); 2]> {
     let batch_len = end.checked_sub(start)?;
     if batch_len <= min_batch_size {
         return None;

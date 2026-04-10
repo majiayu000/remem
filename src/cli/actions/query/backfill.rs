@@ -14,7 +14,8 @@ pub(in crate::cli) fn run_backfill_entities() -> Result<()> {
         .unwrap_or(0);
     println!("Backfilling entities from {} active memories...", count);
 
-    let mut stmt = conn.prepare("SELECT id, title, content FROM memories WHERE status = 'active'")?;
+    let mut stmt =
+        conn.prepare("SELECT id, title, content FROM memories WHERE status = 'active'")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
