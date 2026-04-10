@@ -362,7 +362,7 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
     }
 
     // --- 5 relevant to "time decay" ---
-    let decay_relevant = vec![
+    let decay_relevant = [
         (
             "Time decay scoring formula",
             "Memory score = type_weight * time_decay where decay is 1.0/0.7/0.4 for 7d/30d/older",

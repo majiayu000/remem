@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn parse_observations_title_case_tags() {
+    let xml = r#"
+<Observation>
+  <type>decision</type>
+  <title>Title case tag</title>
+</Observation>
+"#;
+    let parsed = parse_observations(xml);
+    assert_eq!(
+        parsed.len(),
+        1,
+        "Observation with title-case tags must be parsed"
+    );
+    assert_eq!(parsed[0].title.as_deref(), Some("Title case tag"));
+}
+
+#[test]
+fn parse_observations_upper_case_tags() {
+    let xml = r#"
+<OBSERVATION>
+  <type>decision</type>
+  <title>Upper case tag</title>
+</OBSERVATION>
+"#;
+    let parsed = parse_observations(xml);
+    assert_eq!(
+        parsed.len(),
+        1,
+        "OBSERVATION with all-caps tags must be parsed"
+    );
+    assert_eq!(parsed[0].title.as_deref(), Some("Upper case tag"));
+}
+
+#[test]
+fn parse_observations_mixed_case_open_and_close() {
+    let xml = r#"<Observation><type>bugfix</type><title>Mixed close</title></observation>"#;
+    let parsed = parse_observations(xml);
+    assert_eq!(parsed.len(), 1, "Mixed-case open/close tags must be parsed");
+    assert_eq!(parsed[0].obs_type, "bugfix");
+}
+
+#[test]
+fn parse_observations_multiple_mixed_case() {
+    let xml = r#"
+<OBSERVATION>
+  <type>decision</type>
+  <title>First</title>
+</OBSERVATION>
+<observation>
+  <type>bugfix</type>
+  <title>Second</title>
+</observation>
+<Observation>
+  <type>discovery</type>
+  <title>Third</title>
+</Observation>
+"#;
+    let parsed = parse_observations(xml);
+    assert_eq!(
+        parsed.len(),
+        3,
+        "All three mixed-case observation blocks must be parsed"
+    );
+    assert_eq!(parsed[0].title.as_deref(), Some("First"));
+    assert_eq!(parsed[1].title.as_deref(), Some("Second"));
+    assert_eq!(parsed[2].title.as_deref(), Some("Third"));
+}
+
+#[test]
 fn extract_field_scans_from_open_tag() {
     let body = "</title><title>ok</title>";
     assert_eq!(extract_field(body, "title").as_deref(), Some("ok"));

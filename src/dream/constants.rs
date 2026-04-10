@@ -10,6 +10,7 @@ pub(super) const DREAM_MIN_CLUSTER_SIZE: usize = 2;
 pub(super) const TOPIC_KEY_PREFIX_LEN: usize = 20;
 
 /// dream job 最小触发间隔（秒）
+#[allow(dead_code)]
 pub(super) const DREAM_COOLDOWN_SECS: i64 = 3600;
 
 /// 最近 N 秒内写入的记忆不参与合并（避免合并进行中的会话）
