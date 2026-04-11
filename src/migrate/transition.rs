@@ -63,10 +63,7 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
     }
 
     // --- missing columns on memories ---
-    let mem_cols = [
-        ("branch", "TEXT"),
-        ("scope", "TEXT DEFAULT 'project'"),
-    ];
+    let mem_cols = [("branch", "TEXT"), ("scope", "TEXT DEFAULT 'project'")];
     for (col, typedef) in &mem_cols {
         add_column_if_missing(conn, "memories", col, typedef);
     }
@@ -141,7 +138,7 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
             output_tokens INTEGER NOT NULL,
             total_tokens INTEGER NOT NULL,
             estimated_cost_usd REAL NOT NULL
-        );"
+        );",
     )?;
 
     // --- indexes (all IF NOT EXISTS, safe to re-run) ---
@@ -183,7 +180,10 @@ fn add_column_if_missing(conn: &Connection, table: &str, column: &str, typedef: 
     if let Err(e) = conn.execute_batch(&sql) {
         let msg = e.to_string();
         if !msg.contains("duplicate column") {
-            crate::log::warn("migrate", &format!("backfill {}.{}: {}", table, column, msg));
+            crate::log::warn(
+                "migrate",
+                &format!("backfill {}.{}: {}", table, column, msg),
+            );
         }
     }
 }

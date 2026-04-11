@@ -23,8 +23,14 @@ pub(in crate::cli) fn run_show(id: i64) -> Result<()> {
     if let Some(branch) = &memory.branch {
         println!("Branch:   {}", branch);
     }
-    println!("Created:  {}", format_memory_timestamp(memory.created_at_epoch));
-    println!("Updated:  {}", format_memory_timestamp(memory.updated_at_epoch));
+    println!(
+        "Created:  {}",
+        format_memory_timestamp(memory.created_at_epoch)
+    );
+    println!(
+        "Updated:  {}",
+        format_memory_timestamp(memory.updated_at_epoch)
+    );
     println!();
     println!("{}", memory.text);
 

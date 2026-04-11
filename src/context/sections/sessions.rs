@@ -1,7 +1,10 @@
 use super::super::format::{format_epoch_short, format_epoch_time};
 use super::super::types::SessionSummaryBrief;
 
-pub(in crate::context) fn render_recent_sessions(output: &mut String, summaries: &[SessionSummaryBrief]) {
+pub(in crate::context) fn render_recent_sessions(
+    output: &mut String,
+    summaries: &[SessionSummaryBrief],
+) {
     output.push_str("## Sessions\n");
     for summary in summaries {
         let date = format_epoch_short(summary.created_at_epoch);

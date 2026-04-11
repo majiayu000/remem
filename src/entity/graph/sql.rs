@@ -5,7 +5,9 @@ pub(super) fn build_expand_sql(
     branch: Option<&str>,
     include_inactive: bool,
 ) -> String {
-    let entity_placeholders: Vec<String> = (1..=entity_count).map(|index| format!("?{index}")).collect();
+    let entity_placeholders: Vec<String> = (1..=entity_count)
+        .map(|index| format!("?{index}"))
+        .collect();
     let mut conditions = vec![
         format!("me.entity_id IN ({})", entity_placeholders.join(", ")),
         status_filter_sql(include_inactive).to_string(),

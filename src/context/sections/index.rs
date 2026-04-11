@@ -7,7 +7,10 @@ use super::super::format::{format_epoch_short, type_label};
 pub(in crate::context) fn render_memory_index(output: &mut String, memories: &[Memory]) {
     let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
     for memory in memories {
-        by_type.entry(memory.memory_type.as_str()).or_default().push(memory);
+        by_type
+            .entry(memory.memory_type.as_str())
+            .or_default()
+            .push(memory);
     }
 
     let display_order = [
@@ -22,7 +25,12 @@ pub(in crate::context) fn render_memory_index(output: &mut String, memories: &[M
     output.push_str("## Index\n");
     for memory_type in &display_order {
         if let Some(memories_for_type) = by_type.get(memory_type) {
-            push_memory_index_line(output, type_label(memory_type), memory_type, memories_for_type);
+            push_memory_index_line(
+                output,
+                type_label(memory_type),
+                memory_type,
+                memories_for_type,
+            );
         }
     }
 
@@ -34,7 +42,12 @@ pub(in crate::context) fn render_memory_index(output: &mut String, memories: &[M
     output.push('\n');
 }
 
-fn push_memory_index_line(output: &mut String, label: &str, memory_type: &str, memories: &[&Memory]) {
+fn push_memory_index_line(
+    output: &mut String,
+    label: &str,
+    memory_type: &str,
+    memories: &[&Memory],
+) {
     let section_label = if label == memory_type {
         memory_type.to_string()
     } else {

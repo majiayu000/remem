@@ -18,10 +18,7 @@ pub(super) struct MergeResult {
     pub superseded_ids: Vec<i64>,
 }
 
-pub(super) async fn merge_cluster(
-    cluster: &Cluster,
-    project: &str,
-) -> Result<MergeDecision> {
+pub(super) async fn merge_cluster(cluster: &Cluster, project: &str) -> Result<MergeDecision> {
     let user_message = build_user_message(&cluster.members);
 
     let response = crate::ai::call_ai(

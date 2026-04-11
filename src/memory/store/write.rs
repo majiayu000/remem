@@ -82,7 +82,17 @@ pub fn insert_memory_full(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
                      scope = ?8 WHERE id = ?9",
-                    params![session_id, title, content, memory_type, files, now, branch, scope, id],
+                    params![
+                        session_id,
+                        title,
+                        content,
+                        memory_type,
+                        files,
+                        now,
+                        branch,
+                        scope,
+                        id
+                    ],
                 )?;
                 refresh_memory_entities(conn, id, title, content, "entity link refresh failed");
                 return Ok(id);

@@ -47,7 +47,10 @@ pub(super) fn query_memory_ids(
     limit: i64,
     include_inactive: bool,
 ) -> Result<Vec<i64>> {
-    let mut conditions = vec![entity_condition, status_filter_sql(include_inactive).to_string()];
+    let mut conditions = vec![
+        entity_condition,
+        status_filter_sql(include_inactive).to_string(),
+    ];
     let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = vec![first_param];
     let mut idx = 2;
     if let Some(project) = project {
@@ -75,7 +78,8 @@ pub(super) fn query_memory_ids(
         idx
     );
     params_vec.push(Box::new(limit));
-    let refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|value| value.as_ref()).collect();
+    let refs: Vec<&dyn rusqlite::types::ToSql> =
+        params_vec.iter().map(|value| value.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, i64>(0))?;
     crate::db_query::collect_rows(rows)
