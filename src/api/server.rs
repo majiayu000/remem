@@ -15,8 +15,21 @@ pub fn build_router(_port: u16) -> Router<DbState> {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin: &axum::http::HeaderValue, _| {
             let b = origin.as_bytes();
-            b.starts_with(b"http://localhost:")
+            // localhost — with or without explicit port, http or https
+            b == b"http://localhost"
+                || b == b"https://localhost"
+                || b.starts_with(b"http://localhost:")
+                || b.starts_with(b"https://localhost:")
+                // IPv4 loopback
+                || b == b"http://127.0.0.1"
+                || b == b"https://127.0.0.1"
                 || b.starts_with(b"http://127.0.0.1:")
+                || b.starts_with(b"https://127.0.0.1:")
+                // IPv6 loopback
+                || b == b"http://[::1]"
+                || b == b"https://[::1]"
+                || b.starts_with(b"http://[::1]:")
+                || b.starts_with(b"https://[::1]:")
         }))
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);

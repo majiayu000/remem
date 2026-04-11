@@ -89,25 +89,54 @@ fn confine_to_base(abs: &Path) -> Result<PathBuf> {
     let raw_base = remem_data_dir();
     // Canonicalize base if it exists so the prefix check is symlink-safe.
     let base = if raw_base.exists() {
-        raw_base.canonicalize().unwrap_or(raw_base)
+        raw_base.canonicalize().unwrap_or_else(|_| raw_base.clone())
     } else {
-        raw_base
+        raw_base.clone()
     };
 
     let normalized = normalize_path(abs);
 
-    // Canonicalize the parent directory (likely exists) to detect symlinks.
-    let resolved = if let Some(parent) = normalized.parent() {
-        if parent.exists() {
-            match parent.canonicalize() {
-                Ok(canon_parent) => canon_parent.join(normalized.file_name().unwrap_or_default()),
-                Err(_) => normalized.clone(),
+    // Walk up the ancestor chain to find the deepest existing directory
+    // that is still within raw_base, canonicalize it (resolving intermediate
+    // symlinks), then re-attach the non-existing suffix.  This prevents
+    // symlink escapes even when the immediate parent does not yet exist.
+    //
+    // The walk stops at the raw_base boundary so that when base itself
+    // does not yet exist (e.g. fresh temp dirs in tests) we do not walk
+    // above it and produce a canonicalized prefix that diverges from
+    // raw_base (on macOS /tmp → /private/tmp would break starts_with).
+    let resolved = {
+        let mut remaining: Vec<std::ffi::OsString> = Vec::new();
+        let mut ancestor = normalized.clone();
+        loop {
+            if ancestor.exists() {
+                match ancestor.canonicalize() {
+                    Ok(canon) => {
+                        let mut result = canon;
+                        for component in remaining.iter().rev() {
+                            result = result.join(component);
+                        }
+                        break result;
+                    }
+                    Err(_) => break normalized.clone(),
+                }
             }
-        } else {
-            normalized.clone()
+            // Stop at or above raw_base — no deeper existing ancestor within
+            // base is reachable; fall back to the normalized path.
+            if ancestor == raw_base || !ancestor.starts_with(&raw_base) {
+                break normalized.clone();
+            }
+            match ancestor.file_name() {
+                Some(name) => {
+                    remaining.push(name.to_owned());
+                    ancestor = match ancestor.parent() {
+                        Some(p) => p.to_path_buf(),
+                        None => break normalized.clone(),
+                    };
+                }
+                None => break normalized.clone(),
+            }
         }
-    } else {
-        normalized.clone()
     };
 
     // Also canonicalize the final component itself if it is a symlink, so that a
