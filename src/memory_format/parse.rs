@@ -35,14 +35,18 @@ fn extract_array(content: &str, array_name: &str, element_name: &str) -> Vec<Str
 pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
     let mut observations = Vec::new();
     let mut pos = 0;
+    // Use a lowercased copy for tag searching so that <Observation>, <OBSERVATION>, etc.
+    // are all matched. Byte offsets are identical to `text` because ASCII lowercasing
+    // never changes the byte length of a string.
+    let text_lower = text.to_ascii_lowercase();
 
-    while let Some(tag_start_rel) = text[pos..].find("<observation") {
+    while let Some(tag_start_rel) = text_lower[pos..].find("<observation") {
         let tag_start = pos + tag_start_rel;
-        let Some(open_end_rel) = text[tag_start..].find('>') else {
+        let Some(open_end_rel) = text_lower[tag_start..].find('>') else {
             break;
         };
         let content_start = tag_start + open_end_rel + 1;
-        let Some(close_rel) = text[content_start..].find("</observation>") else {
+        let Some(close_rel) = text_lower[content_start..].find("</observation>") else {
             break;
         };
         let content_end = content_start + close_rel;

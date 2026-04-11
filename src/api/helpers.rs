@@ -36,6 +36,7 @@ pub(super) fn error_response(status: StatusCode, code: &str, message: &str) -> i
     )
 }
 
+#[allow(clippy::result_large_err)]
 pub(super) fn open_request_db() -> Result<rusqlite::Connection, Response> {
     db::open_db().map_err(|err| {
         error_response(

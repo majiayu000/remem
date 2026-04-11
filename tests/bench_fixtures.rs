@@ -362,6 +362,7 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
     }
 
     // --- 5 relevant to "time decay" ---
+    #[allow(clippy::useless_vec)]
     let decay_relevant = vec![
         (
             "Time decay scoring formula",

@@ -12,6 +12,7 @@ pub(crate) struct MemoryCandidate {
     pub title: String,
     pub content: String,
     pub memory_type: String,
+    #[allow(dead_code)]
     pub updated_at_epoch: i64,
 }
 
