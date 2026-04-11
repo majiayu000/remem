@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Utc;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 const LOCAL_SAVE_ENABLE_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_COPY";
 const LOCAL_SAVE_DIR_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_DIR";
@@ -39,23 +39,81 @@ pub fn sanitize_segment(raw: &str, fallback: &str, limit: usize) -> String {
     }
 }
 
+/// Resolves `local_path` to an absolute path confined within the allowed base
+/// directory (`remem_data_dir()`).  Returns `Err` if the resolved path escapes
+/// the base or is equal to the base itself.  When `local_path` is `None` or
+/// empty the default note path is returned (always inside the base).
 pub fn resolve_local_note_path(
     project: &str,
     title: Option<&str>,
     local_path: Option<&str>,
-) -> PathBuf {
+) -> Result<PathBuf> {
     if let Some(raw) = local_path.and_then(non_empty_trimmed) {
         let path = PathBuf::from(raw);
-        if path.is_absolute() {
+        let abs = if path.is_absolute() {
             path
         } else {
             std::env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join(path)
+        };
+        confine_to_base(&abs)
+    } else {
+        Ok(default_local_note_path(project, title))
+    }
+}
+
+/// Normalises `..` and `.` components without calling `canonicalize` (which
+/// fails for paths that do not yet exist).
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out: Vec<Component> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                if matches!(out.last(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+                // At root or already at top — just discard the `..`
+            }
+            Component::CurDir => {}
+            _ => out.push(component),
+        }
+    }
+    out.iter().collect()
+}
+
+/// Checks that `abs` (an absolute path) is strictly inside `remem_data_dir()`.
+/// If the parent directory already exists it is canonicalized to resolve
+/// symlinks before the prefix check, preventing symlink-based escapes.
+fn confine_to_base(abs: &Path) -> Result<PathBuf> {
+    let raw_base = remem_data_dir();
+    // Canonicalize base if it exists so the prefix check is symlink-safe.
+    let base = if raw_base.exists() {
+        raw_base.canonicalize().unwrap_or(raw_base)
+    } else {
+        raw_base
+    };
+
+    let normalized = normalize_path(abs);
+
+    // Canonicalize the parent directory (likely exists) to detect symlinks.
+    let resolved = if let Some(parent) = normalized.parent() {
+        if parent.exists() {
+            match parent.canonicalize() {
+                Ok(canon_parent) => canon_parent.join(normalized.file_name().unwrap_or_default()),
+                Err(_) => normalized.clone(),
+            }
+        } else {
+            normalized.clone()
         }
     } else {
-        default_local_note_path(project, title)
+        normalized.clone()
+    };
+
+    if !resolved.starts_with(&base) || resolved == base {
+        return Err(anyhow!("local_path is outside the allowed directory"));
     }
+    Ok(resolved)
 }
 
 pub(super) fn build_local_note_content(project: &str, title: &str, text: &str) -> String {

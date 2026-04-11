@@ -41,11 +41,14 @@ pub(in crate::api) async fn handle_save_memory(
             }),
         )
             .into_response(),
-        Err(err) => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "save_failed",
-            &err.to_string(),
-        )
-        .into_response(),
+        Err(err) => {
+            let msg = err.to_string();
+            let status = if msg.contains("outside the allowed directory") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error_response(status, "save_failed", &msg).into_response()
+        }
     }
 }
