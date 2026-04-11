@@ -13,10 +13,11 @@ pub fn build_router(_port: u16) -> Router<DbState> {
     // different port than the API (common in dev and production setups) are not
     // blocked.  Requests from non-localhost origins are still rejected.
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin: &axum::http::HeaderValue, _| {
-            let b = origin.as_bytes();
-            // localhost — with or without explicit port, http or https
-            b == b"http://localhost"
+        .allow_origin(AllowOrigin::predicate(
+            |origin: &axum::http::HeaderValue, _| {
+                let b = origin.as_bytes();
+                // localhost — with or without explicit port, http or https
+                b == b"http://localhost"
                 || b == b"https://localhost"
                 || b.starts_with(b"http://localhost:")
                 || b.starts_with(b"https://localhost:")
@@ -30,7 +31,8 @@ pub fn build_router(_port: u16) -> Router<DbState> {
                 || b == b"https://[::1]"
                 || b.starts_with(b"http://[::1]:")
                 || b.starts_with(b"https://[::1]:")
-        }))
+            },
+        ))
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
 
