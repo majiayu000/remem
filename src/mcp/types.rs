@@ -68,7 +68,7 @@ pub(super) struct SaveMemoryParams {
     #[schemars(description = "List of related file paths")]
     pub files: Option<Vec<String>>,
     #[schemars(
-        description = "Optional local markdown path for backup copy. Relative paths are resolved from current working directory."
+        description = "Optional local markdown path for backup copy. Relative paths are resolved from current working directory. The resolved path must fall within the remem data directory (REMEM_DATA_DIR); paths outside that boundary are rejected."
     )]
     pub local_path: Option<String>,
     #[schemars(

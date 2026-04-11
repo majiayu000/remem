@@ -110,7 +110,21 @@ fn confine_to_base(abs: &Path) -> Result<PathBuf> {
         normalized.clone()
     };
 
-    if !resolved.starts_with(&base) || resolved == base {
+    // Also canonicalize the final component itself if it is a symlink, so that a
+    // symlink at the leaf (e.g. `base/evil_link -> /etc/passwd`) cannot bypass the
+    // prefix check.  Dangling symlinks are rejected because their target is unknown.
+    let check_path = if resolved.is_symlink() {
+        match resolved.canonicalize() {
+            Ok(canon) => canon,
+            Err(_) => {
+                return Err(anyhow!("local_path is outside the allowed directory"));
+            }
+        }
+    } else {
+        resolved.clone()
+    };
+
+    if !check_path.starts_with(&base) || check_path == base {
         return Err(anyhow!("local_path is outside the allowed directory"));
     }
     Ok(resolved)
