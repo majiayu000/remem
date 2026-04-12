@@ -511,6 +511,75 @@ pub fn summary_xml_partial() -> String {
         .to_string()
 }
 
+pub fn summary_xml_truncated_wrapper() -> String {
+    "<summary>\n\
+     <request>Harden summary parser against malformed wrapper</request>\n\
+     <completed>Should still parse without closing summary tag</completed>\n"
+        .to_string()
+}
+
+pub fn summary_xml_unclosed_request() -> String {
+    "<summary>\n\
+     <request>Improve malformed field tolerance\n\
+     <completed>Recover from missing </request> close tag</completed>\n\
+     </summary>"
+        .to_string()
+}
+
+pub fn summary_xml_with_tag_attributes() -> String {
+    "<summary source=\"hook\" model=\"gpt-5.4\">\n\
+     <request priority=\"high\">Parse attribute-wrapped summary fields</request>\n\
+     <completed origin=\"llm\">Should survive attribute noise around tags</completed>\n\
+     </summary>"
+        .to_string()
+}
+
+pub fn summary_xml_multiple_blocks() -> String {
+    "<summary>\n\
+     <request>Example request from scratchpad</request>\n\
+     <completed>Example completion from scratchpad</completed>\n\
+     </summary>\n\
+     <summary>\n\
+     <request>Final request from actual session</request>\n\
+     <completed>Final completion from actual session</completed>\n\
+     </summary>"
+        .to_string()
+}
+
+pub fn observation_xml_standard() -> String {
+    "<observation>\n\
+     <type>discovery</type>\n\
+     <title>Standard observation parse</title>\n\
+     <facts><fact>first</fact></facts>\n\
+     </observation>"
+        .to_string()
+}
+
+pub fn observation_xml_with_tag_attributes() -> String {
+    "<observation source=\"hook\">\n\
+     <type confidence=\"0.9\">decision</type>\n\
+     <title lang=\"en\">Attribute wrapped observation</title>\n\
+     <facts mode=\"strict\"><fact order=\"1\">first</fact></facts>\n\
+     </observation>"
+        .to_string()
+}
+
+pub fn observation_xml_unclosed_title() -> String {
+    "<observation>\n\
+     <type>discovery</type>\n\
+     <title>Recover malformed title<narrative>narrative survives</narrative>\n\
+     </observation>"
+        .to_string()
+}
+
+pub fn observation_xml_truncated_wrapper() -> String {
+    "<observation>\n\
+     <type>decision</type>\n\
+     <title>Recover truncated observation wrapper</title>\n\
+     <narrative>final observation should still parse</narrative>\n"
+        .to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

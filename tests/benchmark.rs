@@ -10,11 +10,15 @@ mod bench_fixtures;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{entity, memory, search, search_multihop, summarize};
+use remem::{entity, memory, memory_format, search, search_multihop, summarize};
 
 use bench_fixtures::{
-    coding_session_fixtures, insert_memory_at, insert_seed_memories, search_eval_memories,
-    setup_full_schema, summary_xml_partial, summary_xml_skip, summary_xml_with_all_fields,
+    coding_session_fixtures, insert_memory_at, insert_seed_memories, observation_xml_standard,
+    observation_xml_truncated_wrapper, observation_xml_unclosed_title,
+    observation_xml_with_tag_attributes, search_eval_memories, setup_full_schema,
+    summary_xml_multiple_blocks, summary_xml_partial, summary_xml_skip,
+    summary_xml_truncated_wrapper, summary_xml_unclosed_request, summary_xml_with_all_fields,
+    summary_xml_with_tag_attributes,
 };
 
 // ===========================================================================
@@ -682,6 +686,139 @@ fn bench_summary_parse_partial() -> Result<()> {
     assert!(p.decisions.is_none(), "decisions should be absent");
     assert!(p.learned.is_none(), "learned should be absent");
     assert!(p.preferences.is_none(), "preferences should be absent");
+
+    Ok(())
+}
+
+#[test]
+fn bench_summary_parse_malformed_robustness() -> Result<()> {
+    let samples = vec![
+        (
+            "full",
+            summary_xml_with_all_fields(),
+            Some("Add global memory scope for cross-project preference sharing"),
+        ),
+        (
+            "partial",
+            summary_xml_partial(),
+            Some("Fix search crash on empty query"),
+        ),
+        (
+            "truncated_wrapper",
+            summary_xml_truncated_wrapper(),
+            Some("Harden summary parser against malformed wrapper"),
+        ),
+        (
+            "unclosed_request",
+            summary_xml_unclosed_request(),
+            Some("Improve malformed field tolerance"),
+        ),
+        (
+            "tag_attributes",
+            summary_xml_with_tag_attributes(),
+            Some("Parse attribute-wrapped summary fields"),
+        ),
+        (
+            "multiple_blocks",
+            summary_xml_multiple_blocks(),
+            Some("Final request from actual session"),
+        ),
+    ];
+
+    let parsed_ok = samples
+        .iter()
+        .filter(|(name, xml, expected_request)| {
+            let actual = summarize::parse_summary(xml).and_then(|parsed| parsed.request);
+            let ok = actual.as_deref() == *expected_request;
+            if !ok {
+                eprintln!(
+                    "[Summary Robustness] mismatch sample={} expected={:?} actual={:?}",
+                    name, expected_request, actual
+                );
+            }
+            ok
+        })
+        .count();
+    let robustness = parsed_ok as f64 / samples.len() as f64;
+
+    eprintln!(
+        "[Summary Robustness] parsed={}/{} rate={:.2}",
+        parsed_ok,
+        samples.len(),
+        robustness
+    );
+
+    assert!(
+        robustness >= 0.9,
+        "Summary parse robustness {:.2} below threshold 0.9",
+        robustness
+    );
+
+    Ok(())
+}
+
+#[test]
+fn bench_observation_parse_malformed_robustness() -> Result<()> {
+    let standard = observation_xml_standard();
+    let with_attrs = observation_xml_with_tag_attributes();
+    let unclosed = observation_xml_unclosed_title();
+
+    let samples = vec![
+        (
+            standard,
+            "discovery",
+            Some("Standard observation parse"),
+            None,
+        ),
+        (
+            with_attrs,
+            "decision",
+            Some("Attribute wrapped observation"),
+            None,
+        ),
+        (
+            unclosed,
+            "discovery",
+            Some("Recover malformed title"),
+            Some("narrative survives"),
+        ),
+        (
+            observation_xml_truncated_wrapper(),
+            "decision",
+            Some("Recover truncated observation wrapper"),
+            Some("final observation should still parse"),
+        ),
+    ];
+
+    let mut parsed_ok = 0;
+    for (xml, expected_type, expected_title, expected_narrative) in &samples {
+        let parsed = memory_format::parse_observations(xml);
+        if let Some(first) = parsed.first() {
+            let title_ok = first.title.as_deref() == *expected_title;
+            let narrative_ok = expected_narrative
+                .map(|expected| first.narrative.as_deref() == Some(expected))
+                .unwrap_or(true);
+            let type_ok = first.obs_type == *expected_type;
+            if type_ok && title_ok && narrative_ok {
+                parsed_ok += 1;
+            }
+        }
+    }
+
+    let robustness = parsed_ok as f64 / samples.len() as f64;
+
+    eprintln!(
+        "[Observation Robustness] parsed={}/{} rate={:.2}",
+        parsed_ok,
+        samples.len(),
+        robustness
+    );
+
+    assert!(
+        robustness >= 0.9,
+        "Observation parse robustness {:.2} below threshold 0.9",
+        robustness
+    );
 
     Ok(())
 }
