@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 use super::state::{has_migration_table, mark_applied};
@@ -40,9 +40,9 @@ pub(super) fn transition_from_old_system(conn: &Connection) -> Result<()> {
 }
 
 /// Bring a pre-v13 database up to baseline by adding missing columns, tables,
-/// and indexes. Uses IF NOT EXISTS / ignores "duplicate column" errors so it is
+/// and indexes. Uses IF NOT EXISTS / ignores duplicate-column errors so it is
 /// safe to run on any v1-v12 schema.
-fn backfill_to_baseline(conn: &Connection) -> Result<()> {
+pub(super) fn backfill_to_baseline(conn: &Connection) -> Result<()> {
     // --- missing columns on pending_observations (added between v10-v13) ---
     let pending_cols = [
         ("updated_at_epoch", "INTEGER NOT NULL DEFAULT 0"),
@@ -52,7 +52,7 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
         ("last_error", "TEXT"),
     ];
     for (col, typedef) in &pending_cols {
-        add_column_if_missing(conn, "pending_observations", col, typedef);
+        add_column_if_missing(conn, "pending_observations", col, typedef)?;
     }
 
     // --- missing columns on observations ---
@@ -64,19 +64,19 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
         ("commit_sha", "TEXT"),
     ];
     for (col, typedef) in &obs_cols {
-        add_column_if_missing(conn, "observations", col, typedef);
+        add_column_if_missing(conn, "observations", col, typedef)?;
     }
 
     // --- missing columns on memories ---
     let mem_cols = [("branch", "TEXT"), ("scope", "TEXT DEFAULT 'project'")];
     for (col, typedef) in &mem_cols {
-        add_column_if_missing(conn, "memories", col, typedef);
+        add_column_if_missing(conn, "memories", col, typedef)?;
     }
 
     // --- missing columns on session_summaries ---
     let ss_cols = [("discovery_tokens", "INTEGER DEFAULT 0")];
     for (col, typedef) in &ss_cols {
-        add_column_if_missing(conn, "session_summaries", col, typedef);
+        add_column_if_missing(conn, "session_summaries", col, typedef)?;
     }
 
     // --- tables that may not exist in older schemas ---
@@ -179,18 +179,24 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Try to add a column; silently ignore if it already exists.
-fn add_column_if_missing(conn: &Connection, table: &str, column: &str, typedef: &str) {
+/// Try to add a column; ignore only duplicate-column cases.
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    typedef: &str,
+) -> Result<()> {
     let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, typedef);
-    if let Err(e) = conn.execute_batch(&sql) {
-        let msg = e.to_string();
-        if !msg.contains("duplicate column") {
-            crate::log::warn(
-                "migrate",
-                &format!("backfill {}.{}: {}", table, column, msg),
-            );
-        }
+    match conn.execute_batch(&sql) {
+        Ok(()) => Ok(()),
+        Err(error) if is_duplicate_column_error(&error.to_string()) => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("backfill {}.{} failed", table, column)),
     }
+}
+
+fn is_duplicate_column_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("duplicate column") || normalized.contains("already exists")
 }
 
 fn has_existing_migration_entries(conn: &Connection) -> bool {

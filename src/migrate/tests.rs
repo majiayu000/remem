@@ -154,7 +154,61 @@ fn dry_run_pending_reports_pending_for_new_db() -> Result<()> {
 fn backfill_runs_even_when_migration_entries_exist() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 13;")?;
-    // Simulate old v13 schema WITHOUT scope column
+    create_v13_schema_without_scope(&conn)?;
+
+    // Pre-populate _schema_migrations so transition thinks it already ran
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at_epoch INTEGER NOT NULL);
+         INSERT INTO _schema_migrations VALUES (1, 'baseline', 1700000000);",
+    )?;
+
+    run_migrations(&conn)?;
+
+    // scope column must exist and be queryable
+    let has_scope: bool = conn.prepare("SELECT scope FROM memories LIMIT 0").is_ok();
+    assert!(has_scope, "memories.scope must exist after backfill");
+    Ok(())
+}
+
+#[test]
+fn backfill_fails_when_non_duplicate_alter_table_error_occurs() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA user_version = 13;")?;
+    create_v13_schema_without_scope(&conn)?;
+    conn.execute_batch("DROP TABLE pending_observations;")?;
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at_epoch INTEGER NOT NULL);
+         INSERT INTO _schema_migrations VALUES (1, 'baseline', 1700000000);",
+    )?;
+
+    let error = run_migrations(&conn).expect_err("missing table should fail backfill");
+    let message = error.to_string();
+    assert!(message.contains("backfill pending_observations.updated_at_epoch failed"));
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA user_version = 13;")?;
+    create_v13_schema_without_scope(&conn)?;
+    conn.execute_batch("DROP TABLE pending_observations;")?;
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at_epoch INTEGER NOT NULL);
+         INSERT INTO _schema_migrations VALUES (1, 'baseline', 1700000000);",
+    )?;
+
+    let result = dry_run_pending(&conn)?;
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .expect("broken schema should surface in dry-run");
+    assert!(error.contains("baseline backfill"));
+    assert!(error.contains("backfill pending_observations.updated_at_epoch failed"));
+    Ok(())
+}
+
+fn create_v13_schema_without_scope(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE memories (
             id INTEGER PRIMARY KEY, session_id TEXT, project TEXT NOT NULL,
@@ -171,17 +225,6 @@ fn backfill_runs_even_when_migration_entries_exist() -> Result<()> {
         CREATE TABLE summarize_cooldown (project TEXT PRIMARY KEY, last_summarize_epoch INTEGER NOT NULL, last_message_hash TEXT);
         CREATE TABLE summarize_locks (project TEXT PRIMARY KEY, lock_epoch INTEGER NOT NULL);",
     )?;
-    // Pre-populate _schema_migrations so transition thinks it already ran
-    conn.execute_batch(
-        "CREATE TABLE _schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at_epoch INTEGER NOT NULL);
-         INSERT INTO _schema_migrations VALUES (1, 'baseline', 1700000000);",
-    )?;
-
-    run_migrations(&conn)?;
-
-    // scope column must exist and be queryable
-    let has_scope: bool = conn.prepare("SELECT scope FROM memories LIMIT 0").is_ok();
-    assert!(has_scope, "memories.scope must exist after backfill");
     Ok(())
 }
 
