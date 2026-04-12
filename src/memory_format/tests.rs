@@ -76,6 +76,12 @@ fn extract_field_scans_from_open_tag() {
 }
 
 #[test]
+fn extract_field_accepts_tag_attributes() {
+    let body = r#"<title source="llm" score="0.9">ok</title>"#;
+    assert_eq!(extract_field(body, "title").as_deref(), Some("ok"));
+}
+
+#[test]
 fn xml_escape_escapes_angle_and_amp() {
     assert_eq!(xml_escape_text(r#"a<&>"'"#), "a&lt;&amp;&gt;&quot;&apos;");
 }
@@ -110,4 +116,67 @@ fn parse_observations_defaults_invalid_type_and_filters_type_concept() {
     assert_eq!(parsed[0].concepts, vec!["rust"]);
     assert_eq!(parsed[0].files_read, vec!["src/lib.rs"]);
     assert_eq!(parsed[0].files_modified, vec!["src/main.rs"]);
+}
+
+#[test]
+fn parse_observations_tolerates_tag_attributes() {
+    let xml = r#"
+<observation source="hook">
+  <type confidence="0.8">decision</type>
+  <title lang="en">  Keep parser tolerant  </title>
+  <facts quality="high">
+    <fact order="1">first</fact>
+  </facts>
+  <concepts source="entity">
+    <concept score="0.7">parser</concept>
+  </concepts>
+  <files_read>
+    <file path="src/summarize/parse.rs">src/summarize/parse.rs</file>
+  </files_read>
+</observation>
+"#;
+
+    let parsed = parse_observations(xml);
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].obs_type, "decision");
+    assert_eq!(parsed[0].title.as_deref(), Some("Keep parser tolerant"));
+    assert_eq!(parsed[0].facts, vec!["first"]);
+    assert_eq!(parsed[0].concepts, vec!["parser"]);
+    assert_eq!(parsed[0].files_read, vec!["src/summarize/parse.rs"]);
+}
+
+#[test]
+fn parse_observations_tolerates_missing_field_close_tag() {
+    let xml = r#"
+<observation>
+  <type>discovery</type>
+  <title>Recover malformed title<narrative>Narrative remains parseable</narrative>
+</observation>
+"#;
+
+    let parsed = parse_observations(xml);
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].title.as_deref(), Some("Recover malformed title"));
+    assert_eq!(
+        parsed[0].narrative.as_deref(),
+        Some("Narrative remains parseable")
+    );
+}
+
+#[test]
+fn parse_observations_tolerates_missing_observation_close_tag() {
+    let xml = r#"
+<observation>
+  <type>decision</type>
+  <title>Recover truncated observation wrapper</title>
+  <narrative>Should still capture final block even without close tag</narrative>
+"#;
+
+    let parsed = parse_observations(xml);
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].obs_type, "decision");
+    assert_eq!(
+        parsed[0].title.as_deref(),
+        Some("Recover truncated observation wrapper")
+    );
 }

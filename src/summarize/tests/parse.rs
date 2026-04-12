@@ -25,3 +25,89 @@ fn parse_summary_extracts_fields() {
 fn parse_summary_returns_none_for_skip_marker() {
     assert!(parse_summary("<skip_summary />").is_none());
 }
+
+#[test]
+fn parse_summary_tolerates_missing_summary_close_tag() {
+    let xml = r#"
+<summary>
+<request>Harden summary parsing</request>
+<completed>Keep parsing when wrapper is truncated</completed>
+"#;
+    let parsed = parse_summary(xml).expect("truncated summary wrapper should still parse");
+    assert_eq!(parsed.request.as_deref(), Some("Harden summary parsing"));
+    assert_eq!(
+        parsed.completed.as_deref(),
+        Some("Keep parsing when wrapper is truncated")
+    );
+}
+
+#[test]
+fn parse_summary_tolerates_missing_field_close_tag() {
+    let xml = r#"
+<summary>
+<request>Improve robustness<completed>Recover partial output</completed>
+</summary>
+"#;
+    let parsed = parse_summary(xml).expect("malformed field should still parse other content");
+    assert_eq!(parsed.request.as_deref(), Some("Improve robustness"));
+    assert_eq!(parsed.completed.as_deref(), Some("Recover partial output"));
+}
+
+#[test]
+fn parse_summary_tolerates_summary_open_tag_attributes() {
+    let xml = r#"
+<summary source="hook" model="gpt-5.4">
+<request>Parse attribute wrapper</request>
+<completed>Should not fail on metadata attributes</completed>
+</summary>
+"#;
+    let parsed = parse_summary(xml).expect("summary wrapper with attributes should parse");
+    assert_eq!(parsed.request.as_deref(), Some("Parse attribute wrapper"));
+    assert_eq!(
+        parsed.completed.as_deref(),
+        Some("Should not fail on metadata attributes")
+    );
+}
+
+#[test]
+fn parse_summary_tolerates_field_tag_attributes() {
+    let xml = r#"
+<summary>
+<request priority="high">Capture request despite field attrs</request>
+<completed source="llm">Capture completion despite field attrs</completed>
+</summary>
+"#;
+    let parsed = parse_summary(xml).expect("field tags with attributes should parse");
+    assert_eq!(
+        parsed.request.as_deref(),
+        Some("Capture request despite field attrs")
+    );
+    assert_eq!(
+        parsed.completed.as_deref(),
+        Some("Capture completion despite field attrs")
+    );
+}
+
+#[test]
+fn parse_summary_prefers_last_summary_block() {
+    let xml = r#"
+<summary>
+<request>Example request from scratchpad</request>
+<completed>Example completion from scratchpad</completed>
+</summary>
+
+<summary>
+<request>Final request from actual session</request>
+<completed>Final completion from actual session</completed>
+</summary>
+"#;
+    let parsed = parse_summary(xml).expect("multiple summary blocks should parse");
+    assert_eq!(
+        parsed.request.as_deref(),
+        Some("Final request from actual session")
+    );
+    assert_eq!(
+        parsed.completed.as_deref(),
+        Some("Final completion from actual session")
+    );
+}

@@ -1,4 +1,7 @@
-use super::{extract_field, ParsedObservation, OBSERVATION_TYPES};
+use super::{
+    extract::{fallback_value_end, find_close_tag_end, find_close_tag_start, find_open_tag_end},
+    extract_field, ParsedObservation, OBSERVATION_TYPES,
+};
 
 /// Find `needle` in `haystack` using ASCII case-insensitive comparison.
 /// Returns the byte offset of the first match, or `None`.
@@ -11,33 +14,28 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
 }
 
 fn extract_array(content: &str, array_name: &str, element_name: &str) -> Vec<String> {
-    let open = format!("<{}>", array_name);
-    let close = format!("</{}>", array_name);
-    let Some(start) = content.find(&open) else {
+    let lowered = content.to_ascii_lowercase();
+    let Some(start) = find_open_tag_end(&lowered, array_name, 0) else {
         return vec![];
     };
-    let start = start + open.len();
-    let Some(end_rel) = content[start..].find(&close) else {
-        return vec![];
-    };
-    let end = start + end_rel;
+    let end = find_close_tag_start(&lowered, array_name, start).unwrap_or(content.len());
     let inner = &content[start..end];
+    let inner_lower = inner.to_ascii_lowercase();
 
-    let elem_open = format!("<{}>", element_name);
-    let elem_close = format!("</{}>", element_name);
     let mut results = Vec::new();
     let mut pos = 0;
-    while let Some(found) = inner[pos..].find(&elem_open) {
-        let value_start = pos + found + elem_open.len();
-        let Some(end_rel) = inner[value_start..].find(&elem_close) else {
-            break;
-        };
-        let value_end = value_start + end_rel;
+    while let Some(value_start) = find_open_tag_end(&inner_lower, element_name, pos) {
+        let value_end = find_close_tag_start(&inner_lower, element_name, value_start)
+            .unwrap_or_else(|| fallback_value_end(inner, &inner_lower, value_start));
+        if value_start >= value_end {
+            pos = value_start.saturating_add(1);
+            continue;
+        }
         let value = inner[value_start..value_end].trim().to_string();
         if !value.is_empty() {
             results.push(value);
         }
-        pos = value_end + elem_close.len();
+        pos = find_close_tag_end(&inner_lower, element_name, value_start).unwrap_or(value_end);
     }
     results
 }
@@ -52,10 +50,11 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
             break;
         };
         let content_start = tag_start + open_end_rel + 1;
-        let Some(close_rel) = find_ascii_ci(&text[content_start..], "</observation>") else {
-            break;
-        };
-        let content_end = content_start + close_rel;
+        let close_tag = "</observation>";
+        let close_rel = find_ascii_ci(&text[content_start..], close_tag);
+        let content_end = close_rel
+            .map(|rel| content_start + rel)
+            .unwrap_or(text.len());
         let content = &text[content_start..content_end];
 
         let raw_type = extract_field(content, "type").unwrap_or_default();
@@ -79,7 +78,11 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
             files_modified: extract_array(content, "files_modified", "file"),
         });
 
-        pos = content_end + "</observation>".len();
+        pos = if close_rel.is_some() {
+            content_end + close_tag.len()
+        } else {
+            text.len()
+        };
     }
 
     observations
