@@ -59,7 +59,7 @@ pub fn resolve_local_note_path(
         };
         confine_to_base(&abs)
     } else {
-        Ok(default_local_note_path(project, title))
+        confine_to_base(&default_local_note_path(project, title))
     }
 }
 
