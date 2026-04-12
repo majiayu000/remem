@@ -185,6 +185,37 @@ fn backfill_runs_even_when_migration_entries_exist() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn backfill_fails_when_alter_table_returns_non_duplicate_error() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA user_version = 10;")?;
+    conn.execute_batch(
+        "CREATE TABLE sdk_sessions (id INTEGER PRIMARY KEY, content_session_id TEXT UNIQUE NOT NULL, memory_session_id TEXT NOT NULL, project TEXT, user_prompt TEXT, started_at TEXT, started_at_epoch INTEGER, status TEXT DEFAULT 'active', prompt_counter INTEGER DEFAULT 1);
+         CREATE VIEW observations AS SELECT 1 AS id, '' AS memory_session_id, '' AS project, '' AS type, '' AS title, '' AS subtitle, '' AS narrative, '' AS facts, '' AS concepts, '' AS files_read, '' AS files_modified, 0 AS prompt_number, '' AS created_at, 0 AS created_at_epoch;
+         CREATE TABLE session_summaries (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, request TEXT, completed TEXT, decisions TEXT, learned TEXT, next_steps TEXT, preferences TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER);
+         CREATE TABLE pending_observations (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, tool_name TEXT NOT NULL, tool_input TEXT, tool_response TEXT, cwd TEXT, created_at_epoch INTEGER NOT NULL, updated_at_epoch INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, next_retry_epoch INTEGER, last_error TEXT, lease_owner TEXT, lease_expires_epoch INTEGER);
+         CREATE TABLE memories (id INTEGER PRIMARY KEY, session_id TEXT, project TEXT NOT NULL, topic_key TEXT, title TEXT NOT NULL, content TEXT NOT NULL, memory_type TEXT NOT NULL, files TEXT, created_at_epoch INTEGER NOT NULL, updated_at_epoch INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active');
+         CREATE TABLE events (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, event_type TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT, files TEXT, exit_code INTEGER, created_at_epoch INTEGER NOT NULL);
+         CREATE TABLE summarize_cooldown (project TEXT PRIMARY KEY, last_summarize_epoch INTEGER NOT NULL, last_message_hash TEXT);
+         CREATE TABLE summarize_locks (project TEXT PRIMARY KEY, lock_epoch INTEGER NOT NULL);",
+    )?;
+
+    let err = run_migrations(&conn)
+        .expect_err("backfill should fail on non-duplicate ALTER TABLE errors");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("backfill observations."),
+        "unexpected error: {err_msg}"
+    );
+
+    let applied = applied_versions(&conn)?;
+    assert!(
+        applied.is_empty(),
+        "baseline must not be marked applied after failed backfill"
+    );
+    Ok(())
+}
+
 /// Verify all columns in MEMORY_COLS are present after migrating from any starting state.
 #[test]
 fn memory_cols_all_present_after_migration() -> Result<()> {
