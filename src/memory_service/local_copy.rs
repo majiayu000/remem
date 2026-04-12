@@ -94,7 +94,7 @@ fn normalize_path(path: &Path) -> PathBuf {
 /// If the parent directory already exists it is canonicalized to resolve
 /// symlinks before the prefix check, preventing symlink-based escapes.
 fn confine_to_base(abs: &Path) -> Result<PathBuf> {
-    let raw_base = {
+    let raw_base = normalize_path(&{
         let base = remem_data_dir();
         if base.is_absolute() {
             base
@@ -103,7 +103,7 @@ fn confine_to_base(abs: &Path) -> Result<PathBuf> {
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join(base)
         }
-    };
+    });
     // Canonicalize base if it exists so the prefix check is symlink-safe.
     let base = if raw_base.exists() {
         raw_base.canonicalize().unwrap_or_else(|_| raw_base.clone())

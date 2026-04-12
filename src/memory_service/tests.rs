@@ -173,7 +173,55 @@ fn resolve_none_local_path_allows_relative_remem_data_dir_default() {
         "relative REMEM_DATA_DIR default path should be allowed: {got:?}"
     );
     let path = got.unwrap();
-    assert!(path.is_absolute(), "resolved path should be absolute: {path:?}");
+    assert!(
+        path.is_absolute(),
+        "resolved path should be absolute: {path:?}"
+    );
+    assert!(
+        path.starts_with(&expected_base),
+        "resolved path {path:?} should stay inside {:?}",
+        expected_base
+    );
+}
+
+#[test]
+fn resolve_none_local_path_allows_relative_remem_data_dir_with_parent_segments() {
+    let _guard = ScopedTestDataDir::new("path-default-relative-data-dir-parent-segments");
+    let original_cwd = std::env::current_dir().expect("read cwd");
+    let temp_root = std::env::temp_dir().join(format!(
+        "remem-relative-parent-data-dir-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos()
+    ));
+    let workspace_root = temp_root.join("workspace");
+    let project_root = workspace_root.join("project");
+    std::fs::create_dir_all(&project_root).expect("create project root");
+    let expected_base = workspace_root
+        .canonicalize()
+        .expect("canonicalize workspace root")
+        .join(".remem");
+    unsafe {
+        std::env::set_current_dir(&project_root).expect("enter project root");
+        std::env::set_var("REMEM_DATA_DIR", "../.remem");
+        std::env::remove_var("REMEM_SAVE_MEMORY_LOCAL_DIR");
+    }
+
+    let got = resolve_local_note_path("proj", Some("title"), None);
+
+    unsafe {
+        std::env::set_current_dir(&original_cwd).expect("restore cwd");
+        std::env::remove_var("REMEM_DATA_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&temp_root);
+
+    assert!(
+        got.is_ok(),
+        "relative REMEM_DATA_DIR with parent segments should be allowed: {got:?}"
+    );
+    let path = got.unwrap();
     assert!(
         path.starts_with(&expected_base),
         "resolved path {path:?} should stay inside {:?}",
