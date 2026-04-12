@@ -1,4 +1,7 @@
 target/
 .claude/worktrees/
 eval/locomo/__pycache__/
+eval/local/results/
 .env
+.omx/
+plan/
