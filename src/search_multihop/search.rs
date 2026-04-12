@@ -16,14 +16,11 @@ fn take_memories(memories: Vec<Memory>, limit: i64) -> Vec<Memory> {
 
 fn load_ranked_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
     let loaded = memory::get_memories_by_ids(conn, ids, None)?;
-    let id_to_mem: HashMap<i64, Memory> = loaded
-        .into_iter()
-        .map(|memory| (memory.id, memory))
-        .collect();
-    Ok(ids
-        .iter()
-        .filter_map(|id| id_to_mem.get(id).cloned())
-        .collect())
+    let mut id_to_mem: HashMap<i64, Memory> = HashMap::with_capacity(loaded.len());
+    for memory in loaded {
+        id_to_mem.insert(memory.id, memory);
+    }
+    Ok(ids.iter().filter_map(|id| id_to_mem.remove(id)).collect())
 }
 
 pub fn search_multi_hop(
@@ -32,9 +29,8 @@ pub fn search_multi_hop(
     project: Option<&str>,
     limit: i64,
 ) -> Result<MultiHopResult> {
-    let fetch = limit.max(0) * 3;
+    let fetch = limit.max(0).saturating_mul(3);
     let first_hop = crate::search::search(conn, Some(query), project, None, fetch, 0, true)?;
-    let first_hop_ids: Vec<i64> = first_hop.iter().map(|memory| memory.id).collect();
 
     if first_hop.is_empty() {
         return Ok(MultiHopResult {
@@ -53,7 +49,7 @@ pub fn search_multi_hop(
         });
     }
 
-    let first_hop_set: HashSet<i64> = first_hop_ids.iter().copied().collect();
+    let first_hop_set: HashSet<i64> = first_hop.iter().map(|memory| memory.id).collect();
     let second_hop_ids =
         collect_second_hop_ids(conn, &discovered_entities, project, fetch, &first_hop_set)?;
     if second_hop_ids.is_empty() {
@@ -64,6 +60,7 @@ pub fn search_multi_hop(
         });
     }
 
+    let first_hop_ids: Vec<i64> = first_hop.iter().map(|memory| memory.id).collect();
     let top_ids = rank_merged_ids(&first_hop_ids, &second_hop_ids, limit);
     let memories = load_ranked_memories(conn, &top_ids)?;
     Ok(MultiHopResult {
