@@ -594,6 +594,70 @@ fn search_english_short_token_via_like_fallback() -> Result<()> {
 }
 
 #[test]
+fn search_long_token_falls_back_to_like_when_fts_empty() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_mem(&conn, "p", "db schema migration", "Updated AI model")?;
+    insert_mem(&conn, "p", "Other topic entirely", "Nothing relevant")?;
+
+    // trigram FTS does not match underscored token "db_schema" here, so
+    // query path must still fall back to LIKE for recall.
+    let results = search::search(&conn, Some("db_schema"), None, None, 10, 0, true)?;
+    assert!(!results.is_empty(), "should find at least 1 result");
+    assert!(
+        results[0].title.contains("db schema"),
+        "first result should be most relevant"
+    );
+    Ok(())
+}
+
+#[test]
+fn search_separator_token_like_fallback_runs_even_with_entity_hits() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    let entity_hit = insert_mem(&conn, "p", "Tom update note", "Tracked follow-up tasks")?;
+    let separator_hit = insert_mem(&conn, "p", "db schema migration", "Updated AI model")?;
+
+    let tom_entity_id: i64 = match conn.query_row(
+        "SELECT id FROM entities WHERE canonical_name = 'Tom' COLLATE NOCASE LIMIT 1",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(id) => id,
+        Err(_) => {
+            conn.execute(
+                "INSERT INTO entities (canonical_name, entity_type, mention_count, created_at_epoch)
+                 VALUES ('Tom', 'person', 1, 0)",
+                [],
+            )?;
+            conn.query_row(
+                "SELECT id FROM entities WHERE canonical_name = 'Tom' COLLATE NOCASE LIMIT 1",
+                [],
+                |row| row.get(0),
+            )?
+        }
+    };
+    conn.execute(
+        "INSERT OR IGNORE INTO memory_entities (memory_id, entity_id) VALUES (?1, ?2)",
+        params![entity_hit, tom_entity_id],
+    )?;
+
+    let results = search::search(&conn, Some("Tom db_schema"), None, None, 10, 0, true)?;
+    let ids: Vec<i64> = results.iter().map(|memory| memory.id).collect();
+
+    assert!(
+        ids.contains(&entity_hit),
+        "entity channel memory should be present"
+    );
+    assert!(
+        ids.contains(&separator_hit),
+        "separator token should still trigger LIKE fallback memory"
+    );
+    Ok(())
+}
+
+#[test]
 fn search_mixed_chinese_english() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn)?;

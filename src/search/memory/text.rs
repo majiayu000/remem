@@ -7,16 +7,22 @@ use crate::memory::{self, Memory};
 
 use super::super::common::{paginate_memories, rrf_fuse, sanitize_fts_query};
 
+const LIKE_SEPARATORS: [char; 4] = ['-', '_', '/', '.'];
+
 fn load_ordered_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
     let loaded = memory::get_memories_by_ids(conn, ids, None)?;
-    let id_to_memory: HashMap<i64, Memory> = loaded
-        .into_iter()
-        .map(|memory| (memory.id, memory))
-        .collect();
-    Ok(ids
-        .iter()
-        .filter_map(|id| id_to_memory.get(id).cloned())
-        .collect())
+    let mut id_to_memory: HashMap<i64, Memory> = HashMap::with_capacity(loaded.len());
+    for memory in loaded {
+        id_to_memory.insert(memory.id, memory);
+    }
+
+    let mut ordered = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(memory) = id_to_memory.remove(id) {
+            ordered.push(memory);
+        }
+    }
+    Ok(ordered)
 }
 
 pub(super) fn search_with_query(
@@ -41,6 +47,17 @@ pub(super) fn search_with_query(
 
     let core_tokens = crate::query_expand::core_tokens(query_text);
     let core_refs: Vec<&str> = core_tokens.iter().map(|token| token.as_str()).collect();
+    let has_short_core_token = core_refs.iter().any(|token| token.chars().count() < 3);
+    let has_separator_core_token = core_refs
+        .iter()
+        .any(|token| token.chars().any(|ch| LIKE_SEPARATORS.contains(&ch)));
+    let separator_like_tokens = split_separator_like_tokens(&core_refs);
+    let like_tokens = if separator_like_tokens.is_empty() {
+        core_tokens.clone()
+    } else {
+        separator_like_tokens
+    };
+    let like_refs: Vec<&str> = like_tokens.iter().map(|token| token.as_str()).collect();
     let mut channels: Vec<Vec<i64>> = Vec::new();
 
     if !long_tokens.is_empty() {
@@ -55,7 +72,9 @@ pub(super) fn search_with_query(
             include_stale,
             branch,
         )?;
-        channels.push(fts.iter().map(|memory| memory.id).collect());
+        if !fts.is_empty() {
+            channels.push(fts.iter().map(|memory| memory.id).collect());
+        }
     }
 
     let entity_ids = crate::entity::search_by_entity_filtered(
@@ -86,18 +105,24 @@ pub(super) fn search_with_query(
         }
     }
 
-    let like = memory::search_memories_like_filtered(
-        conn,
-        &core_refs,
-        project,
-        memory_type,
-        fetch,
-        0,
-        include_stale,
-        branch,
-    )?;
-    if !like.is_empty() {
-        channels.push(like.iter().map(|memory| memory.id).collect());
+    // LIKE fallback is expensive; reserve it for short-token queries or when
+    // all higher-signal channels return empty.
+    if (has_short_core_token || has_separator_core_token || channels.is_empty())
+        && !like_refs.is_empty()
+    {
+        let like = memory::search_memories_like_filtered(
+            conn,
+            &like_refs,
+            project,
+            memory_type,
+            fetch,
+            0,
+            include_stale,
+            branch,
+        )?;
+        if !like.is_empty() {
+            channels.push(like.iter().map(|memory| memory.id).collect());
+        }
     }
 
     if channels.is_empty() {
@@ -110,4 +135,28 @@ pub(super) fn search_with_query(
         .collect();
     let ordered = load_ordered_memories(conn, &final_ids)?;
     Ok(paginate_memories(ordered, limit, offset))
+}
+
+fn split_separator_like_tokens(core_refs: &[&str]) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let mut tokens = Vec::new();
+    let mut seen = HashSet::new();
+
+    for token in core_refs {
+        if !token.chars().any(|ch| LIKE_SEPARATORS.contains(&ch)) {
+            continue;
+        }
+        for part in token.split(|ch| LIKE_SEPARATORS.contains(&ch)) {
+            if part.is_empty() {
+                continue;
+            }
+            let lowered = part.to_lowercase();
+            if seen.insert(lowered) {
+                tokens.push(part.to_string());
+            }
+        }
+    }
+
+    tokens
 }

@@ -5,6 +5,13 @@ use crate::db;
 use crate::memory::{map_memory_row_pub, Memory};
 use crate::memory_search::filters::{push_branch_filter, push_project_filter};
 
+fn escape_like_token(token: &str) -> String {
+    token
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// LIKE fallback for short tokens.
 pub fn search_memories_like(
     conn: &Connection,
@@ -49,14 +56,12 @@ pub fn search_memories_like_filtered(
     }
 
     for token in tokens {
-        let like_pattern = format!("%{token}%");
-        let cols = ["m.title", "m.content"];
-        let token_clauses: Vec<String> = cols
-            .iter()
-            .map(|col| format!("{col} LIKE ?{idx}"))
-            .collect();
+        let escaped = escape_like_token(token);
+        let like_pattern = format!("%{escaped}%");
+        let token_clause =
+            format!("(m.title LIKE ?{idx} ESCAPE '\\' OR m.content LIKE ?{idx} ESCAPE '\\')");
         param_values.push(Box::new(like_pattern));
-        conditions.push(format!("({})", token_clauses.join(" OR ")));
+        conditions.push(token_clause);
         idx += 1;
     }
 
