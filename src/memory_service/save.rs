@@ -59,7 +59,7 @@ fn maybe_write_local_copy(
     }
 
     let local_path =
-        resolve_local_note_path(project, req.title.as_deref(), req.local_path.as_deref());
+        resolve_local_note_path(project, req.title.as_deref(), req.local_path.as_deref())?;
     let content = build_local_note_content(project, title, &req.text);
     write_local_note(&local_path, &content)?;
     Ok(("saved".to_string(), Some(local_path.display().to_string())))

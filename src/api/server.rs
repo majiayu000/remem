@@ -1,28 +1,51 @@
 use axum::{
+    http::{header, Method},
     routing::{get, post},
     Router,
 };
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use super::handlers::{handle_get_memory, handle_save_memory, handle_search, handle_status};
 use super::types::DbState;
 
-pub fn build_router() -> Router<DbState> {
+pub fn build_router(_port: u16) -> Router<DbState> {
+    // Allow any localhost origin (any port) so browser clients served from a
+    // different port than the API (common in dev and production setups) are not
+    // blocked.  Requests from non-localhost origins are still rejected.
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(
+            |origin: &axum::http::HeaderValue, _| {
+                let b = origin.as_bytes();
+                // localhost — with or without explicit port, http or https
+                b == b"http://localhost"
+                || b == b"https://localhost"
+                || b.starts_with(b"http://localhost:")
+                || b.starts_with(b"https://localhost:")
+                // IPv4 loopback
+                || b == b"http://127.0.0.1"
+                || b == b"https://127.0.0.1"
+                || b.starts_with(b"http://127.0.0.1:")
+                || b.starts_with(b"https://127.0.0.1:")
+                // IPv6 loopback
+                || b == b"http://[::1]"
+                || b == b"https://[::1]"
+                || b.starts_with(b"http://[::1]:")
+                || b.starts_with(b"https://[::1]:")
+            },
+        ))
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::CONTENT_TYPE]);
+
     Router::new()
         .route("/api/v1/search", get(handle_search))
         .route("/api/v1/memory", get(handle_get_memory))
         .route("/api/v1/memories", post(handle_save_memory))
         .route("/api/v1/status", get(handle_status))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(cors)
 }
 
 pub async fn run_api_server(port: u16) -> anyhow::Result<()> {
-    let app = build_router().with_state(DbState);
+    let app = build_router(port).with_state(DbState);
     let addr = format!("127.0.0.1:{}", port);
 
     crate::log::info("api", &format!("REST API listening on http://{}", addr));

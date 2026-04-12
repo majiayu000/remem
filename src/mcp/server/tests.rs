@@ -12,10 +12,14 @@ fn sanitize_segment_collapses_invalid_chars() {
 }
 
 #[test]
-fn resolve_relative_path_from_cwd() {
+fn resolve_relative_path_outside_base_is_rejected() {
+    let _dir = ScopedTestDataDir::new("mcp-path-traversal");
+    // Relative path that resolves outside the allowed base must be rejected.
     let got = resolve_local_note_path("manual", Some("x"), Some("docs/test.md"));
-    assert!(got.is_absolute());
-    assert!(got.ends_with("docs/test.md"));
+    assert!(
+        got.is_err(),
+        "relative path resolving outside base should be rejected"
+    );
 }
 
 #[test]
