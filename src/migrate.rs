@@ -3,6 +3,8 @@ mod run;
 mod state;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_convergence;
 mod transition;
 mod types;
 
