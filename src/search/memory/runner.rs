@@ -15,7 +15,16 @@ pub fn search(
     offset: i64,
     include_stale: bool,
 ) -> Result<Vec<Memory>> {
-    search_with_branch(conn, query, project, memory_type, limit, offset, include_stale, None)
+    search_with_branch(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        None,
+    )
 }
 
 pub fn search_with_branch(
@@ -39,6 +48,14 @@ pub fn search_with_branch(
             include_stale,
             branch,
         ),
-        _ => search_without_query(conn, project, memory_type, limit, offset, include_stale, branch),
+        _ => search_without_query(
+            conn,
+            project,
+            memory_type,
+            limit,
+            offset,
+            include_stale,
+            branch,
+        ),
     }
 }

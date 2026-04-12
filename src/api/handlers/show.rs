@@ -24,9 +24,11 @@ pub(in crate::api) async fn handle_get_memory(
         Ok(_) => {
             error_response(StatusCode::NOT_FOUND, "not_found", "Memory not found").into_response()
         }
-        Err(err) => {
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "db_error", &err.to_string())
-                .into_response()
-        }
+        Err(err) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "db_error",
+            &err.to_string(),
+        )
+        .into_response(),
     }
 }

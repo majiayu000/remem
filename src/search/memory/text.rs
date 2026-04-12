@@ -9,8 +9,14 @@ use super::super::common::{paginate_memories, rrf_fuse, sanitize_fts_query};
 
 fn load_ordered_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
     let loaded = memory::get_memories_by_ids(conn, ids, None)?;
-    let id_to_memory: HashMap<i64, Memory> = loaded.into_iter().map(|memory| (memory.id, memory)).collect();
-    Ok(ids.iter().filter_map(|id| id_to_memory.get(id).cloned()).collect())
+    let id_to_memory: HashMap<i64, Memory> = loaded
+        .into_iter()
+        .map(|memory| (memory.id, memory))
+        .collect();
+    Ok(ids
+        .iter()
+        .filter_map(|id| id_to_memory.get(id).cloned())
+        .collect())
 }
 
 pub(super) fn search_with_query(
@@ -98,7 +104,10 @@ pub(super) fn search_with_query(
         return Ok(vec![]);
     }
 
-    let final_ids: Vec<i64> = rrf_fuse(&channels, 60.0).iter().map(|(id, _)| *id).collect();
+    let final_ids: Vec<i64> = rrf_fuse(&channels, 60.0)
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
     let ordered = load_ordered_memories(conn, &final_ids)?;
     Ok(paginate_memories(ordered, limit, offset))
 }

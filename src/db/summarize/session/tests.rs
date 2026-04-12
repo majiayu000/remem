@@ -88,7 +88,12 @@ fn upsert_session_reuses_memory_session_id_and_increments_counter() -> Result<()
     setup_summary_schema(&conn)?;
 
     let first = upsert_session(&conn, "content-session-abcdefghi", "proj", Some("hello"))?;
-    let second = upsert_session(&conn, "content-session-abcdefghi", "proj", Some("hello again"))?;
+    let second = upsert_session(
+        &conn,
+        "content-session-abcdefghi",
+        "proj",
+        Some("hello again"),
+    )?;
 
     assert_eq!(first, second);
     assert!(first.starts_with("mem-"));

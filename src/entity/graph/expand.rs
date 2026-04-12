@@ -13,7 +13,16 @@ pub fn expand_via_entity_graph(
     project: Option<&str>,
     limit: i64,
 ) -> Result<Vec<i64>> {
-    expand_via_entity_graph_filtered(conn, seed_memory_ids, exclude_ids, project, None, None, limit, false)
+    expand_via_entity_graph_filtered(
+        conn,
+        seed_memory_ids,
+        exclude_ids,
+        project,
+        None,
+        None,
+        limit,
+        false,
+    )
 }
 
 pub fn expand_via_entity_graph_filtered(
@@ -37,9 +46,16 @@ pub fn expand_via_entity_graph_filtered(
 
     let exclude_set: HashSet<i64> = exclude_ids.iter().copied().collect();
     let seed_set: HashSet<i64> = seed_memory_ids.iter().copied().collect();
-    let sql = build_expand_sql(entity_ids.len(), project, memory_type, branch, include_inactive);
+    let sql = build_expand_sql(
+        entity_ids.len(),
+        project,
+        memory_type,
+        branch,
+        include_inactive,
+    );
     let params_vec = build_expand_params(&entity_ids, project, memory_type, branch, limit * 3);
-    let refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|value| value.as_ref()).collect();
+    let refs: Vec<&dyn rusqlite::types::ToSql> =
+        params_vec.iter().map(|value| value.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, i64>(0))?;

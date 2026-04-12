@@ -10,7 +10,11 @@ pub(in crate::cli) async fn run_dream(project: Option<&str>, dry_run: bool) -> R
 
     if dry_run {
         let clusters = crate::dream::list_clusters(&project)?;
-        println!("project={} clusters={} (dry-run, no changes)", project, clusters.len());
+        println!(
+            "project={} clusters={} (dry-run, no changes)",
+            project,
+            clusters.len()
+        );
         for (i, c) in clusters.iter().enumerate() {
             println!("  cluster[{}] size={}", i, c.members.len());
             for m in &c.members {

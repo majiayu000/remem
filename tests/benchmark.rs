@@ -243,7 +243,7 @@ fn bench_context_score_prefers_decisions_and_recent() -> Result<()> {
         "Fix search crash on hyphen",
         "Wrapped tokens in quotes for FTS5 MATCH safety",
         "bugfix",
-        now - 1 * 86400, // 1 day old
+        now - 86400, // 1 day old
         "project",
     )?;
     let discovery_old = insert_memory_at(

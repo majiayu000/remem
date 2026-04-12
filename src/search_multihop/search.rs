@@ -16,7 +16,10 @@ fn take_memories(memories: Vec<Memory>, limit: i64) -> Vec<Memory> {
 
 fn load_ranked_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
     let loaded = memory::get_memories_by_ids(conn, ids, None)?;
-    let id_to_mem: HashMap<i64, Memory> = loaded.into_iter().map(|memory| (memory.id, memory)).collect();
+    let id_to_mem: HashMap<i64, Memory> = loaded
+        .into_iter()
+        .map(|memory| (memory.id, memory))
+        .collect();
     Ok(ids
         .iter()
         .filter_map(|id| id_to_mem.get(id).cloned())
@@ -51,7 +54,8 @@ pub fn search_multi_hop(
     }
 
     let first_hop_set: HashSet<i64> = first_hop_ids.iter().copied().collect();
-    let second_hop_ids = collect_second_hop_ids(conn, &discovered_entities, project, fetch, &first_hop_set)?;
+    let second_hop_ids =
+        collect_second_hop_ids(conn, &discovered_entities, project, fetch, &first_hop_set)?;
     if second_hop_ids.is_empty() {
         return Ok(MultiHopResult {
             memories: take_memories(first_hop, limit),

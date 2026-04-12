@@ -3,12 +3,12 @@ use anyhow::Result;
 use crate::db;
 use crate::memory_format;
 
-use super::helpers::{clone_pending_batch, collect_observation_titles, split_timeout_range};
-use super::types::ActionFlushOutcome;
 use super::super::constants::{FLUSH_RETRY_MIN_BATCH_SIZE, OBSERVATION_PROMPT};
 use super::super::context::{build_existing_context, build_session_events_xml};
 use super::super::persist::persist_flush_batch;
 use super::super::runtime::{is_ai_timeout_error, pending_retry_backoff_secs};
+use super::helpers::{clone_pending_batch, collect_observation_titles, split_timeout_range};
+use super::types::ActionFlushOutcome;
 
 pub(crate) async fn flush_action_batches(
     conn: &mut rusqlite::Connection,
@@ -18,7 +18,10 @@ pub(crate) async fn flush_action_batches(
     pending: &[db::PendingObservation],
     action_indices: &[usize],
 ) -> Result<ActionFlushOutcome> {
-    let action_batch: Vec<&db::PendingObservation> = action_indices.iter().map(|&index| &pending[index]).collect();
+    let action_batch: Vec<&db::PendingObservation> = action_indices
+        .iter()
+        .map(|&index| &pending[index])
+        .collect();
     let mut ranges: Vec<(usize, usize)> = vec![(0, action_batch.len())];
     let mut total_observations = 0usize;
     let mut titles = Vec::new();
@@ -34,7 +37,10 @@ pub(crate) async fn flush_action_batches(
         let existing_context = match build_existing_context(conn, project) {
             Ok(context) => context,
             Err(err) => {
-                crate::log::warn("flush", &format!("existing context failed (continuing): {}", err));
+                crate::log::warn(
+                    "flush",
+                    &format!("existing context failed (continuing): {}", err),
+                );
                 String::new()
             }
         };
@@ -80,10 +86,16 @@ pub(crate) async fn flush_action_batches(
                 }
 
                 let ids: Vec<i64> = batch.iter().map(|pending| pending.id).collect();
-                let max_attempt = batch.iter().map(|pending| pending.attempt_count).max().unwrap_or(1);
+                let max_attempt = batch
+                    .iter()
+                    .map(|pending| pending.attempt_count)
+                    .max()
+                    .unwrap_or(1);
                 let backoff = pending_retry_backoff_secs(max_attempt);
                 let err_msg = format!("action flush ai call failed: {}", err);
-                if let Err(retry_err) = db::retry_pending_claimed(conn, lease_owner, &ids, &err_msg, backoff) {
+                if let Err(retry_err) =
+                    db::retry_pending_claimed(conn, lease_owner, &ids, &err_msg, backoff)
+                {
                     crate::log::warn("flush", &format!("retry mark failed: {}", retry_err));
                 }
                 crate::log::warn("flush", &format!("AI call failed: {}", err));
@@ -103,9 +115,20 @@ pub(crate) async fn flush_action_batches(
 
         let observations = memory_format::parse_observations(&response);
         if observations.is_empty() {
-            crate::log::info("flush", &format!("no observations extracted from batch ({} events)", batch.len()));
+            crate::log::info(
+                "flush",
+                &format!(
+                    "no observations extracted from batch ({} events)",
+                    batch.len()
+                ),
+            );
             let ids: Vec<i64> = batch.iter().map(|pending| pending.id).collect();
-            db::fail_pending_claimed(conn, lease_owner, &ids, "no observations extracted from action batch")?;
+            db::fail_pending_claimed(
+                conn,
+                lease_owner,
+                &ids,
+                "no observations extracted from action batch",
+            )?;
             continue;
         }
 
