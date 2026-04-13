@@ -1,6 +1,8 @@
 use super::{resolve_local_note_path, sanitize_segment};
 use crate::db::test_support::ScopedTestDataDir;
 
+const LOCAL_SAVE_DIR_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_DIR";
+
 #[test]
 fn sanitize_segment_falls_back_for_empty_slug() {
     let got = sanitize_segment("!!!", "fallback", 64);
@@ -77,4 +79,24 @@ fn resolve_none_local_path_returns_default() {
         path,
         base
     );
+}
+
+#[test]
+fn resolve_default_path_with_env_outside_base_is_rejected() {
+    // Regression test for SEC-07: REMEM_SAVE_MEMORY_LOCAL_DIR pointing outside
+    // remem_data_dir() must be rejected even when local_path is None.
+    let _dir = ScopedTestDataDir::new("path-env-outside");
+    // Point LOCAL_SAVE_DIR_ENV to a directory outside the test base dir
+    std::env::set_var(LOCAL_SAVE_DIR_ENV, "/tmp/evil-outside-base");
+    let got = resolve_local_note_path("proj", Some("title"), None);
+    std::env::remove_var(LOCAL_SAVE_DIR_ENV);
+    assert!(
+        got.is_err(),
+        "default path via env outside base should be rejected, got {:?}",
+        got
+    );
+    assert!(got
+        .unwrap_err()
+        .to_string()
+        .contains("outside the allowed directory"));
 }
