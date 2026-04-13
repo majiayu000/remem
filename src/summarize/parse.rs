@@ -14,7 +14,13 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
         return None;
     }
 
-    let content = memory_format::extract_field(text, "summary")?;
+    // Return None only when <summary> tag is entirely absent.
+    // An empty <summary></summary> must still produce Some so that
+    // finalize_summarize records cooldown/duplicate metadata correctly.
+    if !text.contains("<summary>") {
+        return None;
+    }
+    let content = memory_format::extract_field(text, "summary").unwrap_or_default();
 
     Some(ParsedSummary {
         request: memory_format::extract_field(&content, "request"),

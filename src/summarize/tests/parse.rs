@@ -25,3 +25,14 @@ fn parse_summary_extracts_fields() {
 fn parse_summary_returns_none_for_skip_marker() {
     assert!(parse_summary("<skip_summary />").is_none());
 }
+
+#[test]
+fn parse_summary_returns_some_for_empty_summary_block() {
+    // An empty <summary></summary> must not be treated as a skip.
+    // finalize_summarize still needs to run to record cooldown/duplicate metadata.
+    let parsed = parse_summary("<summary></summary>");
+    assert!(parsed.is_some(), "empty summary block should produce Some, not None");
+    let parsed = parsed.unwrap();
+    assert!(parsed.request.is_none());
+    assert!(parsed.completed.is_none());
+}
