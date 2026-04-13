@@ -25,8 +25,22 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             "project"
         });
 
-    // Insert into DB first. Writing the local copy before the DB insert would
-    // leave an orphaned file on disk if the insert fails (U-17).
+    // Validate and resolve the local_path BEFORE the DB insert so that an
+    // invalid user-supplied path (e.g. path traversal) is rejected with a
+    // clean error before any data is written to the database (U-18).
+    let resolved_local_path = if local_copy_enabled_override(req.local_copy_enabled) {
+        Some(resolve_local_note_path(
+            project,
+            req.title.as_deref(),
+            req.local_path.as_deref(),
+        )?)
+    } else {
+        None
+    };
+
+    // Insert into DB after path validation passes. Writing the local copy
+    // before the DB insert would leave an orphaned file on disk if the
+    // insert fails (U-17).
     let id = crate::memory::insert_memory_full(
         conn,
         None,
@@ -41,7 +55,26 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         req.created_at_epoch,
     )?;
 
-    let (local_status, local_path) = maybe_write_local_copy(project, title, req)?;
+    // Filesystem write is best-effort: the DB row is the authoritative record.
+    // Any I/O error (permissions, ENOSPC, race) is demoted to local_status
+    // "failed" so callers always receive the real saved id and do not retry a
+    // request that already succeeded in the DB, which would create duplicates.
+    let (local_status, local_path) = match resolved_local_path {
+        None => ("disabled".to_string(), None),
+        Some(path) => {
+            let content = build_local_note_content(project, title, &req.text);
+            match write_local_note(&path, &content) {
+                Ok(()) => ("saved".to_string(), Some(path.display().to_string())),
+                Err(e) => {
+                    crate::log::warn(
+                        "save",
+                        &format!("local copy write failed for id={}: {}", id, e),
+                    );
+                    ("failed".to_string(), None)
+                }
+            }
+        }
+    };
 
     Ok(SaveMemoryResult {
         id,
@@ -51,20 +84,4 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         local_status,
         local_path,
     })
-}
-
-fn maybe_write_local_copy(
-    project: &str,
-    title: &str,
-    req: &SaveMemoryRequest,
-) -> Result<(String, Option<String>)> {
-    if !local_copy_enabled_override(req.local_copy_enabled) {
-        return Ok(("disabled".to_string(), None));
-    }
-
-    let local_path =
-        resolve_local_note_path(project, req.title.as_deref(), req.local_path.as_deref())?;
-    let content = build_local_note_content(project, title, &req.text);
-    write_local_note(&local_path, &content)?;
-    Ok(("saved".to_string(), Some(local_path.display().to_string())))
 }
