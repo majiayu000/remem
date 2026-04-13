@@ -185,6 +185,39 @@ fn backfill_runs_even_when_migration_entries_exist() -> Result<()> {
     Ok(())
 }
 
+/// Regression (issue #8): a failing ALTER TABLE that is NOT a duplicate-column error must
+/// propagate as an error rather than being silently logged and swallowed.
+/// Simulates a DB at OLD_BASELINE_VERSION where `pending_observations` is absent so that
+/// `ALTER TABLE pending_observations ADD COLUMN …` fails with "no such table" — a non-duplicate
+/// error that must bubble up through `backfill_to_baseline` → `transition_from_old_system` →
+/// `run_migrations`.
+#[test]
+fn add_column_non_duplicate_error_propagates() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    // user_version = 13 triggers the transition/backfill path inside transition_from_old_system.
+    conn.execute_batch("PRAGMA user_version = 13;")?;
+    // Intentionally omit `pending_observations` so ALTER TABLE fails with "no such table".
+    conn.execute_batch(
+        "CREATE TABLE sdk_sessions (id INTEGER PRIMARY KEY);
+         CREATE TABLE observations (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL);
+         CREATE TABLE session_summaries (id INTEGER PRIMARY KEY);
+         CREATE TABLE memories (
+             id INTEGER PRIMARY KEY, project TEXT NOT NULL, title TEXT NOT NULL,
+             content TEXT NOT NULL, memory_type TEXT NOT NULL,
+             created_at_epoch INTEGER NOT NULL, updated_at_epoch INTEGER NOT NULL,
+             status TEXT NOT NULL DEFAULT 'active'
+         );
+         CREATE TABLE events (id INTEGER PRIMARY KEY);",
+    )?;
+
+    let result = run_migrations(&conn);
+    assert!(
+        result.is_err(),
+        "run_migrations must return Err when ALTER TABLE fails with a non-duplicate-column error"
+    );
+    Ok(())
+}
+
 /// Verify all columns in MEMORY_COLS are present after migrating from any starting state.
 #[test]
 fn memory_cols_all_present_after_migration() -> Result<()> {
