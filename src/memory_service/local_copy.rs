@@ -171,7 +171,40 @@ pub(super) fn write_local_note(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, content)?;
+    // TOCTOU mitigation: the initial confinement check in resolve_local_note_path()
+    // was performed before the DB write.  A concurrent attacker could have replaced
+    // a directory component with a symlink in that interval.  Now that
+    // create_dir_all has run the parent exists and can be canonicalized; we
+    // re-verify confinement with the fully-resolved path before writing.
+    let base = remem_data_dir();
+    let canon_base = if base.exists() {
+        base.canonicalize().unwrap_or_else(|_| base.clone())
+    } else {
+        base.clone()
+    };
+    let write_path = match path.parent() {
+        Some(parent) => match parent.canonicalize() {
+            Ok(canon_parent) => {
+                let filename = path
+                    .file_name()
+                    .ok_or_else(|| anyhow!("local_path is outside the allowed directory"))?;
+                canon_parent.join(filename)
+            }
+            Err(_) => return Err(anyhow!("local_path is outside the allowed directory")),
+        },
+        None => return Err(anyhow!("local_path is outside the allowed directory")),
+    };
+    if !write_path.starts_with(&canon_base) || write_path == canon_base {
+        return Err(anyhow!("local_path is outside the allowed directory"));
+    }
+    // Reject a symlink planted at the leaf path between the parent-canonicalize
+    // step above and this write.  Without O_NOFOLLOW a tiny window remains, but
+    // rejecting pre-existing symlinks at the target is best-effort hardening
+    // within the available stdlib surface area.
+    if write_path.is_symlink() {
+        return Err(anyhow!("local_path is outside the allowed directory"));
+    }
+    std::fs::write(&write_path, content)?;
     Ok(())
 }
 

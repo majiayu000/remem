@@ -78,3 +78,52 @@ fn resolve_none_local_path_returns_default() {
         base
     );
 }
+
+// --- TOCTOU / symlink-at-leaf tests ---
+
+#[test]
+#[cfg(unix)]
+fn write_local_note_rejects_symlink_planted_at_leaf() {
+    use std::os::unix::fs::symlink;
+    let _dir = ScopedTestDataDir::new("toctou-leaf-symlink");
+    let base = crate::db::data_dir();
+    let parent = base.join("notes");
+    std::fs::create_dir_all(&parent).unwrap();
+
+    // Plant a symlink inside the data dir that points outside it.
+    let target = base.join("notes").join("evil.md");
+    symlink("/etc/passwd", &target).unwrap();
+
+    let err = super::local_copy::write_local_note(&target, "should not write")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("outside the allowed directory"),
+        "expected confinement error, got: {}",
+        err
+    );
+    // /etc/passwd must be untouched (we should never have written to it).
+}
+
+#[test]
+#[cfg(unix)]
+fn write_local_note_rejects_symlink_in_parent_dir() {
+    use std::os::unix::fs::symlink;
+    let _dir = ScopedTestDataDir::new("toctou-parent-symlink");
+    let base = crate::db::data_dir();
+    // ScopedTestDataDir sets the env var but does not create the directory.
+    std::fs::create_dir_all(&base).unwrap();
+
+    // Create a symlink at a directory component inside base pointing outside.
+    // e.g. base/evil_dir -> /tmp  =>  base/evil_dir/file.md is outside base.
+    let evil_dir = base.join("evil_dir");
+    symlink("/tmp", &evil_dir).unwrap();
+    let target = evil_dir.join("file.md");
+
+    let err = super::local_copy::write_local_note(&target, "should not write")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("outside the allowed directory"),
+        "expected confinement error for symlinked parent, got: {}",
+        err
+    );
+}

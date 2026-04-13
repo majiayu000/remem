@@ -253,6 +253,8 @@ Recommended workflow: `search(query)` → find relevant IDs → `get_observation
 - Dual-write by default: SQLite memory + local Markdown (`~/.remem/manual-notes/<project>/...md`)
 - Custom local path via `local_path` parameter
 - When user asks to "save a document", write project-local file first, then `save_memory` as long-term backup
+- Response field `local_status`: `saved` (both writes OK) | `disabled` (local copy off) | `failed` (DB saved, local write failed)
+- HTTP status: `201 Created` when `local_status` is `saved` or `disabled`; `207 Multi-Status` when `local_status` is `failed` — clients keying on HTTP status will see a non-201 and can surface the partial failure
 
 ## Memory Scope (Project vs Global)
 

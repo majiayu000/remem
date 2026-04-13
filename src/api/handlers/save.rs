@@ -29,18 +29,29 @@ pub(in crate::api) async fn handle_save_memory(
     };
 
     match memory_service::save_memory(&conn, &save_req) {
-        Ok(saved) => (
-            StatusCode::CREATED,
-            Json(SaveMemoryResponse {
-                id: saved.id,
-                status: saved.status,
-                memory_type: saved.memory_type,
-                upserted: saved.upserted,
-                local_status: saved.local_status,
-                local_path: saved.local_path,
-            }),
-        )
-            .into_response(),
+        Ok(saved) => {
+            // 207 Multi-Status signals "DB saved but local backup failed" so
+            // clients that key only on HTTP status see a non-201 and can alert.
+            // 201 is returned only when both DB and local copy succeeded (or
+            // local copy is disabled).
+            let http_status = if saved.local_status == "failed" {
+                StatusCode::MULTI_STATUS
+            } else {
+                StatusCode::CREATED
+            };
+            (
+                http_status,
+                Json(SaveMemoryResponse {
+                    id: saved.id,
+                    status: saved.status,
+                    memory_type: saved.memory_type,
+                    upserted: saved.upserted,
+                    local_status: saved.local_status,
+                    local_path: saved.local_path,
+                }),
+            )
+                .into_response()
+        }
         Err(err) => {
             let msg = err.to_string();
             let status = if msg.contains("outside the allowed directory") {

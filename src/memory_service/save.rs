@@ -65,6 +65,11 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             let content = build_local_note_content(project, title, &req.text);
             match write_local_note(&path, &content) {
                 Ok(()) => ("saved".to_string(), Some(path.display().to_string())),
+                // Security violations (path confinement, TOCTOU) must propagate
+                // as hard errors — do not demote to local_status="failed".
+                Err(e) if e.to_string().contains("outside the allowed directory") => {
+                    return Err(e);
+                }
                 Err(e) => {
                     crate::log::warn(
                         "save",
