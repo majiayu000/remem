@@ -52,7 +52,7 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
         ("last_error", "TEXT"),
     ];
     for (col, typedef) in &pending_cols {
-        add_column_if_missing(conn, "pending_observations", col, typedef);
+        add_column_if_missing(conn, "pending_observations", col, typedef)?;
     }
 
     // --- missing columns on observations ---
@@ -64,19 +64,19 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
         ("commit_sha", "TEXT"),
     ];
     for (col, typedef) in &obs_cols {
-        add_column_if_missing(conn, "observations", col, typedef);
+        add_column_if_missing(conn, "observations", col, typedef)?;
     }
 
     // --- missing columns on memories ---
     let mem_cols = [("branch", "TEXT"), ("scope", "TEXT DEFAULT 'project'")];
     for (col, typedef) in &mem_cols {
-        add_column_if_missing(conn, "memories", col, typedef);
+        add_column_if_missing(conn, "memories", col, typedef)?;
     }
 
     // --- missing columns on session_summaries ---
     let ss_cols = [("discovery_tokens", "INTEGER DEFAULT 0")];
     for (col, typedef) in &ss_cols {
-        add_column_if_missing(conn, "session_summaries", col, typedef);
+        add_column_if_missing(conn, "session_summaries", col, typedef)?;
     }
 
     // --- tables that may not exist in older schemas ---
@@ -179,18 +179,23 @@ fn backfill_to_baseline(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Try to add a column; silently ignore if it already exists.
-fn add_column_if_missing(conn: &Connection, table: &str, column: &str, typedef: &str) {
+/// Try to add a column; silently ignore if it already exists (duplicate column error).
+/// Any other error is propagated to the caller.
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    typedef: &str,
+) -> Result<()> {
     let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, typedef);
     if let Err(e) = conn.execute_batch(&sql) {
         let msg = e.to_string();
-        if !msg.contains("duplicate column") {
-            crate::log::warn(
-                "migrate",
-                &format!("backfill {}.{}: {}", table, column, msg),
-            );
+        if msg.contains("duplicate column") {
+            return Ok(());
         }
+        return Err(e.into());
     }
+    Ok(())
 }
 
 fn has_existing_migration_entries(conn: &Connection) -> bool {
