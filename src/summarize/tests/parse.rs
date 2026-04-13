@@ -111,3 +111,20 @@ fn parse_summary_prefers_last_summary_block() {
         Some("Final completion from actual session")
     );
 }
+
+#[test]
+fn parse_summary_keeps_literal_angle_brackets_in_well_formed_fields() {
+    let xml = r#"
+<summary>
+<request>Handle x < y safely</request>
+<completed>Preserve literal angle brackets in closed fields</completed>
+</summary>
+"#;
+    let parsed =
+        parse_summary(xml).expect("well-formed field with literal angle bracket should parse");
+    assert_eq!(parsed.request.as_deref(), Some("Handle x < y safely"));
+    assert_eq!(
+        parsed.completed.as_deref(),
+        Some("Preserve literal angle brackets in closed fields")
+    );
+}

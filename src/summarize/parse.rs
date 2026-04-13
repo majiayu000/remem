@@ -62,22 +62,47 @@ fn find_last_open_tag_end(lowered: &str, tag: &str) -> Option<usize> {
     last
 }
 
+fn is_recovery_boundary_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "request"
+            | "completed"
+            | "decisions"
+            | "learned"
+            | "next_steps"
+            | "preferences"
+            | "summary"
+            | "skip_summary"
+    )
+}
+
 fn fallback_value_end(content: &str, lowered: &str, start: usize) -> usize {
-    let mut next_tag = content[start..]
-        .char_indices()
-        .find_map(|(idx, ch)| (ch == '<').then_some(start + idx))
-        .unwrap_or(content.len());
-    while next_tag < content.len() && lowered[next_tag..].starts_with("</") {
-        let after = next_tag + 2;
-        next_tag = content[after..]
-            .char_indices()
-            .find_map(|(idx, ch)| (ch == '<').then_some(after + idx))
+    let bytes = lowered.as_bytes();
+    let mut search_from = start;
+    while let Some(rel) = lowered[search_from..].find('<') {
+        let next_tag = search_from + rel;
+        let tag_start = match bytes.get(next_tag + 1) {
+            Some(b'/') => {
+                search_from = next_tag + 2;
+                continue;
+            }
+            Some(ch) if ch.is_ascii_alphabetic() => next_tag + 1,
+            _ => {
+                search_from = next_tag + 1;
+                continue;
+            }
+        };
+        let tag_end = bytes[tag_start..]
+            .iter()
+            .position(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
+            .map(|rel_end| tag_start + rel_end)
             .unwrap_or(content.len());
-        if next_tag == content.len() {
-            break;
+        if is_recovery_boundary_tag(&lowered[tag_start..tag_end]) {
+            return next_tag;
         }
+        search_from = next_tag + 1;
     }
-    next_tag
+    content.len()
 }
 
 fn extract_field_relaxed(content: &str, field: &str) -> Option<String> {
