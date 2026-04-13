@@ -31,8 +31,17 @@ fn parse_summary_returns_some_for_empty_summary_block() {
     // An empty <summary></summary> must not be treated as a skip.
     // finalize_summarize still needs to run to record cooldown/duplicate metadata.
     let parsed = parse_summary("<summary></summary>");
-    assert!(parsed.is_some(), "empty summary block should produce Some, not None");
+    assert!(
+        parsed.is_some(),
+        "empty summary block should produce Some, not None"
+    );
     let parsed = parsed.unwrap();
     assert!(parsed.request.is_none());
     assert!(parsed.completed.is_none());
+}
+
+#[test]
+fn parse_summary_returns_none_for_truncated_summary_block() {
+    // A truncated response with no </summary> must return None, not Some with empty fields.
+    assert!(parse_summary("<summary>truncated without closing tag").is_none());
 }
