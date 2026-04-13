@@ -3,6 +3,7 @@ use rusqlite::Connection;
 
 use super::state::applied_versions;
 use super::{dry_run_pending, run_migrations, MIGRATIONS};
+use crate::db::test_support::ScopedTestDataDir;
 
 #[test]
 fn baseline_creates_all_tables() -> Result<()> {
@@ -83,6 +84,7 @@ fn transition_from_old_system_skips_baseline() -> Result<()> {
 
 #[test]
 fn auto_upgrades_old_schema_version() -> Result<()> {
+    let _test_dir = ScopedTestDataDir::new("migrate-auto-upgrade");
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 10;")?;
     // Simulate a v10 database with minimal tables
@@ -172,6 +174,7 @@ fn backfill_runs_even_when_migration_entries_exist() -> Result<()> {
 
 #[test]
 fn backfill_fails_when_non_duplicate_alter_table_error_occurs() -> Result<()> {
+    let _test_dir = ScopedTestDataDir::new("migrate-backfill-error");
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 13;")?;
     create_v13_schema_without_scope(&conn)?;
