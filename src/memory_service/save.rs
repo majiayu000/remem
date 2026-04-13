@@ -16,7 +16,6 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         .as_ref()
         .and_then(|files| serde_json::to_string(files).ok());
 
-    let (local_status, local_path) = maybe_write_local_copy(project, title, req)?;
     let scope = req
         .scope
         .as_deref()
@@ -25,6 +24,9 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         } else {
             "project"
         });
+
+    // Insert into DB first. Writing the local copy before the DB insert would
+    // leave an orphaned file on disk if the insert fails (U-17).
     let id = crate::memory::insert_memory_full(
         conn,
         None,
@@ -38,6 +40,8 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         scope,
         req.created_at_epoch,
     )?;
+
+    let (local_status, local_path) = maybe_write_local_copy(project, title, req)?;
 
     Ok(SaveMemoryResult {
         id,
