@@ -15,7 +15,7 @@ pub struct ScopedTestDataDir {
 
 impl ScopedTestDataDir {
     pub fn new(label: &str) -> Self {
-        let guard = env_lock().lock().expect("test env lock poisoned");
+        let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("REMEM_DATA_DIR");
         let unique = format!(
             "remem-test-{}-{}-{}",

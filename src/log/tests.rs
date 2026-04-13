@@ -56,8 +56,11 @@ fn open_log_append_creates_log_file_in_data_dir() {
 
 #[test]
 fn rotate_if_needed_shifts_existing_files() {
-    let _data_dir = ScopedTestDataDir::new("log-rotate");
-    let path = log_path().expect("log path should resolve");
+    let data_dir = ScopedTestDataDir::new("log-rotate");
+    // Use a dedicated test path — NOT the real log path — so concurrent
+    // tests' log writes (e.g. migration auto-upgrade) cannot contaminate
+    // the file we are about to rotate.
+    let path = data_dir.path.join("logs").join("rotate-test.log");
     let parent = path.parent().expect("log file should have parent");
     std::fs::create_dir_all(parent).expect("log dir should create");
 
