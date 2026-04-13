@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::state::{applied_versions, has_migration_table};
+use super::transition::backfill_to_baseline;
 use super::types::{DryRunResult, Migration, MIGRATIONS, OLD_BASELINE_VERSION};
 
 pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
@@ -9,6 +10,19 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
     let applied = infer_applied_versions(real_conn, current_version)?;
+
+    let test_conn = Connection::open_in_memory()?;
+    clone_schema(real_conn, &test_conn)?;
+    if current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
+        if let Err(error) = backfill_to_baseline(&test_conn) {
+            return Ok(DryRunResult {
+                current_version,
+                pending_count: applied_pending_count(&applied),
+                error: Some(format!("baseline backfill: {}", error)),
+            });
+        }
+    }
+
     let pending: Vec<&Migration> = MIGRATIONS
         .iter()
         .filter(|migration| !applied.contains(&migration.version))
@@ -22,8 +36,6 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         });
     }
 
-    let test_conn = Connection::open_in_memory()?;
-    clone_schema(real_conn, &test_conn)?;
     for migration in &pending {
         if let Err(error) = test_conn.execute_batch(migration.sql) {
             return Ok(DryRunResult {
@@ -37,11 +49,26 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         }
     }
 
+    if let Err(error) = backfill_to_baseline(&test_conn) {
+        return Ok(DryRunResult {
+            current_version,
+            pending_count: pending.len(),
+            error: Some(format!("baseline backfill: {}", error)),
+        });
+    }
+
     Ok(DryRunResult {
         current_version,
         pending_count: pending.len(),
         error: None,
     })
+}
+
+fn applied_pending_count(applied: &[i64]) -> usize {
+    MIGRATIONS
+        .iter()
+        .filter(|migration| !applied.contains(&migration.version))
+        .count()
 }
 
 fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec<i64>> {
