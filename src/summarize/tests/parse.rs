@@ -130,6 +130,48 @@ fn parse_summary_keeps_literal_angle_brackets_in_well_formed_fields() {
 }
 
 #[test]
+fn parse_summary_complete_block_wins_over_trailing_prose_summary_token() {
+    // A valid <summary>...</summary> block followed by trailing prose that contains
+    // a literal `<summary>` reference must NOT cause the valid block to be discarded.
+    // Before the fix, the unpaired trailing token set last_open_without_close and
+    // was unconditionally preferred over the complete block.
+    let xml = r#"
+<summary>
+<request>Fix the parser</request>
+<completed>Parser fixed</completed>
+</summary>
+Here is how to use the <summary> tag in your prompts.
+"#;
+    let parsed = parse_summary(xml).expect("valid summary must not be discarded");
+    assert_eq!(
+        parsed.request.as_deref(),
+        Some("Fix the parser"),
+        "request must come from the complete block, not the trailing token"
+    );
+    assert_eq!(parsed.completed.as_deref(), Some("Parser fixed"));
+}
+
+#[test]
+fn parse_summary_truncated_new_attempt_wins_when_it_has_fields() {
+    // When the model starts a second <summary> block (genuinely truncated) after a
+    // complete one, that second block should be preferred because it contains fields.
+    let xml = r#"
+<summary>
+<request>Old attempt</request>
+<completed>Old result</completed>
+</summary>
+<summary>
+<request>Better attempt truncated
+"#;
+    let parsed = parse_summary(xml).expect("truncated second attempt with fields should parse");
+    assert_eq!(
+        parsed.request.as_deref(),
+        Some("Better attempt truncated"),
+        "truncated second block with fields must win over the earlier complete block"
+    );
+}
+
+#[test]
 fn parse_summary_ignores_embedded_summary_tag_in_field() {
     // P2 regression: a literal `<summary>` token inside a field must not cause
     // the parser to anchor to that inner token instead of the outer wrapper.

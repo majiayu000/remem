@@ -164,6 +164,29 @@ fn parse_observations_tolerates_missing_field_close_tag() {
 }
 
 #[test]
+fn parse_observations_rejects_plural_tag_as_observation() {
+    // <observations> (plural) must NOT be treated as a real <observation> block.
+    // Without the tag-name boundary check the outer container would be parsed as
+    // an observation, consuming content up to the first </observation> and
+    // potentially mangling or duplicating the real inner item.
+    let xml = r#"
+<observations>
+  <observation>
+    <type>decision</type>
+    <title>Inner item</title>
+  </observation>
+</observations>
+"#;
+    let parsed = parse_observations(xml);
+    assert_eq!(
+        parsed.len(),
+        1,
+        "only the inner <observation> must be parsed, not the <observations> wrapper"
+    );
+    assert_eq!(parsed[0].title.as_deref(), Some("Inner item"));
+}
+
+#[test]
 fn parse_observations_tolerates_missing_observation_close_tag() {
     let xml = r#"
 <observation>

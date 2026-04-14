@@ -46,6 +46,18 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
 
     while let Some(tag_start_rel) = find_ascii_ci(&text[pos..], "<observation") {
         let tag_start = pos + tag_start_rel;
+        let after_name = tag_start + "<observation".len();
+        // Enforce tag-name boundary: the byte after "observation" must be whitespace,
+        // '>', or '/' — otherwise `<observations>`, `<observationary>`, etc. would
+        // silently parse as a real <observation> block and corrupt the output.
+        let boundary_ok = match text.as_bytes().get(after_name) {
+            Some(&ch) => ch.is_ascii_whitespace() || ch == b'>' || ch == b'/',
+            None => true,
+        };
+        if !boundary_ok {
+            pos = after_name;
+            continue;
+        }
         let Some(open_end_rel) = text[tag_start..].find('>') else {
             break;
         };

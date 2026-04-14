@@ -62,8 +62,6 @@ fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usi
     let mut search_from = 0;
     let mut candidates: Vec<(usize, usize)> = Vec::new();
     // Only track open tags that have NO matching close tag (genuinely truncated).
-    // Paired inner tags (e.g. a literal `<summary>` inside field content that shares
-    // the outer close) must not be mistaken for a trailing truncated block.
     let mut last_open_without_close: Option<usize> = None;
 
     while let Some(open_end) = find_open_tag_end(lowered, "summary", search_from) {
@@ -71,11 +69,15 @@ fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usi
             candidates.push((open_end, close_pos));
             // This open has a matching close — clear any pending "unpaired open".
             last_open_without_close = None;
+            // Advance past the close tag so that any literal `<summary>` token
+            // inside this block's content is not found in the next iteration and
+            // incorrectly flagged as an unpaired truncated block.
+            search_from = close_pos + "</summary>".len();
         } else {
             // No close found — this is a trailing truncated block.
             last_open_without_close = Some(open_end);
+            search_from = open_end;
         }
-        search_from = open_end;
     }
 
     // Walk candidates; for each unique close tag keep only the *first* open of that group,
@@ -91,11 +93,20 @@ fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usi
     }
 
     if let Some((comp_start, comp_end)) = last_pair {
-        // If there is a trailing open tag without a matching close that comes after the
-        // last complete block, prefer it (truncated block).
+        // Only prefer a trailing unpaired `<summary>` over the complete block when the
+        // content after that open tag actually contains summary field tags — this
+        // distinguishes a genuine truncated AI response from a bare `<summary>` token
+        // in trailing prose, which must NOT win over a complete and valid block.
         if let Some(last_start) = last_open_without_close {
             if last_start > comp_start {
-                return Some((last_start, text_len));
+                let tail = &lowered[last_start..];
+                let has_summary_field = ["<completed", "<request", "<decisions",
+                                         "<learned", "<next_steps", "<preferences"]
+                    .iter()
+                    .any(|f| tail.contains(f));
+                if has_summary_field {
+                    return Some((last_start, text_len));
+                }
             }
         }
         return Some((comp_start, comp_end));

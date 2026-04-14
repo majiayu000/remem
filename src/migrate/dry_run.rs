@@ -41,7 +41,12 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     // against the same state the real upgrade path would see.  Without this, an
     // older live database that is missing baseline-added columns causes dry-run to
     // report false failures.
-    if current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
+    //
+    // Production (transition.rs) backfills for any old_version > 0, covering v1-v12
+    // as well as v13+.  The previous condition only covered current_version >=
+    // OLD_BASELINE_VERSION (v13), leaving v1-v12 databases diverged from production
+    // and still producing false migration failures.
+    if current_version > 0 || has_migration_table(real_conn) {
         if let Err(error) = backfill_to_baseline(&test_conn) {
             return Ok(DryRunResult {
                 current_version,
@@ -110,6 +115,56 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A database with user_version in [1, OLD_BASELINE_VERSION) (v1-v12) must receive
+    /// the same baseline backfill as production: `transition_from_old_system` runs
+    /// `backfill_to_baseline` for any `old_version > 0`.  The previous dry-run condition
+    /// only covered `>= OLD_BASELINE_VERSION`, so v1-v12 databases diverged from the
+    /// production upgrade path and could keep reporting false migration failures.
+    #[test]
+    fn dry_run_backfills_for_legacy_v1_to_v12_database() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        // Build a minimal v5-era schema: core tables exist with their original column
+        // set, missing the newer columns that backfill_to_baseline will add.
+        // All columns referenced by the index creation batch in backfill_to_baseline
+        // must either be present initially or be added first by add_column_if_missing.
+        conn.execute_batch(
+            "CREATE TABLE sdk_sessions (
+                 id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL,
+                 project TEXT, started_at_epoch INTEGER, status TEXT DEFAULT 'active'
+             );
+             CREATE TABLE observations (
+                 id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL,
+                 project TEXT NOT NULL, type TEXT NOT NULL, title TEXT,
+                 created_at_epoch INTEGER
+             );
+             CREATE TABLE memories (
+                 id INTEGER PRIMARY KEY, project TEXT NOT NULL,
+                 memory_type TEXT, topic_key TEXT, status TEXT,
+                 updated_at_epoch INTEGER
+             );
+             CREATE TABLE pending_observations (
+                 id INTEGER PRIMARY KEY, session_id TEXT NOT NULL,
+                 project TEXT, memory_session_id TEXT,
+                 created_at_epoch INTEGER, lease_expires_epoch INTEGER
+             );
+             CREATE TABLE events (
+                 id INTEGER PRIMARY KEY, session_id TEXT,
+                 project TEXT, created_at_epoch INTEGER
+             );
+             CREATE TABLE session_summaries (
+                 id INTEGER PRIMARY KEY, project TEXT, created_at_epoch INTEGER
+             );
+             PRAGMA user_version = 5;",
+        )?;
+        let result = dry_run_pending(&conn)?;
+        assert!(
+            result.error.is_none(),
+            "dry_run on a v1-v12 legacy database must not return an error; got: {:?}",
+            result.error
+        );
+        Ok(())
+    }
 
     /// Verify that a table whose DDL fails to clone is surfaced in clone_errors
     /// rather than silently dropped (issue #18).
