@@ -51,12 +51,12 @@ pub(super) fn search_with_query(
     let has_separator_core_token = core_refs
         .iter()
         .any(|token| token.chars().any(|ch| LIKE_SEPARATORS.contains(&ch)));
-    let separator_like_tokens = split_separator_like_tokens(&core_refs);
-    let like_tokens = if separator_like_tokens.is_empty() {
-        core_tokens.clone()
-    } else {
-        separator_like_tokens
-    };
+    // Build LIKE tokens: separator-containing tokens are split into parts; in
+    // separator context, lowercase non-separator terms (e.g. "migration") are
+    // preserved, while capitalised tokens (e.g. "Tom") are omitted because the
+    // entity channel already covers them and AND-semantics LIKE would otherwise
+    // exclude memories that don't mention the entity by name.
+    let like_tokens = build_like_tokens(&core_refs);
     let like_refs: Vec<&str> = like_tokens.iter().map(|token| token.as_str()).collect();
     let mut channels: Vec<Vec<i64>> = Vec::new();
 
@@ -137,25 +137,51 @@ pub(super) fn search_with_query(
     Ok(paginate_memories(ordered, limit, offset))
 }
 
-fn split_separator_like_tokens(core_refs: &[&str]) -> Vec<String> {
+/// Build the token list for the LIKE fallback channel.
+///
+/// When no separator tokens are present all core tokens pass through unchanged.
+///
+/// When separator tokens ARE present each is split into component parts
+/// (e.g. `db_schema` → `["db", "schema"]`).  Lowercase non-separator tokens
+/// (common content words such as `migration`) are also included so they are not
+/// silently dropped.  Capitalised non-separator tokens (e.g. `Tom`) are
+/// excluded: the entity channel already covers them, and including them in the
+/// AND-semantics LIKE query would prevent memories that don't mention the entity
+/// from being found.
+fn build_like_tokens(core_refs: &[&str]) -> Vec<String> {
     use std::collections::HashSet;
 
-    let mut tokens = Vec::new();
-    let mut seen = HashSet::new();
+    let has_separator = core_refs
+        .iter()
+        .any(|t| t.chars().any(|c| LIKE_SEPARATORS.contains(&c)));
+
+    if !has_separator {
+        return core_refs.iter().map(|s| s.to_string()).collect();
+    }
+
+    let mut tokens: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
 
     for token in core_refs {
-        if !token.chars().any(|ch| LIKE_SEPARATORS.contains(&ch)) {
-            continue;
-        }
-        for part in token.split(|ch| LIKE_SEPARATORS.contains(&ch)) {
-            if part.is_empty() {
-                continue;
+        if token.chars().any(|ch| LIKE_SEPARATORS.contains(&ch)) {
+            for part in token.split(|ch: char| LIKE_SEPARATORS.contains(&ch)) {
+                if part.is_empty() {
+                    continue;
+                }
+                let lowered = part.to_lowercase();
+                if seen.insert(lowered) {
+                    tokens.push(part.to_string());
+                }
             }
-            let lowered = part.to_lowercase();
+        } else if token.starts_with(|c: char| c.is_lowercase()) {
+            // Lowercase non-separator tokens are content words — keep them.
+            let lowered = token.to_lowercase();
             if seen.insert(lowered) {
-                tokens.push(part.to_string());
+                tokens.push(token.to_string());
             }
         }
+        // Capitalised tokens (likely entity names) are intentionally omitted in
+        // separator context — handled by the entity channel.
     }
 
     tokens

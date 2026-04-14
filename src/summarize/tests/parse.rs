@@ -140,6 +140,11 @@ fn parse_summary_ignores_embedded_summary_tag_in_field() {
 </summary>
 "#;
     let parsed = parse_summary(xml).expect("should parse");
+    // request must be non-None (truncated at the inner tag is acceptable; None is data loss)
+    assert!(
+        parsed.request.is_some(),
+        "request field must not be lost when outer wrapper anchoring is correct; got None"
+    );
     // completed must be captured from the outer wrapper, not lost
     assert_eq!(parsed.completed.as_deref(), Some("Documented"));
 }

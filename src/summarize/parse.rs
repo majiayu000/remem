@@ -61,12 +61,19 @@ fn find_close_tag_start(lowered: &str, tag: &str, from: usize) -> Option<usize> 
 fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usize)> {
     let mut search_from = 0;
     let mut candidates: Vec<(usize, usize)> = Vec::new();
-    let mut last_open: Option<usize> = None;
+    // Only track open tags that have NO matching close tag (genuinely truncated).
+    // Paired inner tags (e.g. a literal `<summary>` inside field content that shares
+    // the outer close) must not be mistaken for a trailing truncated block.
+    let mut last_open_without_close: Option<usize> = None;
 
     while let Some(open_end) = find_open_tag_end(lowered, "summary", search_from) {
-        last_open = Some(open_end);
         if let Some(close_pos) = find_close_tag_start(lowered, "summary", open_end) {
             candidates.push((open_end, close_pos));
+            // This open has a matching close — clear any pending "unpaired open".
+            last_open_without_close = None;
+        } else {
+            // No close found — this is a trailing truncated block.
+            last_open_without_close = Some(open_end);
         }
         search_from = open_end;
     }
@@ -84,8 +91,9 @@ fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usi
     }
 
     if let Some((comp_start, comp_end)) = last_pair {
-        // If there is a trailing open tag without a matching close, prefer it (truncated block).
-        if let Some(last_start) = last_open {
+        // If there is a trailing open tag without a matching close that comes after the
+        // last complete block, prefer it (truncated block).
+        if let Some(last_start) = last_open_without_close {
             if last_start > comp_start {
                 return Some((last_start, text_len));
             }
@@ -93,8 +101,8 @@ fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usi
         return Some((comp_start, comp_end));
     }
 
-    // No complete pair found — use the last open tag (truncated wrapper).
-    last_open.map(|start| (start, text_len))
+    // No complete pair found — use the last unpaired open tag (truncated wrapper).
+    last_open_without_close.map(|start| (start, text_len))
 }
 
 fn is_recovery_boundary_tag(tag: &str) -> bool {

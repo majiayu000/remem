@@ -42,7 +42,7 @@ pub(super) fn transition_from_old_system(conn: &Connection) -> Result<()> {
 /// Bring a pre-v13 database up to baseline by adding missing columns, tables,
 /// and indexes. Uses IF NOT EXISTS / ignores "duplicate column" errors so it is
 /// safe to run on any v1-v12 schema.
-fn backfill_to_baseline(conn: &Connection) -> Result<()> {
+pub(super) fn backfill_to_baseline(conn: &Connection) -> Result<()> {
     // --- missing columns on pending_observations (added between v10-v13) ---
     let pending_cols = [
         ("updated_at_epoch", "INTEGER NOT NULL DEFAULT 0"),

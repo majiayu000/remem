@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::state::{applied_versions, has_migration_table};
+use super::transition::backfill_to_baseline;
 use super::types::{DryRunResult, Migration, MIGRATIONS, OLD_BASELINE_VERSION};
 
 pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
@@ -34,6 +35,22 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
             )),
         });
     }
+
+    // Mirror what run_migrations() does via transition_from_old_system(): backfill
+    // baseline columns/tables onto the clone so that pending migrations replay
+    // against the same state the real upgrade path would see.  Without this, an
+    // older live database that is missing baseline-added columns causes dry-run to
+    // report false failures.
+    if current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
+        if let Err(error) = backfill_to_baseline(&test_conn) {
+            return Ok(DryRunResult {
+                current_version,
+                pending_count: pending.len(),
+                error: Some(format!("baseline backfill: {}", error)),
+            });
+        }
+    }
+
     for migration in &pending {
         if let Err(error) = test_conn.execute_batch(migration.sql) {
             return Ok(DryRunResult {
@@ -83,7 +100,8 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<Vec<String>> {
         let safe = safe.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
         if let Err(error) = dst.execute_batch(&safe) {
             crate::log::debug("migrate", &format!("clone_schema skip: {}", error));
-            clone_errors.push(format!("{}: {}", &sql[..sql.len().min(60)], error));
+            let preview: String = sql.chars().take(60).collect();
+            clone_errors.push(format!("{}: {}", preview, error));
         }
     }
     Ok(clone_errors)
