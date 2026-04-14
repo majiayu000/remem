@@ -90,7 +90,8 @@ fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec
 fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
     let mut stmt = src.prepare(
         "SELECT sql FROM sqlite_master
-         WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')",
+         WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')
+         ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END, name",
     )?;
     let sqls: Vec<String> = stmt
         .query_map([], |row| row.get(0))?

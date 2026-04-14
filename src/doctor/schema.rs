@@ -31,20 +31,24 @@ pub(super) fn check_schema_migration() -> Check {
 
     match crate::migrate::dry_run_pending(&real_conn) {
         Ok(result) => {
-            if result.pending_count == 0 {
+            if let Some(err) = result.error {
+                Check {
+                    name: "Schema",
+                    status: Status::Fail,
+                    detail: if result.pending_count == 0 {
+                        format!("schema check failed: {}", err)
+                    } else {
+                        format!(
+                            "{} pending migration(s) will FAIL: {}",
+                            result.pending_count, err
+                        )
+                    },
+                }
+            } else if result.pending_count == 0 {
                 Check {
                     name: "Schema",
                     status: Status::Ok,
                     detail: format!("v{} (up to date)", result.current_version),
-                }
-            } else if let Some(err) = result.error {
-                Check {
-                    name: "Schema",
-                    status: Status::Fail,
-                    detail: format!(
-                        "{} pending migration(s) will FAIL: {}",
-                        result.pending_count, err
-                    ),
                 }
             } else {
                 Check {
