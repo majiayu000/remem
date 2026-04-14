@@ -128,3 +128,18 @@ fn parse_summary_keeps_literal_angle_brackets_in_well_formed_fields() {
         Some("Preserve literal angle brackets in closed fields")
     );
 }
+
+#[test]
+fn parse_summary_ignores_embedded_summary_tag_in_field() {
+    // P2 regression: a literal `<summary>` token inside a field must not cause
+    // the parser to anchor to that inner token instead of the outer wrapper.
+    let xml = r#"
+<summary>
+<request>Explain the &lt;summary&gt; tag format — use <summary> sparingly</request>
+<completed>Documented</completed>
+</summary>
+"#;
+    let parsed = parse_summary(xml).expect("should parse");
+    // completed must be captured from the outer wrapper, not lost
+    assert_eq!(parsed.completed.as_deref(), Some("Documented"));
+}

@@ -52,14 +52,49 @@ fn find_close_tag_start(lowered: &str, tag: &str, from: usize) -> Option<usize> 
     None
 }
 
-fn find_last_open_tag_end(lowered: &str, tag: &str) -> Option<usize> {
+/// Find the last complete `<summary>...</summary>` block, or fall back to the last
+/// open tag when the final block is truncated (no close tag).
+///
+/// When multiple open tags share the same close tag (e.g. a literal `<summary>` inside
+/// a field), the *first* open tag of each close-group is kept so the outer wrapper is
+/// not discarded in favour of an embedded token.
+fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usize)> {
     let mut search_from = 0;
-    let mut last = None;
-    while let Some(found) = find_open_tag_end(lowered, tag, search_from) {
-        last = Some(found);
-        search_from = found;
+    let mut candidates: Vec<(usize, usize)> = Vec::new();
+    let mut last_open: Option<usize> = None;
+
+    while let Some(open_end) = find_open_tag_end(lowered, "summary", search_from) {
+        last_open = Some(open_end);
+        if let Some(close_pos) = find_close_tag_start(lowered, "summary", open_end) {
+            candidates.push((open_end, close_pos));
+        }
+        search_from = open_end;
     }
-    last
+
+    // Walk candidates; for each unique close tag keep only the *first* open of that group,
+    // then take the last such group — this is the last genuinely-complete summary block.
+    let mut last_pair: Option<(usize, usize)> = None;
+    let mut prev_close: Option<usize> = None;
+    for &(open, close) in &candidates {
+        if prev_close != Some(close) {
+            last_pair = Some((open, close));
+            prev_close = Some(close);
+        }
+        // Same close as the previous entry — already recorded the earlier open for this group.
+    }
+
+    if let Some((comp_start, comp_end)) = last_pair {
+        // If there is a trailing open tag without a matching close, prefer it (truncated block).
+        if let Some(last_start) = last_open {
+            if last_start > comp_start {
+                return Some((last_start, text_len));
+            }
+        }
+        return Some((comp_start, comp_end));
+    }
+
+    // No complete pair found — use the last open tag (truncated wrapper).
+    last_open.map(|start| (start, text_len))
 }
 
 fn is_recovery_boundary_tag(tag: &str) -> bool {
@@ -110,6 +145,8 @@ fn extract_field_relaxed(content: &str, field: &str) -> Option<String> {
     let start = find_open_tag_end(&lowered, field, 0)?;
     let fallback_end = fallback_value_end(content, &lowered, start);
     let end = match find_close_tag_start(&lowered, field, start) {
+        // Close tag exists but comes after the first sibling open tag — likely
+        // misplaced inside another field's content; use the fallback boundary.
         Some(close_start) if fallback_end < close_start => fallback_end,
         Some(close_start) => close_start,
         None => fallback_end,
@@ -131,8 +168,7 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
         return None;
     }
 
-    let start = find_last_open_tag_end(&lowered, "summary")?;
-    let end = find_close_tag_start(&lowered, "summary", start).unwrap_or(text.len());
+    let (start, end) = find_last_summary_range(&lowered, text.len())?;
     let content = &text[start..end];
 
     Some(ParsedSummary {

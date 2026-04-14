@@ -23,7 +23,17 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     }
 
     let test_conn = Connection::open_in_memory()?;
-    clone_schema(real_conn, &test_conn)?;
+    let clone_errors = clone_schema(real_conn, &test_conn)?;
+    if !clone_errors.is_empty() {
+        return Ok(DryRunResult {
+            current_version,
+            pending_count: pending.len(),
+            error: Some(format!(
+                "clone_schema failures: {}",
+                clone_errors.join("; ")
+            )),
+        });
+    }
     for migration in &pending {
         if let Err(error) = test_conn.execute_batch(migration.sql) {
             return Ok(DryRunResult {
@@ -54,7 +64,7 @@ fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec
     Ok(Vec::new())
 }
 
-fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
+fn clone_schema(src: &Connection, dst: &Connection) -> Result<Vec<String>> {
     let mut stmt = src.prepare(
         "SELECT sql FROM sqlite_master
          WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')",
@@ -64,6 +74,7 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         .filter_map(|row| row.ok())
         .collect();
 
+    let mut clone_errors: Vec<String> = Vec::new();
     for sql in &sqls {
         if sql.contains("fts5") || sql.starts_with("CREATE TABLE IF NOT EXISTS '_") {
             continue;
@@ -72,7 +83,41 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         let safe = safe.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
         if let Err(error) = dst.execute_batch(&safe) {
             crate::log::debug("migrate", &format!("clone_schema skip: {}", error));
+            clone_errors.push(format!("{}: {}", &sql[..sql.len().min(60)], error));
         }
     }
-    Ok(())
+    Ok(clone_errors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that a table whose DDL fails to clone is surfaced in clone_errors
+    /// rather than silently dropped (issue #18).
+    ///
+    /// We use `PRAGMA writable_schema` to inject a DDL row with invalid SQL that
+    /// SQLite accepted at insertion time but that `execute_batch` will reject.
+    #[test]
+    fn clone_schema_surfaces_non_fts5_clone_error() -> Result<()> {
+        let src = Connection::open_in_memory()?;
+        src.execute_batch("PRAGMA writable_schema = ON;")?;
+        src.execute_batch(
+            "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql)
+             VALUES ('table', 'bad_table', 'bad_table', 0, 'THIS IS NOT VALID SQL');",
+        )?;
+
+        let dst = Connection::open_in_memory()?;
+        let errors = clone_schema(&src, &dst)?;
+        assert!(
+            !errors.is_empty(),
+            "clone error for bad DDL must be surfaced"
+        );
+        assert!(
+            errors[0].contains("bad_table") || errors[0].contains("THIS IS NOT"),
+            "error message should reference the failing DDL: {:?}",
+            errors
+        );
+        Ok(())
+    }
 }

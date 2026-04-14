@@ -692,7 +692,7 @@ fn bench_summary_parse_partial() -> Result<()> {
 
 #[test]
 fn bench_summary_parse_malformed_robustness() -> Result<()> {
-    let samples = vec![
+    let samples = [
         (
             "full",
             summary_xml_with_all_fields(),
@@ -763,7 +763,7 @@ fn bench_observation_parse_malformed_robustness() -> Result<()> {
     let with_attrs = observation_xml_with_tag_attributes();
     let unclosed = observation_xml_unclosed_title();
 
-    let samples = vec![
+    let samples = [
         (
             standard,
             "discovery",
