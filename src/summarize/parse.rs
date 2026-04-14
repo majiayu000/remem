@@ -26,9 +26,21 @@ fn find_open_tag_end(lowered: &str, tag: &str, from: usize) -> Option<usize> {
                 search_from = after_name;
                 continue;
             }
-            return lowered[after_name..]
-                .find('>')
-                .map(|close_rel| after_name + close_rel + 1);
+            // Scan for the closing '>', skipping '>' inside quoted attribute values.
+            let bytes = &lowered.as_bytes()[after_name..];
+            let mut in_quote: Option<u8> = None;
+            for (i, &b) in bytes.iter().enumerate() {
+                match in_quote {
+                    Some(q) if b == q => in_quote = None,
+                    Some(_) => {}
+                    None => match b {
+                        b'"' | b'\'' => in_quote = Some(b),
+                        b'>' => return Some(after_name + i + 1),
+                        _ => {}
+                    },
+                }
+            }
+            return None;
         }
         return None;
     }
@@ -100,10 +112,26 @@ fn find_last_summary_range(lowered: &str, text_len: usize) -> Option<(usize, usi
         if let Some(last_start) = last_open_without_close {
             if last_start > comp_start {
                 let tail = &lowered[last_start..];
-                let has_summary_field = ["<completed", "<request", "<decisions",
-                                         "<learned", "<next_steps", "<preferences"]
+                let has_summary_field = ["completed", "request", "decisions",
+                                         "learned", "next_steps", "preferences"]
                     .iter()
-                    .any(|f| tail.contains(f));
+                    .any(|f| {
+                        let open = format!("<{}>", f);
+                        let close = format!("</{}", f);
+                        // Accept a complete field (open + close tag) or a truncated
+                        // field whose open tag is followed by non-empty content.
+                        // The close-tag check prevents bare mentions like "use
+                        // `<request>` tags" (which have no </request>) from winning
+                        // unless the open tag has actual content after it.
+                        if tail.contains(close.as_str()) {
+                            return true;
+                        }
+                        if let Some(after) = tail.find(open.as_str()).map(|p| p + open.len()) {
+                            let rest = tail[after..].trim_start();
+                            return !rest.is_empty() && !rest.starts_with('<');
+                        }
+                        false
+                    });
                 if has_summary_field {
                     return Some((last_start, text_len));
                 }
@@ -164,9 +192,6 @@ fn extract_field_relaxed(content: &str, field: &str) -> Option<String> {
     let start = find_open_tag_end(&lowered, field, 0)?;
     let fallback_end = fallback_value_end(content, &lowered, start);
     let end = match find_close_tag_start(&lowered, field, start) {
-        // Close tag exists but comes after the first sibling open tag — likely
-        // misplaced inside another field's content; use the fallback boundary.
-        Some(close_start) if fallback_end < close_start => fallback_end,
         Some(close_start) => close_start,
         None => fallback_end,
     };

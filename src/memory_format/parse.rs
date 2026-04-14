@@ -61,6 +61,13 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
         let Some(open_end_rel) = text[tag_start..].find('>') else {
             break;
         };
+        // Skip self-closing tags like <observation/> — they carry no content.
+        if open_end_rel > 0
+            && text.as_bytes().get(tag_start + open_end_rel - 1) == Some(&b'/')
+        {
+            pos = tag_start + open_end_rel + 1;
+            continue;
+        }
         let content_start = tag_start + open_end_rel + 1;
         let close_tag = "</observation>";
         let close_rel = find_ascii_ci(&text[content_start..], close_tag);

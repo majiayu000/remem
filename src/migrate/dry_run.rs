@@ -46,7 +46,13 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     // as well as v13+.  The previous condition only covered current_version >=
     // OLD_BASELINE_VERSION (v13), leaving v1-v12 databases diverged from production
     // and still producing false migration failures.
-    if current_version > 0 || has_migration_table(real_conn) {
+    // Mirror transition_from_old_system(): backfill only when migration entries
+    // exist (not just the table) or when user_version > 0.  A database where
+    // _schema_migrations was created but never populated (user_version = 0)
+    // must NOT be backfilled here, matching the production gate in transition.rs.
+    let has_migration_entries = has_migration_table(real_conn)
+        && applied_versions(real_conn).map(|v| !v.is_empty()).unwrap_or(false);
+    if current_version > 0 || has_migration_entries {
         if let Err(error) = backfill_to_baseline(&test_conn) {
             return Ok(DryRunResult {
                 current_version,

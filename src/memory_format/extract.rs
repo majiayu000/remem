@@ -17,9 +17,21 @@ pub(super) fn find_open_tag_end(lowered: &str, tag: &str, from: usize) -> Option
                 search_from = after_name;
                 continue;
             }
-            return lowered[after_name..]
-                .find('>')
-                .map(|close_rel| after_name + close_rel + 1);
+            // Scan for the closing '>', skipping '>' inside quoted attribute values.
+            let bytes = &lowered.as_bytes()[after_name..];
+            let mut in_quote: Option<u8> = None;
+            for (i, &b) in bytes.iter().enumerate() {
+                match in_quote {
+                    Some(q) if b == q => in_quote = None,
+                    Some(_) => {}
+                    None => match b {
+                        b'"' | b'\'' => in_quote = Some(b),
+                        b'>' => return Some(after_name + i + 1),
+                        _ => {}
+                    },
+                }
+            }
+            return None;
         }
         return None;
     }

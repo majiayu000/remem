@@ -711,7 +711,10 @@ fn bench_summary_parse_malformed_robustness() -> Result<()> {
         (
             "unclosed_request",
             summary_xml_unclosed_request(),
-            Some("Improve malformed field tolerance"),
+            // Issue 1: close tag always wins over fallback boundary, so the
+            // misplaced </request> inside <completed> now terminates the field,
+            // capturing content up to that point.
+            Some("Improve malformed field tolerance\n<completed>Recover from missing"),
         ),
         (
             "tag_attributes",
