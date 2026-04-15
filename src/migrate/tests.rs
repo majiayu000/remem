@@ -211,6 +211,52 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
     Ok(())
 }
 
+/// Regression: `clone_schema` must skip tables whose *name* starts with '_',
+/// not tables whose SQL body contains `'_`.  A table with `DEFAULT '_pending'`
+/// in its DDL must still be cloned, and a table whose name is `_schema_migrations`
+/// (whether stored as `'_schema_migrations'` or `"_schema_migrations"`) must be
+/// skipped regardless of quoting style.
+#[test]
+fn clone_schema_skips_internal_tables_by_name_not_sql_body() -> Result<()> {
+    let src = Connection::open_in_memory()?;
+    // A normal table whose SQL body happens to contain '_pending' as a string literal.
+    src.execute_batch(
+        "CREATE TABLE jobs (
+             id INTEGER PRIMARY KEY,
+             status TEXT NOT NULL DEFAULT '_pending'
+         );
+         CREATE TABLE _schema_migrations (
+             version INTEGER PRIMARY KEY,
+             name TEXT NOT NULL,
+             applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+
+    let dst = Connection::open_in_memory()?;
+    // Access the private function through the public dry_run path by calling it
+    // on a connection that only has these two tables.
+    super::dry_run::clone_schema(&src, &dst)?;
+
+    let jobs_cloned: bool = dst
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(jobs_cloned, "jobs table (with DEFAULT '_pending') must be cloned");
+
+    let internal_skipped: bool = dst
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_schema_migrations'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(!internal_skipped, "_schema_migrations must be skipped by clone_schema");
+    Ok(())
+}
+
 fn create_v13_schema_without_scope(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE memories (
