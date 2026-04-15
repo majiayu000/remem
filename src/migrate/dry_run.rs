@@ -99,7 +99,10 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         .collect();
 
     for sql in &sqls {
-        if sql.contains("fts5") || sql.starts_with("CREATE TABLE IF NOT EXISTS '_") {
+        // Skip FTS5 virtual tables and internal tables whose names begin with '_'.
+        // Raw sqlite_master SQL uses the form `CREATE TABLE '_name'`, so we match
+        // on the raw form — the IF NOT EXISTS rewrite happens below, after this check.
+        if sql.contains("fts5") || sql.contains(" '_") || sql.contains(" \"_\"") {
             continue;
         }
         let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
