@@ -12,7 +12,13 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     let applied = infer_applied_versions(real_conn, current_version)?;
 
     let test_conn = Connection::open_in_memory()?;
-    clone_schema(real_conn, &test_conn)?;
+    if let Err(error) = clone_schema(real_conn, &test_conn) {
+        return Ok(DryRunResult {
+            current_version,
+            pending_count: applied_pending_count(&applied),
+            error: Some(format!("schema clone: {}", error)),
+        });
+    }
     if current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
         if let Err(error) = backfill_to_baseline(&test_conn) {
             return Ok(DryRunResult {
@@ -84,7 +90,8 @@ fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec
 fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
     let mut stmt = src.prepare(
         "SELECT sql FROM sqlite_master
-         WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')",
+         WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')
+         ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END, name",
     )?;
     let sqls: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
@@ -97,9 +104,7 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         }
         let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
         let safe = safe.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
-        if let Err(error) = dst.execute_batch(&safe) {
-            crate::log::debug("migrate", &format!("clone_schema skip: {}", error));
-        }
+        dst.execute_batch(&safe)?;
     }
     Ok(())
 }
