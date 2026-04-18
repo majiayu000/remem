@@ -39,6 +39,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 axum = { version = "0.8.8", features = ["json"] }
 tower-http = { version = "0.6.8", features = ["cors"] }
 getrandom = "0.3"
+toml_edit = "0.22"
 
 [profile.release]
 opt-level = "z"
