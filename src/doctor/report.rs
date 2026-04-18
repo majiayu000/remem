@@ -10,15 +10,11 @@ pub fn run_doctor() -> Result<()> {
     println!("remem v{} — system check", version);
     println!();
 
-    let checks = vec![
-        check_binary(),
-        check_schema_migration(),
-        check_database(),
-        check_hooks(),
-        check_mcp(),
-        check_pending_queue(),
-        check_disk_space(),
-    ];
+    let mut checks = vec![check_binary(), check_schema_migration(), check_database()];
+    checks.extend(check_hooks());
+    checks.extend(check_mcp());
+    checks.push(check_pending_queue());
+    checks.push(check_disk_space());
 
     let mut warns = 0;
     let mut fails = 0;

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use std::path::PathBuf;
 
-pub(super) fn read_json_file(path: &PathBuf) -> Result<Value> {
+pub(in crate::install) fn read_json_file(path: &PathBuf) -> Result<Value> {
     if path.exists() {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("读取 {} 失败", path.display()))?;
@@ -12,7 +12,7 @@ pub(super) fn read_json_file(path: &PathBuf) -> Result<Value> {
     }
 }
 
-pub(super) fn write_json_file(path: &PathBuf, value: &Value) -> Result<()> {
+pub(in crate::install) fn write_json_file(path: &PathBuf, value: &Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
