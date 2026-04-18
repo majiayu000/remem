@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+pub(super) use crate::install::InstallTarget;
+
 #[derive(Parser)]
 #[command(name = "remem", about = "Persistent memory for Claude Code", version)]
 pub(super) struct Cli {
@@ -25,8 +27,22 @@ pub(super) enum Commands {
         once: bool,
     },
     Mcp,
-    Install,
-    Uninstall,
+    Install {
+        /// Which host(s) to install into.
+        #[arg(long, value_enum, default_value = "auto")]
+        target: InstallTarget,
+        /// Print what would be written without touching disk.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Uninstall {
+        /// Which host(s) to uninstall from. Defaults to all known hosts.
+        #[arg(long, value_enum, default_value = "auto")]
+        target: InstallTarget,
+        /// Print what would be removed without touching disk.
+        #[arg(long)]
+        dry_run: bool,
+    },
     Cleanup,
     SyncMemory {
         #[arg(long)]

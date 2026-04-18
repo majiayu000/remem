@@ -13,87 +13,173 @@ pub(super) fn check_binary() -> Check {
     }
 }
 
-pub(super) fn check_hooks() -> Check {
-    let settings_path = dirs::home_dir()
-        .map(|home| home.join(".claude").join("settings.json"))
-        .unwrap_or_else(|| PathBuf::from("~/.claude/settings.json"));
+/// A single host we know how to validate. The strings are leaked static
+/// because `Check::name` takes `&'static str` — every host lives for the
+/// process, so leaking is fine.
+struct HostProbe {
+    name: &'static str,
+    hooks_path: PathBuf,
+    mcp_path: PathBuf,
+    /// Needle in the MCP config file that indicates remem is registered.
+    /// JSON hosts use `mcpServers`, TOML hosts use `mcp_servers`.
+    mcp_needle: &'static str,
+}
 
-    if !settings_path.exists() {
-        return Check {
+fn known_hosts() -> Vec<HostProbe> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    vec![
+        HostProbe {
+            name: "claude",
+            hooks_path: home.join(".claude").join("settings.json"),
+            mcp_path: home.join(".claude.json"),
+            mcp_needle: "mcpServers",
+        },
+        HostProbe {
+            name: "codex",
+            hooks_path: home.join(".codex").join("hooks.json"),
+            mcp_path: home.join(".codex").join("config.toml"),
+            mcp_needle: "mcp_servers",
+        },
+    ]
+}
+
+/// True if the host's config directory exists — i.e. the tool is installed
+/// on this machine and worth probing.
+fn host_present(probe: &HostProbe) -> bool {
+    probe.hooks_path.parent().is_some_and(|p| p.exists())
+        || probe.hooks_path.exists()
+        || probe.mcp_path.exists()
+}
+
+/// Produce one Check per detected host's hooks file. Hosts whose config
+/// directory doesn't exist are silently skipped — they aren't installed, so
+/// there's nothing to validate.
+pub(super) fn check_hooks() -> Vec<Check> {
+    let mut checks = Vec::new();
+    for probe in known_hosts().iter().filter(|h| host_present(h)) {
+        checks.push(probe_hooks(probe));
+    }
+    if checks.is_empty() {
+        checks.push(Check {
             name: "Hooks",
             status: Status::Fail,
-            detail: format!("{} not found", settings_path.display()),
+            detail: "no supported host detected (install Claude Code or Codex)".to_string(),
+        });
+    }
+    checks
+}
+
+pub(super) fn check_mcp() -> Vec<Check> {
+    let mut checks = Vec::new();
+    for probe in known_hosts().iter().filter(|h| host_present(h)) {
+        checks.push(probe_mcp(probe));
+    }
+    if checks.is_empty() {
+        checks.push(Check {
+            name: "MCP server",
+            status: Status::Fail,
+            detail: "no supported host detected".to_string(),
+        });
+    }
+    checks
+}
+
+fn probe_hooks(probe: &HostProbe) -> Check {
+    let name: &'static str = Box::leak(format!("Hooks ({})", probe.name).into_boxed_str());
+
+    if !probe.hooks_path.exists() {
+        return Check {
+            name,
+            status: Status::Fail,
+            detail: format!("{} not found (run `remem install`)", probe.hooks_path.display()),
         };
     }
 
-    let content = match std::fs::read_to_string(&settings_path) {
+    let content = match std::fs::read_to_string(&probe.hooks_path) {
         Ok(content) => content,
         Err(err) => {
             return Check {
-                name: "Hooks",
+                name,
                 status: Status::Fail,
-                detail: format!("cannot read {}: {}", settings_path.display(), err),
+                detail: format!("cannot read {}: {}", probe.hooks_path.display(), err),
             };
         }
     };
 
-    let hooks = ["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"];
-    let mut found = 0;
-    for hook in &hooks {
-        if content.contains(hook) && content.contains("remem") {
-            found += 1;
-        }
-    }
+    let events = ["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"];
+    let found = events
+        .iter()
+        .filter(|event| content.contains(*event) && content.contains("remem"))
+        .count();
 
-    if found == hooks.len() {
+    if found == events.len() {
         Check {
-            name: "Hooks",
+            name,
             status: Status::Ok,
-            detail: format!("{}/{} registered in settings.json", found, hooks.len()),
+            detail: format!("{}/{} registered in {}", found, events.len(), probe.hooks_path.display()),
         }
     } else if found > 0 {
         Check {
-            name: "Hooks",
+            name,
             status: Status::Warn,
             detail: format!(
-                "{}/{} registered (run `remem install` to fix)",
+                "{}/{} registered (run `remem install --target {}` to fix)",
                 found,
-                hooks.len()
+                events.len(),
+                probe.name
             ),
         }
     } else {
         Check {
-            name: "Hooks",
+            name,
             status: Status::Fail,
-            detail: "no remem hooks found (run `remem install`)".to_string(),
+            detail: format!("no remem hooks (run `remem install --target {}`)", probe.name),
         }
     }
 }
 
-pub(super) fn check_mcp() -> Check {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let mcp_paths = [
-        home.join(".claude.json"),
-        home.join(".claude").join("claude_desktop_config.json"),
-    ];
+fn probe_mcp(probe: &HostProbe) -> Check {
+    let name: &'static str = Box::leak(format!("MCP ({})", probe.name).into_boxed_str());
 
-    for path in &mcp_paths {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if content.contains("remem") && content.contains("mcp") {
-                    return Check {
-                        name: "MCP server",
-                        status: Status::Ok,
-                        detail: format!("registered in {}", path.display()),
-                    };
-                }
-            }
-        }
+    if !probe.mcp_path.exists() {
+        return Check {
+            name,
+            status: Status::Fail,
+            detail: format!(
+                "{} not found (run `remem install --target {}`)",
+                probe.mcp_path.display(),
+                probe.name
+            ),
+        };
     }
 
-    Check {
-        name: "MCP server",
-        status: Status::Fail,
-        detail: "not registered (run `remem install`)".to_string(),
+    let content = match std::fs::read_to_string(&probe.mcp_path) {
+        Ok(c) => c,
+        Err(err) => {
+            return Check {
+                name,
+                status: Status::Fail,
+                detail: format!("cannot read {}: {}", probe.mcp_path.display(), err),
+            };
+        }
+    };
+
+    // Substring check is defensive (works for both JSON and TOML without
+    // parsing either). `<needle>` + `remem` both present ≈ registered.
+    if content.contains(probe.mcp_needle) && content.contains("remem") {
+        Check {
+            name,
+            status: Status::Ok,
+            detail: format!("registered in {}", probe.mcp_path.display()),
+        }
+    } else {
+        Check {
+            name,
+            status: Status::Fail,
+            detail: format!(
+                "not registered (run `remem install --target {}`)",
+                probe.name
+            ),
+        }
     }
 }
