@@ -78,7 +78,7 @@ fn cluster_candidates(candidates: Vec<MemoryCandidate>) -> Vec<Cluster> {
         .collect();
 
     // Sort by cluster size descending (biggest benefit first)
-    clusters.sort_by(|a, b| b.members.len().cmp(&a.members.len()));
+    clusters.sort_by_key(|b| std::cmp::Reverse(b.members.len()));
     clusters.truncate(DREAM_MAX_CLUSTERS);
     clusters
 }
