@@ -89,22 +89,19 @@ fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec
 
 fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
     let mut stmt = src.prepare(
-        "SELECT sql FROM sqlite_master
+        "SELECT sql, tbl_name FROM sqlite_master
          WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')
          ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END, name",
     )?;
-    let sqls: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .filter_map(|row| row.ok())
         .collect();
 
-    for sql in &sqls {
-        // sqlite_master stores the original CREATE statement (without IF NOT EXISTS),
-        // so the prefix check must match the pre-replacement form.
-        if sql.contains("fts5")
-            || sql.starts_with("CREATE TABLE '_")
-            || sql.starts_with("CREATE TABLE \"_")
-        {
+    for (sql, tbl_name) in &rows {
+        // Skip fts5 virtual tables and any object belonging to an _-prefixed internal table.
+        // tbl_name is the owning table for indexes/triggers too, so this covers all three types.
+        if sql.contains("fts5") || tbl_name.starts_with('_') {
             continue;
         }
         let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
@@ -121,7 +118,14 @@ mod tests {
     #[test]
     fn clone_schema_skips_underscore_prefixed_tables() {
         let src = Connection::open_in_memory().unwrap();
+        // quoted underscore table
         src.execute_batch("CREATE TABLE '_internal' (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        // unquoted underscore table (e.g. _schema_migrations stored by state.rs)
+        src.execute_batch("CREATE TABLE _schema_migrations (version INTEGER PRIMARY KEY)")
+            .unwrap();
+        // index on an underscore table — must not be cloned either
+        src.execute_batch("CREATE INDEX idx_sm_version ON _schema_migrations(version)")
             .unwrap();
         src.execute_batch("CREATE TABLE normal (id INTEGER PRIMARY KEY)")
             .unwrap();
@@ -137,6 +141,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0, "_internal table must not be cloned");
+
+        let count: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = '_schema_migrations'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "_schema_migrations table must not be cloned");
+
+        let count: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_sm_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "index on _schema_migrations must not be cloned");
 
         let count: i64 = dst
             .query_row(
