@@ -88,22 +88,32 @@ fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec
 }
 
 fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
+    // Migration-system tables that must not be replicated into the dry-run
+    // database. Matched against the unquoted `name` column so bracket-quoted
+    // and backtick-quoted DDL variants are handled transparently.
+    const INTERNAL_TABLES: &[&str] = &["_schema_migrations"];
+
     let mut stmt = src.prepare(
-        "SELECT sql FROM sqlite_master
+        "SELECT type, name, tbl_name, sql FROM sqlite_master
          WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')
          ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END, name",
     )?;
-    let sqls: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
-        .filter_map(|row| row.ok())
+    let rows: Vec<(String, String, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .filter_map(|r| r.ok())
         .collect();
 
-    for sql in &sqls {
-        if sql.contains("fts5")
-            || sql.starts_with("CREATE TABLE _")
-            || sql.starts_with("CREATE TABLE '_")
-            || sql.starts_with("CREATE TABLE \"_")
-        {
+    for (obj_type, name, tbl_name, sql) in &rows {
+        if sql.contains("fts5") {
+            continue;
+        }
+        // Skip internal tables and any indexes/triggers that belong to them.
+        let is_internal = if obj_type == "table" {
+            INTERNAL_TABLES.contains(&name.as_str())
+        } else {
+            INTERNAL_TABLES.contains(&tbl_name.as_str())
+        };
+        if is_internal {
             continue;
         }
         let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
