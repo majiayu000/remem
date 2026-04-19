@@ -99,7 +99,10 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         .collect();
 
     for sql in &sqls {
-        if sql.contains("fts5") || sql.starts_with("CREATE TABLE IF NOT EXISTS '_") {
+        if sql.contains("fts5")
+            || sql.starts_with("CREATE TABLE '_")
+            || sql.starts_with("CREATE TABLE \"_")
+        {
             continue;
         }
         let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
