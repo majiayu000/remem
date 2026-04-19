@@ -99,7 +99,9 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
          ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END, name",
     )?;
     let rows: Vec<(String, String, String, String)> = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
         .filter_map(|r| r.ok())
         .collect();
 
