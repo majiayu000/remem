@@ -47,7 +47,7 @@ pub(super) fn check_dedup(conn: &Connection) -> Result<DedupReport> {
         }
     }
 
-    worst_groups.sort_by(|left, right| right.1.cmp(&left.1));
+    worst_groups.sort_by_key(|right| std::cmp::Reverse(right.1));
     worst_groups.truncate(5);
 
     let total: i64 = conn.query_row(
