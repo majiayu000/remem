@@ -99,7 +99,12 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         .collect();
 
     for sql in &sqls {
-        if sql.contains("fts5") || sql.starts_with("CREATE TABLE IF NOT EXISTS '_") {
+        // sqlite_master stores the original CREATE statement (without IF NOT EXISTS),
+        // so the prefix check must match the pre-replacement form.
+        if sql.contains("fts5")
+            || sql.starts_with("CREATE TABLE '_")
+            || sql.starts_with("CREATE TABLE \"_")
+        {
             continue;
         }
         let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
@@ -107,4 +112,39 @@ fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
         dst.execute_batch(&safe)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_schema_skips_underscore_prefixed_tables() {
+        let src = Connection::open_in_memory().unwrap();
+        src.execute_batch("CREATE TABLE '_internal' (id INTEGER PRIMARY KEY)")
+            .unwrap();
+        src.execute_batch("CREATE TABLE normal (id INTEGER PRIMARY KEY)")
+            .unwrap();
+
+        let dst = Connection::open_in_memory().unwrap();
+        clone_schema(&src, &dst).unwrap();
+
+        let count: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = '_internal'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "_internal table must not be cloned");
+
+        let count: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'normal'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "normal table must be cloned");
+    }
 }
