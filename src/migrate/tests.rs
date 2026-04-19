@@ -211,6 +211,28 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn dry_run_skips_unquoted_schema_migrations_table() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA user_version = 13;")?;
+    create_v13_schema_without_scope(&conn)?;
+    // Seed _schema_migrations unquoted — SQLite stores it in sqlite_master as
+    // "CREATE TABLE _schema_migrations ...", which the old quoted-only guard missed.
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at_epoch INTEGER NOT NULL);
+         INSERT INTO _schema_migrations VALUES (1, 'baseline', 1700000000);",
+    )?;
+
+    let result = dry_run_pending(&conn)?;
+    // The internal table must be skipped; no clone/schema error should surface.
+    assert!(
+        result.error.is_none(),
+        "dry_run must not fail when _schema_migrations is unquoted in sqlite_master: {:?}",
+        result.error
+    );
+    Ok(())
+}
+
 fn create_v13_schema_without_scope(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE memories (
