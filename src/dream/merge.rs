@@ -31,7 +31,27 @@ pub(super) async fn merge_cluster(cluster: &Cluster, project: &str) -> Result<Me
     )
     .await?;
 
-    Ok(parse_response(&response))
+    Ok(filter_superseded_ids(parse_response(&response), cluster))
+}
+
+fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDecision {
+    let MergeDecision::Merge(mut result) = decision else {
+        return decision;
+    };
+    let member_ids: std::collections::HashSet<i64> = cluster.members.iter().map(|m| m.id).collect();
+    let before = result.superseded_ids.len();
+    result.superseded_ids.retain(|id| member_ids.contains(id));
+    let dropped = before - result.superseded_ids.len();
+    if dropped > 0 {
+        crate::log::warn(
+            "dream",
+            &format!(
+                "dropped {} hallucinated superseded_id(s) not in cluster",
+                dropped
+            ),
+        );
+    }
+    MergeDecision::Merge(result)
 }
 
 fn build_user_message(members: &[MemoryCandidate]) -> String {
@@ -130,6 +150,51 @@ mod tests {
     fn test_parse_missing_fields_becomes_no_merge() {
         let response = "<memory><topic_key>k</topic_key></memory>";
         assert!(matches!(parse_response(response), MergeDecision::NoMerge));
+    }
+
+    #[test]
+    fn test_filter_superseded_ids_drops_hallucinated() {
+        let cluster = Cluster {
+            members: vec![
+                MemoryCandidate {
+                    id: 10,
+                    topic_key: Some("k".into()),
+                    title: "t".into(),
+                    content: "c".into(),
+                    memory_type: "decision".into(),
+                    updated_at_epoch: 0,
+                },
+                MemoryCandidate {
+                    id: 20,
+                    topic_key: Some("k".into()),
+                    title: "t".into(),
+                    content: "c".into(),
+                    memory_type: "decision".into(),
+                    updated_at_epoch: 0,
+                },
+            ],
+        };
+        let decision = MergeDecision::Merge(MergeResult {
+            topic_key: "k".into(),
+            memory_type: "decision".into(),
+            title: "T".into(),
+            content: "C".into(),
+            // 99999 is hallucinated; 10 and 20 are valid cluster members
+            superseded_ids: vec![10, 99999, 20],
+        });
+        match filter_superseded_ids(decision, &cluster) {
+            MergeDecision::Merge(r) => assert_eq!(r.superseded_ids, vec![10, 20]),
+            MergeDecision::NoMerge => panic!("expected Merge"),
+        }
+    }
+
+    #[test]
+    fn test_filter_superseded_ids_no_merge_passthrough() {
+        let cluster = Cluster { members: vec![] };
+        assert!(matches!(
+            filter_superseded_ids(MergeDecision::NoMerge, &cluster),
+            MergeDecision::NoMerge
+        ));
     }
 
     #[test]
