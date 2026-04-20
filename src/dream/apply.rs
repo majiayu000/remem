@@ -3,10 +3,11 @@ use rusqlite::{params, Connection};
 
 use super::merge::MergeResult;
 
-pub(super) fn apply(conn: &Connection, project: &str, result: &MergeResult) -> Result<()> {
-    // Upsert the merged memory (reuses existing topic_key upsert logic)
+pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) -> Result<()> {
+    let tx = conn.transaction()?;
+
     crate::memory::insert_memory_full(
-        conn,
+        &tx,
         Some("dream"),
         project,
         Some(&result.topic_key),
@@ -19,14 +20,17 @@ pub(super) fn apply(conn: &Connection, project: &str, result: &MergeResult) -> R
         None,
     )?;
 
-    // Mark superseded memories as stale
     for id in &result.superseded_ids {
-        conn.execute(
+        let rows = tx.execute(
             "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
             params![id, project],
         )?;
+        if rows == 0 {
+            anyhow::bail!("stale-mark for id {} updated 0 rows; rolling back", id);
+        }
     }
 
+    tx.commit()?;
     Ok(())
 }
 
@@ -46,7 +50,7 @@ mod tests {
 
     #[test]
     fn test_apply_upserts_merged_memory() {
-        let (conn, project) = setup();
+        let (mut conn, project) = setup();
         let result = MergeResult {
             topic_key: "merged-topic".to_owned(),
             memory_type: "decision".to_owned(),
@@ -54,7 +58,7 @@ mod tests {
             content: "Merged content".to_owned(),
             superseded_ids: vec![],
         };
-        apply(&conn, &project, &result).expect("apply");
+        apply(&mut conn, &project, &result).expect("apply");
 
         let count: i64 = conn
             .query_row(
@@ -68,7 +72,7 @@ mod tests {
 
     #[test]
     fn test_apply_marks_superseded_stale() {
-        let (conn, project) = setup();
+        let (mut conn, project) = setup();
         let old_id = insert_memory(
             &conn,
             Some("sess-1"),
@@ -88,7 +92,7 @@ mod tests {
             content: "New content".to_owned(),
             superseded_ids: vec![old_id],
         };
-        apply(&conn, &project, &result).expect("apply");
+        apply(&mut conn, &project, &result).expect("apply");
 
         let status: String = conn
             .query_row(
@@ -98,5 +102,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(status, "stale");
+    }
+
+    #[test]
+    fn test_apply_is_atomic_on_invalid_superseded_id() {
+        // ID 99999 does not exist — stale-mark must fail, and the upsert must be rolled back.
+        let (mut conn, project) = setup();
+        let result = MergeResult {
+            topic_key: "atomic-merged".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Atomic title".to_owned(),
+            content: "Atomic content".to_owned(),
+            superseded_ids: vec![99999],
+        };
+        assert!(
+            apply(&mut conn, &project, &result).is_err(),
+            "apply must fail when a superseded id does not exist"
+        );
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE project = ?1 AND topic_key = ?2",
+                params![project, "atomic-merged"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "upsert must be rolled back when stale-mark fails");
     }
 }

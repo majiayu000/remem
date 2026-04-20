@@ -14,7 +14,7 @@ pub(crate) fn list_clusters(project: &str) -> Result<Vec<Cluster>> {
 }
 
 pub async fn process_dream_job(project: &str) -> Result<()> {
-    let conn = crate::db::open_db()?;
+    let mut conn = crate::db::open_db()?;
     let clusters = load_clusters(&conn, project)?;
 
     if clusters.is_empty() {
@@ -36,7 +36,7 @@ pub async fn process_dream_job(project: &str) -> Result<()> {
     for cluster in &clusters {
         match merge_cluster(cluster, project).await? {
             MergeDecision::Merge(result) => {
-                apply::apply(&conn, project, &result)?;
+                apply::apply(&mut conn, project, &result)?;
                 merged += 1;
                 crate::log::info(
                     "dream",
