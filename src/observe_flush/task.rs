@@ -90,25 +90,13 @@ pub(crate) async fn flush_single_task(
 mod tests {
     use rusqlite::Connection;
 
+    use crate::db::test_support::ScopedTestDataDir;
     use crate::db::PendingObservation;
 
     use super::flush_single_task;
 
-    /// Regression guard for https://github.com/majiayu000/remem/issues/30.
-    ///
-    /// When the DB is missing the context tables, `build_existing_context` returns
-    /// `Err`.  The fix at task.rs:32 must swallow that error as a warning and
-    /// continue — not propagate it.  We verify by checking that the error returned
-    /// (which will be from the downstream AI call, not from SQLite) does NOT
-    /// contain the SQLite "no such table" sentinel that would indicate the context
-    /// error leaked through.
-    #[tokio::test]
-    async fn flush_single_task_continues_when_context_tables_missing() -> anyhow::Result<()> {
-        // Empty in-memory DB — no tables at all, so build_existing_context fails.
-        let mut conn = Connection::open_in_memory()?;
-
-        let long_response = "A".repeat(200); // > MIN_TASK_RESPONSE_LEN (100)
-        let pending = PendingObservation {
+    fn make_pending(long_response: String) -> PendingObservation {
+        PendingObservation {
             id: 1,
             session_id: "sess-test".to_string(),
             project: "test-proj".to_string(),
@@ -122,14 +110,37 @@ mod tests {
             attempt_count: 1,
             next_retry_epoch: None,
             last_error: None,
-        };
+        }
+    }
+
+    /// Regression guard for https://github.com/majiayu000/remem/issues/30.
+    ///
+    /// When `build_existing_context` fails (e.g. "no such table: observations"),
+    /// the fix at task.rs:32 must emit a WARN log entry and then continue —
+    /// not propagate the error.  This test verifies the warning was actually
+    /// written to the log file.  A bare `.unwrap_or_default()` (the pre-fix
+    /// regression) produces no log output and would therefore fail this assertion,
+    /// distinguishing it from the fixed `.map_err(warn).unwrap_or_default()` path.
+    // ScopedTestDataDir holds a std::sync::MutexGuard (!Send) to serialize env-var
+    // access. Holding it across .await is intentional here: the warning fires
+    // before the first await, and the guard must stay alive until we read the log
+    // file after the call returns. #[tokio::test] uses a current-thread runtime
+    // so the future need not be Send.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn flush_single_task_warns_on_context_build_failure() -> anyhow::Result<()> {
+        // Redirect REMEM_DATA_DIR so we can read the log file and assert the
+        // warning was emitted.
+        let data_dir = ScopedTestDataDir::new("flush-single-warn");
+        let log_path = data_dir.path.join("remem.log");
+
+        // Empty in-memory DB — no tables at all, so build_existing_context fails.
+        let mut conn = Connection::open_in_memory()?;
+        let pending = make_pending("A".repeat(200)); // > MIN_TASK_RESPONSE_LEN (100)
 
         let result = flush_single_task(&mut conn, "sess-test", "test-proj", "owner", &pending).await;
 
-        // build_existing_context queries `observations` and `memories`.  If its
-        // error leaks through, the returned Err will contain one of those table
-        // names.  Any other error (AI call failure, missing pending_observations
-        // table, etc.) is irrelevant to this regression guard.
+        // The SQLite context error must NOT propagate as the returned Err.
         if let Err(ref e) = result {
             let msg = e.to_string();
             assert!(
@@ -139,7 +150,16 @@ mod tests {
                 e
             );
         }
-        // Ok(_) is also acceptable (e.g. if the full pipeline completes in CI).
+
+        // Core regression guard: the WARN line must be present in the log file.
+        // The pre-fix code (bare .unwrap_or_default()) never wrote this line,
+        // so this assertion fails on the old implementation and passes on the fix.
+        let log_content = std::fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(
+            log_content.contains("existing context failed (continuing)"),
+            "expected WARN 'existing context failed (continuing)' in {log_path:?}, got:\n{log_content}"
+        );
+
         Ok(())
     }
 }
