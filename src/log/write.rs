@@ -107,3 +107,7 @@ pub fn info(component: &str, msg: &str) {
 pub fn warn(component: &str, msg: &str) {
     write_log("WARN", component, msg);
 }
+
+pub fn error(component: &str, msg: &str) {
+    write_log("ERROR", component, msg);
+}

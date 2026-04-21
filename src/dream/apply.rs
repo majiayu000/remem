@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
 
 use super::merge::MergeResult;
@@ -6,6 +6,7 @@ use super::merge::MergeResult;
 pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) -> Result<()> {
     let tx = conn.transaction()?;
 
+    // Upsert the merged memory (reuses existing topic_key upsert logic)
     crate::memory::insert_memory_full(
         &tx,
         Some("dream"),
@@ -21,12 +22,16 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
     )?;
 
     for id in &result.superseded_ids {
-        let rows = tx.execute(
+        let updated = tx.execute(
             "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
             params![id, project],
         )?;
-        if rows == 0 {
-            anyhow::bail!("stale-mark for id {} updated 0 rows; rolling back", id);
+        if updated != 1 {
+            return Err(anyhow!(
+                "failed to mark superseded memory stale: id={} project={}",
+                id,
+                project
+            ));
         }
     }
 
@@ -46,6 +51,24 @@ mod tests {
         setup_memory_schema(&conn);
         let project = "test-dream-apply".to_owned();
         (conn, project)
+    }
+
+    fn active_count(conn: &Connection, project: &str, topic_key: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE project = ?1 AND topic_key = ?2 AND status = 'active'",
+            params![project, topic_key],
+            |row| row.get(0),
+        )
+        .expect("active count should query")
+    }
+
+    fn status_for_id(conn: &Connection, id: i64) -> String {
+        conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("status should query")
     }
 
     #[test]
@@ -94,14 +117,49 @@ mod tests {
         };
         apply(&mut conn, &project, &result).expect("apply");
 
-        let status: String = conn
-            .query_row(
-                "SELECT status FROM memories WHERE id = ?1",
-                params![old_id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(status, "stale");
+        assert_eq!(status_for_id(&conn, old_id), "stale");
+    }
+
+    #[test]
+    fn test_apply_rolls_back_when_stale_mark_update_fails() {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            Some("old-topic"),
+            "old title",
+            "old content",
+            "decision",
+            None,
+        )
+        .expect("insert old memory");
+        conn.execute_batch(
+            "CREATE TRIGGER fail_stale_update
+             BEFORE UPDATE OF status ON memories
+             WHEN NEW.status = 'stale'
+             BEGIN
+                 SELECT RAISE(FAIL, 'forced stale update failure');
+             END;",
+        )
+        .expect("trigger should install");
+
+        let result = MergeResult {
+            topic_key: "merged-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+
+        let error = apply(&mut conn, &project, &result).expect_err("apply should fail");
+        assert!(
+            error.to_string().contains("forced stale update failure"),
+            "expected trigger failure, got: {error:?}"
+        );
+
+        assert_eq!(active_count(&conn, &project, "merged-topic"), 0);
+        assert_eq!(status_for_id(&conn, old_id), "active");
     }
 
     #[test]
