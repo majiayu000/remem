@@ -85,3 +85,61 @@ pub(crate) async fn flush_single_task(
 
     Ok(observations.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use crate::db::PendingObservation;
+
+    use super::flush_single_task;
+
+    /// Regression guard for https://github.com/majiayu000/remem/issues/30.
+    ///
+    /// When the DB is missing the context tables, `build_existing_context` returns
+    /// `Err`.  The fix at task.rs:32 must swallow that error as a warning and
+    /// continue — not propagate it.  We verify by checking that the error returned
+    /// (which will be from the downstream AI call, not from SQLite) does NOT
+    /// contain the SQLite "no such table" sentinel that would indicate the context
+    /// error leaked through.
+    #[tokio::test]
+    async fn flush_single_task_continues_when_context_tables_missing() -> anyhow::Result<()> {
+        // Empty in-memory DB — no tables at all, so build_existing_context fails.
+        let mut conn = Connection::open_in_memory()?;
+
+        let long_response = "A".repeat(200); // > MIN_TASK_RESPONSE_LEN (100)
+        let pending = PendingObservation {
+            id: 1,
+            session_id: "sess-test".to_string(),
+            project: "test-proj".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: Some("echo hello".to_string()),
+            tool_response: Some(long_response),
+            cwd: None,
+            created_at_epoch: 0,
+            updated_at_epoch: 0,
+            status: "claimed".to_string(),
+            attempt_count: 1,
+            next_retry_epoch: None,
+            last_error: None,
+        };
+
+        let result = flush_single_task(&mut conn, "sess-test", "test-proj", "owner", &pending).await;
+
+        // build_existing_context queries `observations` and `memories`.  If its
+        // error leaks through, the returned Err will contain one of those table
+        // names.  Any other error (AI call failure, missing pending_observations
+        // table, etc.) is irrelevant to this regression guard.
+        if let Err(ref e) = result {
+            let msg = e.to_string();
+            assert!(
+                !msg.contains("no such table: observations")
+                    && !msg.contains("no such table: memories"),
+                "build_existing_context error leaked into flush_single_task: {}",
+                e
+            );
+        }
+        // Ok(_) is also acceptable (e.g. if the full pipeline completes in CI).
+        Ok(())
+    }
+}
