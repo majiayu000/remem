@@ -85,6 +85,7 @@ fn cluster_candidates(candidates: Vec<MemoryCandidate>) -> Vec<Cluster> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
 
     fn make(id: i64, topic_key: Option<&str>, memory_type: &str) -> MemoryCandidate {
         MemoryCandidate {
@@ -140,5 +141,41 @@ mod tests {
             .collect();
         let clusters = cluster_candidates(candidates);
         assert!(clusters.len() <= DREAM_MAX_CLUSTERS);
+    }
+
+    #[test]
+    fn test_load_clusters_propagates_row_error() {
+        // Row with `id` stored as TEXT passes the recency-guard WHERE clause
+        // (updated_at_epoch = 0 is always older than now-3600) but causes
+        // rusqlite `row.get::<_, i64>(0)?` to return InvalidType.
+        // The old filter_map(|r| r.ok()) silently dropped such rows; the fix
+        // propagates the error as Err.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                 id,
+                 project      TEXT,
+                 status       TEXT,
+                 topic_key    TEXT,
+                 title        TEXT,
+                 content      TEXT,
+                 memory_type  TEXT,
+                 updated_at_epoch INTEGER
+             )",
+        )
+        .unwrap();
+        // Insert a row with TEXT in `id` (not coercible to i64) and
+        // updated_at_epoch=0 so it passes the recency-guard filter.
+        conn.execute(
+            "INSERT INTO memories VALUES (?1, ?2, 'active', NULL, 'title', 'content', 'preference', 0)",
+            rusqlite::params!["not-an-integer", "test-project"],
+        )
+        .unwrap();
+
+        let result = load_clusters(&conn, "test-project");
+        assert!(
+            result.is_err(),
+            "load_clusters must propagate row deserialization errors, not silently drop them"
+        );
     }
 }
