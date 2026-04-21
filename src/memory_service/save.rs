@@ -54,7 +54,10 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             memory_type: memory_type.to_string(),
             upserted: req.topic_key.is_some(),
             local_status: local_copy.status.clone(),
-            local_path: local_copy.path.as_ref().map(|path| path.display().to_string()),
+            local_path: local_copy
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string()),
         })
     })();
 
@@ -74,7 +77,11 @@ struct LocalCopyPlan {
     content: Option<String>,
 }
 
-fn prepare_local_copy(project: &str, title: &str, req: &SaveMemoryRequest) -> Result<LocalCopyPlan> {
+fn prepare_local_copy(
+    project: &str,
+    title: &str,
+    req: &SaveMemoryRequest,
+) -> Result<LocalCopyPlan> {
     if !local_copy_enabled_override(req.local_copy_enabled) {
         return Ok(LocalCopyPlan {
             status: "disabled".to_string(),
@@ -94,7 +101,8 @@ fn prepare_local_copy(project: &str, title: &str, req: &SaveMemoryRequest) -> Re
 }
 
 fn write_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
-    if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref()) {
+    if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref())
+    {
         write_local_note(path, content)?;
     }
     Ok(())
