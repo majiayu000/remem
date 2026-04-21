@@ -266,6 +266,22 @@ fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn applied_versions_propagates_row_error() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    // TEXT column so we can insert a non-numeric value that fails i64 deserialization.
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (version TEXT, name TEXT NOT NULL, applied_at_epoch INTEGER NOT NULL);
+         INSERT INTO _schema_migrations VALUES ('1', 'baseline', 1700000000);
+         INSERT INTO _schema_migrations VALUES ('not-a-number', 'bad', 1700000001);",
+    )?;
+    assert!(
+        applied_versions(&conn).is_err(),
+        "applied_versions must propagate row deserialization errors instead of silently dropping them"
+    );
+    Ok(())
+}
+
 fn create_v13_schema_without_scope(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE memories (

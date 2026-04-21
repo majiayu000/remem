@@ -23,10 +23,9 @@ pub(super) fn has_migration_table(conn: &Connection) -> bool {
 
 pub(super) fn applied_versions(conn: &Connection) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare("SELECT version FROM _schema_migrations ORDER BY version")?;
-    let versions = stmt
+    let versions: Vec<i64> = stmt
         .query_map([], |row| row.get(0))?
-        .filter_map(|row| row.ok())
-        .collect();
+        .collect::<rusqlite::Result<Vec<i64>>>()?;
     Ok(versions)
 }
 
