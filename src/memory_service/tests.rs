@@ -51,6 +51,71 @@ fn resolve_tilde_path_is_rejected() {
 }
 
 #[test]
+fn save_memory_outside_local_path_does_not_persist_memory() {
+    let _dir = ScopedTestDataDir::new("save-outside-path-no-db-write");
+    let conn = db::open_db().expect("db should open");
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some("/etc/passwd".to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("out-of-bounds local_path should fail");
+
+    assert!(
+        err.to_string().contains("outside the allowed directory"),
+        "unexpected error: {err:?}"
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[test]
+fn save_memory_local_write_failure_does_not_persist_memory() {
+    let test_dir = ScopedTestDataDir::new("save-local-write-failure-no-db-write");
+    let conn = db::open_db().expect("db should open");
+    let blocking_file = test_dir.path.join("manual-notes").join("proj");
+    std::fs::create_dir_all(blocking_file.parent().expect("blocking file parent"))
+        .expect("create blocking file parent");
+    std::fs::write(&blocking_file, "not a directory").expect("create blocking file");
+
+    let local_path = blocking_file.join("forced-failure.md");
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("local write should abort save");
+
+    assert!(
+        err.to_string().contains("Not a directory")
+            || err.to_string().contains("not a directory")
+            || err.to_string().contains("File exists"),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        !local_path.exists(),
+        "local copy path should not exist after a write failure: {:?}",
+        local_path
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[test]
 fn save_memory_db_failure_does_not_leave_local_copy_behind() {
     let test_dir = ScopedTestDataDir::new("save-db-failure-no-local-copy");
     let conn = db::open_db().expect("db should open");

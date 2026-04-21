@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
+use std::path::PathBuf;
 
 use super::local_copy::{
     build_local_note_content, local_copy_enabled_override, resolve_local_note_path,
@@ -24,43 +25,77 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         } else {
             "project"
         });
-    let id = crate::memory::insert_memory_full(
-        conn,
-        None,
-        project,
-        req.topic_key.as_deref(),
-        title,
-        &req.text,
-        memory_type,
-        files_json.as_deref(),
-        req.branch.as_deref(),
-        scope,
-        req.created_at_epoch,
-    )?;
-    let (local_status, local_path) = maybe_write_local_copy(project, title, req)?;
+    let local_copy = prepare_local_copy(project, title, req)?;
 
-    Ok(SaveMemoryResult {
-        id,
-        status: "saved".to_string(),
-        memory_type: memory_type.to_string(),
-        upserted: req.topic_key.is_some(),
-        local_status,
-        local_path,
-    })
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .context("begin save_memory transaction")?;
+
+    let result = (|| -> Result<SaveMemoryResult> {
+        let id = crate::memory::insert_memory_full(
+            conn,
+            None,
+            project,
+            req.topic_key.as_deref(),
+            title,
+            &req.text,
+            memory_type,
+            files_json.as_deref(),
+            req.branch.as_deref(),
+            scope,
+            req.created_at_epoch,
+        )?;
+        write_local_copy(&local_copy)?;
+        conn.execute_batch("COMMIT")
+            .context("commit save_memory transaction")?;
+
+        Ok(SaveMemoryResult {
+            id,
+            status: "saved".to_string(),
+            memory_type: memory_type.to_string(),
+            upserted: req.topic_key.is_some(),
+            local_status: local_copy.status.clone(),
+            local_path: local_copy.path.as_ref().map(|path| path.display().to_string()),
+        })
+    })();
+
+    match result {
+        Ok(saved) => Ok(saved),
+        Err(err) => {
+            conn.execute_batch("ROLLBACK")
+                .context("rollback save_memory transaction")?;
+            Err(err)
+        }
+    }
 }
 
-fn maybe_write_local_copy(
-    project: &str,
-    title: &str,
-    req: &SaveMemoryRequest,
-) -> Result<(String, Option<String>)> {
+struct LocalCopyPlan {
+    status: String,
+    path: Option<PathBuf>,
+    content: Option<String>,
+}
+
+fn prepare_local_copy(project: &str, title: &str, req: &SaveMemoryRequest) -> Result<LocalCopyPlan> {
     if !local_copy_enabled_override(req.local_copy_enabled) {
-        return Ok(("disabled".to_string(), None));
+        return Ok(LocalCopyPlan {
+            status: "disabled".to_string(),
+            path: None,
+            content: None,
+        });
     }
 
     let local_path =
         resolve_local_note_path(project, req.title.as_deref(), req.local_path.as_deref())?;
     let content = build_local_note_content(project, title, &req.text);
-    write_local_note(&local_path, &content)?;
-    Ok(("saved".to_string(), Some(local_path.display().to_string())))
+    Ok(LocalCopyPlan {
+        status: "saved".to_string(),
+        path: Some(local_path),
+        content: Some(content),
+    })
+}
+
+fn write_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
+    if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref()) {
+        write_local_note(path, content)?;
+    }
+    Ok(())
 }
