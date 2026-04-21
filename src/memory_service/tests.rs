@@ -1,5 +1,5 @@
-use super::{resolve_local_note_path, sanitize_segment};
-use crate::db::test_support::ScopedTestDataDir;
+use super::{resolve_local_note_path, sanitize_segment, save_memory, SaveMemoryRequest};
+use crate::db::{self, test_support::ScopedTestDataDir};
 
 #[test]
 fn sanitize_segment_falls_back_for_empty_slug() {
@@ -48,6 +48,49 @@ fn resolve_tilde_path_is_rejected() {
     let _dir = ScopedTestDataDir::new("path-tilde");
     let got = resolve_local_note_path("proj", Some("title"), Some("~/.ssh/authorized_keys"));
     assert!(got.is_err(), "tilde path should be rejected (not expanded)");
+}
+
+#[test]
+fn save_memory_db_failure_does_not_leave_local_copy_behind() {
+    let test_dir = ScopedTestDataDir::new("save-db-failure-no-local-copy");
+    let conn = db::open_db().expect("db should open");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_memory_insert BEFORE INSERT ON memories BEGIN
+            SELECT RAISE(ABORT, 'forced insert failure');
+        END;",
+    )
+    .expect("failure trigger should be created");
+
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("forced-failure.md");
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("insert trigger should abort save");
+
+    assert!(
+        err.to_string().contains("forced insert failure"),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        !local_path.exists(),
+        "local copy should not be written when db insert fails: {:?}",
+        local_path
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
 }
 
 #[test]

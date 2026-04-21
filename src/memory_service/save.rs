@@ -16,7 +16,6 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         .as_ref()
         .and_then(|files| serde_json::to_string(files).ok());
 
-    let (local_status, local_path) = maybe_write_local_copy(project, title, req)?;
     let scope = req
         .scope
         .as_deref()
@@ -38,6 +37,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         scope,
         req.created_at_epoch,
     )?;
+    let (local_status, local_path) = maybe_write_local_copy(project, title, req)?;
 
     Ok(SaveMemoryResult {
         id,
