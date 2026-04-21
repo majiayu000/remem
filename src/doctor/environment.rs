@@ -91,7 +91,10 @@ fn probe_hooks(probe: &HostProbe) -> Check {
         return Check {
             name,
             status: Status::Fail,
-            detail: format!("{} not found (run `remem install`)", probe.hooks_path.display()),
+            detail: format!(
+                "{} not found (run `remem install`)",
+                probe.hooks_path.display()
+            ),
         };
     }
 
@@ -116,7 +119,12 @@ fn probe_hooks(probe: &HostProbe) -> Check {
         Check {
             name,
             status: Status::Ok,
-            detail: format!("{}/{} registered in {}", found, events.len(), probe.hooks_path.display()),
+            detail: format!(
+                "{}/{} registered in {}",
+                found,
+                events.len(),
+                probe.hooks_path.display()
+            ),
         }
     } else if found > 0 {
         Check {
@@ -133,7 +141,10 @@ fn probe_hooks(probe: &HostProbe) -> Check {
         Check {
             name,
             status: Status::Fail,
-            detail: format!("no remem hooks (run `remem install --target {}`)", probe.name),
+            detail: format!(
+                "no remem hooks (run `remem install --target {}`)",
+                probe.name
+            ),
         }
     }
 }

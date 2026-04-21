@@ -82,8 +82,14 @@ impl InstallHost for ClaudeHost {
 
     fn dry_run_plan(&self, bin: &str) -> Vec<String> {
         vec![
-            format!("  MCP    -> {} (add mcpServers.remem)", claude_json_path().display()),
-            format!("  hooks  -> {} (SessionStart/UserPromptSubmit/PostToolUse/Stop)", settings_path().display()),
+            format!(
+                "  MCP    -> {} (add mcpServers.remem)",
+                claude_json_path().display()
+            ),
+            format!(
+                "  hooks  -> {} (SessionStart/UserPromptSubmit/PostToolUse/Stop)",
+                settings_path().display()
+            ),
             format!("  binary -> {}", bin),
         ]
     }

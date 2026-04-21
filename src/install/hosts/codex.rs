@@ -79,8 +79,8 @@ fn read_toml_doc(path: &Path) -> Result<DocumentMut> {
     if !path.exists() {
         return Ok(DocumentMut::new());
     }
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("读取 {} 失败", path.display()))?;
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("读取 {} 失败", path.display()))?;
     content
         .parse::<DocumentMut>()
         .with_context(|| format!("解析 {} 失败（非法 TOML）", path.display()))

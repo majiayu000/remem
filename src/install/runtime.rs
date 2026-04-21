@@ -83,7 +83,11 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
     for host in &hosts {
         host.uninstall_mcp(&bin)?;
         host.uninstall_hooks(&bin)?;
-        eprintln!("  {} 已清理 ({})", host.name(), host.config_path().display());
+        eprintln!(
+            "  {} 已清理 ({})",
+            host.name(),
+            host.config_path().display()
+        );
     }
 
     eprintln!("remem uninstall 完成");
