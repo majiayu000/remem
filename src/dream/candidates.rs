@@ -46,8 +46,7 @@ pub(super) fn load_clusters(conn: &Connection, project: &str) -> Result<Vec<Clus
                 updated_at_epoch: row.get(5)?,
             })
         })?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<rusqlite::Result<Vec<MemoryCandidate>>>()?;
 
     Ok(cluster_candidates(candidates))
 }
