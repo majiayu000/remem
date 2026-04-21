@@ -138,7 +138,8 @@ mod tests {
         let mut conn = Connection::open_in_memory()?;
         let pending = make_pending("A".repeat(200)); // > MIN_TASK_RESPONSE_LEN (100)
 
-        let result = flush_single_task(&mut conn, "sess-test", "test-proj", "owner", &pending).await;
+        let result =
+            flush_single_task(&mut conn, "sess-test", "test-proj", "owner", &pending).await;
 
         // The SQLite context error must NOT propagate as the returned Err.
         if let Err(ref e) = result {
