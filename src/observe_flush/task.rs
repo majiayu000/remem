@@ -29,7 +29,14 @@ pub(crate) async fn flush_single_task(
         return Ok(0);
     }
 
-    let existing_context = build_existing_context(conn, project).unwrap_or_default();
+    let existing_context = build_existing_context(conn, project)
+        .map_err(|err| {
+            crate::log::warn(
+                "flush",
+                &format!("existing context failed (continuing): {}", err),
+            );
+        })
+        .unwrap_or_default();
     let events = build_session_events_xml(std::slice::from_ref(pending));
     let user_message = format!(
         "{}<session_events>\n{}</session_events>",
