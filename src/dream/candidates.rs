@@ -40,14 +40,13 @@ pub(super) fn load_clusters(conn: &Connection, project: &str) -> Result<Vec<Clus
             Ok(MemoryCandidate {
                 id: row.get(0)?,
                 topic_key: row.get(1)?,
-                title: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                content: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                memory_type: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                title: row.get::<_, String>(2)?,
+                content: row.get::<_, String>(3)?,
+                memory_type: row.get::<_, String>(4)?,
                 updated_at_epoch: row.get(5)?,
             })
         })?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<rusqlite::Result<Vec<MemoryCandidate>>>()?;
 
     Ok(cluster_candidates(candidates))
 }
@@ -86,6 +85,7 @@ fn cluster_candidates(candidates: Vec<MemoryCandidate>) -> Vec<Cluster> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
 
     fn make(id: i64, topic_key: Option<&str>, memory_type: &str) -> MemoryCandidate {
         MemoryCandidate {
@@ -141,5 +141,66 @@ mod tests {
             .collect();
         let clusters = cluster_candidates(candidates);
         assert!(clusters.len() <= DREAM_MAX_CLUSTERS);
+    }
+
+    fn setup_memories_table(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                 id,
+                 project      TEXT,
+                 status       TEXT,
+                 topic_key    TEXT,
+                 title        TEXT,
+                 content      TEXT,
+                 memory_type  TEXT,
+                 updated_at_epoch INTEGER
+             )",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_load_clusters_propagates_row_error() {
+        // Row with `id` stored as TEXT passes the recency-guard WHERE clause
+        // (updated_at_epoch = 0 is always older than now-3600) but causes
+        // rusqlite `row.get::<_, i64>(0)?` to return InvalidType.
+        // The old filter_map(|r| r.ok()) silently dropped such rows; the fix
+        // propagates the error as Err.
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memories_table(&conn);
+        // Insert a row with TEXT in `id` (not coercible to i64) and
+        // updated_at_epoch=0 so it passes the recency-guard filter.
+        conn.execute(
+            "INSERT INTO memories VALUES (?1, ?2, 'active', NULL, 'title', 'content', 'preference', 0)",
+            rusqlite::params!["not-an-integer", "test-project"],
+        )
+        .unwrap();
+
+        let result = load_clusters(&conn, "test-project");
+        assert!(
+            result.is_err(),
+            "load_clusters must propagate row deserialization errors, not silently drop them"
+        );
+    }
+
+    #[test]
+    fn test_load_clusters_propagates_null_text_column_error() {
+        // Rows with NULL title, content, or memory_type are data-integrity
+        // violations: the fix must surface them as errors, not silently
+        // substitute empty strings that corrupt downstream merge generation.
+        let conn = Connection::open_in_memory().unwrap();
+        setup_memories_table(&conn);
+        // NULL title — updated_at_epoch=0 passes the recency guard.
+        conn.execute(
+            "INSERT INTO memories VALUES (1, 'test-project', 'active', NULL, NULL, 'content', 'preference', 0)",
+            [],
+        )
+        .unwrap();
+
+        let result = load_clusters(&conn, "test-project");
+        assert!(
+            result.is_err(),
+            "load_clusters must propagate NULL title as an error, not silently replace it with \"\""
+        );
     }
 }
