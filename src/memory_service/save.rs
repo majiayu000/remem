@@ -72,7 +72,12 @@ struct LocalCopyPlan {
     status: String,
     path: Option<PathBuf>,
     content: Option<String>,
-    backup_path: Option<PathBuf>,
+    backup: Option<LocalCopyBackup>,
+}
+
+struct LocalCopyBackup {
+    restore_path: PathBuf,
+    backup_path: PathBuf,
 }
 
 fn prepare_local_copy(
@@ -85,7 +90,7 @@ fn prepare_local_copy(
             status: "disabled".to_string(),
             path: None,
             content: None,
-            backup_path: None,
+            backup: None,
         });
     }
 
@@ -96,48 +101,53 @@ fn prepare_local_copy(
         status: "saved".to_string(),
         path: Some(local_path),
         content: Some(content),
-        backup_path: None,
+        backup: None,
     })
 }
 
 fn write_local_copy(local_copy: &mut LocalCopyPlan) -> Result<()> {
     if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref())
     {
-        let backup_path = backup_existing_local_copy(path)?;
+        let backup = backup_existing_local_copy(path)?;
         if let Err(err) = write_local_note(path, content) {
-            if let Err(restore_err) = restore_local_copy(path, backup_path.as_deref()) {
+            if let Err(restore_err) = restore_local_copy(backup.as_ref()) {
                 return Err(err.context(format!(
                     "write local copy failed and restore failed: {restore_err}"
                 )));
             }
             return Err(err);
         }
-        local_copy.backup_path = backup_path;
+        local_copy.backup = backup;
     }
     Ok(())
 }
 
 fn cleanup_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
-    if let Some(path) = local_copy.path.as_deref() {
-        restore_local_copy(path, local_copy.backup_path.as_deref())?;
+    restore_local_copy(local_copy.backup.as_ref())?;
+    match (local_copy.path.as_deref(), local_copy.backup.as_ref()) {
+        (Some(path), None) => remove_local_copy_file(path),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
-fn backup_existing_local_copy(path: &Path) -> Result<Option<PathBuf>> {
-    match path.try_exists() {
-        Ok(true) => {
-            let backup_path = allocate_backup_path(path);
-            std::fs::rename(path, &backup_path).with_context(|| {
+fn backup_existing_local_copy(path: &Path) -> Result<Option<LocalCopyBackup>> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            let restore_path = backup_restore_path(path, &metadata)?;
+            let backup_path = allocate_backup_path(&restore_path);
+            std::fs::rename(&restore_path, &backup_path).with_context(|| {
                 format!(
                     "move existing local copy {} to backup {}",
-                    path.display(),
+                    restore_path.display(),
                     backup_path.display()
                 )
             })?;
-            Ok(Some(backup_path))
+            Ok(Some(LocalCopyBackup {
+                restore_path,
+                backup_path,
+            }))
         }
-        Ok(false) => Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(anyhow!(
             "check existing local copy at {}: {err}",
             path.display()
@@ -145,19 +155,41 @@ fn backup_existing_local_copy(path: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
-fn restore_local_copy(path: &Path, backup_path: Option<&Path>) -> Result<()> {
-    match backup_path {
-        Some(backup_path) => {
-            remove_local_copy_file(path)?;
-            std::fs::rename(backup_path, path).with_context(|| {
-                format!(
-                    "restore local copy from backup {} to {}",
-                    backup_path.display(),
-                    path.display()
-                )
-            })?;
+fn backup_restore_path(path: &Path, metadata: &std::fs::Metadata) -> Result<PathBuf> {
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
+        return Err(anyhow!(
+            "local_path {} must reference a file, not a directory",
+            path.display()
+        ));
+    }
+
+    if file_type.is_symlink() {
+        let target_path = path
+            .canonicalize()
+            .with_context(|| format!("resolve local_path symlink target at {}", path.display()))?;
+        if target_path.is_dir() {
+            return Err(anyhow!(
+                "local_path {} must reference a file, not a directory",
+                path.display()
+            ));
         }
-        None => remove_local_copy_file(path)?,
+        return Ok(target_path);
+    }
+
+    Ok(path.to_path_buf())
+}
+
+fn restore_local_copy(backup: Option<&LocalCopyBackup>) -> Result<()> {
+    if let Some(backup) = backup {
+        remove_local_copy_file(&backup.restore_path)?;
+        std::fs::rename(&backup.backup_path, &backup.restore_path).with_context(|| {
+            format!(
+                "restore local copy from backup {} to {}",
+                backup.backup_path.display(),
+                backup.restore_path.display()
+            )
+        })?;
     }
     Ok(())
 }
@@ -171,8 +203,8 @@ fn remove_local_copy_file(path: &Path) -> Result<()> {
 }
 
 fn discard_local_copy_backup(local_copy: &LocalCopyPlan) {
-    if let Some(backup_path) = local_copy.backup_path.as_deref() {
-        let _ = std::fs::remove_file(backup_path);
+    if let Some(backup) = local_copy.backup.as_ref() {
+        let _ = std::fs::remove_file(&backup.backup_path);
     }
 }
 

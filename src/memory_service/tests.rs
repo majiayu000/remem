@@ -1,6 +1,8 @@
 use super::{resolve_local_note_path, sanitize_segment, save_memory, SaveMemoryRequest};
 use crate::db::{self, test_support::ScopedTestDataDir};
 #[cfg(unix)]
+use std::os::unix::fs::symlink;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
@@ -207,6 +209,51 @@ fn save_memory_db_failure_restores_existing_local_copy() {
     assert_eq!(memory_count, 0, "db should not persist a memory row");
 }
 
+#[test]
+fn save_memory_existing_directory_local_path_does_not_persist_memory() {
+    let test_dir = ScopedTestDataDir::new("save-directory-local-path-rejected");
+    let conn = db::open_db().expect("db should open");
+
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("existing-dir");
+    let nested_entry = local_path.join("nested.txt");
+    std::fs::create_dir_all(&local_path).expect("create existing directory local path");
+    std::fs::write(&nested_entry, "keep me").expect("seed nested entry");
+
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("directory local_path should fail");
+
+    assert!(
+        err.to_string()
+            .contains("must reference a file, not a directory"),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        local_path.is_dir(),
+        "directory path should remain a directory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&nested_entry).expect("nested entry should stay intact"),
+        "keep me"
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
 #[cfg(unix)]
 #[test]
 fn save_memory_db_failure_restores_write_only_existing_local_copy() {
@@ -267,6 +314,54 @@ fn save_memory_db_failure_restores_write_only_existing_local_copy() {
         .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
         .expect("count query should succeed");
     assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[cfg(unix)]
+#[test]
+fn save_memory_existing_symlink_local_path_stays_a_symlink() {
+    let test_dir = ScopedTestDataDir::new("save-symlink-local-path-preserved");
+    let conn = db::open_db().expect("db should open");
+
+    let project_dir = test_dir.path.join("manual-notes").join("proj");
+    std::fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let target_path = project_dir.join("target-note.md");
+    std::fs::write(&target_path, "original note body").expect("seed symlink target");
+
+    let local_path = project_dir.join("symlink-note.md");
+    symlink(&target_path, &local_path).expect("create local note symlink");
+
+    let req = SaveMemoryRequest {
+        text: "updated body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("save through symlink should succeed");
+
+    assert_eq!(saved.status, "saved");
+    assert!(
+        std::fs::symlink_metadata(&local_path)
+            .expect("local path metadata")
+            .file_type()
+            .is_symlink(),
+        "local path should remain a symlink"
+    );
+
+    let symlink_target = std::fs::read_link(&local_path).expect("read symlink target");
+    assert_eq!(
+        symlink_target, target_path,
+        "symlink target should be preserved"
+    );
+
+    let updated = std::fs::read_to_string(&target_path).expect("read updated target");
+    assert!(
+        updated.contains("updated body"),
+        "saved note should be written through the symlink target: {updated}"
+    );
 }
 
 #[test]
