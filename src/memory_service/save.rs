@@ -26,49 +26,43 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             "project"
         });
     let local_copy = prepare_local_copy(project, title, req)?;
+    write_local_copy(&local_copy)?;
 
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .context("begin save_memory transaction")?;
-
-    let result = (|| -> Result<SaveMemoryResult> {
-        let id = crate::memory::insert_memory_full(
-            conn,
-            None,
-            project,
-            req.topic_key.as_deref(),
-            title,
-            &req.text,
-            memory_type,
-            files_json.as_deref(),
-            req.branch.as_deref(),
-            scope,
-            req.created_at_epoch,
-        )?;
-        write_local_copy(&local_copy)?;
-        conn.execute_batch("COMMIT")
-            .context("commit save_memory transaction")?;
-
-        Ok(SaveMemoryResult {
-            id,
-            status: "saved".to_string(),
-            memory_type: memory_type.to_string(),
-            upserted: req.topic_key.is_some(),
-            local_status: local_copy.status.clone(),
-            local_path: local_copy
-                .path
-                .as_ref()
-                .map(|path| path.display().to_string()),
-        })
-    })();
-
-    match result {
-        Ok(saved) => Ok(saved),
+    let id = match crate::memory::insert_memory_full(
+        conn,
+        None,
+        project,
+        req.topic_key.as_deref(),
+        title,
+        &req.text,
+        memory_type,
+        files_json.as_deref(),
+        req.branch.as_deref(),
+        scope,
+        req.created_at_epoch,
+    ) {
+        Ok(id) => id,
         Err(err) => {
-            conn.execute_batch("ROLLBACK")
-                .context("rollback save_memory transaction")?;
-            Err(err)
+            if let Err(cleanup_err) = cleanup_local_copy(&local_copy) {
+                return Err(err.context(format!(
+                    "database save failed and local copy cleanup failed: {cleanup_err}"
+                )));
+            }
+            return Err(err);
         }
-    }
+    };
+
+    Ok(SaveMemoryResult {
+        id,
+        status: "saved".to_string(),
+        memory_type: memory_type.to_string(),
+        upserted: req.topic_key.is_some(),
+        local_status: local_copy.status.clone(),
+        local_path: local_copy
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+    })
 }
 
 struct LocalCopyPlan {
@@ -104,6 +98,20 @@ fn write_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
     if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref())
     {
         write_local_note(path, content)?;
+    }
+    Ok(())
+}
+
+fn cleanup_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
+    if let Some(path) = local_copy.path.as_deref() {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("remove local copy at {}", path.display()));
+            }
+        }
     }
     Ok(())
 }
