@@ -22,7 +22,7 @@ pub(super) fn check_binary() -> Check {
 struct HostProbe {
     name: &'static str,
     hooks_path: PathBuf,
-    mcp_path: PathBuf,
+    mcp_paths: Vec<PathBuf>,
 }
 
 fn known_hosts() -> Vec<HostProbe> {
@@ -31,12 +31,15 @@ fn known_hosts() -> Vec<HostProbe> {
         HostProbe {
             name: "claude",
             hooks_path: home.join(".claude").join("settings.json"),
-            mcp_path: home.join(".claude.json"),
+            mcp_paths: vec![
+                home.join(".claude.json"),
+                home.join(".claude").join("claude_desktop_config.json"),
+            ],
         },
         HostProbe {
             name: "codex",
             hooks_path: home.join(".codex").join("hooks.json"),
-            mcp_path: home.join(".codex").join("config.toml"),
+            mcp_paths: vec![home.join(".codex").join("config.toml")],
         },
     ]
 }
@@ -46,7 +49,7 @@ fn known_hosts() -> Vec<HostProbe> {
 fn host_present(probe: &HostProbe) -> bool {
     probe.hooks_path.parent().is_some_and(|p| p.exists())
         || probe.hooks_path.exists()
-        || probe.mcp_path.exists()
+        || probe.mcp_paths.iter().any(|path| path.exists())
 }
 
 fn active_hosts() -> Vec<HostProbe> {
@@ -178,69 +181,42 @@ fn probe_hooks(probe: HostProbe) -> Check {
 
 fn probe_mcp(probe: HostProbe) -> Check {
     let name = mcp_check_name(probe.name);
-
-    if !probe.mcp_path.exists() {
-        return Check {
-            name,
-            status: Status::Fail,
-            detail: format!(
-                "{} not found (run `remem install --target {}`)",
-                probe.mcp_path.display(),
-                probe.name
-            ),
+    let has_existing_path = probe.mcp_paths.iter().any(|path| path.exists());
+    if let Some(result) = probe
+        .mcp_paths
+        .iter()
+        .filter(|path| path.exists())
+        .find_map(|path| probe_mcp_path(probe.name, path))
+    {
+        return match result {
+            Ok(path) => Check {
+                name,
+                status: Status::Ok,
+                detail: format!("registered in {}", path.display()),
+            },
+            Err((path, err)) => Check {
+                name,
+                status: Status::Fail,
+                detail: format!("cannot parse {}: {}", path.display(), err),
+            },
         };
     }
 
-    let content = match std::fs::read_to_string(&probe.mcp_path) {
-        Ok(c) => c,
-        Err(err) => {
-            return Check {
-                name,
-                status: Status::Fail,
-                detail: format!("cannot read {}: {}", probe.mcp_path.display(), err),
-            };
-        }
-    };
-
-    let has_remem = match probe.name {
-        "claude" => match serde_json::from_str::<Value>(&content) {
-            Ok(doc) => claude_has_remem_mcp(&doc),
-            Err(err) => {
-                return Check {
-                    name,
-                    status: Status::Fail,
-                    detail: format!("cannot parse {}: {}", probe.mcp_path.display(), err),
-                };
-            }
-        },
-        "codex" => match content.parse::<DocumentMut>() {
-            Ok(doc) => codex_has_remem_mcp(&doc),
-            Err(err) => {
-                return Check {
-                    name,
-                    status: Status::Fail,
-                    detail: format!("cannot parse {}: {}", probe.mcp_path.display(), err),
-                };
-            }
-        },
-        _ => false,
-    };
-
-    if has_remem {
-        Check {
-            name,
-            status: Status::Ok,
-            detail: format!("registered in {}", probe.mcp_path.display()),
-        }
-    } else {
-        Check {
-            name,
-            status: Status::Fail,
-            detail: format!(
+    Check {
+        name,
+        status: Status::Fail,
+        detail: if has_existing_path {
+            format!(
                 "not registered (run `remem install --target {}`)",
                 probe.name
-            ),
-        }
+            )
+        } else {
+            format!(
+                "{} not found (run `remem install --target {}`)",
+                display_mcp_paths(&probe.mcp_paths),
+                probe.name
+            )
+        },
     }
 }
 
@@ -264,6 +240,14 @@ fn host_targets_remem(probe: &HostProbe) -> bool {
     hooks_file_has_remem(&probe.hooks_path) || mcp_file_has_remem(probe)
 }
 
+fn display_mcp_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" or ")
+}
+
 fn hooks_file_has_remem(path: &PathBuf) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false;
@@ -277,10 +261,17 @@ fn hooks_file_has_remem(path: &PathBuf) -> bool {
 }
 
 fn mcp_file_has_remem(probe: &HostProbe) -> bool {
-    let Ok(content) = std::fs::read_to_string(&probe.mcp_path) else {
+    probe
+        .mcp_paths
+        .iter()
+        .any(|path| path_has_remem_mcp(probe.name, path))
+}
+
+fn path_has_remem_mcp(host: &str, path: &PathBuf) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
-    match probe.name {
+    match host {
         "claude" => match serde_json::from_str::<Value>(&content) {
             Ok(doc) => claude_has_remem_mcp(&doc),
             Err(_) => content.contains("remem"),
@@ -290,6 +281,29 @@ fn mcp_file_has_remem(probe: &HostProbe) -> bool {
             Err(_) => content.contains("remem"),
         },
         _ => false,
+    }
+}
+
+fn probe_mcp_path<'a>(
+    host: &str,
+    path: &'a PathBuf,
+) -> Option<Result<&'a PathBuf, (&'a PathBuf, String)>> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let has_remem = match host {
+        "claude" => match serde_json::from_str::<Value>(&content) {
+            Ok(doc) => claude_has_remem_mcp(&doc),
+            Err(err) => return Some(Err((path, err.to_string()))),
+        },
+        "codex" => match content.parse::<DocumentMut>() {
+            Ok(doc) => codex_has_remem_mcp(&doc),
+            Err(err) => return Some(Err((path, err.to_string()))),
+        },
+        _ => false,
+    };
+    if has_remem {
+        Some(Ok(path))
+    } else {
+        None
     }
 }
 
@@ -361,7 +375,7 @@ mod tests {
         let check = probe_hooks(HostProbe {
             name: "codex",
             hooks_path,
-            mcp_path: dir.join("config.toml"),
+            mcp_paths: vec![dir.join("config.toml")],
         });
 
         assert!(matches!(check.status, Status::Warn));
@@ -385,7 +399,7 @@ note = "remem"
         let check = probe_mcp(HostProbe {
             name: "codex",
             hooks_path: dir.join("hooks.json"),
-            mcp_path,
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Fail));
@@ -398,18 +412,18 @@ note = "remem"
         let claude = HostProbe {
             name: "claude",
             hooks_path: claude_dir.join("settings.json"),
-            mcp_path: claude_dir.join("claude.json"),
+            mcp_paths: vec![claude_dir.join("claude.json")],
         };
-        std::fs::write(&claude.mcp_path, r#"{ "mcpServers": { "other": {} } }"#).unwrap();
+        std::fs::write(&claude.mcp_paths[0], r#"{ "mcpServers": { "other": {} } }"#).unwrap();
 
         let codex_dir = temp_path("doctor-codex");
         let codex = HostProbe {
             name: "codex",
             hooks_path: codex_dir.join("hooks.json"),
-            mcp_path: codex_dir.join("config.toml"),
+            mcp_paths: vec![codex_dir.join("config.toml")],
         };
         std::fs::write(
-            &codex.mcp_path,
+            &codex.mcp_paths[0],
             r#"[mcp_servers.remem]
 command = "/tmp/remem"
 "#,
@@ -431,5 +445,31 @@ command = "/tmp/remem"
         };
 
         assert_eq!(hosts, vec![codex]);
+    }
+
+    #[test]
+    fn probe_mcp_accepts_claude_desktop_config_path() {
+        let dir = temp_path("doctor-claude-desktop");
+        std::fs::write(
+            dir.join("claude_desktop_config.json"),
+            r#"{ "mcpServers": { "remem": { "command": "/tmp/remem" } } }"#,
+        )
+        .unwrap();
+
+        let check = probe_mcp(HostProbe {
+            name: "claude",
+            hooks_path: dir.join("settings.json"),
+            mcp_paths: vec![
+                dir.join("claude.json"),
+                dir.join("claude_desktop_config.json"),
+            ],
+        });
+
+        assert!(matches!(check.status, Status::Ok));
+        assert!(
+            check.detail.contains("claude_desktop_config.json"),
+            "{}",
+            check.detail
+        );
     }
 }
