@@ -89,6 +89,35 @@ fn expand_via_entity_graph_filtered_respects_branch_and_status() {
 }
 
 #[test]
+fn search_by_entity_project_filter_includes_global_scope_records() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_entity_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories (id, project, memory_type, status, scope) VALUES (?1, ?2, 'decision', 'active', 'project')",
+        params![1_i64, "proj"],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memories (id, project, memory_type, status, scope) VALUES (?1, ?2, 'preference', 'active', 'global')",
+        params![2_i64, "other-proj"],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memories (id, project, memory_type, status, scope) VALUES (?1, ?2, 'decision', 'active', 'project')",
+        params![3_i64, "other-proj"],
+    )
+    .unwrap();
+    link_entities(&conn, 1, &["SQLite".to_string()]).unwrap();
+    link_entities(&conn, 2, &["SQLite".to_string()]).unwrap();
+    link_entities(&conn, 3, &["SQLite".to_string()]).unwrap();
+
+    let ids = search_by_entity(&conn, "SQLite", Some("proj"), 10).unwrap();
+    assert!(ids.contains(&1));
+    assert!(ids.contains(&2));
+    assert!(!ids.contains(&3));
+}
+
+#[test]
 fn search_by_entity_filtered_respects_branch_and_status() {
     let conn = Connection::open_in_memory().unwrap();
     setup_entity_schema(&conn);
