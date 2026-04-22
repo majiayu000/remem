@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
-use crate::install::config::{apply_hooks_json, strip_hooks_json};
+use crate::install::config::{build_hooks, remove_remem_hooks, strip_hooks_json};
 use crate::install::host::{HookSupport, InstallHost};
+use crate::install::json_io::{read_json_file, write_json_file};
 use crate::install::paths::{codex_config_path, codex_hooks_path};
 
 pub(in crate::install) struct CodexHost;
@@ -30,6 +32,7 @@ impl InstallHost for CodexHost {
         let path = codex_config_path();
         let mut doc = read_toml_doc(&path)?;
         upsert_remem_server(&mut doc, bin)?;
+        enable_codex_hooks(&mut doc)?;
         write_toml_doc(&path, &doc)?;
         Ok(())
     }
@@ -46,10 +49,7 @@ impl InstallHost for CodexHost {
     }
 
     fn install_hooks(&self, bin: &str) -> Result<HookSupport> {
-        // Codex's ~/.codex/hooks.json uses the same schema as Claude's
-        // settings.json (SessionStart / UserPromptSubmit / PreToolUse /
-        // PostToolUse / Stop, stdin JSON events). Reuse the shared merger.
-        apply_hooks_json(&codex_hooks_path(), bin)?;
+        apply_codex_hooks_json(&codex_hooks_path(), bin)?;
         Ok(HookSupport::Installed)
     }
 
@@ -93,6 +93,77 @@ fn write_toml_doc(path: &Path, doc: &DocumentMut) -> Result<()> {
     }
     std::fs::write(path, doc.to_string())
         .with_context(|| format!("写入 {} 失败", path.display()))?;
+    Ok(())
+}
+
+fn apply_codex_hooks_json(path: &Path, bin: &str) -> Result<()> {
+    let mut doc = read_json_file(&path.to_path_buf())?;
+    remove_remem_hooks(&mut doc, bin);
+
+    let new_hooks = build_codex_hooks(bin);
+    let obj = doc
+        .as_object_mut()
+        .with_context(|| format!("{} 根节点不是 Object", path.display()))?;
+    let hooks = obj
+        .entry("hooks".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
+        for (event_type, entries) in new {
+            let arr = existing
+                .entry(event_type.to_string())
+                .or_insert_with(|| serde_json::json!([]));
+            if let (Some(arr), Some(new_entries)) = (arr.as_array_mut(), entries.as_array()) {
+                for entry in new_entries {
+                    arr.push(entry.clone());
+                }
+            }
+        }
+    }
+    write_json_file(&path.to_path_buf(), &doc)
+}
+
+fn build_codex_hooks(bin: &str) -> Value {
+    let mut hooks = build_hooks(bin);
+    convert_hook_timeouts_to_seconds(&mut hooks);
+    hooks
+}
+
+fn convert_hook_timeouts_to_seconds(value: &mut Value) {
+    let Some(events) = value.as_object_mut() else {
+        return;
+    };
+
+    for entries in events.values_mut() {
+        let Some(entries) = entries.as_array_mut() else {
+            continue;
+        };
+        for entry in entries {
+            let Some(hooks) = entry
+                .get_mut("hooks")
+                .and_then(|hooks| hooks.as_array_mut())
+            else {
+                continue;
+            };
+            for hook in hooks {
+                let Some(timeout) = hook.get_mut("timeout") else {
+                    continue;
+                };
+                let Some(ms) = timeout.as_i64() else {
+                    continue;
+                };
+                *timeout = Value::from((ms / 1000).max(1));
+            }
+        }
+    }
+}
+
+fn enable_codex_hooks(doc: &mut DocumentMut) -> Result<()> {
+    let features = doc
+        .entry("features")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .context("features 存在但不是 table，拒绝覆盖")?;
+    features["codex_hooks"] = value(true);
     Ok(())
 }
 
@@ -190,6 +261,24 @@ startup_timeout_sec = 5
         assert!(rendered.contains("[mcp_servers.omx_state]"), "{rendered}");
         assert!(rendered.contains("startup_timeout_sec = 5"), "{rendered}");
         assert!(rendered.contains("[mcp_servers.remem]"), "{rendered}");
+    }
+
+    #[test]
+    fn enable_codex_hooks_adds_feature_flag() {
+        let mut doc = DocumentMut::new();
+        enable_codex_hooks(&mut doc).unwrap();
+        let rendered = doc.to_string();
+        assert!(rendered.contains("[features]"), "{rendered}");
+        assert!(rendered.contains("codex_hooks = true"), "{rendered}");
+    }
+
+    #[test]
+    fn build_codex_hooks_uses_second_timeouts() {
+        let hooks = build_codex_hooks("/tmp/remem");
+        assert_eq!(hooks["SessionStart"][0]["hooks"][0]["timeout"], 15);
+        assert_eq!(hooks["UserPromptSubmit"][0]["hooks"][0]["timeout"], 15);
+        assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 120);
+        assert_eq!(hooks["Stop"][0]["hooks"][0]["timeout"], 120);
     }
 
     #[test]
