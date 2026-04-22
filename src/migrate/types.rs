@@ -4,11 +4,18 @@ pub(crate) struct Migration {
     pub sql: &'static str,
 }
 
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "baseline",
-    sql: include_str!("../migrations/v001_baseline.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "baseline",
+        sql: include_str!("../migrations/v001_baseline.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "raw_messages",
+        sql: include_str!("../migrations/v002_raw_messages.sql"),
+    },
+];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
 

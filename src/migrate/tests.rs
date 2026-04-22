@@ -62,10 +62,10 @@ fn full_migration_on_empty_db() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1]);
+    assert_eq!(applied, vec![1, 2]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 13);
+    assert_eq!(user_version, 14);
     Ok(())
 }
 
@@ -78,7 +78,7 @@ fn transition_from_old_system_skips_baseline() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1]);
+    assert_eq!(applied, vec![1, 2]);
     Ok(())
 }
 
@@ -101,12 +101,12 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
 
     run_migrations(&conn)?;
 
-    // Should have auto-upgraded and marked baseline as applied
+    // Should have auto-upgraded and marked baseline + raw_messages as applied
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1]);
+    assert_eq!(applied, vec![1, 2]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 13);
+    assert_eq!(user_version, 14);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -145,7 +145,7 @@ fn dry_run_pending_reports_pending_for_new_db() -> Result<()> {
     let result = dry_run_pending(&conn)?;
 
     assert_eq!(result.current_version, 0);
-    assert_eq!(result.pending_count, 1);
+    assert_eq!(result.pending_count, 2);
     assert!(result.error.is_none());
     Ok(())
 }
@@ -202,7 +202,9 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
     )?;
 
     let result = dry_run_pending(&conn)?;
-    assert_eq!(result.pending_count, 0);
+    // After broken baseline backfill fails, dry_run reports the still-unapplied
+    // migrations (v2 raw_messages is not yet in _schema_migrations).
+    assert_eq!(result.pending_count, 1);
     let error = result
         .error
         .expect("broken schema should surface in dry-run");

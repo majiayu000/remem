@@ -38,6 +38,7 @@ pub mod pending_admin;
 pub mod preference;
 pub mod project_id;
 pub mod query_expand;
+pub mod raw_archive;
 pub mod search;
 pub mod search_multihop;
 pub mod summarize;

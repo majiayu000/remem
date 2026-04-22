@@ -29,6 +29,7 @@ pub(in crate::cli) fn run_status() -> Result<()> {
     println!("  Memories:      {:>6}", stats.active_memories);
     println!("  Observations:  {:>6}", stats.active_observations);
     println!("  Sessions:      {:>6}", stats.session_summaries);
+    println!("  Raw messages:  {:>6}", stats.raw_messages);
     println!("  Pending:       {:>6}", stats.pending_observations);
     println!("  Pending failed:{:>6}", stats.failed_pending_observations);
     println!();

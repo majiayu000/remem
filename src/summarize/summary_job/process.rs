@@ -12,14 +12,21 @@ use super::persist::{build_existing_summary_context, finalize_summary, sync_nati
 
 pub async fn process_summary_job_input(input: &str) -> Result<()> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
-    let Some(session_id) = hook.session_id else {
+    let Some(session_id) = hook.session_id.clone() else {
         return Ok(());
     };
     let cwd = hook.cwd.as_deref().unwrap_or(".");
     let project = project_from_cwd(cwd);
 
+    let mut conn = db::open_db()?;
+
+    // Raw archive ingest happens BEFORE every summarize short-circuit so that
+    // "what was said is searchable" is independent of curation outcome.
+    capture_raw_archive(&conn, &hook, &session_id, &project, cwd);
+
     let assistant_msg = hook
         .last_assistant_message
+        .clone()
         .or_else(|| {
             hook.transcript_path
                 .as_deref()
@@ -30,7 +37,6 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
         return Ok(());
     };
 
-    let mut conn = db::open_db()?;
     if db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)? {
         crate::log::info(
             "summary-job",
@@ -95,6 +101,56 @@ fn prepare_assistant_message(message: String) -> Option<String> {
         Some(crate::db::truncate_str(&message, 12000).to_string())
     } else {
         Some(message)
+    }
+}
+
+fn capture_raw_archive(
+    conn: &rusqlite::Connection,
+    hook: &SummarizeInput,
+    session_id: &str,
+    project: &str,
+    cwd: &str,
+) {
+    let branch = db::detect_git_branch(cwd);
+    let cwd_opt = Some(cwd);
+
+    if let Some(transcript_path) = hook.transcript_path.as_deref() {
+        match crate::raw_archive::drain_transcript(
+            conn,
+            transcript_path,
+            session_id,
+            project,
+            branch.as_deref(),
+            cwd_opt,
+        ) {
+            Ok(new_rows) => crate::log::info(
+                "summary-job",
+                &format!(
+                    "raw archive drained transcript new_rows={} project={}",
+                    new_rows, project
+                ),
+            ),
+            Err(error) => crate::log::warn(
+                "summary-job",
+                &format!("raw archive drain failed: {}", error),
+            ),
+        }
+    } else if let Some(last) = hook.last_assistant_message.as_deref() {
+        if let Err(error) = crate::raw_archive::insert_raw_message(
+            conn,
+            session_id,
+            project,
+            crate::raw_archive::ROLE_ASSISTANT,
+            last,
+            crate::raw_archive::SOURCE_HOOK,
+            branch.as_deref(),
+            cwd_opt,
+        ) {
+            crate::log::warn(
+                "summary-job",
+                &format!("raw archive insert failed: {}", error),
+            );
+        }
     }
 }
 

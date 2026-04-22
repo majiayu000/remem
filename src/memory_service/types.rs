@@ -21,6 +21,8 @@ pub struct SearchResultSet {
     pub memories: Vec<crate::memory::Memory>,
     pub multi_hop: Option<MultiHopMeta>,
     pub has_more: bool,
+    /// Raw archive hits attached as fallback when curated memories are sparse.
+    pub raw_hits: Vec<crate::raw_archive::RawMessage>,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -1,4 +1,5 @@
 mod context_tools;
+mod raw_tools;
 mod runtime;
 mod search_tools;
 #[cfg(test)]
@@ -20,7 +21,8 @@ impl MemoryServer {
             tool_router: Self::tool_router_search()
                 + Self::tool_router_context()
                 + Self::tool_router_write()
-                + Self::tool_router_workstream(),
+                + Self::tool_router_workstream()
+                + Self::tool_router_raw(),
         })
     }
 
