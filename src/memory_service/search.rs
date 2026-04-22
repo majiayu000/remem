@@ -99,10 +99,7 @@ fn maybe_fallback_raw(
     match crate::raw_archive::search_raw_messages(conn, &raw_req) {
         Ok(hits) => hits,
         Err(error) => {
-            crate::log::warn(
-                "search",
-                &format!("raw archive fallback failed: {}", error),
-            );
+            crate::log::warn("search", &format!("raw archive fallback failed: {}", error));
             vec![]
         }
     }

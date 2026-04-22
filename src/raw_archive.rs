@@ -30,10 +30,7 @@ pub struct RawMessage {
 /// `memory_promote::slug::content_hash`, which normalizes whitespace/case for
 /// semantic dedup of curated memories.
 fn exact_content_hash(content: &str) -> String {
-    format!(
-        "{:016x}",
-        crate::db::deterministic_hash(content.as_bytes())
-    )
+    format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
 }
 
 /// Insert one raw message. UNIQUE(project, role, content_hash) makes this
@@ -172,10 +169,7 @@ pub struct RawSearchRequest {
     pub offset: i64,
 }
 
-pub fn search_raw_messages(
-    conn: &Connection,
-    req: &RawSearchRequest,
-) -> Result<Vec<RawMessage>> {
+pub fn search_raw_messages(conn: &Connection, req: &RawSearchRequest) -> Result<Vec<RawMessage>> {
     let limit = req.limit.max(1);
     let offset = req.offset.max(0);
     let query = req.query.trim();
@@ -209,19 +203,22 @@ pub fn search_raw_messages(
     ));
 
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(crate::db::to_sql_refs(&binds)), |row| {
-        Ok(RawMessage {
-            id: row.get(0)?,
-            session_id: row.get(1)?,
-            project: row.get(2)?,
-            role: row.get(3)?,
-            content: row.get(4)?,
-            source: row.get(5)?,
-            branch: row.get(6)?,
-            cwd: row.get(7)?,
-            created_at_epoch: row.get(8)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(crate::db::to_sql_refs(&binds)),
+        |row| {
+            Ok(RawMessage {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                project: row.get(2)?,
+                role: row.get(3)?,
+                content: row.get(4)?,
+                source: row.get(5)?,
+                branch: row.get(6)?,
+                cwd: row.get(7)?,
+                created_at_epoch: row.get(8)?,
+            })
+        },
+    )?;
 
     let mut out = Vec::new();
     for row in rows {

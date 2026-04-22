@@ -119,8 +119,8 @@ impl MemoryServer {
                     });
                 }
                 if !raw_hits_json.is_empty() {
-                    response["raw_hits"] = serde_json::to_value(&raw_hits_json)
-                        .map_err(|e| e.to_string())?;
+                    response["raw_hits"] =
+                        serde_json::to_value(&raw_hits_json).map_err(|e| e.to_string())?;
                 }
                 serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
             } else {
