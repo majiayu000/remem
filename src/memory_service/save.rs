@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::local_copy::{
     build_local_note_content, local_copy_enabled_override, resolve_local_note_path,
@@ -25,8 +26,8 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         } else {
             "project"
         });
-    let local_copy = prepare_local_copy(project, title, req)?;
-    write_local_copy(&local_copy)?;
+    let mut local_copy = prepare_local_copy(project, title, req)?;
+    write_local_copy(&mut local_copy)?;
 
     let id = match crate::memory::insert_memory_full(
         conn,
@@ -52,6 +53,8 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         }
     };
 
+    discard_local_copy_backup(&local_copy);
+
     Ok(SaveMemoryResult {
         id,
         status: "saved".to_string(),
@@ -69,7 +72,7 @@ struct LocalCopyPlan {
     status: String,
     path: Option<PathBuf>,
     content: Option<String>,
-    original_content: Option<Vec<u8>>,
+    backup_path: Option<PathBuf>,
 }
 
 fn prepare_local_copy(
@@ -82,59 +85,109 @@ fn prepare_local_copy(
             status: "disabled".to_string(),
             path: None,
             content: None,
-            original_content: None,
+            backup_path: None,
         });
     }
 
     let local_path =
         resolve_local_note_path(project, req.title.as_deref(), req.local_path.as_deref())?;
     let content = build_local_note_content(project, title, &req.text);
-    let original_content = match local_path.try_exists() {
-        Ok(true) => Some(std::fs::read(&local_path).map_err(|err| {
-            anyhow!(
-                "read existing local copy at {}: {err}",
-                local_path.display()
-            )
-        })?),
-        Ok(false) => None,
-        Err(err) => {
-            return Err(anyhow!(
-                "check existing local copy at {}: {err}",
-                local_path.display()
-            ));
-        }
-    };
     Ok(LocalCopyPlan {
         status: "saved".to_string(),
         path: Some(local_path),
         content: Some(content),
-        original_content,
+        backup_path: None,
     })
 }
 
-fn write_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
+fn write_local_copy(local_copy: &mut LocalCopyPlan) -> Result<()> {
     if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref())
     {
-        write_local_note(path, content)?;
+        let backup_path = backup_existing_local_copy(path)?;
+        if let Err(err) = write_local_note(path, content) {
+            if let Err(restore_err) = restore_local_copy(path, backup_path.as_deref()) {
+                return Err(err.context(format!(
+                    "write local copy failed and restore failed: {restore_err}"
+                )));
+            }
+            return Err(err);
+        }
+        local_copy.backup_path = backup_path;
     }
     Ok(())
 }
 
 fn cleanup_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
     if let Some(path) = local_copy.path.as_deref() {
-        if let Some(original_content) = local_copy.original_content.as_deref() {
-            std::fs::write(path, original_content)
-                .with_context(|| format!("restore local copy at {}", path.display()))?;
-        } else {
-            match std::fs::remove_file(path) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    return Err(err)
-                        .with_context(|| format!("remove local copy at {}", path.display()));
-                }
-            }
-        }
+        restore_local_copy(path, local_copy.backup_path.as_deref())?;
     }
     Ok(())
+}
+
+fn backup_existing_local_copy(path: &Path) -> Result<Option<PathBuf>> {
+    match path.try_exists() {
+        Ok(true) => {
+            let backup_path = allocate_backup_path(path);
+            std::fs::rename(path, &backup_path).with_context(|| {
+                format!(
+                    "move existing local copy {} to backup {}",
+                    path.display(),
+                    backup_path.display()
+                )
+            })?;
+            Ok(Some(backup_path))
+        }
+        Ok(false) => Ok(None),
+        Err(err) => Err(anyhow!(
+            "check existing local copy at {}: {err}",
+            path.display()
+        )),
+    }
+}
+
+fn restore_local_copy(path: &Path, backup_path: Option<&Path>) -> Result<()> {
+    match backup_path {
+        Some(backup_path) => {
+            remove_local_copy_file(path)?;
+            std::fs::rename(backup_path, path).with_context(|| {
+                format!(
+                    "restore local copy from backup {} to {}",
+                    backup_path.display(),
+                    path.display()
+                )
+            })?;
+        }
+        None => remove_local_copy_file(path)?,
+    }
+    Ok(())
+}
+
+fn remove_local_copy_file(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("remove local copy at {}", path.display())),
+    }
+}
+
+fn discard_local_copy_backup(local_copy: &LocalCopyPlan) {
+    if let Some(backup_path) = local_copy.backup_path.as_deref() {
+        let _ = std::fs::remove_file(backup_path);
+    }
+}
+
+fn allocate_backup_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("local-copy");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(
+        ".{file_name}.remem-backup-{}-{timestamp}.tmp",
+        std::process::id()
+    ))
 }
