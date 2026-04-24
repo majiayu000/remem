@@ -1,6 +1,10 @@
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use std::path::Path;
 
-pub(super) fn build_hooks(bin: &str) -> Value {
+use crate::install::json_io::{read_json_file, write_json_file};
+
+pub(in crate::install) fn build_hooks(bin: &str) -> Value {
     json!({
         "SessionStart": [{
             "hooks": [{ "type": "command", "command": format!("{} context", bin), "timeout": 15000 }]
@@ -18,7 +22,7 @@ pub(super) fn build_hooks(bin: &str) -> Value {
     })
 }
 
-pub(super) fn build_mcp_server(bin: &str) -> Value {
+pub(in crate::install) fn build_mcp_server(bin: &str) -> Value {
     json!({
         "type": "stdio",
         "command": bin,
@@ -39,7 +43,7 @@ fn is_remem_hook(hook_entry: &Value, bin: &str) -> bool {
     false
 }
 
-pub(super) fn remove_remem_hooks(settings: &mut Value, bin: &str) {
+pub(in crate::install) fn remove_remem_hooks(settings: &mut Value, bin: &str) {
     if let Some(hooks) = settings
         .get_mut("hooks")
         .and_then(|hooks| hooks.as_object_mut())
@@ -64,7 +68,44 @@ pub(super) fn remove_remem_hooks(settings: &mut Value, bin: &str) {
     }
 }
 
-pub(super) fn remove_remem_mcp(settings: &mut Value, bin: &str) {
+/// Shared hook merge used by every host whose config file is JSON-shaped
+/// the same way Claude Code's `settings.json` is.
+///
+/// Idempotent: strips any existing remem hook entries before appending fresh
+/// ones, so repeated calls converge on the same state.
+pub(in crate::install) fn apply_hooks_json(path: &Path, bin: &str) -> Result<()> {
+    let mut doc = read_json_file(&path.to_path_buf())?;
+    remove_remem_hooks(&mut doc, bin);
+
+    let new_hooks = build_hooks(bin);
+    let obj = doc
+        .as_object_mut()
+        .with_context(|| format!("{} 根节点不是 Object", path.display()))?;
+    let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
+    if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
+        for (event_type, entries) in new {
+            let arr = existing.entry(event_type).or_insert_with(|| json!([]));
+            if let (Some(arr), Some(new_entries)) = (arr.as_array_mut(), entries.as_array()) {
+                for entry in new_entries {
+                    arr.push(entry.clone());
+                }
+            }
+        }
+    }
+    write_json_file(&path.to_path_buf(), &doc)
+}
+
+/// Remove remem hook entries from the JSON file at `path`, if it exists.
+pub(in crate::install) fn strip_hooks_json(path: &Path, bin: &str) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut doc = read_json_file(&path.to_path_buf())?;
+    remove_remem_hooks(&mut doc, bin);
+    write_json_file(&path.to_path_buf(), &doc)
+}
+
+pub(in crate::install) fn remove_remem_mcp(settings: &mut Value, bin: &str) {
     if let Some(servers) = settings
         .get_mut("mcpServers")
         .and_then(|servers| servers.as_object_mut())

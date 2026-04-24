@@ -24,8 +24,8 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Summarize => summarize::summarize().await?,
         Commands::Worker { once } => worker::run(once, 2000).await?,
         Commands::Mcp => mcp::run_mcp_server().await?,
-        Commands::Install => install::install()?,
-        Commands::Uninstall => install::uninstall()?,
+        Commands::Install { target, dry_run } => install::install(target, dry_run)?,
+        Commands::Uninstall { target, dry_run } => install::uninstall(target, dry_run)?,
         Commands::Cleanup => run_cleanup()?,
         Commands::SyncMemory { cwd } => {
             let cwd = resolve_cwd_arg(cwd);

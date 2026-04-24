@@ -1,56 +1,44 @@
-use anyhow::{Context, Result};
-use serde_json::json;
+use anyhow::{bail, Result};
 
-use crate::install::config::{build_hooks, build_mcp_server, remove_remem_hooks, remove_remem_mcp};
-use crate::install::json_io::{read_json_file, write_json_file};
-use crate::install::paths::{
-    binary_path, claude_json_path, old_hooks_path, remem_data_dir, settings_path,
-};
+use crate::install::host::{HookSupport, InstallTarget};
+use crate::install::hosts::resolve_hosts;
+use crate::install::paths::{binary_path, old_hooks_path, remem_data_dir};
 
-pub fn install() -> Result<()> {
+pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
     let bin = binary_path()?;
-    let settings_file = settings_path();
-    let claude_json_file = claude_json_path();
+    let hosts = resolve_hosts(target);
+    if hosts.is_empty() {
+        bail!(
+            "没检测到可用的 host（target=Auto 时仅安装已检测到的 host）。\n\
+             如需强制安装到全部 host，请使用 `--target all`。"
+        );
+    }
 
-    let mut settings = read_json_file(&settings_file)?;
-    remove_remem_hooks(&mut settings, &bin);
-    remove_remem_mcp(&mut settings, &bin);
-
-    let new_hooks = build_hooks(&bin);
-    let obj = settings
-        .as_object_mut()
-        .context("settings.json 根节点不是 Object")?;
-    let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
-    if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
-        for (event_type, entries) in new {
-            let arr = existing.entry(event_type).or_insert_with(|| json!([]));
-            if let (Some(arr), Some(new_entries)) = (arr.as_array_mut(), entries.as_array()) {
-                for entry in new_entries {
-                    arr.push(entry.clone());
-                }
+    if dry_run {
+        eprintln!("remem install (dry-run) — 以下写入不会被执行:");
+        for host in &hosts {
+            eprintln!("→ {}", host.name());
+            for line in host.dry_run_plan(&bin) {
+                eprintln!("{line}");
             }
         }
+        eprintln!("  data   -> {}", remem_data_dir().display());
+        return Ok(());
     }
-    write_json_file(&settings_file, &settings)?;
 
-    let mut claude_json = read_json_file(&claude_json_file)?;
-    remove_remem_mcp(&mut claude_json, &bin);
-
-    let obj = claude_json
-        .as_object_mut()
-        .context("~/.claude.json 根节点不是 Object")?;
-    let mcp_servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
-    if let Some(servers) = mcp_servers.as_object_mut() {
-        servers.insert("remem".to_string(), build_mcp_server(&bin));
+    eprintln!("remem install:");
+    for host in &hosts {
+        eprintln!("→ {}", host.name());
+        host.install_mcp(&bin)?;
+        eprintln!("  MCP    -> {}", host.config_path().display());
+        match host.install_hooks(&bin)? {
+            HookSupport::Installed => eprintln!("  hooks  ✓"),
+            HookSupport::Skipped(reason) => eprintln!("  hooks  skipped: {reason}"),
+        }
     }
-    write_json_file(&claude_json_file, &claude_json)?;
 
     let data_dir = remem_data_dir();
     std::fs::create_dir_all(&data_dir)?;
-
-    eprintln!("remem install complete:");
-    eprintln!("  hooks  -> {}", settings_file.display());
-    eprintln!("  MCP    -> {}", claude_json_file.display());
     eprintln!("  data   -> {}", data_dir.display());
     eprintln!("  binary -> {}", bin);
 
@@ -66,31 +54,40 @@ pub fn install() -> Result<()> {
 
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  1. Restart Claude Code (quit and reopen)");
-    eprintln!("  2. remem will automatically capture your sessions");
+    eprintln!("  1. Restart the affected host(s) (Claude Code / Codex)");
+    eprintln!("  2. remem will automatically capture your sessions (hosts with hook support)");
     eprintln!("  3. Run 'remem status' to check system health");
 
     Ok(())
 }
 
-pub fn uninstall() -> Result<()> {
+pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
     let bin = binary_path()?;
-    let settings_file = settings_path();
-    let claude_json_file = claude_json_path();
+    // Uninstall defaults to "all known hosts" so a stale config isn't left
+    // behind if the user removed a host before running uninstall.
+    let effective = if matches!(target, InstallTarget::Auto) {
+        InstallTarget::All
+    } else {
+        target
+    };
+    let hosts = resolve_hosts(effective);
 
-    if settings_file.exists() {
-        let mut settings = read_json_file(&settings_file)?;
-        remove_remem_hooks(&mut settings, &bin);
-        remove_remem_mcp(&mut settings, &bin);
-        write_json_file(&settings_file, &settings)?;
-        eprintln!("  hooks 已从 {} 移除", settings_file.display());
+    if dry_run {
+        eprintln!("remem uninstall (dry-run) — 以下删除不会被执行:");
+        for host in &hosts {
+            eprintln!("→ {}: 移除 {}", host.name(), host.config_path().display());
+        }
+        return Ok(());
     }
 
-    if claude_json_file.exists() {
-        let mut claude_json = read_json_file(&claude_json_file)?;
-        remove_remem_mcp(&mut claude_json, &bin);
-        write_json_file(&claude_json_file, &claude_json)?;
-        eprintln!("  MCP 已从 {} 移除", claude_json_file.display());
+    for host in &hosts {
+        host.uninstall_mcp(&bin)?;
+        host.uninstall_hooks(&bin)?;
+        eprintln!(
+            "  {} 已清理 ({})",
+            host.name(),
+            host.config_path().display()
+        );
     }
 
     eprintln!("remem uninstall 完成");
