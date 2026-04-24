@@ -1,5 +1,9 @@
-use super::{resolve_local_note_path, sanitize_segment};
-use crate::db::test_support::ScopedTestDataDir;
+use super::{resolve_local_note_path, sanitize_segment, save_memory, SaveMemoryRequest};
+use crate::db::{self, test_support::ScopedTestDataDir};
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn sanitize_segment_falls_back_for_empty_slug() {
@@ -48,6 +52,316 @@ fn resolve_tilde_path_is_rejected() {
     let _dir = ScopedTestDataDir::new("path-tilde");
     let got = resolve_local_note_path("proj", Some("title"), Some("~/.ssh/authorized_keys"));
     assert!(got.is_err(), "tilde path should be rejected (not expanded)");
+}
+
+#[test]
+fn save_memory_outside_local_path_does_not_persist_memory() {
+    let _dir = ScopedTestDataDir::new("save-outside-path-no-db-write");
+    let conn = db::open_db().expect("db should open");
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some("/etc/passwd".to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("out-of-bounds local_path should fail");
+
+    assert!(
+        err.to_string().contains("outside the allowed directory"),
+        "unexpected error: {err:?}"
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[test]
+fn save_memory_local_write_failure_does_not_persist_memory() {
+    let test_dir = ScopedTestDataDir::new("save-local-write-failure-no-db-write");
+    let conn = db::open_db().expect("db should open");
+    let blocking_file = test_dir.path.join("manual-notes").join("proj");
+    std::fs::create_dir_all(blocking_file.parent().expect("blocking file parent"))
+        .expect("create blocking file parent");
+    std::fs::write(&blocking_file, "not a directory").expect("create blocking file");
+
+    let local_path = blocking_file.join("forced-failure.md");
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("local write should abort save");
+
+    assert!(
+        err.to_string().contains("Not a directory")
+            || err.to_string().contains("not a directory")
+            || err.to_string().contains("File exists"),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        !local_path.exists(),
+        "local copy path should not exist after a write failure: {:?}",
+        local_path
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[test]
+fn save_memory_db_failure_does_not_leave_local_copy_behind() {
+    let test_dir = ScopedTestDataDir::new("save-db-failure-no-local-copy");
+    let conn = db::open_db().expect("db should open");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_memory_insert BEFORE INSERT ON memories BEGIN
+            SELECT RAISE(ABORT, 'forced insert failure');
+        END;",
+    )
+    .expect("failure trigger should be created");
+
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("forced-failure.md");
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("insert trigger should abort save");
+
+    assert!(
+        err.to_string().contains("forced insert failure"),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        !local_path.exists(),
+        "local copy should not be written when db insert fails: {:?}",
+        local_path
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[test]
+fn save_memory_db_failure_restores_existing_local_copy() {
+    let test_dir = ScopedTestDataDir::new("save-db-failure-restores-existing-local-copy");
+    let conn = db::open_db().expect("db should open");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_memory_insert BEFORE INSERT ON memories BEGIN
+            SELECT RAISE(ABORT, 'forced insert failure');
+        END;",
+    )
+    .expect("failure trigger should be created");
+
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("existing-note.md");
+    std::fs::create_dir_all(local_path.parent().expect("existing note parent"))
+        .expect("create existing note parent");
+    std::fs::write(&local_path, "original note body").expect("seed existing note");
+
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("insert trigger should abort save");
+
+    assert!(
+        err.to_string().contains("forced insert failure"),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&local_path).expect("existing note should remain readable"),
+        "original note body",
+        "db failure should restore the prior local note contents"
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[test]
+fn save_memory_existing_directory_local_path_does_not_persist_memory() {
+    let test_dir = ScopedTestDataDir::new("save-directory-local-path-rejected");
+    let conn = db::open_db().expect("db should open");
+
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("existing-dir");
+    let nested_entry = local_path.join("nested.txt");
+    std::fs::create_dir_all(&local_path).expect("create existing directory local path");
+    std::fs::write(&nested_entry, "keep me").expect("seed nested entry");
+
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("directory local_path should fail");
+
+    assert!(
+        err.to_string()
+            .contains("must reference a file, not a directory"),
+        "unexpected error: {err:?}"
+    );
+    assert!(
+        local_path.is_dir(),
+        "directory path should remain a directory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&nested_entry).expect("nested entry should stay intact"),
+        "keep me"
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[cfg(unix)]
+#[test]
+fn save_memory_db_failure_restores_write_only_existing_local_copy() {
+    let test_dir = ScopedTestDataDir::new("save-db-failure-restores-write-only-local-copy");
+    let conn = db::open_db().expect("db should open");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_memory_insert BEFORE INSERT ON memories BEGIN
+            SELECT RAISE(ABORT, 'forced insert failure');
+        END;",
+    )
+    .expect("failure trigger should be created");
+
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("write-only-note.md");
+    std::fs::create_dir_all(local_path.parent().expect("existing note parent"))
+        .expect("create existing note parent");
+    std::fs::write(&local_path, "original note body").expect("seed existing note");
+
+    let mut permissions = std::fs::metadata(&local_path)
+        .expect("read existing permissions")
+        .permissions();
+    permissions.set_mode(0o200);
+    std::fs::set_permissions(&local_path, permissions).expect("make existing note write-only");
+
+    let req = SaveMemoryRequest {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory(&conn, &req).expect_err("insert trigger should abort save");
+
+    assert!(
+        err.to_string().contains("forced insert failure"),
+        "unexpected error: {err:?}"
+    );
+
+    let mut readable_permissions = std::fs::metadata(&local_path)
+        .expect("restored note should exist")
+        .permissions();
+    readable_permissions.set_mode(0o600);
+    std::fs::set_permissions(&local_path, readable_permissions)
+        .expect("make restored note readable");
+
+    assert_eq!(
+        std::fs::read_to_string(&local_path).expect("restored note should be readable"),
+        "original note body",
+        "db failure should restore the prior local note contents"
+    );
+
+    let memory_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+        .expect("count query should succeed");
+    assert_eq!(memory_count, 0, "db should not persist a memory row");
+}
+
+#[cfg(unix)]
+#[test]
+fn save_memory_existing_symlink_local_path_stays_a_symlink() {
+    let test_dir = ScopedTestDataDir::new("save-symlink-local-path-preserved");
+    let conn = db::open_db().expect("db should open");
+
+    let project_dir = test_dir.path.join("manual-notes").join("proj");
+    std::fs::create_dir_all(&project_dir).expect("create project dir");
+
+    let target_path = project_dir.join("target-note.md");
+    std::fs::write(&target_path, "original note body").expect("seed symlink target");
+
+    let local_path = project_dir.join("symlink-note.md");
+    symlink(&target_path, &local_path).expect("create local note symlink");
+
+    let req = SaveMemoryRequest {
+        text: "updated body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("save through symlink should succeed");
+
+    assert_eq!(saved.status, "saved");
+    assert!(
+        std::fs::symlink_metadata(&local_path)
+            .expect("local path metadata")
+            .file_type()
+            .is_symlink(),
+        "local path should remain a symlink"
+    );
+
+    let symlink_target = std::fs::read_link(&local_path).expect("read symlink target");
+    assert_eq!(
+        symlink_target, target_path,
+        "symlink target should be preserved"
+    );
+
+    let updated = std::fs::read_to_string(&target_path).expect("read updated target");
+    assert!(
+        updated.contains("updated body"),
+        "saved note should be written through the symlink target: {updated}"
+    );
 }
 
 #[test]
