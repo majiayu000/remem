@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::memory::types::{map_memory_row, Memory, MEMORY_COLS};
+use crate::memory_search::push_project_filter_required;
 
 pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Memory>> {
     list_memories(conn, project, None, limit, 0, false, None)
@@ -25,9 +26,10 @@ pub fn list_memories(
     include_inactive: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
-    let mut conditions = vec!["(project = ?1 OR scope = 'global')".to_string()];
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(project.to_string())];
-    let mut idx = 2;
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
 
     if !include_inactive {
         conditions.push("status = 'active'".to_string());
@@ -77,7 +79,8 @@ pub fn get_memories_by_ids(
         .collect();
 
     if let Some(project) = project {
-        conditions.push(format!("project = ?{}", ids.len() + 1));
+        let idx = ids.len() + 1;
+        conditions.push(format!("(project = ?{idx} OR scope = 'global')"));
         params.push(Box::new(project.to_string()));
     }
 
