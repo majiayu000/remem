@@ -8,6 +8,7 @@ pub struct SystemStats {
     pub active_memories: i64,
     pub active_observations: i64,
     pub session_summaries: i64,
+    pub raw_messages: i64,
     pub pending_observations: i64,
     pub failed_pending_observations: i64,
     pub stuck_jobs: i64,
@@ -40,6 +41,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         session_summaries: conn.query_row("SELECT COUNT(*) FROM session_summaries", [], |row| {
             row.get(0)
         })?,
+        raw_messages: conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?,
         pending_observations: conn.query_row(
             "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
             [],

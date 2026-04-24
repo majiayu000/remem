@@ -1,9 +1,11 @@
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
-use super::super::types::{SearchParams, SearchResult};
+use super::super::types::{RawSearchHit, SearchParams, SearchResult};
 use super::MemoryServer;
 use crate::memory_service;
+
+const RAW_PREVIEW_CHARS: usize = 300;
 
 #[tool_router(router = tool_router_search, vis = "pub(super)")]
 impl MemoryServer {
@@ -48,6 +50,7 @@ impl MemoryServer {
                 memories,
                 multi_hop,
                 has_more: _,
+                raw_hits,
             } = search_set;
 
             let search_results: Vec<SearchResult> = memories
@@ -71,6 +74,22 @@ impl MemoryServer {
                 })
                 .collect();
 
+            let raw_hits_json: Vec<RawSearchHit> = raw_hits
+                .into_iter()
+                .map(|msg| RawSearchHit {
+                    id: msg.id,
+                    session_id: msg.session_id,
+                    project: msg.project,
+                    role: msg.role,
+                    preview: msg.content.chars().take(RAW_PREVIEW_CHARS).collect(),
+                    source: msg.source,
+                    branch: msg.branch,
+                    created_at: chrono::DateTime::from_timestamp(msg.created_at_epoch, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_default(),
+                })
+                .collect();
+
             let hop_info = if let Some(meta) = &multi_hop {
                 format!(
                     " hops={} entities_discovered={}",
@@ -83,21 +102,26 @@ impl MemoryServer {
             crate::log::info(
                 "mcp",
                 &format!(
-                    "search done count={} {}ms{}",
+                    "search done count={} raw_fallback={} {}ms{}",
                     search_results.len(),
+                    raw_hits_json.len(),
                     start.elapsed().as_millis(),
                     hop_info,
                 ),
             );
 
-            if let Some(meta) = multi_hop {
-                let response = serde_json::json!({
-                    "results": search_results,
-                    "multi_hop": {
+            if multi_hop.is_some() || !raw_hits_json.is_empty() {
+                let mut response = serde_json::json!({ "results": search_results });
+                if let Some(meta) = multi_hop {
+                    response["multi_hop"] = serde_json::json!({
                         "hops": meta.hops,
                         "entities_discovered": meta.entities_discovered,
-                    }
-                });
+                    });
+                }
+                if !raw_hits_json.is_empty() {
+                    response["raw_hits"] =
+                        serde_json::to_value(&raw_hits_json).map_err(|e| e.to_string())?;
+                }
                 serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
             } else {
                 serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())

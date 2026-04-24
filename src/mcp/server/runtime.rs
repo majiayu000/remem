@@ -13,6 +13,7 @@ const SERVER_INSTRUCTIONS: &str = r#"Persistent memory for Claude Code sessions.
 3. Then: `get_observations(ids)` → full narrative, facts, concepts, files
 4. Use `timeline(anchor/query)` to understand chronological context around a change
 5. Use `save_memory(text)` to persist important decisions or discoveries (and local markdown backup)
+6. If curated `search` is empty/sparse, it auto-attaches `raw_hits` from the raw archive (every user/assistant turn captured at Stop time). Call `search_raw(query)` directly when you need to recall a literal phrase that was never summarized or promoted.
 
 ## Local document rule
 - If user asks to save/write/update a document, create or edit a local file first

@@ -119,3 +119,32 @@ pub(super) struct SearchResult {
     pub project: String,
     pub status: String,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct SearchRawParams {
+    #[schemars(
+        description = "Raw FTS query across every user/assistant turn captured by the raw archive. Unlike `search`, this bypasses all curation and returns literal chat content. Use when `search` comes back empty or you need to recall an exact phrase from past conversations."
+    )]
+    pub query: String,
+    #[schemars(description = "Project name filter")]
+    pub project: Option<String>,
+    #[schemars(description = "Role filter: 'user' or 'assistant' (default: both)")]
+    pub role: Option<String>,
+    #[schemars(description = "Max results to return (default 20)")]
+    pub limit: Option<i64>,
+    #[schemars(description = "Result offset for pagination")]
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct RawSearchHit {
+    pub id: i64,
+    pub session_id: String,
+    pub project: String,
+    pub role: String,
+    pub preview: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub created_at: String,
+}

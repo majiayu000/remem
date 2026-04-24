@@ -20,6 +20,9 @@ fn setup_stats_schema(conn: &Connection) {
         CREATE TABLE session_summaries (
             id INTEGER PRIMARY KEY
         );
+        CREATE TABLE raw_messages (
+            id INTEGER PRIMARY KEY
+        );
         CREATE TABLE pending_observations (
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL
@@ -88,6 +91,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
             active_memories: 2,
             active_observations: 1,
             session_summaries: 1,
+            raw_messages: 0,
             pending_observations: 1,
             failed_pending_observations: 1,
             stuck_jobs: 1,
