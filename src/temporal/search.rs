@@ -34,7 +34,9 @@ pub fn search_by_time_filtered(
         conditions.push("status = 'active'".to_string());
     }
     if let Some(project) = project {
-        conditions.push(crate::memory_search::project_or_global_clause("project", idx));
+        conditions.push(crate::memory_search::project_or_global_clause(
+            "project", idx,
+        ));
         params_vec.push(Box::new(project.to_string()));
         idx += 1;
     }
