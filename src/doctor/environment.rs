@@ -139,7 +139,7 @@ fn probe_hooks(probe: HostProbe) -> Check {
         }
     };
 
-    let events = ["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"];
+    let events = expected_hook_events(probe.name);
     let found = events
         .iter()
         .filter(|event| event_has_remem_hook(&doc, event))
@@ -253,10 +253,18 @@ fn hooks_file_has_remem(path: &PathBuf) -> bool {
         return false;
     };
     match serde_json::from_str::<Value>(&content) {
-        Ok(doc) => ["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"]
+        Ok(doc) => ["claude", "codex"]
             .iter()
+            .flat_map(|host| expected_hook_events(host).iter())
             .any(|event| event_has_remem_hook(&doc, event)),
         Err(_) => content.contains("remem"),
+    }
+}
+
+fn expected_hook_events(host: &str) -> &'static [&'static str] {
+    match host {
+        "codex" => &["SessionStart", "Stop"],
+        _ => &["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"],
     }
 }
 
@@ -379,7 +387,32 @@ mod tests {
         });
 
         assert!(matches!(check.status, Status::Warn));
-        assert!(check.detail.contains("1/4 registered"), "{}", check.detail);
+        assert!(check.detail.contains("1/2 registered"), "{}", check.detail);
+    }
+
+    #[test]
+    fn probe_hooks_accepts_codex_summary_strategy() {
+        let dir = temp_path("doctor-codex-hooks");
+        let hooks_path = dir.join("hooks.json");
+        std::fs::write(
+            &hooks_path,
+            r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
+    "Stop": [{ "hooks": [{ "command": "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize" }] }]
+  }
+}"#,
+        )
+        .unwrap();
+
+        let check = probe_hooks(HostProbe {
+            name: "codex",
+            hooks_path,
+            mcp_paths: vec![dir.join("config.toml")],
+        });
+
+        assert!(matches!(check.status, Status::Ok));
+        assert!(check.detail.contains("2/2 registered"), "{}", check.detail);
     }
 
     #[test]

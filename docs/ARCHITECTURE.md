@@ -4,11 +4,14 @@
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                 Claude Code / Codex Hooks                  │
+│              Host Hooks (Claude Code / Codex)              │
+│                                                            │
+│  Claude Code: SessionStart/UserPromptSubmit/PostToolUse/Stop│
+│  Codex:       SessionStart/Stop                            │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
-│  UserPromptSubmit ──→ session-init  (register + flush)     │
-│  PostToolUse ───────→ observe       (filter + queue)       │
+│  UserPromptSubmit ──→ session-init  (Claude Code only)     │
+│  PostToolUse ───────→ observe       (Claude Code only)     │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
                │                      │
@@ -73,7 +76,7 @@
 
 ## Data Flow
 
-### 1. Observation Capture (PostToolUse → observe)
+### 1. Observation Capture (Claude Code PostToolUse → observe)
 
 ```
 Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
@@ -157,7 +160,7 @@ New session starts
        └─ Recent session summaries (request/completed)
 ```
 
-### 4. Stale Queue Recovery (UserPromptSubmit → session_init)
+### 4. Stale Queue Recovery (Claude Code UserPromptSubmit → session_init)
 
 ```
 New message submitted
@@ -377,7 +380,7 @@ memories_fts (title, content)                                    -- FTS5 trigram
 - **HTTP-first AI calls**: HTTP API direct 2-5s vs `claude -p` CLI 30+s, 6-12x performance gap
 - **Stop hook async**: Dispatcher returns in 6ms, `std::process::Command` spawns independent worker
 - **SQLite single-file + WAL**: Zero dependencies, FTS5 full-text search, WAL concurrent read/write
-- **Queue batch processing**: PostToolUse only queues (<1ms), Stop processes ≤15 events in one AI call
+- **Queue batch processing**: Claude Code PostToolUse only queues (<1ms), Stop processes ≤15 events in one AI call
 - **Decision priority**: Summary fields ordered decisions > completed > learned, architectural knowledge most valuable
 - **Schema version control**: `PRAGMA user_version` skips repeated migration, reduces per-hook DB overhead
 - **Stable project key**: `parent/dirname@hash12`, readable prefix + canonical path hash, eliminates same-name directory collisions

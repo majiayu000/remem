@@ -49,15 +49,20 @@ remem install
 
 ## 工作机制
 
-`remem` 通过 host hooks 自动运行：
+`remem` 使用 host-specific hook 策略自动运行：
 
 ```
-你的 Claude Code/Codex 正常工作流
+Claude Code 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
         |- UserPromptSubmit  -> 注册会话、刷新旧队列
         |- PostToolUse       -> 捕获工具操作（入队，<1ms）
         '- Stop              -> 后台总结（返回约 6ms）
+
+Codex 正常工作流
+        |
+        |- SessionStart      -> 注入记忆与偏好
+        '- Stop              -> 使用 Codex CLI 后台总结
 ```
 
 全程自动，不需要手动保存记忆。

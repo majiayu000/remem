@@ -49,15 +49,20 @@ Restart your AI coding tool after installation.
 
 ## How It Works
 
-remem runs through host hooks:
+remem uses host-specific hook strategies:
 
 ```
-Your normal Claude Code/Codex workflow
+Claude Code workflow
         |
         |- SessionStart      -> Inject memories + preferences
         |- UserPromptSubmit  -> Register session, flush stale queues
         |- PostToolUse       -> Capture tool operations (queued, <1ms)
         '- Stop              -> Summarize in background (~6ms return)
+
+Codex workflow
+        |
+        |- SessionStart      -> Inject memories + preferences
+        '- Stop              -> Summarize in background with Codex CLI
 ```
 
 No manual capture is required.
