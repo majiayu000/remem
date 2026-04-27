@@ -95,7 +95,6 @@ fn configure_worker_executor_env(command: &mut std::process::Command) {
             command.env("REMEM_SUMMARY_EXECUTOR", executor);
         }
     }
-    command.env_remove("REMEM_EXECUTOR");
 }
 
 #[cfg(test)]
@@ -141,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_env_translates_legacy_global_executor_to_summary_only() {
+    fn worker_env_translates_legacy_global_executor_without_removing_it() {
         with_env_vars(
             &[
                 ("REMEM_EXECUTOR", Some("codex-cli")),
@@ -155,7 +154,24 @@ mod tests {
                     command_env(&command, "REMEM_SUMMARY_EXECUTOR"),
                     Some(Some(OsStr::new("codex-cli")))
                 );
-                assert_eq!(command_env(&command, "REMEM_EXECUTOR"), Some(None));
+                assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
+            },
+        );
+    }
+
+    #[test]
+    fn worker_env_preserves_explicit_summary_override_and_global_executor() {
+        with_env_vars(
+            &[
+                ("REMEM_EXECUTOR", Some("http")),
+                ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
+            ],
+            || {
+                let mut command = std::process::Command::new("remem");
+                configure_worker_executor_env(&mut command);
+
+                assert_eq!(command_env(&command, "REMEM_SUMMARY_EXECUTOR"), None);
+                assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
             },
         );
     }
