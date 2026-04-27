@@ -71,9 +71,9 @@ fn executor_for_operation(operation: &str) -> Option<AiExecutor> {
 fn executor_env_keys(operation: &str) -> &'static [&'static str] {
     match operation {
         "summarize" => &["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"],
-        "flush" | "flush-task" => &["REMEM_FLUSH_EXECUTOR", "REMEM_EXECUTOR"],
-        "compress" => &["REMEM_COMPRESS_EXECUTOR", "REMEM_EXECUTOR"],
-        "dream" => &["REMEM_DREAM_EXECUTOR", "REMEM_EXECUTOR"],
+        "flush" | "flush-task" => &["REMEM_FLUSH_EXECUTOR"],
+        "compress" => &["REMEM_COMPRESS_EXECUTOR"],
+        "dream" => &["REMEM_DREAM_EXECUTOR"],
         _ => &["REMEM_EXECUTOR"],
     }
 }

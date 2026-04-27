@@ -108,7 +108,7 @@ fn summary_executor_override_does_not_leak_to_flush() {
 }
 
 #[test]
-fn operation_executor_overrides_global_fallback() {
+fn operation_executor_overrides_do_not_use_global_fallback_for_background_jobs() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", Some("claude-cli")),
@@ -123,11 +123,32 @@ fn operation_executor_overrides_global_fallback() {
                 Some(AiExecutor::CodexCli)
             );
             assert_eq!(executor_for_operation("flush"), Some(AiExecutor::Http));
-            assert_eq!(
-                executor_for_operation("compress"),
-                Some(AiExecutor::ClaudeCli)
-            );
+            assert_eq!(executor_for_operation("compress"), None);
+            assert_eq!(executor_for_operation("dream"), None);
             assert_eq!(executor_for_operation("other"), Some(AiExecutor::ClaudeCli));
+        },
+    );
+}
+
+#[test]
+fn legacy_global_executor_only_affects_summary() {
+    with_env_vars(
+        &[
+            ("REMEM_EXECUTOR", Some("codex-cli")),
+            ("REMEM_SUMMARY_EXECUTOR", None),
+            ("REMEM_FLUSH_EXECUTOR", None),
+            ("REMEM_COMPRESS_EXECUTOR", None),
+            ("REMEM_DREAM_EXECUTOR", None),
+        ],
+        || {
+            assert_eq!(
+                executor_for_operation("summarize"),
+                Some(AiExecutor::CodexCli)
+            );
+            assert_eq!(executor_for_operation("flush"), None);
+            assert_eq!(executor_for_operation("flush-task"), None);
+            assert_eq!(executor_for_operation("compress"), None);
+            assert_eq!(executor_for_operation("dream"), None);
         },
     );
 }
