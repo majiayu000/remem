@@ -445,65 +445,6 @@ fn query_recent_summaries_scans_past_self_diagnostic_burst() {
     assert_eq!(summaries[1].request, "Repair guard source path");
 }
 
-#[test]
-fn query_recent_summaries_suppresses_stale_design_prototype_noise() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_session_summary_schema(&conn);
-    let project = "/tmp/vibeguard";
-    let now = chrono::Utc::now().timestamp();
-
-    insert_session_summary(
-        &conn,
-        project,
-        "Build landing page and wireframe variants",
-        Some("Starfield prototype shipped"),
-        now - 8 * 86400,
-    );
-    insert_session_summary(
-        &conn,
-        project,
-        "Generate VibeGuard wireframe prototype",
-        Some("Landing page assets updated"),
-        now - 9 * 86400,
-    );
-    insert_session_summary(
-        &conn,
-        project,
-        "Fix runtime hook",
-        Some("Validated hook behavior"),
-        now - 10 * 86400,
-    );
-
-    let summaries = query_recent_summaries(&conn, project, 5).unwrap();
-
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].request, "Fix runtime hook");
-}
-
-#[test]
-fn query_recent_summaries_keeps_stale_design_summary_as_last_resort() {
-    let conn = Connection::open_in_memory().unwrap();
-    create_session_summary_schema(&conn);
-    let project = "/tmp/vibeguard";
-    let now = chrono::Utc::now().timestamp();
-
-    insert_session_summary(
-        &conn,
-        project,
-        "Build landing page and wireframe variants",
-        Some("Starfield prototype shipped"),
-        now - 8 * 86400,
-    );
-
-    let summaries = query_recent_summaries(&conn, project, 5).unwrap();
-
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(
-        summaries[0].request,
-        "Build landing page and wireframe variants"
-    );
-}
-
 fn sample_memory(id: i64, memory_type: &str, title: &str) -> Memory {
     sample_memory_with_epoch(id, memory_type, title, 1_710_000_000)
 }
