@@ -14,6 +14,7 @@ const BASENAME_SEARCH_LIMIT: i64 = 20;
 const MAX_SELF_DIAGNOSTIC_MEMORIES: usize = 2;
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
+const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
 
 pub(super) fn load_context_data(
     conn: &Connection,
@@ -286,7 +287,9 @@ pub(super) fn query_recent_summaries(
     }
 
     let scan_limit = SUMMARY_MAX_SCAN.max(limit);
+    let now_epoch = chrono::Utc::now().timestamp();
     let mut selected = Vec::new();
+    let mut low_signal_fallback = Vec::new();
     let mut seen_clusters = HashSet::new();
     let mut offset = 0usize;
 
@@ -302,10 +305,17 @@ pub(super) fn query_recent_summaries(
                 continue;
             }
 
-            if !seen_clusters.insert(summary_cluster_key(&summary)) {
+            let cluster_key = summary_cluster_key(&summary);
+            if seen_clusters.contains(&cluster_key) {
                 continue;
             }
 
+            if is_stale_design_prototype_summary(&summary, now_epoch) {
+                low_signal_fallback.push((cluster_key, summary));
+                continue;
+            }
+
+            seen_clusters.insert(cluster_key);
             selected.push(summary);
             if selected.len() >= limit {
                 break;
@@ -313,6 +323,17 @@ pub(super) fn query_recent_summaries(
         }
 
         offset += fetch_limit;
+    }
+
+    if selected.is_empty() {
+        for (cluster_key, summary) in low_signal_fallback {
+            if seen_clusters.insert(cluster_key) {
+                selected.push(summary);
+            }
+            if selected.len() >= limit {
+                break;
+            }
+        }
     }
 
     Ok(selected)
@@ -346,6 +367,18 @@ fn query_summary_batch(
 fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
     let haystack = session_summary_haystack(summary);
     is_self_diagnostic_text(&haystack)
+}
+
+fn is_stale_design_prototype_summary(summary: &SessionSummaryBrief, now_epoch: i64) -> bool {
+    let age_days = (now_epoch - summary.created_at_epoch) / 86400;
+    if age_days <= STALE_DESIGN_SUMMARY_DAYS {
+        return false;
+    }
+
+    let haystack = session_summary_haystack(summary);
+    ["landing page", "wireframe", "starfield"]
+        .iter()
+        .any(|needle| haystack.contains(needle))
 }
 
 fn summary_cluster_key(summary: &SessionSummaryBrief) -> String {
