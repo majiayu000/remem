@@ -4,7 +4,7 @@
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                    Claude Code Hooks                       │
+│                 Claude Code / Codex Hooks                  │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
 │  UserPromptSubmit ──→ session-init  (register + flush)     │
@@ -289,7 +289,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 |----------|---------|-------------|
 | `REMEM_DATA_DIR` | `~/.remem` | Data directory (DB + logs) |
 | `REMEM_MODEL` | `haiku` | AI model (haiku/sonnet/opus or full model ID) |
-| `REMEM_EXECUTOR` | `auto` | AI executor: `auto` (HTTP first) / `http` / `cli` |
+| `REMEM_EXECUTOR` | `auto` | AI executor: `auto` (HTTP first) / `http` / `claude-cli` / `codex-cli` |
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Custom API endpoint |
 | `REMEM_DEBUG` | - | Enable debug logging |
@@ -302,6 +302,8 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_SHOW_WORK_TOKENS` | `true` | Show work token statistics |
 | `REMEM_CONTEXT_SHOW_LAST_SUMMARY` | `true` | Show last session summary |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI path |
+| `REMEM_CODEX_PATH` | `codex` | Codex CLI path |
+| `REMEM_CODEX_MODEL` | - | Optional Codex CLI model override |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
 | `REMEM_SAVE_MEMORY_LOCAL_COPY` | `true` | Enable local Markdown backup for save_memory |
 | `REMEM_SAVE_MEMORY_LOCAL_DIR` | `~/.remem/manual-notes` | Local backup directory |

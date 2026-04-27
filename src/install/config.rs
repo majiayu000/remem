@@ -4,20 +4,44 @@ use std::path::Path;
 
 use crate::install::json_io::{read_json_file, write_json_file};
 
-pub(in crate::install) fn build_hooks(bin: &str) -> Value {
+#[derive(Clone, Copy)]
+pub(in crate::install) enum HookExecutor {
+    ClaudeCli,
+    CodexCli,
+}
+
+impl HookExecutor {
+    fn env_value(self) -> &'static str {
+        match self {
+            Self::ClaudeCli => "claude-cli",
+            Self::CodexCli => "codex-cli",
+        }
+    }
+}
+
+fn hook_command(bin: &str, executor: HookExecutor, subcommand: &str) -> String {
+    format!(
+        "REMEM_EXECUTOR={} {} {}",
+        executor.env_value(),
+        bin,
+        subcommand
+    )
+}
+
+pub(in crate::install) fn build_hooks(bin: &str, executor: HookExecutor) -> Value {
     json!({
         "SessionStart": [{
-            "hooks": [{ "type": "command", "command": format!("{} context", bin), "timeout": 15000 }]
+            "hooks": [{ "type": "command", "command": hook_command(bin, executor, "context"), "timeout": 15000 }]
         }],
         "UserPromptSubmit": [{
-            "hooks": [{ "type": "command", "command": format!("{} session-init", bin), "timeout": 15000 }]
+            "hooks": [{ "type": "command", "command": hook_command(bin, executor, "session-init"), "timeout": 15000 }]
         }],
         "PostToolUse": [{
             "matcher": "Write|Edit|NotebookEdit|Bash|Task",
-            "hooks": [{ "type": "command", "command": format!("{} observe", bin), "timeout": 120000 }]
+            "hooks": [{ "type": "command", "command": hook_command(bin, executor, "observe"), "timeout": 120000 }]
         }],
         "Stop": [{
-            "hooks": [{ "type": "command", "command": format!("{} summarize", bin), "timeout": 120000 }]
+            "hooks": [{ "type": "command", "command": hook_command(bin, executor, "summarize"), "timeout": 120000 }]
         }]
     })
 }
@@ -73,11 +97,15 @@ pub(in crate::install) fn remove_remem_hooks(settings: &mut Value, bin: &str) {
 ///
 /// Idempotent: strips any existing remem hook entries before appending fresh
 /// ones, so repeated calls converge on the same state.
-pub(in crate::install) fn apply_hooks_json(path: &Path, bin: &str) -> Result<()> {
+pub(in crate::install) fn apply_hooks_json(
+    path: &Path,
+    bin: &str,
+    executor: HookExecutor,
+) -> Result<()> {
     let mut doc = read_json_file(&path.to_path_buf())?;
     remove_remem_hooks(&mut doc, bin);
 
-    let new_hooks = build_hooks(bin);
+    let new_hooks = build_hooks(bin, executor);
     let obj = doc
         .as_object_mut()
         .with_context(|| format!("{} 根节点不是 Object", path.display()))?;

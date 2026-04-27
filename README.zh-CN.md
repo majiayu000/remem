@@ -4,7 +4,7 @@
 
 语言： [English](README.md) | **简体中文**
 
-`remem` 是面向 Claude Code 的持久记忆工具。它是一个 Rust 单二进制程序，会在会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。
+`remem` 是面向 Claude Code 和 Codex 的持久记忆工具。它是一个 Rust 单二进制程序，会在会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -41,18 +41,18 @@ cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
 
-# 配置 Claude Code hooks + MCP
+# 配置检测到的 Claude Code/Codex hooks + MCP
 remem install
 ```
 
-安装后重启 Claude Code。
+安装后重启对应的 AI 编程工具。
 
 ## 工作机制
 
-`remem` 通过 Claude Code Hooks 自动运行：
+`remem` 通过 host hooks 自动运行：
 
 ```
-你的 Claude Code 正常工作流
+你的 Claude Code/Codex 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
         |- UserPromptSubmit  -> 注册会话、刷新旧队列

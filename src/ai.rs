@@ -1,4 +1,5 @@
 mod cli;
+mod codex_cli;
 mod config;
 mod http;
 mod pricing;
@@ -8,6 +9,7 @@ mod types;
 mod usage;
 
 use cli::call_cli;
+use codex_cli::call_codex_cli;
 use http::call_http;
 use pricing::estimate_tokens;
 use usage::record_usage;
@@ -21,8 +23,11 @@ pub async fn call_ai(
     ctx: UsageContext<'_>,
 ) -> anyhow::Result<String> {
     let result = match std::env::var("REMEM_EXECUTOR").ok().as_deref() {
-        Some("http") => call_http(system, user_message).await,
-        Some("cli") => call_cli(system, user_message).await,
+        Some("http") | Some("anthropic-http") | Some("anthropic") => {
+            call_http(system, user_message).await
+        }
+        Some("cli") | Some("claude-cli") | Some("claude") => call_cli(system, user_message).await,
+        Some("codex-cli") | Some("codex") => call_codex_cli(system, user_message).await,
         _ => {
             if std::env::var("ANTHROPIC_API_KEY").is_ok()
                 || std::env::var("ANTHROPIC_AUTH_TOKEN").is_ok()

@@ -1,25 +1,46 @@
 use serde_json::json;
 
-use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp};
+use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp, HookExecutor};
 
 #[test]
-fn build_hooks_contains_expected_commands() {
-    let hooks = build_hooks("/tmp/remem");
+fn build_hooks_contains_expected_claude_commands() {
+    let hooks = build_hooks("/tmp/remem", HookExecutor::ClaudeCli);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
-        "/tmp/remem context"
+        "REMEM_EXECUTOR=claude-cli /tmp/remem context"
     );
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "/tmp/remem session-init"
+        "REMEM_EXECUTOR=claude-cli /tmp/remem session-init"
     );
     assert_eq!(
         hooks["PostToolUse"][0]["hooks"][0]["command"],
-        "/tmp/remem observe"
+        "REMEM_EXECUTOR=claude-cli /tmp/remem observe"
     );
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
-        "/tmp/remem summarize"
+        "REMEM_EXECUTOR=claude-cli /tmp/remem summarize"
+    );
+}
+
+#[test]
+fn build_hooks_contains_expected_codex_commands() {
+    let hooks = build_hooks("/tmp/remem", HookExecutor::CodexCli);
+    assert_eq!(
+        hooks["SessionStart"][0]["hooks"][0]["command"],
+        "REMEM_EXECUTOR=codex-cli /tmp/remem context"
+    );
+    assert_eq!(
+        hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
+        "REMEM_EXECUTOR=codex-cli /tmp/remem session-init"
+    );
+    assert_eq!(
+        hooks["PostToolUse"][0]["hooks"][0]["command"],
+        "REMEM_EXECUTOR=codex-cli /tmp/remem observe"
+    );
+    assert_eq!(
+        hooks["Stop"][0]["hooks"][0]["command"],
+        "REMEM_EXECUTOR=codex-cli /tmp/remem summarize"
     );
 }
 

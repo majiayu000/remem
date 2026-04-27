@@ -4,7 +4,7 @@
 
 Language: **English** | [简体中文](README.zh-CN.md)
 
-Persistent memory for Claude Code. A single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings.
+Persistent memory for Claude Code and Codex. A single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -41,18 +41,18 @@ cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
 
-# Configure Claude Code hooks + MCP
+# Configure detected Claude Code/Codex hooks + MCP
 remem install
 ```
 
-Restart Claude Code after installation.
+Restart your AI coding tool after installation.
 
 ## How It Works
 
-remem runs through Claude Code hooks:
+remem runs through host hooks:
 
 ```
-Your normal Claude Code workflow
+Your normal Claude Code/Codex workflow
         |
         |- SessionStart      -> Inject memories + preferences
         |- UserPromptSubmit  -> Register session, flush stale queues

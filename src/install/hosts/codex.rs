@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
-use crate::install::config::{build_hooks, remove_remem_hooks, strip_hooks_json};
+use crate::install::config::{build_hooks, remove_remem_hooks, strip_hooks_json, HookExecutor};
 use crate::install::host::{HookSupport, InstallHost};
 use crate::install::json_io::{read_json_file, write_json_file};
 use crate::install::paths::{codex_config_path, codex_hooks_path};
@@ -123,7 +123,7 @@ fn apply_codex_hooks_json(path: &Path, bin: &str) -> Result<()> {
 }
 
 fn build_codex_hooks(bin: &str) -> Value {
-    let mut hooks = build_hooks(bin);
+    let mut hooks = build_hooks(bin, HookExecutor::CodexCli);
     convert_hook_timeouts_to_seconds(&mut hooks);
     hooks
 }
@@ -279,6 +279,10 @@ startup_timeout_sec = 5
         assert_eq!(hooks["UserPromptSubmit"][0]["hooks"][0]["timeout"], 15);
         assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 120);
         assert_eq!(hooks["Stop"][0]["hooks"][0]["timeout"], 120);
+        assert_eq!(
+            hooks["Stop"][0]["hooks"][0]["command"],
+            "REMEM_EXECUTOR=codex-cli /tmp/remem summarize"
+        );
     }
 
     #[test]
