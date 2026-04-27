@@ -289,7 +289,11 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 |----------|---------|-------------|
 | `REMEM_DATA_DIR` | `~/.remem` | Data directory (DB + logs) |
 | `REMEM_MODEL` | `haiku` | AI model (haiku/sonnet/opus or full model ID) |
-| `REMEM_EXECUTOR` | `auto` | AI executor: `auto` (HTTP first) / `http` / `claude-cli` / `codex-cli` |
+| `REMEM_EXECUTOR` | `auto` | Legacy/general AI executor fallback for summaries and unspecified operations: `auto` / `http` / `claude-cli` / `codex-cli` |
+| `REMEM_SUMMARY_EXECUTOR` | `REMEM_EXECUTOR` | Summary executor override, used by Stop hooks (`claude-cli` for Claude Code, `codex-cli` for Codex) |
+| `REMEM_FLUSH_EXECUTOR` | `auto` | Flush/background observation executor override |
+| `REMEM_COMPRESS_EXECUTOR` | `auto` | Memory compression executor override |
+| `REMEM_DREAM_EXECUTOR` | `auto` | Dream executor override |
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Custom API endpoint |
 | `REMEM_DEBUG` | - | Enable debug logging |

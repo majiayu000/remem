@@ -35,12 +35,22 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
         stdin.write_all(prompt.as_bytes()).await?;
     }
 
-    let output = tokio::time::timeout(
+    let output = match tokio::time::timeout(
         std::time::Duration::from_secs(AI_TIMEOUT_SECS),
         child.wait_with_output(),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("codex CLI timed out after {}s", AI_TIMEOUT_SECS))??;
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            let _ = std::fs::remove_file(&output_path);
+            return Err(error.into());
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(&output_path);
+            anyhow::bail!("codex CLI timed out after {}s", AI_TIMEOUT_SECS);
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
