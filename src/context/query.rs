@@ -12,7 +12,9 @@ const CONTEXT_MEMORY_LIMIT: usize = 50;
 const RECENT_MEMORY_FETCH_LIMIT: i64 = 100;
 const BASENAME_SEARCH_LIMIT: i64 = 20;
 const MAX_SELF_DIAGNOSTIC_MEMORIES: usize = 2;
-const SUMMARY_FETCH_MULTIPLIER: usize = 3;
+const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
+const SUMMARY_MAX_SCAN: usize = 200;
+const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
 
 pub(super) fn load_context_data(
     conn: &Connection,
@@ -280,25 +282,77 @@ pub(super) fn query_recent_summaries(
     project: &str,
     limit: usize,
 ) -> Result<Vec<SessionSummaryBrief>> {
-    let fetch_limit = limit.saturating_mul(SUMMARY_FETCH_MULTIPLIER).max(limit);
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let now_epoch = chrono::Utc::now().timestamp();
+    let scan_limit = SUMMARY_MAX_SCAN.max(limit);
+    let mut selected = Vec::new();
+    let mut fallback = Vec::new();
+    let mut seen_clusters = HashSet::new();
+    let mut offset = 0usize;
+
+    while selected.len() < limit && offset < scan_limit {
+        let fetch_limit = SUMMARY_FETCH_BATCH_SIZE.min(scan_limit - offset);
+        let batch = query_summary_batch(conn, project, fetch_limit, offset)?;
+        if batch.is_empty() {
+            break;
+        }
+
+        for summary in batch {
+            if is_session_summary_self_diagnostic(&summary) {
+                continue;
+            }
+
+            if !seen_clusters.insert(summary_cluster_key(&summary)) {
+                continue;
+            }
+
+            if is_stale_design_prototype_summary(&summary, now_epoch) {
+                fallback.push(summary);
+                continue;
+            }
+
+            selected.push(summary);
+            if selected.len() >= limit {
+                break;
+            }
+        }
+
+        offset += fetch_limit;
+    }
+
+    if selected.is_empty() {
+        selected.extend(fallback.into_iter().take(limit));
+    }
+
+    Ok(selected)
+}
+
+fn query_summary_batch(
+    conn: &Connection,
+    project: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<SessionSummaryBrief>> {
     let mut stmt = conn.prepare(
         "SELECT request, completed, created_at_epoch \
          FROM session_summaries \
          WHERE project = ?1 AND request IS NOT NULL AND request != '' \
-         ORDER BY created_at_epoch DESC LIMIT ?2",
+         ORDER BY created_at_epoch DESC LIMIT ?2 OFFSET ?3",
     )?;
-    let rows = stmt.query_map(rusqlite::params![project, fetch_limit as i64], |row| {
-        Ok(SessionSummaryBrief {
-            request: row.get(0)?,
-            completed: row.get(1)?,
-            created_at_epoch: row.get(2)?,
-        })
-    })?;
-    Ok(rows
-        .flatten()
-        .filter(|summary| !is_session_summary_self_diagnostic(summary))
-        .take(limit)
-        .collect())
+    let rows = stmt.query_map(
+        rusqlite::params![project, limit as i64, offset as i64],
+        |row| {
+            Ok(SessionSummaryBrief {
+                request: row.get(0)?,
+                completed: row.get(1)?,
+                created_at_epoch: row.get(2)?,
+            })
+        },
+    )?;
+    crate::db_query::collect_rows(rows)
 }
 
 fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
@@ -308,4 +362,34 @@ fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
         summary.completed.as_deref().unwrap_or_default()
     );
     is_self_diagnostic_text(&haystack)
+}
+
+fn is_stale_design_prototype_summary(summary: &SessionSummaryBrief, now_epoch: i64) -> bool {
+    let age_days = (now_epoch - summary.created_at_epoch) / 86400;
+    if age_days <= STALE_DESIGN_SUMMARY_DAYS {
+        return false;
+    }
+
+    let haystack = session_summary_haystack(summary);
+    ["landing page", "wireframe", "starfield"]
+        .iter()
+        .any(|needle| haystack.contains(needle))
+}
+
+fn summary_cluster_key(summary: &SessionSummaryBrief) -> String {
+    let request = normalize_cluster_text(&summary.request);
+    let tokens: Vec<&str> = request.split_whitespace().collect();
+    if let Some(reference_key) = reference_cluster_key(&tokens) {
+        return reference_key;
+    }
+    context_cluster_suffix(&request)
+}
+
+fn session_summary_haystack(summary: &SessionSummaryBrief) -> String {
+    format!(
+        "{} {}",
+        summary.request,
+        summary.completed.as_deref().unwrap_or_default()
+    )
+    .to_ascii_lowercase()
 }
