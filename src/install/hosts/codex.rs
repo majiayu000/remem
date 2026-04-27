@@ -281,7 +281,7 @@ startup_timeout_sec = 5
         assert_eq!(hooks["Stop"][0]["hooks"][0]["timeout"], 120);
         assert_eq!(
             hooks["Stop"][0]["hooks"][0]["command"],
-            "REMEM_EXECUTOR=codex-cli /tmp/remem summarize"
+            "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize"
         );
     }
 

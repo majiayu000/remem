@@ -76,13 +76,87 @@ fn spawn_worker_once() -> Result<()> {
         Some(file) => std::process::Stdio::from(file),
         None => std::process::Stdio::null(),
     };
-    let _child = std::process::Command::new(&exe)
+    let mut command = std::process::Command::new(&exe);
+    command
         .arg("worker")
         .arg("--once")
         .env("REMEM_STDERR_TO_LOG", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(stderr_cfg)
-        .spawn()?;
+        .stderr(stderr_cfg);
+    configure_worker_executor_env(&mut command);
+    let _child = command.spawn()?;
     Ok(())
+}
+
+fn configure_worker_executor_env(command: &mut std::process::Command) {
+    if std::env::var_os("REMEM_SUMMARY_EXECUTOR").is_none() {
+        if let Some(executor) = std::env::var_os("REMEM_EXECUTOR") {
+            command.env("REMEM_SUMMARY_EXECUTOR", executor);
+        }
+    }
+    command.env_remove("REMEM_EXECUTOR");
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::sync::Mutex;
+
+    use super::configure_worker_executor_env;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+        let old_values = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        for (key, value) in vars {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+
+        let result = f();
+
+        for (key, value) in old_values {
+            match value {
+                Some(value) => unsafe { std::env::set_var(&key, value) },
+                None => unsafe { std::env::remove_var(&key) },
+            }
+        }
+
+        result
+    }
+
+    fn command_env<'a>(command: &'a std::process::Command, key: &str) -> Option<Option<&'a OsStr>> {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new(key))
+            .map(|(_, value)| value)
+    }
+
+    #[test]
+    fn worker_env_translates_legacy_global_executor_to_summary_only() {
+        with_env_vars(
+            &[
+                ("REMEM_EXECUTOR", Some("codex-cli")),
+                ("REMEM_SUMMARY_EXECUTOR", None),
+            ],
+            || {
+                let mut command = std::process::Command::new("remem");
+                configure_worker_executor_env(&mut command);
+
+                assert_eq!(
+                    command_env(&command, "REMEM_SUMMARY_EXECUTOR"),
+                    Some(Some(OsStr::new("codex-cli")))
+                );
+                assert_eq!(command_env(&command, "REMEM_EXECUTOR"), Some(None));
+            },
+        );
+    }
 }

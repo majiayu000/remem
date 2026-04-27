@@ -11,7 +11,7 @@ pub(in crate::install) enum HookExecutor {
 }
 
 impl HookExecutor {
-    fn env_value(self) -> &'static str {
+    fn summary_executor(self) -> &'static str {
         match self {
             Self::ClaudeCli => "claude-cli",
             Self::CodexCli => "codex-cli",
@@ -20,12 +20,16 @@ impl HookExecutor {
 }
 
 fn hook_command(bin: &str, executor: HookExecutor, subcommand: &str) -> String {
-    format!(
-        "REMEM_EXECUTOR={} {} {}",
-        executor.env_value(),
-        bin,
-        subcommand
-    )
+    if subcommand == "summarize" {
+        format!(
+            "REMEM_SUMMARY_EXECUTOR={} {} {}",
+            executor.summary_executor(),
+            bin,
+            subcommand
+        )
+    } else {
+        format!("{} {}", bin, subcommand)
+    }
 }
 
 pub(in crate::install) fn build_hooks(bin: &str, executor: HookExecutor) -> Value {
