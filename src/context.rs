@@ -1,4 +1,5 @@
 mod format;
+mod memory_traits;
 mod query;
 mod render;
 mod sections;
