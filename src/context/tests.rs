@@ -3,7 +3,7 @@ use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
-use super::query::load_context_data;
+use super::query::{load_context_data, query_recent_summaries};
 use super::sections::{
     render_core_memory, render_memory_index, render_recent_sessions, render_workstreams,
 };
@@ -260,6 +260,46 @@ fn load_context_data_prefers_current_branch_within_dedup_cluster() {
 }
 
 #[test]
+fn load_context_data_keeps_current_branch_memories_before_limit() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/vibeguard";
+    let now = chrono::Utc::now().timestamp();
+
+    for idx in 0..55 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("branchless-topic-{idx}")),
+            "decision",
+            &format!("Branchless decision {idx}"),
+            "Recent branchless decision body",
+            now - idx,
+        );
+    }
+    insert_memory_with_branch(
+        &conn,
+        200,
+        project,
+        Some("current-branch-topic"),
+        "bugfix",
+        "Current branch operational fix",
+        "Older but branch-specific fix body",
+        now - 1_000,
+        Some("fix/context-selection"),
+    );
+
+    let loaded = load_context_data(&conn, project, Some("fix/context-selection"));
+
+    assert_eq!(loaded.memories.len(), 50);
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Current branch operational fix"));
+}
+
+#[test]
 fn load_context_data_limits_memory_self_diagnostics_before_index_rendering() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
@@ -301,6 +341,71 @@ fn load_context_data_limits_memory_self_diagnostics_before_index_rendering() {
         .memories
         .iter()
         .any(|memory| memory.title == "Fix guard path source selection"));
+}
+
+#[test]
+fn query_recent_summaries_filters_self_diagnostics_and_backfills() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE session_summaries (
+            project TEXT,
+            request TEXT,
+            completed TEXT,
+            created_at_epoch INTEGER
+        );",
+    )
+    .unwrap();
+    let project = "/tmp/vibeguard";
+
+    insert_session_summary(
+        &conn,
+        project,
+        "Debug remem context memory injection",
+        Some("SessionStart memories loaded investigation"),
+        300,
+    );
+    insert_session_summary(
+        &conn,
+        project,
+        "Fix runtime hook",
+        Some("Validated hook behavior"),
+        299,
+    );
+    insert_session_summary(
+        &conn,
+        project,
+        "Analyze SessionStart memories loaded",
+        None,
+        298,
+    );
+    insert_session_summary(
+        &conn,
+        project,
+        "Review PR install paths",
+        Some("Checked install scripts"),
+        297,
+    );
+    insert_session_summary(
+        &conn,
+        project,
+        "Memory injection follow-up",
+        Some("remem context smoke test"),
+        296,
+    );
+    insert_session_summary(
+        &conn,
+        project,
+        "Repair guard source path",
+        Some("Added source path evidence"),
+        295,
+    );
+
+    let summaries = query_recent_summaries(&conn, project, 3).unwrap();
+
+    assert_eq!(summaries.len(), 3);
+    assert_eq!(summaries[0].request, "Fix runtime hook");
+    assert_eq!(summaries[1].request, "Review PR install paths");
+    assert_eq!(summaries[2].request, "Repair guard source path");
 }
 
 fn sample_memory(id: i64, memory_type: &str, title: &str) -> Memory {
@@ -379,6 +484,21 @@ fn insert_memory_with_branch(
             updated_at_epoch,
             branch
         ],
+    )
+    .unwrap();
+}
+
+fn insert_session_summary(
+    conn: &Connection,
+    project: &str,
+    request: &str,
+    completed: Option<&str>,
+    created_at_epoch: i64,
+) {
+    conn.execute(
+        "INSERT INTO session_summaries (project, request, completed, created_at_epoch)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![project, request, completed, created_at_epoch],
     )
     .unwrap();
 }

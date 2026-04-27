@@ -5,13 +5,14 @@ use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
 
-use super::memory_traits::is_memory_self_diagnostic;
+use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::types::{LoadedContext, SessionSummaryBrief};
 
 const CONTEXT_MEMORY_LIMIT: usize = 50;
 const RECENT_MEMORY_FETCH_LIMIT: i64 = 100;
 const BASENAME_SEARCH_LIMIT: i64 = 20;
 const MAX_SELF_DIAGNOSTIC_MEMORIES: usize = 2;
+const SUMMARY_FETCH_MULTIPLIER: usize = 3;
 
 pub(super) fn load_context_data(
     conn: &Connection,
@@ -65,10 +66,10 @@ fn load_project_memories(
         }
     }
 
-    limit_self_diagnostic_memories(deduplicate_memory_clusters(memories, current_branch))
-        .into_iter()
-        .take(CONTEXT_MEMORY_LIMIT)
-        .collect()
+    let mut selected =
+        limit_self_diagnostic_memories(deduplicate_memory_clusters(memories, current_branch));
+    sort_memories_by_branch(&mut selected, current_branch);
+    selected.into_iter().take(CONTEXT_MEMORY_LIMIT).collect()
 }
 
 fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {
@@ -279,18 +280,32 @@ pub(super) fn query_recent_summaries(
     project: &str,
     limit: usize,
 ) -> Result<Vec<SessionSummaryBrief>> {
+    let fetch_limit = limit.saturating_mul(SUMMARY_FETCH_MULTIPLIER).max(limit);
     let mut stmt = conn.prepare(
         "SELECT request, completed, created_at_epoch \
          FROM session_summaries \
          WHERE project = ?1 AND request IS NOT NULL AND request != '' \
          ORDER BY created_at_epoch DESC LIMIT ?2",
     )?;
-    let rows = stmt.query_map(rusqlite::params![project, limit as i64], |row| {
+    let rows = stmt.query_map(rusqlite::params![project, fetch_limit as i64], |row| {
         Ok(SessionSummaryBrief {
             request: row.get(0)?,
             completed: row.get(1)?,
             created_at_epoch: row.get(2)?,
         })
     })?;
-    Ok(rows.flatten().collect())
+    Ok(rows
+        .flatten()
+        .filter(|summary| !is_session_summary_self_diagnostic(summary))
+        .take(limit)
+        .collect())
+}
+
+fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
+    let haystack = format!(
+        "{} {}",
+        summary.request,
+        summary.completed.as_deref().unwrap_or_default()
+    );
+    is_self_diagnostic_text(&haystack)
 }
