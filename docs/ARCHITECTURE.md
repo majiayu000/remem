@@ -4,11 +4,14 @@
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                    Claude Code Hooks                       │
+│              Host Hooks (Claude Code / Codex)              │
+│                                                            │
+│  Claude Code: SessionStart/UserPromptSubmit/PostToolUse/Stop│
+│  Codex:       SessionStart/Stop                            │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
-│  UserPromptSubmit ──→ session-init  (register + flush)     │
-│  PostToolUse ───────→ observe       (filter + queue)       │
+│  UserPromptSubmit ──→ session-init  (Claude Code only)     │
+│  PostToolUse ───────→ observe       (Claude Code only)     │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
                │                      │
@@ -73,7 +76,7 @@
 
 ## Data Flow
 
-### 1. Observation Capture (PostToolUse → observe)
+### 1. Observation Capture (Claude Code PostToolUse → observe)
 
 ```
 Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
@@ -157,7 +160,7 @@ New session starts
        └─ Recent session summaries (request/completed)
 ```
 
-### 4. Stale Queue Recovery (UserPromptSubmit → session_init)
+### 4. Stale Queue Recovery (Claude Code UserPromptSubmit → session_init)
 
 ```
 New message submitted
@@ -289,7 +292,11 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 |----------|---------|-------------|
 | `REMEM_DATA_DIR` | `~/.remem` | Data directory (DB + logs) |
 | `REMEM_MODEL` | `haiku` | AI model (haiku/sonnet/opus or full model ID) |
-| `REMEM_EXECUTOR` | `auto` | AI executor: `auto` (HTTP first) / `http` / `cli` |
+| `REMEM_EXECUTOR` | `auto` | Legacy/general AI executor fallback for summaries and unspecified operations: `auto` / `http` / `claude-cli` / `codex-cli` |
+| `REMEM_SUMMARY_EXECUTOR` | `REMEM_EXECUTOR` | Summary executor override, used by Stop hooks (`claude-cli` for Claude Code, `codex-cli` for Codex) |
+| `REMEM_FLUSH_EXECUTOR` | `auto` | Flush/background observation executor override |
+| `REMEM_COMPRESS_EXECUTOR` | `auto` | Memory compression executor override |
+| `REMEM_DREAM_EXECUTOR` | `auto` | Dream executor override |
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Custom API endpoint |
 | `REMEM_DEBUG` | - | Enable debug logging |
@@ -302,6 +309,8 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_SHOW_WORK_TOKENS` | `true` | Show work token statistics |
 | `REMEM_CONTEXT_SHOW_LAST_SUMMARY` | `true` | Show last session summary |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI path |
+| `REMEM_CODEX_PATH` | `codex` | Codex CLI path |
+| `REMEM_CODEX_MODEL` | - | Optional Codex CLI model override |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
 | `REMEM_SAVE_MEMORY_LOCAL_COPY` | `true` | Enable local Markdown backup for save_memory |
 | `REMEM_SAVE_MEMORY_LOCAL_DIR` | `~/.remem/manual-notes` | Local backup directory |
@@ -371,7 +380,7 @@ memories_fts (title, content)                                    -- FTS5 trigram
 - **HTTP-first AI calls**: HTTP API direct 2-5s vs `claude -p` CLI 30+s, 6-12x performance gap
 - **Stop hook async**: Dispatcher returns in 6ms, `std::process::Command` spawns independent worker
 - **SQLite single-file + WAL**: Zero dependencies, FTS5 full-text search, WAL concurrent read/write
-- **Queue batch processing**: PostToolUse only queues (<1ms), Stop processes ≤15 events in one AI call
+- **Queue batch processing**: Claude Code PostToolUse only queues (<1ms), Stop processes ≤15 events in one AI call
 - **Decision priority**: Summary fields ordered decisions > completed > learned, architectural knowledge most valuable
 - **Schema version control**: `PRAGMA user_version` skips repeated migration, reduces per-hook DB overhead
 - **Stable project key**: `parent/dirname@hash12`, readable prefix + canonical path hash, eliminates same-name directory collisions

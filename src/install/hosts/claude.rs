@@ -3,7 +3,7 @@ use serde_json::json;
 use std::path::PathBuf;
 
 use crate::install::config::{
-    apply_hooks_json, build_mcp_server, remove_remem_mcp, strip_hooks_json,
+    apply_hooks_json, build_mcp_server, remove_remem_mcp, strip_hooks_json, HookStrategy,
 };
 use crate::install::host::{HookSupport, InstallHost};
 use crate::install::json_io::{read_json_file, write_json_file};
@@ -65,7 +65,7 @@ impl InstallHost for ClaudeHost {
             remove_remem_mcp(&mut doc, bin);
             write_json_file(&path, &doc)?;
         }
-        apply_hooks_json(&path, bin)?;
+        apply_hooks_json(&path, bin, HookStrategy::ClaudeCode)?;
         Ok(HookSupport::Installed)
     }
 

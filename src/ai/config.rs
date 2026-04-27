@@ -16,3 +16,13 @@ pub(super) fn resolve_model_for_api(short: &str) -> &str {
 pub(super) fn get_claude_path() -> String {
     std::env::var("REMEM_CLAUDE_PATH").unwrap_or_else(|_| "claude".to_string())
 }
+
+pub(super) fn get_codex_path() -> String {
+    std::env::var("REMEM_CODEX_PATH").unwrap_or_else(|_| "codex".to_string())
+}
+
+pub(super) fn get_codex_model() -> Option<String> {
+    std::env::var("REMEM_CODEX_MODEL")
+        .ok()
+        .filter(|model| !model.trim().is_empty())
+}

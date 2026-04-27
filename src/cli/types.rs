@@ -3,7 +3,11 @@ use clap::{Parser, Subcommand};
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
-#[command(name = "remem", about = "Persistent memory for Claude Code", version)]
+#[command(
+    name = "remem",
+    about = "Persistent memory for Claude Code and Codex",
+    version
+)]
 pub(super) struct Cli {
     #[command(subcommand)]
     pub(super) command: Commands,

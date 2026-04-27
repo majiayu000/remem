@@ -16,12 +16,30 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             session_id,
             color,
         } => {
+            if remem_hooks_disabled() {
+                return Ok(());
+            }
             let cwd = resolve_cwd_arg(cwd);
             context::generate_context(&cwd, session_id.as_deref(), color)?;
         }
-        Commands::SessionInit => observe::session_init().await?,
-        Commands::Observe => observe::observe().await?,
-        Commands::Summarize => summarize::summarize().await?,
+        Commands::SessionInit => {
+            if remem_hooks_disabled() {
+                return Ok(());
+            }
+            observe::session_init().await?;
+        }
+        Commands::Observe => {
+            if remem_hooks_disabled() {
+                return Ok(());
+            }
+            observe::observe().await?;
+        }
+        Commands::Summarize => {
+            if remem_hooks_disabled() {
+                return Ok(());
+            }
+            summarize::summarize().await?;
+        }
         Commands::Worker { once } => worker::run(once, 2000).await?,
         Commands::Mcp => mcp::run_mcp_server().await?,
         Commands::Install { target, dry_run } => install::install(target, dry_run)?,
@@ -54,4 +72,10 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn remem_hooks_disabled() -> bool {
+    std::env::var("REMEM_DISABLE_HOOKS")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }

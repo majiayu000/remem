@@ -5,7 +5,7 @@ use rmcp::{tool_handler, ServerHandler, ServiceExt};
 use super::MemoryServer;
 use crate::db;
 
-const SERVER_INSTRUCTIONS: &str = r#"Persistent memory for Claude Code sessions.
+const SERVER_INSTRUCTIONS: &str = r#"Persistent memory for Claude Code and Codex sessions.
 
 ## Workflow
 1. **Context index** is auto-injected at session start (titles + types, ~50 tokens each)

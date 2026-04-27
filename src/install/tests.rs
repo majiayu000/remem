@@ -1,10 +1,10 @@
 use serde_json::json;
 
-use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp};
+use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp, HookStrategy};
 
 #[test]
-fn build_hooks_contains_expected_commands() {
-    let hooks = build_hooks("/tmp/remem");
+fn build_hooks_contains_expected_claude_commands() {
+    let hooks = build_hooks("/tmp/remem", HookStrategy::ClaudeCode);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context"
@@ -19,7 +19,22 @@ fn build_hooks_contains_expected_commands() {
     );
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
-        "/tmp/remem summarize"
+        "REMEM_SUMMARY_EXECUTOR=claude-cli /tmp/remem summarize"
+    );
+}
+
+#[test]
+fn build_hooks_contains_expected_codex_commands() {
+    let hooks = build_hooks("/tmp/remem", HookStrategy::Codex);
+    assert_eq!(
+        hooks["SessionStart"][0]["hooks"][0]["command"],
+        "/tmp/remem context"
+    );
+    assert!(hooks.get("UserPromptSubmit").is_none());
+    assert!(hooks.get("PostToolUse").is_none());
+    assert_eq!(
+        hooks["Stop"][0]["hooks"][0]["command"],
+        "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize"
     );
 }
 
