@@ -53,21 +53,7 @@ fn host_present(probe: &HostProbe) -> bool {
 }
 
 fn active_hosts() -> Vec<HostProbe> {
-    let hosts: Vec<HostProbe> = known_hosts().into_iter().filter(host_present).collect();
-    if hosts.is_empty() {
-        return hosts;
-    }
-
-    let targeted: Vec<HostProbe> = hosts
-        .iter()
-        .filter(|probe| host_targets_remem(probe))
-        .cloned()
-        .collect();
-    if targeted.is_empty() {
-        hosts
-    } else {
-        targeted
-    }
+    known_hosts().into_iter().filter(host_present).collect()
 }
 
 /// Produce one Check per detected host's hooks file. Hosts whose config
@@ -236,10 +222,6 @@ fn mcp_check_name(host: &str) -> &'static str {
     }
 }
 
-fn host_targets_remem(probe: &HostProbe) -> bool {
-    hooks_file_has_remem(&probe.hooks_path) || mcp_file_has_remem(probe)
-}
-
 fn display_mcp_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -248,47 +230,10 @@ fn display_mcp_paths(paths: &[PathBuf]) -> String {
         .join(" or ")
 }
 
-fn hooks_file_has_remem(path: &PathBuf) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    match serde_json::from_str::<Value>(&content) {
-        Ok(doc) => ["claude", "codex"]
-            .iter()
-            .flat_map(|host| expected_hook_events(host).iter())
-            .any(|event| event_has_remem_hook(&doc, event)),
-        Err(_) => content.contains("remem"),
-    }
-}
-
 fn expected_hook_events(host: &str) -> &'static [&'static str] {
     match host {
         "codex" => &["SessionStart", "PostToolUse", "Stop"],
         _ => &["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"],
-    }
-}
-
-fn mcp_file_has_remem(probe: &HostProbe) -> bool {
-    probe
-        .mcp_paths
-        .iter()
-        .any(|path| path_has_remem_mcp(probe.name, path))
-}
-
-fn path_has_remem_mcp(host: &str, path: &PathBuf) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    match host {
-        "claude" => match serde_json::from_str::<Value>(&content) {
-            Ok(doc) => claude_has_remem_mcp(&doc),
-            Err(_) => content.contains("remem"),
-        },
-        "codex" => match content.parse::<DocumentMut>() {
-            Ok(doc) => codex_has_remem_mcp(&doc),
-            Err(_) => content.contains("remem"),
-        },
-        _ => false,
     }
 }
 
@@ -352,15 +297,40 @@ fn codex_has_remem_mcp(doc: &DocumentMut) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_path(label: &str) -> PathBuf {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("remem-{label}-{id}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    struct HomeGuard {
+        previous: Option<OsString>,
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(previous) => unsafe { std::env::set_var("HOME", previous) },
+                None => unsafe { std::env::remove_var("HOME") },
+            }
+        }
+    }
+
+    fn with_home_dir<T>(home: &PathBuf, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+        let _home_guard = HomeGuard {
+            previous: std::env::var_os("HOME"),
+        };
+        unsafe { std::env::set_var("HOME", home) };
+        f()
     }
 
     #[test]
@@ -441,7 +411,7 @@ note = "remem"
     }
 
     #[test]
-    fn active_hosts_prefers_hosts_with_remem_markers() {
+    fn active_hosts_keeps_all_present_hosts() {
         let claude_dir = temp_path("doctor-claude");
         let claude = HostProbe {
             name: "claude",
@@ -464,21 +434,59 @@ command = "/tmp/remem"
         )
         .unwrap();
 
-        let hosts = {
-            let present = vec![claude, codex.clone()];
-            let targeted: Vec<_> = present
-                .iter()
-                .filter(|probe| host_targets_remem(probe))
-                .cloned()
-                .collect();
-            if targeted.is_empty() {
-                present
-            } else {
-                targeted
-            }
-        };
+        let expected = vec![claude.clone(), codex.clone()];
+        let hosts: Vec<_> = expected.clone().into_iter().filter(host_present).collect();
 
-        assert_eq!(hosts, vec![codex]);
+        assert_eq!(hosts, expected);
+    }
+
+    #[test]
+    fn doctor_reports_each_present_host_even_if_only_one_targets_remem() {
+        let home = temp_path("doctor-home");
+        let claude_dir = home.join(".claude");
+        let codex_dir = home.join(".codex");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::create_dir_all(&codex_dir).unwrap();
+
+        std::fs::write(
+            codex_dir.join("hooks.json"),
+            r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
+    "PostToolUse": [{ "hooks": [{ "command": "/tmp/remem observe" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize" }] }]
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            codex_dir.join("config.toml"),
+            r#"[mcp_servers.remem]
+command = "/tmp/remem"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            home.join(".claude.json"),
+            r#"{ "mcpServers": { "other": {} } }"#,
+        )
+        .unwrap();
+
+        with_home_dir(&home, || {
+            let hook_checks = check_hooks();
+            assert_eq!(hook_checks.len(), 2);
+            assert_eq!(hook_checks[0].name, "Hooks (claude)");
+            assert!(matches!(hook_checks[0].status, Status::Fail));
+            assert_eq!(hook_checks[1].name, "Hooks (codex)");
+            assert!(matches!(hook_checks[1].status, Status::Ok));
+
+            let mcp_checks = check_mcp();
+            assert_eq!(mcp_checks.len(), 2);
+            assert_eq!(mcp_checks[0].name, "MCP (claude)");
+            assert!(matches!(mcp_checks[0].status, Status::Fail));
+            assert_eq!(mcp_checks[1].name, "MCP (codex)");
+            assert!(matches!(mcp_checks[1].status, Status::Ok));
+        });
     }
 
     #[test]
