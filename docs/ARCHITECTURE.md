@@ -7,11 +7,11 @@
 │              Host Hooks (Claude Code / Codex)              │
 │                                                            │
 │  Claude Code: SessionStart/UserPromptSubmit/PostToolUse/Stop│
-│  Codex:       SessionStart/Stop                            │
+│  Codex:       SessionStart/PostToolUse(Bash)/Stop           │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
 │  UserPromptSubmit ──→ session-init  (Claude Code only)     │
-│  PostToolUse ───────→ observe       (Claude Code only)     │
+│  PostToolUse ───────→ observe       (Claude all, Codex Bash)│
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
                │                      │
@@ -76,7 +76,7 @@
 
 ## Data Flow
 
-### 1. Observation Capture (Claude Code PostToolUse → observe)
+### 1. Observation Capture (PostToolUse → observe)
 
 ```
 Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
@@ -84,8 +84,9 @@ Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
                │              └─ Skip: git status/log/diff, ls, cat,
                │                      npm install, cargo build (read-only)
                │
-               └─ Accept: Write, Edit, NotebookEdit, Bash
-                  Skip: Read, Glob, Grep, Task (read-only tools)
+               └─ Accept: Claude Write/Edit/NotebookEdit/Bash/Task/Agent,
+                          Codex Bash
+                  Skip: Read, Glob, Grep, metadata-only tools
 ```
 
 Each queued event stores: session_id, project, tool_name, tool_input, tool_response (truncated to 4KB).

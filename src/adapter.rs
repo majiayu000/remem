@@ -39,14 +39,38 @@ pub trait ToolAdapter: Send + Sync {
     fn classify_event(&self, event: &ParsedHookEvent) -> Option<EventSummary>;
 }
 
-static ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> =
-    LazyLock::new(|| vec![Box::new(crate::adapter_claude::ClaudeCodeAdapter)]);
+static ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
+    vec![
+        Box::new(crate::adapter_claude::ClaudeCodeAdapter),
+        Box::new(crate::adapter_codex::CodexAdapter),
+    ]
+});
 
 /// Auto-detect adapter from raw hook JSON and parse the event.
 pub fn detect_adapter(raw_json: &str) -> Option<(&'static dyn ToolAdapter, ParsedHookEvent)> {
+    if let Ok(name) = std::env::var("REMEM_HOOK_ADAPTER") {
+        if !name.trim().is_empty() {
+            return detect_adapter_by_name(raw_json, &name);
+        }
+    }
+
     for adapter in ADAPTERS.iter() {
         if let Some(event) = adapter.parse_hook(raw_json) {
             return Some((adapter.as_ref(), event));
+        }
+    }
+    None
+}
+
+pub(crate) fn detect_adapter_by_name(
+    raw_json: &str,
+    name: &str,
+) -> Option<(&'static dyn ToolAdapter, ParsedHookEvent)> {
+    for adapter in ADAPTERS.iter() {
+        if adapter.name() == name {
+            return adapter
+                .parse_hook(raw_json)
+                .map(|event| (adapter.as_ref(), event));
         }
     }
     None
@@ -65,6 +89,29 @@ mod tests {
         assert_eq!(adapter.name(), "claude-code");
         assert_eq!(event.session_id, "s1");
         assert_eq!(event.tool_name, "Edit");
+    }
+
+    #[test]
+    fn detect_codex_input_when_strategy_is_forced() {
+        let json = r#"{"session_id":"s1","cwd":"/tmp","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"python test.py"},"tool_result":{"exitCode":0}}"#;
+        let result = detect_adapter_by_name(json, "codex-cli");
+        assert!(result.is_some());
+        let (adapter, event) = result.unwrap();
+        assert_eq!(adapter.name(), "codex-cli");
+        assert_eq!(event.session_id, "s1");
+        assert_eq!(event.tool_name, "Bash");
+        assert_eq!(event.tool_response.unwrap()["exitCode"], 0);
+    }
+
+    #[test]
+    fn forced_strategy_keeps_adapter_selection_isolated() {
+        let json = r#"{"session_id":"s1","cwd":"/tmp","tool_name":"Edit","tool_input":{"file_path":"x.rs"}}"#;
+
+        let (adapter, _) = detect_adapter_by_name(json, "codex-cli").unwrap();
+        assert_eq!(adapter.name(), "codex-cli");
+        let (adapter, _) = detect_adapter_by_name(json, "claude-code").unwrap();
+        assert_eq!(adapter.name(), "claude-code");
+        assert!(detect_adapter_by_name(json, "missing-adapter").is_none());
     }
 
     #[test]

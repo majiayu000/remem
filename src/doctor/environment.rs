@@ -263,7 +263,7 @@ fn hooks_file_has_remem(path: &PathBuf) -> bool {
 
 fn expected_hook_events(host: &str) -> &'static [&'static str] {
     match host {
-        "codex" => &["SessionStart", "Stop"],
+        "codex" => &["SessionStart", "PostToolUse", "Stop"],
         _ => &["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"],
     }
 }
@@ -387,11 +387,11 @@ mod tests {
         });
 
         assert!(matches!(check.status, Status::Warn));
-        assert!(check.detail.contains("1/2 registered"), "{}", check.detail);
+        assert!(check.detail.contains("1/3 registered"), "{}", check.detail);
     }
 
     #[test]
-    fn probe_hooks_accepts_codex_summary_strategy() {
+    fn probe_hooks_accepts_codex_strategy() {
         let dir = temp_path("doctor-codex-hooks");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
@@ -399,6 +399,7 @@ mod tests {
             r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
+    "PostToolUse": [{ "hooks": [{ "command": "REMEM_HOOK_ADAPTER=codex-cli /tmp/remem observe" }] }],
     "Stop": [{ "hooks": [{ "command": "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize" }] }]
   }
 }"#,
@@ -412,7 +413,7 @@ mod tests {
         });
 
         assert!(matches!(check.status, Status::Ok));
-        assert!(check.detail.contains("2/2 registered"), "{}", check.detail);
+        assert!(check.detail.contains("3/3 registered"), "{}", check.detail);
     }
 
     #[test]

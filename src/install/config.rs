@@ -23,7 +23,28 @@ impl HookStrategy {
     }
 
     fn include_observe(self) -> bool {
-        matches!(self, Self::ClaudeCode)
+        true
+    }
+
+    fn observe_matcher(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "Write|Edit|NotebookEdit|Bash|Task",
+            Self::Codex => "Bash",
+        }
+    }
+
+    fn observe_timeout_ms(self) -> i64 {
+        match self {
+            Self::ClaudeCode => 120000,
+            Self::Codex => 3000,
+        }
+    }
+
+    fn observe_adapter(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex-cli",
+        }
     }
 }
 
@@ -32,6 +53,13 @@ fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
         format!(
             "REMEM_SUMMARY_EXECUTOR={} {} {}",
             strategy.summary_executor(),
+            bin,
+            subcommand
+        )
+    } else if subcommand == "observe" {
+        format!(
+            "REMEM_HOOK_ADAPTER={} {} {}",
+            strategy.observe_adapter(),
             bin,
             subcommand
         )
@@ -63,8 +91,8 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
         hooks.insert(
             "PostToolUse".to_string(),
             json!([{
-                "matcher": "Write|Edit|NotebookEdit|Bash|Task",
-                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": 120000 }]
+                "matcher": strategy.observe_matcher(),
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": strategy.observe_timeout_ms() }]
             }]),
         );
     }

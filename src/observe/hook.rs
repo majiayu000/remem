@@ -42,9 +42,6 @@ pub async fn observe() -> Result<()> {
         return Ok(());
     };
 
-    let branch = event.cwd.as_deref().and_then(db::detect_git_branch);
-    let _commit_sha = event.cwd.as_deref().and_then(db::detect_git_commit);
-
     let conn = db::open_db()?;
     crate::memory::insert_event(
         &conn,
@@ -72,12 +69,13 @@ pub async fn observe() -> Result<()> {
     crate::log::info(
         "observe",
         &format!(
-            "EVENT {} project={} branch={:?}",
-            summary.summary, event.project, branch
+            "EVENT {} project={} tool={}",
+            summary.summary, event.project, event.tool_name
         ),
     );
 
     if matches!(event.tool_name.as_str(), "Write" | "Edit") {
+        let branch = event.cwd.as_deref().and_then(db::detect_git_branch);
         if let Some(file_path) = event
             .tool_input
             .as_ref()

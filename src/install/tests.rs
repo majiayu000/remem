@@ -15,7 +15,7 @@ fn build_hooks_contains_expected_claude_commands() {
     );
     assert_eq!(
         hooks["PostToolUse"][0]["hooks"][0]["command"],
-        "/tmp/remem observe"
+        "REMEM_HOOK_ADAPTER=claude-code /tmp/remem observe"
     );
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
@@ -31,7 +31,12 @@ fn build_hooks_contains_expected_codex_commands() {
         "/tmp/remem context"
     );
     assert!(hooks.get("UserPromptSubmit").is_none());
-    assert!(hooks.get("PostToolUse").is_none());
+    assert_eq!(hooks["PostToolUse"][0]["matcher"], "Bash");
+    assert_eq!(
+        hooks["PostToolUse"][0]["hooks"][0]["command"],
+        "REMEM_HOOK_ADAPTER=codex-cli /tmp/remem observe"
+    );
+    assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 3000);
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize"

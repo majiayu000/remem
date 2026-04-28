@@ -62,6 +62,7 @@ Claude Code workflow
 Codex workflow
         |
         |- SessionStart      -> Inject memories + preferences
+        |- PostToolUse(Bash) -> Capture shell operations (queued, short timeout)
         '- Stop              -> Summarize in background with Codex CLI
 ```
 

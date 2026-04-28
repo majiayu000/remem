@@ -3,13 +3,11 @@ mod tests;
 
 use crate::adapter::{EventSummary, ParsedHookEvent, ToolAdapter};
 
-pub use crate::adapter_common::should_skip_bash_command;
+pub struct CodexAdapter;
 
-pub struct ClaudeCodeAdapter;
-
-impl ToolAdapter for ClaudeCodeAdapter {
+impl ToolAdapter for CodexAdapter {
     fn name(&self) -> &str {
-        "claude-code"
+        "codex-cli"
     }
 
     fn parse_hook(&self, raw_json: &str) -> Option<ParsedHookEvent> {
@@ -21,7 +19,7 @@ impl ToolAdapter for ClaudeCodeAdapter {
     }
 
     fn should_skip_bash(&self, command: &str) -> bool {
-        should_skip_bash_command(command)
+        crate::adapter_common::should_skip_bash_command(command)
     }
 
     fn classify_event(&self, event: &ParsedHookEvent) -> Option<EventSummary> {
