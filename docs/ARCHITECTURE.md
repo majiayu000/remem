@@ -295,7 +295,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_MODEL` | `haiku` | AI model (haiku/sonnet/opus or full model ID) |
 | `REMEM_EXECUTOR` | `auto` | Legacy/general AI executor fallback for summaries and unspecified operations: `auto` / `http` / `claude-cli` / `codex-cli` |
 | `REMEM_SUMMARY_EXECUTOR` | `REMEM_EXECUTOR` | Summary executor override, used by Stop hooks (`claude-cli` for Claude Code, `codex-cli` for Codex) |
-| `REMEM_FLUSH_EXECUTOR` | `auto` | Flush/background observation executor override |
+| `REMEM_FLUSH_EXECUTOR` | `auto` | Flush/background observation executor override. If unset, `flush` / `flush-task` reuse `REMEM_SUMMARY_EXECUTOR` only when it resolves to Codex, so older Codex installs keep working without broadening Claude behavior |
 | `REMEM_COMPRESS_EXECUTOR` | `auto` | Memory compression executor override |
 | `REMEM_DREAM_EXECUTOR` | `auto` | Dream executor override |
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
