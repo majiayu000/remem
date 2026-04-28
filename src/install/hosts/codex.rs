@@ -65,7 +65,7 @@ impl InstallHost for CodexHost {
                 SERVER_KEY
             ),
             format!(
-                "  hooks  -> {} (SessionStart/Stop)",
+                "  hooks  -> {} (SessionStart/PostToolUse(Bash)/Stop)",
                 codex_hooks_path().display()
             ),
             format!("  binary -> {}", bin),
@@ -276,9 +276,14 @@ startup_timeout_sec = 5
     fn build_codex_hooks_uses_second_timeouts() {
         let hooks = build_codex_hooks("/tmp/remem");
         assert_eq!(hooks["SessionStart"][0]["hooks"][0]["timeout"], 15);
+        assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 3);
+        assert_eq!(hooks["PostToolUse"][0]["matcher"], "Bash");
+        assert_eq!(
+            hooks["PostToolUse"][0]["hooks"][0]["command"],
+            "REMEM_HOOK_ADAPTER=codex-cli /tmp/remem observe"
+        );
         assert_eq!(hooks["Stop"][0]["hooks"][0]["timeout"], 120);
         assert!(hooks.get("UserPromptSubmit").is_none());
-        assert!(hooks.get("PostToolUse").is_none());
         assert_eq!(
             hooks["Stop"][0]["hooks"][0]["command"],
             "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize"

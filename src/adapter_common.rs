@@ -1,8 +1,128 @@
-use crate::adapter::EventSummary;
+use serde::Deserialize;
+
+use crate::adapter::{EventSummary, ParsedHookEvent};
 use crate::db;
 use crate::observe::short_path;
 
-pub(super) fn event_summary(
+const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash", "Task", "Agent"];
+
+const SKIP_TOOLS: &[&str] = &[
+    "ListMcpResourcesTool",
+    "SlashCommand",
+    "Skill",
+    "TodoWrite",
+    "AskUserQuestion",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+    "EnterPlanMode",
+    "ExitPlanMode",
+];
+
+const BASH_SKIP_PREFIXES: &[&str] = &[
+    "git status",
+    "git log",
+    "git diff",
+    "git branch",
+    "git stash list",
+    "git remote",
+    "git fetch",
+    "git show",
+    "ls",
+    "pwd",
+    "echo ",
+    "which ",
+    "type ",
+    "whereis ",
+    "cat ",
+    "head ",
+    "tail ",
+    "wc ",
+    "file ",
+    "npm install",
+    "npm ci",
+    "yarn install",
+    "pnpm install",
+    "cargo build",
+    "cargo check",
+    "cargo clippy",
+    "cargo fmt",
+    "cd ",
+    "pushd ",
+    "popd",
+    "lsof ",
+    "ps ",
+    "top",
+    "htop",
+    "df ",
+    "du ",
+    "grep ",
+    "rg ",
+    "find ",
+    "git grep",
+];
+
+#[derive(Debug, Deserialize)]
+struct HookInput {
+    session_id: Option<String>,
+    cwd: Option<String>,
+    tool_name: Option<String>,
+    tool_input: Option<serde_json::Value>,
+    tool_response: Option<serde_json::Value>,
+    tool_output: Option<serde_json::Value>,
+    tool_result: Option<serde_json::Value>,
+}
+
+pub(crate) fn parse_tool_hook(raw_json: &str) -> Option<ParsedHookEvent> {
+    let hook: HookInput = serde_json::from_str(raw_json).ok()?;
+    let session_id = hook.session_id?;
+    let cwd = hook.cwd;
+    let project = db::project_from_cwd(cwd.as_deref().unwrap_or("."));
+    Some(ParsedHookEvent {
+        session_id,
+        cwd,
+        project,
+        tool_name: hook.tool_name.unwrap_or_else(|| "unknown".into()),
+        tool_input: hook.tool_input,
+        tool_response: hook.tool_response.or(hook.tool_output).or(hook.tool_result),
+    })
+}
+
+pub(crate) fn should_skip_tool(tool_name: &str) -> bool {
+    SKIP_TOOLS.contains(&tool_name) || !ACTION_TOOLS.contains(&tool_name)
+}
+
+pub fn should_skip_bash_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    let lowered = trimmed.to_lowercase();
+
+    BASH_SKIP_PREFIXES
+        .iter()
+        .any(|prefix| lowered.starts_with(prefix))
+        || lowered.contains("| grep ")
+        || is_read_only_polling_cmd(&lowered)
+}
+
+fn is_read_only_polling_cmd(cmd_lower: &str) -> bool {
+    let is_curl = cmd_lower.starts_with("curl ");
+    let has_mutation_method = cmd_lower.contains("-x post")
+        || cmd_lower.contains("-x put")
+        || cmd_lower.contains("-x patch")
+        || cmd_lower.contains("-x delete")
+        || cmd_lower.contains("--request post")
+        || cmd_lower.contains("--request put")
+        || cmd_lower.contains("--request patch")
+        || cmd_lower.contains("--request delete");
+
+    if is_curl && !has_mutation_method {
+        return true;
+    }
+
+    cmd_lower.starts_with("sleep ") && cmd_lower.contains("&& curl ")
+}
+
+pub(crate) fn event_summary(
     tool_name: &str,
     input: &Option<serde_json::Value>,
     response: &Option<serde_json::Value>,

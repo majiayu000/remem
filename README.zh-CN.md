@@ -62,6 +62,7 @@ Claude Code 正常工作流
 Codex 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
+        |- PostToolUse(Bash) -> 捕获 shell 操作（入队，短超时）
         '- Stop              -> 使用 Codex CLI 后台总结
 ```
 
