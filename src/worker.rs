@@ -110,7 +110,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::ffi::OsString;
     use std::os::unix::fs::PermissionsExt;
