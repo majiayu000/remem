@@ -60,8 +60,12 @@ fn active_hosts() -> Vec<HostProbe> {
 /// directory doesn't exist are silently skipped — they aren't installed, so
 /// there's nothing to validate.
 pub(super) fn check_hooks() -> Vec<Check> {
+    check_hooks_for(active_hosts())
+}
+
+fn check_hooks_for(hosts: Vec<HostProbe>) -> Vec<Check> {
     let mut checks = Vec::new();
-    for probe in active_hosts() {
+    for probe in hosts {
         checks.push(probe_hooks(probe));
     }
     if checks.is_empty() {
@@ -75,8 +79,12 @@ pub(super) fn check_hooks() -> Vec<Check> {
 }
 
 pub(super) fn check_mcp() -> Vec<Check> {
+    check_mcp_for(active_hosts())
+}
+
+fn check_mcp_for(hosts: Vec<HostProbe>) -> Vec<Check> {
     let mut checks = Vec::new();
-    for probe in active_hosts() {
+    for probe in hosts {
         checks.push(probe_mcp(probe));
     }
     if checks.is_empty() {
@@ -297,40 +305,15 @@ fn codex_has_remem_mcp(doc: &DocumentMut) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsString;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Mutex;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_path(label: &str) -> PathBuf {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("remem-{label}-{id}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    struct HomeGuard {
-        previous: Option<OsString>,
-    }
-
-    impl Drop for HomeGuard {
-        fn drop(&mut self) {
-            match self.previous.take() {
-                Some(previous) => unsafe { std::env::set_var("HOME", previous) },
-                None => unsafe { std::env::remove_var("HOME") },
-            }
-        }
-    }
-
-    fn with_home_dir<T>(home: &PathBuf, f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
-        let _home_guard = HomeGuard {
-            previous: std::env::var_os("HOME"),
-        };
-        unsafe { std::env::set_var("HOME", home) };
-        f()
     }
 
     #[test]
@@ -442,11 +425,8 @@ command = "/tmp/remem"
 
     #[test]
     fn doctor_reports_each_present_host_even_if_only_one_targets_remem() {
-        let home = temp_path("doctor-home");
-        let claude_dir = home.join(".claude");
-        let codex_dir = home.join(".codex");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::create_dir_all(&codex_dir).unwrap();
+        let claude_dir = temp_path("doctor-home-claude");
+        let codex_dir = temp_path("doctor-home-codex");
 
         std::fs::write(
             codex_dir.join("hooks.json"),
@@ -467,26 +447,37 @@ command = "/tmp/remem"
         )
         .unwrap();
         std::fs::write(
-            home.join(".claude.json"),
+            claude_dir.join("claude.json"),
             r#"{ "mcpServers": { "other": {} } }"#,
         )
         .unwrap();
 
-        with_home_dir(&home, || {
-            let hook_checks = check_hooks();
-            assert_eq!(hook_checks.len(), 2);
-            assert_eq!(hook_checks[0].name, "Hooks (claude)");
-            assert!(matches!(hook_checks[0].status, Status::Fail));
-            assert_eq!(hook_checks[1].name, "Hooks (codex)");
-            assert!(matches!(hook_checks[1].status, Status::Ok));
+        let hosts = vec![
+            HostProbe {
+                name: "claude",
+                hooks_path: claude_dir.join("settings.json"),
+                mcp_paths: vec![claude_dir.join("claude.json")],
+            },
+            HostProbe {
+                name: "codex",
+                hooks_path: codex_dir.join("hooks.json"),
+                mcp_paths: vec![codex_dir.join("config.toml")],
+            },
+        ];
 
-            let mcp_checks = check_mcp();
-            assert_eq!(mcp_checks.len(), 2);
-            assert_eq!(mcp_checks[0].name, "MCP (claude)");
-            assert!(matches!(mcp_checks[0].status, Status::Fail));
-            assert_eq!(mcp_checks[1].name, "MCP (codex)");
-            assert!(matches!(mcp_checks[1].status, Status::Ok));
-        });
+        let hook_checks = check_hooks_for(hosts.clone());
+        assert_eq!(hook_checks.len(), 2);
+        assert_eq!(hook_checks[0].name, "Hooks (claude)");
+        assert!(matches!(hook_checks[0].status, Status::Fail));
+        assert_eq!(hook_checks[1].name, "Hooks (codex)");
+        assert!(matches!(hook_checks[1].status, Status::Ok));
+
+        let mcp_checks = check_mcp_for(hosts);
+        assert_eq!(mcp_checks.len(), 2);
+        assert_eq!(mcp_checks[0].name, "MCP (claude)");
+        assert!(matches!(mcp_checks[0].status, Status::Fail));
+        assert_eq!(mcp_checks[1].name, "MCP (codex)");
+        assert!(matches!(mcp_checks[1].status, Status::Ok));
     }
 
     #[test]
