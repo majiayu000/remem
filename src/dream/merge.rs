@@ -51,6 +51,13 @@ fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDec
             ),
         );
     }
+    if result.superseded_ids.is_empty() {
+        crate::log::warn(
+            "dream",
+            "rejecting merge with no valid superseded_id(s) after filtering",
+        );
+        return MergeDecision::NoMerge;
+    }
     MergeDecision::Merge(result)
 }
 
@@ -88,6 +95,9 @@ fn parse_response(response: &str) -> MergeDecision {
         .split_whitespace()
         .filter_map(|s| s.parse::<i64>().ok())
         .collect();
+    if superseded_ids.is_empty() {
+        return MergeDecision::NoMerge;
+    }
 
     MergeDecision::Merge(MergeResult {
         topic_key,
@@ -189,6 +199,31 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_superseded_ids_rejects_empty_after_filter() {
+        let cluster = Cluster {
+            members: vec![MemoryCandidate {
+                id: 10,
+                topic_key: Some("k".into()),
+                title: "t".into(),
+                content: "c".into(),
+                memory_type: "decision".into(),
+                updated_at_epoch: 0,
+            }],
+        };
+        let decision = MergeDecision::Merge(MergeResult {
+            topic_key: "k".into(),
+            memory_type: "decision".into(),
+            title: "T".into(),
+            content: "C".into(),
+            superseded_ids: vec![99999],
+        });
+        assert!(matches!(
+            filter_superseded_ids(decision, &cluster),
+            MergeDecision::NoMerge
+        ));
+    }
+
+    #[test]
     fn test_filter_superseded_ids_no_merge_passthrough() {
         let cluster = Cluster { members: vec![] };
         assert!(matches!(
@@ -198,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_empty_supersedes() {
+    fn test_parse_empty_supersedes_becomes_no_merge() {
         let response = r#"<memory>
 <topic_key>k</topic_key>
 <type>decision</type>
@@ -206,9 +241,6 @@ mod tests {
 <content>C</content>
 <supersedes></supersedes>
 </memory>"#;
-        match parse_response(response) {
-            MergeDecision::Merge(r) => assert!(r.superseded_ids.is_empty()),
-            MergeDecision::NoMerge => panic!("expected Merge"),
-        }
+        assert!(matches!(parse_response(response), MergeDecision::NoMerge));
     }
 }
