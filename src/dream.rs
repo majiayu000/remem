@@ -3,7 +3,7 @@ mod candidates;
 mod constants;
 mod merge;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use candidates::load_clusters;
 pub(crate) use candidates::Cluster;
 use merge::{merge_cluster, MergeDecision};
@@ -49,6 +49,7 @@ async fn process_clusters(
     let mut merged = 0usize;
     let mut skipped = 0usize;
     let mut merge_failures = 0usize;
+    let mut apply_failures = 0usize;
 
     for cluster in clusters {
         let cluster_size = cluster.members.len();
@@ -74,14 +75,15 @@ async fn process_clusters(
                 let topic_key = result.topic_key.clone();
                 let superseded = result.superseded_ids.len();
                 if let Err(error) = apply::apply(conn, project, &result) {
-                    return Err(anyhow!(
-                        "project={} cluster_size={} cluster_first_id={:?} topic_key={} apply failed: {}",
-                        project,
-                        cluster_size,
-                        cluster_first_id,
-                        topic_key,
-                        error
-                    ));
+                    apply_failures += 1;
+                    crate::log::warn(
+                        "dream",
+                        &format!(
+                            "project={} cluster_size={} cluster_first_id={:?} topic_key={} apply failed: {}",
+                            project, cluster_size, cluster_first_id, topic_key, error
+                        ),
+                    );
+                    continue;
                 }
                 merged += 1;
                 crate::log::info(
@@ -98,18 +100,10 @@ async fn process_clusters(
     crate::log::info(
         "dream",
         &format!(
-            "project={} merged={} skipped={} merge_failures={}",
-            project, merged, skipped, merge_failures
+            "project={} merged={} skipped={} merge_failures={} apply_failures={}",
+            project, merged, skipped, merge_failures, apply_failures
         ),
     );
-
-    if merged == 0 && merge_failures > 0 {
-        return Err(anyhow!(
-            "project={} all {} cluster merge attempts failed",
-            project,
-            merge_failures
-        ));
-    }
 
     Ok(())
 }
@@ -205,7 +199,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_clusters_fails_when_all_cluster_merges_fail() {
+    async fn process_clusters_skips_when_all_cluster_merges_fail() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         setup_memory_schema(&conn);
         let project = "test-dream-all-fail";
@@ -214,45 +208,56 @@ mod tests {
             make_cluster([201, 202], ["broken-topic-c", "broken-topic-d"]),
         ];
 
-        let error = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
             Box::pin(async move { Err(anyhow!("synthetic merge failure")) })
         })
         .await
-        .expect_err("dream processing should fail when every cluster merge fails");
-
-        assert!(
-            error
-                .to_string()
-                .contains("all 2 cluster merge attempts failed"),
-            "error should report all-clusters-failed"
-        );
+        .expect("dream processing should skip failed clusters without retrying the whole job");
     }
 
     #[tokio::test]
-    async fn process_clusters_propagates_apply_failure() {
+    async fn process_clusters_continues_after_apply_failure() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         setup_memory_schema(&conn);
         let project = "test-dream-apply-failure";
-        let clusters = vec![make_cluster([101, 102], ["topic-a", "topic-b"])];
+        let stale_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            None,
+            "old title",
+            "old content",
+            "decision",
+            None,
+        )
+        .expect("insert");
+        let clusters = vec![
+            make_cluster([101, 102], ["bad-topic-a", "bad-topic-b"]),
+            make_cluster([201, 202], ["good-topic-a", "good-topic-b"]),
+        ];
 
-        let error = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+        process_clusters(project, &mut conn, &clusters, |cluster, _project| {
+            let should_fail_apply = cluster.members[0].id == 101;
             Box::pin(async move {
                 Ok(MergeDecision::Merge(merge::MergeResult {
-                    topic_key: "merged-topic".to_owned(),
+                    topic_key: if should_fail_apply {
+                        "failed-apply-topic".to_owned()
+                    } else {
+                        "merged-topic".to_owned()
+                    },
                     memory_type: "decision".to_owned(),
                     title: "Merged title".to_owned(),
                     content: "Merged content".to_owned(),
-                    superseded_ids: vec![99999],
+                    superseded_ids: if should_fail_apply {
+                        vec![99999]
+                    } else {
+                        vec![stale_id]
+                    },
                 }))
             })
         })
         .await
-        .expect_err("dream processing should fail when apply fails");
-
-        assert!(
-            error.to_string().contains("apply failed"),
-            "error should include the apply failure context"
-        );
+        .expect("dream processing should continue after an apply failure");
 
         let merged_count: i64 = conn
             .query_row(
@@ -261,6 +266,30 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("count merged rows");
-        assert_eq!(merged_count, 0, "failed apply must roll back merged memory");
+        assert_eq!(
+            merged_count, 1,
+            "later clusters should still merge after apply failure"
+        );
+
+        let failed_apply_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE project = ?1 AND topic_key = ?2",
+                params![project, "failed-apply-topic"],
+                |row| row.get(0),
+            )
+            .expect("count failed apply rows");
+        assert_eq!(
+            failed_apply_count, 0,
+            "failed apply must still roll back its own transaction"
+        );
+
+        let stale_status: String = conn
+            .query_row(
+                "SELECT status FROM memories WHERE id = ?1",
+                params![stale_id],
+                |row| row.get(0),
+            )
+            .expect("read stale status");
+        assert_eq!(stale_status, "stale");
     }
 }
