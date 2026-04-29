@@ -54,17 +54,22 @@ pub(super) fn load_clusters(conn: &Connection, project: &str) -> Result<Vec<Clus
 fn cluster_candidates(candidates: Vec<MemoryCandidate>) -> Vec<Cluster> {
     use std::collections::HashMap;
 
-    // Group by cluster key: topic_key prefix (or memory_type for NULL topic_key)
-    let mut groups: HashMap<String, Vec<MemoryCandidate>> = HashMap::new();
+    // Group keyed memories by (memory_type, topic_key prefix) and unkeyed ones by
+    // (memory_type, None) so clustering stays within each memory-type bucket.
+    let mut groups: HashMap<(String, Option<String>), Vec<MemoryCandidate>> = HashMap::new();
 
     for c in candidates {
+        let memory_type = c.memory_type.clone();
         let group_key = match &c.topic_key {
             Some(key) if !key.is_empty() => {
-                // Truncate to prefix length for grouping
-                key.chars().take(TOPIC_KEY_PREFIX_LEN).collect::<String>()
+                // Truncate to prefix length for grouping.
+                (
+                    memory_type,
+                    Some(key.chars().take(TOPIC_KEY_PREFIX_LEN).collect::<String>()),
+                )
             }
-            // NULL or empty topic_key: group by memory_type
-            _ => format!("__unkeyed__{}", c.memory_type),
+            // NULL or empty topic_key: group by memory_type only.
+            _ => (memory_type, None),
         };
         groups.entry(group_key).or_default().push(c);
     }
@@ -122,6 +127,33 @@ mod tests {
         // 2 preference + 1 decision; only preference group has ≥ 2
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].members.len(), 2);
+    }
+
+    #[test]
+    fn test_cluster_same_prefix_keeps_memory_types_separate() {
+        let candidates = vec![
+            make(1, Some("auth-middleware-design-v1"), "decision"),
+            make(2, Some("auth-middleware-design-v2"), "decision"),
+            make(3, Some("auth-middleware-design-v3"), "preference"),
+            make(4, Some("auth-middleware-design-v4"), "preference"),
+        ];
+        let mut cluster_shapes: Vec<(String, usize)> = cluster_candidates(candidates)
+            .into_iter()
+            .map(|cluster| {
+                let memory_type = cluster.members[0].memory_type.clone();
+                assert!(cluster
+                    .members
+                    .iter()
+                    .all(|member| member.memory_type == memory_type));
+                (memory_type, cluster.members.len())
+            })
+            .collect();
+
+        cluster_shapes.sort();
+        assert_eq!(
+            cluster_shapes,
+            vec![("decision".to_string(), 2), ("preference".to_string(), 2)]
+        );
     }
 
     #[test]
