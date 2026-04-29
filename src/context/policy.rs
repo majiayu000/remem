@@ -190,18 +190,10 @@ impl ContextPolicy {
         let Some(section) = self.section(kind) else {
             return true;
         };
-        if section
-            .exclude_types
-            .iter()
-            .any(|excluded| *excluded == memory_type)
-        {
+        if section.exclude_types.contains(&memory_type) {
             return false;
         }
-        section.include_types.is_empty()
-            || section
-                .include_types
-                .iter()
-                .any(|included| *included == memory_type)
+        section.include_types.is_empty() || section.include_types.contains(&memory_type)
     }
 
     pub(super) fn section_item_limit(&self, kind: SectionKind, fallback: usize) -> usize {
