@@ -43,6 +43,10 @@ codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
 
 # 配置检测到的 Claude Code/Codex hooks + MCP
 remem install
+
+# 可选：明确指定安装目标
+remem install --target codex    # auto | claude | codex | all
+remem install --dry-run         # 预览配置改动
 ```
 
 安装后重启对应的 AI 编程工具。
@@ -158,6 +162,8 @@ remem preferences add "text"
 remem preferences remove 42
 remem context --cwd .
 remem cleanup
+remem dream [--project X] [--dry-run]
+remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
