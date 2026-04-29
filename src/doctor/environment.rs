@@ -53,29 +53,19 @@ fn host_present(probe: &HostProbe) -> bool {
 }
 
 fn active_hosts() -> Vec<HostProbe> {
-    let hosts: Vec<HostProbe> = known_hosts().into_iter().filter(host_present).collect();
-    if hosts.is_empty() {
-        return hosts;
-    }
-
-    let targeted: Vec<HostProbe> = hosts
-        .iter()
-        .filter(|probe| host_targets_remem(probe))
-        .cloned()
-        .collect();
-    if targeted.is_empty() {
-        hosts
-    } else {
-        targeted
-    }
+    known_hosts().into_iter().filter(host_present).collect()
 }
 
 /// Produce one Check per detected host's hooks file. Hosts whose config
 /// directory doesn't exist are silently skipped — they aren't installed, so
 /// there's nothing to validate.
 pub(super) fn check_hooks() -> Vec<Check> {
+    check_hooks_for(active_hosts())
+}
+
+fn check_hooks_for(hosts: Vec<HostProbe>) -> Vec<Check> {
     let mut checks = Vec::new();
-    for probe in active_hosts() {
+    for probe in hosts {
         checks.push(probe_hooks(probe));
     }
     if checks.is_empty() {
@@ -89,8 +79,12 @@ pub(super) fn check_hooks() -> Vec<Check> {
 }
 
 pub(super) fn check_mcp() -> Vec<Check> {
+    check_mcp_for(active_hosts())
+}
+
+fn check_mcp_for(hosts: Vec<HostProbe>) -> Vec<Check> {
     let mut checks = Vec::new();
-    for probe in active_hosts() {
+    for probe in hosts {
         checks.push(probe_mcp(probe));
     }
     if checks.is_empty() {
@@ -236,10 +230,6 @@ fn mcp_check_name(host: &str) -> &'static str {
     }
 }
 
-fn host_targets_remem(probe: &HostProbe) -> bool {
-    hooks_file_has_remem(&probe.hooks_path) || mcp_file_has_remem(probe)
-}
-
 fn display_mcp_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
@@ -248,47 +238,10 @@ fn display_mcp_paths(paths: &[PathBuf]) -> String {
         .join(" or ")
 }
 
-fn hooks_file_has_remem(path: &PathBuf) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    match serde_json::from_str::<Value>(&content) {
-        Ok(doc) => ["claude", "codex"]
-            .iter()
-            .flat_map(|host| expected_hook_events(host).iter())
-            .any(|event| event_has_remem_hook(&doc, event)),
-        Err(_) => content.contains("remem"),
-    }
-}
-
 fn expected_hook_events(host: &str) -> &'static [&'static str] {
     match host {
         "codex" => &["SessionStart", "PostToolUse", "Stop"],
         _ => &["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"],
-    }
-}
-
-fn mcp_file_has_remem(probe: &HostProbe) -> bool {
-    probe
-        .mcp_paths
-        .iter()
-        .any(|path| path_has_remem_mcp(probe.name, path))
-}
-
-fn path_has_remem_mcp(host: &str, path: &PathBuf) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    match host {
-        "claude" => match serde_json::from_str::<Value>(&content) {
-            Ok(doc) => claude_has_remem_mcp(&doc),
-            Err(_) => content.contains("remem"),
-        },
-        "codex" => match content.parse::<DocumentMut>() {
-            Ok(doc) => codex_has_remem_mcp(&doc),
-            Err(_) => content.contains("remem"),
-        },
-        _ => false,
     }
 }
 
@@ -441,7 +394,7 @@ note = "remem"
     }
 
     #[test]
-    fn active_hosts_prefers_hosts_with_remem_markers() {
+    fn active_hosts_keeps_all_present_hosts() {
         let claude_dir = temp_path("doctor-claude");
         let claude = HostProbe {
             name: "claude",
@@ -464,21 +417,67 @@ command = "/tmp/remem"
         )
         .unwrap();
 
-        let hosts = {
-            let present = vec![claude, codex.clone()];
-            let targeted: Vec<_> = present
-                .iter()
-                .filter(|probe| host_targets_remem(probe))
-                .cloned()
-                .collect();
-            if targeted.is_empty() {
-                present
-            } else {
-                targeted
-            }
-        };
+        let expected = vec![claude.clone(), codex.clone()];
+        let hosts: Vec<_> = expected.clone().into_iter().filter(host_present).collect();
 
-        assert_eq!(hosts, vec![codex]);
+        assert_eq!(hosts, expected);
+    }
+
+    #[test]
+    fn doctor_reports_each_present_host_even_if_only_one_targets_remem() {
+        let claude_dir = temp_path("doctor-home-claude");
+        let codex_dir = temp_path("doctor-home-codex");
+
+        std::fs::write(
+            codex_dir.join("hooks.json"),
+            r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
+    "PostToolUse": [{ "hooks": [{ "command": "/tmp/remem observe" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize" }] }]
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            codex_dir.join("config.toml"),
+            r#"[mcp_servers.remem]
+command = "/tmp/remem"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            claude_dir.join("claude.json"),
+            r#"{ "mcpServers": { "other": {} } }"#,
+        )
+        .unwrap();
+
+        let hosts = vec![
+            HostProbe {
+                name: "claude",
+                hooks_path: claude_dir.join("settings.json"),
+                mcp_paths: vec![claude_dir.join("claude.json")],
+            },
+            HostProbe {
+                name: "codex",
+                hooks_path: codex_dir.join("hooks.json"),
+                mcp_paths: vec![codex_dir.join("config.toml")],
+            },
+        ];
+
+        let hook_checks = check_hooks_for(hosts.clone());
+        assert_eq!(hook_checks.len(), 2);
+        assert_eq!(hook_checks[0].name, "Hooks (claude)");
+        assert!(matches!(hook_checks[0].status, Status::Fail));
+        assert_eq!(hook_checks[1].name, "Hooks (codex)");
+        assert!(matches!(hook_checks[1].status, Status::Ok));
+
+        let mcp_checks = check_mcp_for(hosts);
+        assert_eq!(mcp_checks.len(), 2);
+        assert_eq!(mcp_checks[0].name, "MCP (claude)");
+        assert!(matches!(mcp_checks[0].status, Status::Fail));
+        assert_eq!(mcp_checks[1].name, "MCP (codex)");
+        assert!(matches!(mcp_checks[1].status, Status::Ok));
     }
 
     #[test]
