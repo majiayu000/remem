@@ -39,7 +39,7 @@ fn build_hooks_contains_expected_codex_commands() {
     assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 3000);
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
-        "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize"
+        "REMEM_SUMMARY_EXECUTOR=codex-cli REMEM_FLUSH_EXECUTOR=codex-cli /tmp/remem summarize"
     );
 }
 

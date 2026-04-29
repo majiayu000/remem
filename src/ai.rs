@@ -60,6 +60,10 @@ async fn call_auto(system: &str, user_message: &str) -> anyhow::Result<types::Ai
 }
 
 fn executor_for_operation(operation: &str) -> Option<AiExecutor> {
+    if matches!(operation, "flush" | "flush-task") {
+        return flush_executor();
+    }
+
     for key in executor_env_keys(operation) {
         if let Some(executor) = executor_from_env(key) {
             return Some(executor);
@@ -76,6 +80,13 @@ fn executor_env_keys(operation: &str) -> &'static [&'static str] {
         "dream" => &["REMEM_DREAM_EXECUTOR"],
         _ => &["REMEM_EXECUTOR"],
     }
+}
+
+fn flush_executor() -> Option<AiExecutor> {
+    executor_from_env("REMEM_FLUSH_EXECUTOR").or_else(|| {
+        executor_from_env("REMEM_SUMMARY_EXECUTOR")
+            .filter(|executor| *executor == AiExecutor::CodexCli)
+    })
 }
 
 fn executor_from_env(key: &str) -> Option<AiExecutor> {

@@ -86,7 +86,7 @@ fn estimate_cost_usd_combines_input_and_output_prices() {
 }
 
 #[test]
-fn summary_executor_override_does_not_leak_to_flush() {
+fn codex_summary_executor_falls_back_for_flush_operations() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", None),
@@ -100,15 +100,18 @@ fn summary_executor_override_does_not_leak_to_flush() {
                 executor_for_operation("summarize"),
                 Some(AiExecutor::CodexCli)
             );
-            assert_eq!(executor_for_operation("flush"), None);
-            assert_eq!(executor_for_operation("flush-task"), None);
+            assert_eq!(executor_for_operation("flush"), Some(AiExecutor::CodexCli));
+            assert_eq!(
+                executor_for_operation("flush-task"),
+                Some(AiExecutor::CodexCli)
+            );
             assert_eq!(executor_for_operation("compress"), None);
         },
     );
 }
 
 #[test]
-fn operation_executor_overrides_do_not_use_global_fallback_for_background_jobs() {
+fn explicit_flush_executor_override_wins_over_codex_fallback() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", Some("claude-cli")),
@@ -123,6 +126,7 @@ fn operation_executor_overrides_do_not_use_global_fallback_for_background_jobs()
                 Some(AiExecutor::CodexCli)
             );
             assert_eq!(executor_for_operation("flush"), Some(AiExecutor::Http));
+            assert_eq!(executor_for_operation("flush-task"), Some(AiExecutor::Http));
             assert_eq!(executor_for_operation("compress"), None);
             assert_eq!(executor_for_operation("dream"), None);
             assert_eq!(executor_for_operation("other"), Some(AiExecutor::ClaudeCli));
@@ -131,7 +135,28 @@ fn operation_executor_overrides_do_not_use_global_fallback_for_background_jobs()
 }
 
 #[test]
-fn legacy_global_executor_only_affects_summary() {
+fn claude_summary_executor_does_not_broaden_flush_resolution() {
+    with_env_vars(
+        &[
+            ("REMEM_EXECUTOR", None),
+            ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
+            ("REMEM_FLUSH_EXECUTOR", None),
+            ("REMEM_COMPRESS_EXECUTOR", None),
+            ("REMEM_DREAM_EXECUTOR", None),
+        ],
+        || {
+            assert_eq!(
+                executor_for_operation("summarize"),
+                Some(AiExecutor::ClaudeCli)
+            );
+            assert_eq!(executor_for_operation("flush"), None);
+            assert_eq!(executor_for_operation("flush-task"), None);
+        },
+    );
+}
+
+#[test]
+fn legacy_global_executor_still_only_affects_summary_directly() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", Some("codex-cli")),
