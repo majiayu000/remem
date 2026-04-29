@@ -6,25 +6,35 @@ use rusqlite::Connection;
 use crate::memory::{self, Memory};
 
 use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
+use super::policy::{ContextPolicy, SectionKind};
 use super::types::{LoadedContext, SessionSummaryBrief};
 
-const CONTEXT_MEMORY_LIMIT: usize = 50;
-const RECENT_MEMORY_FETCH_LIMIT: i64 = 100;
 const BASENAME_SEARCH_LIMIT: i64 = 20;
-const MAX_SELF_DIAGNOSTIC_MEMORIES: usize = 2;
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
 const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
 
+#[cfg(test)]
 pub(super) fn load_context_data(
     conn: &Connection,
     project: &str,
     current_branch: Option<&str>,
 ) -> LoadedContext {
-    let mut memories = load_project_memories(conn, project, current_branch);
+    let policy = ContextPolicy::from_limits(super::policy::ContextLimits::default());
+    load_context_data_with_policy(conn, project, current_branch, &policy)
+}
+
+pub(super) fn load_context_data_with_policy(
+    conn: &Connection,
+    project: &str,
+    current_branch: Option<&str>,
+    policy: &ContextPolicy,
+) -> LoadedContext {
+    let mut memories = load_project_memories(conn, project, current_branch, policy);
     sort_memories_by_branch(&mut memories, current_branch);
 
-    let summaries = query_recent_summaries(conn, project, 5).unwrap_or_default();
+    let summaries =
+        query_recent_summaries(conn, project, policy.limits.session_limit).unwrap_or_default();
     let workstreams =
         crate::workstream::query_active_workstreams(conn, project).unwrap_or_default();
 
@@ -39,12 +49,14 @@ fn load_project_memories(
     conn: &Connection,
     project: &str,
     current_branch: Option<&str>,
+    policy: &ContextPolicy,
 ) -> Vec<Memory> {
     let mut memories = Vec::new();
     let mut seen_ids = HashSet::new();
 
     let recent =
-        memory::get_recent_memories(conn, project, RECENT_MEMORY_FETCH_LIMIT).unwrap_or_default();
+        memory::get_recent_memories(conn, project, policy.limits.candidate_fetch_limit as i64)
+            .unwrap_or_default();
     for memory in recent {
         if seen_ids.insert(memory.id) {
             memories.push(memory);
@@ -68,10 +80,17 @@ fn load_project_memories(
         }
     }
 
-    let mut selected =
-        limit_self_diagnostic_memories(deduplicate_memory_clusters(memories, current_branch));
+    let mut selected = limit_self_diagnostic_memories(
+        deduplicate_memory_clusters(memories, current_branch),
+        policy.limits.self_diagnostic_limit,
+    );
+    selected
+        .retain(|memory| policy.allows_memory_type(SectionKind::MemoryIndex, &memory.memory_type));
     sort_memories_by_branch(&mut selected, current_branch);
-    selected.into_iter().take(CONTEXT_MEMORY_LIMIT).collect()
+    selected
+        .into_iter()
+        .take(policy.limits.memory_index_limit)
+        .collect()
 }
 
 fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {
@@ -147,13 +166,13 @@ fn is_better_cluster_representative(
             && candidate.updated_at_epoch > incumbent.updated_at_epoch)
 }
 
-fn limit_self_diagnostic_memories(memories: Vec<Memory>) -> Vec<Memory> {
+fn limit_self_diagnostic_memories(memories: Vec<Memory>, limit: usize) -> Vec<Memory> {
     let mut retained = Vec::new();
     let mut self_diagnostic_count = 0;
 
     for memory in memories {
         if is_memory_self_diagnostic(&memory) {
-            if self_diagnostic_count >= MAX_SELF_DIAGNOSTIC_MEMORIES {
+            if self_diagnostic_count >= limit {
                 continue;
             }
             self_diagnostic_count += 1;

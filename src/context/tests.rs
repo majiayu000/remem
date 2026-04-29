@@ -3,9 +3,11 @@ use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
+use super::policy::{ContextLimits, ContextPolicy};
 use super::query::{load_context_data, query_recent_summaries};
 use super::sections::{
-    render_core_memory, render_memory_index, render_recent_sessions, render_workstreams,
+    render_core_memory, render_memory_index, render_memory_index_with_limits,
+    render_recent_sessions, render_workstreams,
 };
 use super::types::SessionSummaryBrief;
 
@@ -42,6 +44,41 @@ fn render_memory_index_prioritizes_known_types() {
     let custom_pos = output.find("**custom**").unwrap();
     assert!(decision_pos < bugfix_pos);
     assert!(bugfix_pos < custom_pos);
+}
+
+#[test]
+fn render_memory_index_excludes_preferences() {
+    let mut output = String::new();
+    let memories = vec![
+        sample_memory(1, "preference", "Preference title"),
+        sample_memory(2, "decision", "Decision title"),
+    ];
+
+    render_memory_index(&mut output, &memories);
+
+    assert!(output.contains("Decision title"));
+    assert!(!output.contains("Preference title"));
+    assert!(!output.contains("**Preferences**"));
+}
+
+#[test]
+fn render_memory_index_respects_item_limit() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        memory_index_limit: 2,
+        ..ContextLimits::default()
+    };
+    let memories = vec![
+        sample_memory(1, "decision", "Decision one"),
+        sample_memory(2, "decision", "Decision two"),
+        sample_memory(3, "decision", "Decision three"),
+    ];
+
+    render_memory_index_with_limits(&mut output, &memories, &limits);
+
+    assert!(output.contains("Decision one"));
+    assert!(output.contains("Decision two"));
+    assert!(!output.contains("Decision three"));
 }
 
 #[test]
@@ -341,6 +378,117 @@ fn load_context_data_limits_memory_self_diagnostics_before_index_rendering() {
         .memories
         .iter()
         .any(|memory| memory.title == "Fix guard path source selection"));
+}
+
+#[test]
+fn load_context_data_excludes_preferences_from_main_memory_pool() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/computer";
+    let now = chrono::Utc::now().timestamp();
+
+    for idx in 0..60 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("preference-topic-{idx}")),
+            "preference",
+            &format!("Preference {idx}"),
+            "User prefers evidence-backed coordination",
+            now - idx,
+        );
+    }
+    insert_memory(
+        &conn,
+        100,
+        project,
+        Some("context-budget-decision"),
+        "decision",
+        "Use host-aware context compiler",
+        "Split preferences from the main memory index",
+        now - 100,
+    );
+    insert_memory(
+        &conn,
+        101,
+        project,
+        Some("context-budget-discovery"),
+        "discovery",
+        "Preference flood starves core memories",
+        "The main index was dominated by preferences",
+        now - 101,
+    );
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert!(!loaded
+        .memories
+        .iter()
+        .any(|memory| memory.memory_type == "preference"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Use host-aware context compiler"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Preference flood starves core memories"));
+}
+
+#[test]
+fn context_limits_env_override_and_legacy_alias_are_respected() {
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("REMEM_CONTEXT_OBSERVATIONS", "7".to_string());
+    vars.insert("REMEM_CONTEXT_CORE_ITEM_LIMIT", "3".to_string());
+    vars.insert("REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT", "900".to_string());
+
+    let limits = ContextLimits::from_env_reader(|key| vars.get(key).cloned());
+
+    assert_eq!(limits.memory_index_limit, 7);
+    assert_eq!(limits.core_item_limit, 3);
+    assert_eq!(limits.preference_char_limit, 900);
+}
+
+#[test]
+fn context_limits_new_memory_index_env_wins_over_legacy_alias() {
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("REMEM_CONTEXT_OBSERVATIONS", "7".to_string());
+    vars.insert("REMEM_CONTEXT_MEMORY_INDEX_LIMIT", "11".to_string());
+
+    let limits = ContextLimits::from_env_reader(|key| vars.get(key).cloned());
+
+    assert_eq!(limits.memory_index_limit, 11);
+}
+
+#[test]
+fn load_context_data_respects_memory_index_limit_policy() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/vibeguard";
+    let now = chrono::Utc::now().timestamp();
+    let limits = ContextLimits {
+        memory_index_limit: 3,
+        ..ContextLimits::default()
+    };
+    let policy = ContextPolicy::from_limits(limits);
+
+    for idx in 0..8 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("decision-topic-{idx}")),
+            "decision",
+            &format!("Decision {idx}"),
+            "Decision body",
+            now - idx,
+        );
+    }
+
+    let loaded = super::query::load_context_data_with_policy(&conn, project, None, &policy);
+
+    assert_eq!(loaded.memories.len(), 3);
 }
 
 #[test]

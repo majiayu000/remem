@@ -21,6 +21,8 @@ pub(super) enum Commands {
         #[arg(long)]
         session_id: Option<String>,
         #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
         color: bool,
     },
     SessionInit,

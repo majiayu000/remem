@@ -4,16 +4,36 @@ use crate::db;
 use crate::db::project_from_cwd;
 
 use super::format::format_header_datetime;
-use super::query::load_context_data;
+use super::host::{resolve_host_kind, resolve_profile};
+use super::policy::{ContextPolicy, SectionKind};
+use super::query::load_context_data_with_policy;
 use super::sections::{
-    render_core_memory, render_empty_state, render_memory_index, render_recent_sessions,
-    render_workstreams,
+    render_core_memory_with_limits, render_empty_state, render_memory_index_with_limits,
+    render_recent_sessions, render_workstreams,
 };
+use super::types::ContextRequest;
 
-pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool) -> Result<()> {
+pub fn generate_context(
+    cwd: &str,
+    session_id: Option<&str>,
+    use_colors: bool,
+    host_arg: Option<&str>,
+) -> Result<()> {
     let timer = crate::log::Timer::start("context", &format!("cwd={}", cwd));
     let project = project_from_cwd(cwd);
     let current_branch = db::detect_git_branch(cwd);
+    let host = resolve_host_kind(host_arg);
+    let profile = resolve_profile(host);
+    let policy = profile.default_policy();
+    let request = ContextRequest {
+        cwd: cwd.to_string(),
+        project: project.clone(),
+        session_id: session_id.map(str::to_string),
+        current_branch: current_branch.clone(),
+        host: profile.host(),
+        use_colors,
+    };
+    let capabilities = profile.capabilities();
 
     let conn = match db::open_db() {
         Ok(connection) => connection,
@@ -28,26 +48,46 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         }
     };
 
-    let loaded = load_context_data(&conn, &project, current_branch.as_deref());
-    if loaded.memories.is_empty() && loaded.summaries.is_empty() && loaded.workstreams.is_empty() {
+    let loaded = load_context_data_with_policy(
+        &conn,
+        &request.project,
+        request.current_branch.as_deref(),
+        &policy,
+    );
+    let (preference_output, preference_count) =
+        match render_preferences_to_buffer(&conn, &project, cwd, &policy) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                crate::log::warn("context", &format!("render_preferences failed: {}", error));
+                (String::new(), 0)
+            }
+        };
+
+    if preference_count == 0
+        && loaded.memories.is_empty()
+        && loaded.summaries.is_empty()
+        && loaded.workstreams.is_empty()
+    {
         render_empty_state(&project);
         timer.done("empty (no data)");
         return Ok(());
     }
 
     let mut output = String::new();
-    output.push_str(&build_context_header(&project, current_branch.as_deref()));
-    output.push_str(
-        "Use `search`/`get_observations` for details. `save_memory` after decisions/bugfixes.\n\n",
-    );
+    output.push_str(&build_context_header(
+        &request.project,
+        request.current_branch.as_deref(),
+    ));
+    output.push_str(profile.retrieval_hints().line);
+    output.push_str("\n\n");
 
-    if let Err(error) = crate::preference::render_preferences(&mut output, &conn, &project, cwd) {
-        crate::log::warn("context", &format!("render_preferences failed: {}", error));
-    }
+    output.push_str(&preference_output);
 
+    let mut core_count = 0;
     if !loaded.memories.is_empty() {
-        render_core_memory(&mut output, &loaded.memories);
-        render_memory_index(&mut output, &loaded.memories);
+        let render_limits = section_render_limits(&policy);
+        core_count = render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
+        render_memory_index_with_limits(&mut output, &loaded.memories, &render_limits);
     }
     if !loaded.workstreams.is_empty() {
         render_workstreams(&mut output, &loaded.workstreams);
@@ -56,17 +96,65 @@ pub fn generate_context(cwd: &str, _session_id: Option<&str>, _use_colors: bool)
         render_recent_sessions(&mut output, &loaded.summaries);
     }
 
-    output.push_str(&format!("{} memories loaded.\n", loaded.memories.len()));
+    output.push_str(&format!(
+        "{} indexed memories loaded. {} core memories. {} preferences. {} sessions.\n",
+        loaded.memories.len(),
+        core_count,
+        preference_count,
+        loaded.summaries.len()
+    ));
     print!("{}", output);
 
     timer.done(&format!(
-        "project={} memories={} summaries={} workstreams={}",
-        project,
+        "project={} cwd={} session={} host={} colors={} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] indexed_memories={} core={} preferences={} summaries={} workstreams={}",
+        request.project,
+        request.cwd,
+        request.session_id.as_deref().unwrap_or("-"),
+        request.host.as_env_value(),
+        request.use_colors,
+        capabilities.has_mcp_tools,
+        capabilities.has_session_start_hook,
+        capabilities.has_user_prompt_submit_hook,
+        capabilities.observes_native_file_edits,
+        capabilities.observes_bash,
         loaded.memories.len(),
+        core_count,
+        preference_count,
         loaded.summaries.len(),
         loaded.workstreams.len(),
     ));
     Ok(())
+}
+
+fn section_render_limits(policy: &ContextPolicy) -> super::policy::ContextLimits {
+    let mut limits = policy.limits;
+    limits.core_item_limit = policy.section_item_limit(SectionKind::Core, limits.core_item_limit);
+    limits.core_char_limit = policy.section_char_limit(SectionKind::Core, limits.core_char_limit);
+    limits.memory_index_limit =
+        policy.section_item_limit(SectionKind::MemoryIndex, limits.memory_index_limit);
+    limits.memory_index_char_limit =
+        policy.section_char_limit(SectionKind::MemoryIndex, limits.memory_index_char_limit);
+    limits
+}
+
+fn render_preferences_to_buffer(
+    conn: &rusqlite::Connection,
+    project: &str,
+    cwd: &str,
+    policy: &ContextPolicy,
+) -> Result<(String, usize)> {
+    let mut output = String::new();
+    let limits = &policy.limits;
+    let count = crate::preference::render_preferences_with_limits(
+        &mut output,
+        conn,
+        project,
+        cwd,
+        limits.preference_project_limit,
+        limits.preference_global_limit,
+        limits.preference_char_limit,
+    )?;
+    Ok((output, count))
 }
 
 fn build_context_header(project: &str, current_branch: Option<&str>) -> String {
