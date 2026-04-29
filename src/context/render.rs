@@ -84,10 +84,12 @@ pub fn generate_context(
     output.push_str(&preference_output);
 
     let mut core_count = 0;
+    let mut index_count = 0;
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(&policy);
         core_count = render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
-        render_memory_index_with_limits(&mut output, &loaded.memories, &render_limits);
+        index_count =
+            render_memory_index_with_limits(&mut output, &loaded.memories, &render_limits);
     }
     if !loaded.workstreams.is_empty() {
         render_workstreams_with_limits(
@@ -102,9 +104,10 @@ pub fn generate_context(
     }
 
     output.push_str(&format!(
-        "{} indexed memories loaded. {} core memories. {} preferences. {} sessions.\n",
+        "{} context memories loaded. {} core memories. {} indexed memories. {} preferences. {} sessions.\n",
         loaded.memories.len(),
         core_count,
+        index_count,
         preference_count,
         loaded.summaries.len()
     ));
@@ -112,7 +115,7 @@ pub fn generate_context(
     print!("{}", output);
 
     timer.done(&format!(
-        "project={} cwd={} session={} host={} colors={} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] indexed_memories={} core={} preferences={} summaries={} workstreams={}",
+        "project={} cwd={} session={} host={} colors={} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} index={} preferences={} summaries={} workstreams={}",
         request.project,
         request.cwd,
         request.session_id.as_deref().unwrap_or("-"),
@@ -125,6 +128,7 @@ pub fn generate_context(
         capabilities.observes_bash,
         loaded.memories.len(),
         core_count,
+        index_count,
         preference_count,
         loaded.summaries.len(),
         loaded.workstreams.len(),

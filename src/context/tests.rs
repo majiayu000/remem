@@ -83,6 +83,25 @@ fn render_memory_index_respects_item_limit() {
 }
 
 #[test]
+fn render_memory_index_truncates_first_item_to_char_limit() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        memory_index_char_limit: 48,
+        ..ContextLimits::default()
+    };
+    let long_title = "Decision title that is far too long for the index budget";
+    let memories = vec![sample_memory(1, "decision", long_title)];
+
+    let rendered = render_memory_index_with_limits(&mut output, &memories, &limits);
+    let body = output.strip_prefix("## Index\n").unwrap().trim_end();
+
+    assert_eq!(rendered, 1);
+    assert!(body.chars().count() <= limits.memory_index_char_limit);
+    assert!(output.contains("..."));
+    assert!(!output.contains(long_title));
+}
+
+#[test]
 fn render_workstreams_includes_next_action_when_present() {
     let mut output = String::new();
     let workstreams = vec![WorkStream {
@@ -362,7 +381,7 @@ fn load_context_data_keeps_current_branch_memories_before_limit() {
 
     let loaded = load_context_data(&conn, project, Some("fix/context-selection"));
 
-    assert_eq!(loaded.memories.len(), 50);
+    assert!(loaded.memories.len() > ContextLimits::default().memory_index_limit);
     assert!(loaded
         .memories
         .iter()
@@ -561,13 +580,14 @@ fn context_limits_new_memory_index_env_wins_over_legacy_alias() {
 }
 
 #[test]
-fn load_context_data_respects_memory_index_limit_policy() {
+fn load_context_data_keeps_core_candidates_when_index_limit_is_small() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
     let limits = ContextLimits {
-        memory_index_limit: 3,
+        memory_index_limit: 1,
+        core_item_limit: 4,
         ..ContextLimits::default()
     };
     let policy = ContextPolicy::from_limits(limits);
@@ -587,7 +607,8 @@ fn load_context_data_respects_memory_index_limit_policy() {
 
     let loaded = super::query::load_context_data_with_policy(&conn, project, None, &policy);
 
-    assert_eq!(loaded.memories.len(), 3);
+    assert!(loaded.memories.len() > limits.memory_index_limit);
+    assert!(loaded.memories.len() >= limits.core_item_limit);
 }
 
 #[test]

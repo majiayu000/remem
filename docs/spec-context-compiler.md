@@ -363,10 +363,10 @@ The existing footer:
 should become more precise after section splitting:
 
 ```text
-50 indexed memories loaded. 6 core memories. 5 sessions.
+120 context memories loaded. 6 core memories. 50 indexed memories. 5 sessions.
 ```
 
-This avoids implying that preferences or total DB rows are included in the same number.
+This separates the candidate pool from section counts so a compact index does not imply a smaller Core pool.
 
 ## 10. Migration Plan
 

@@ -96,9 +96,6 @@ fn load_project_memories(
     );
     sort_memories_by_branch(&mut selected, current_branch);
     selected
-        .into_iter()
-        .take(policy.limits.memory_index_limit)
-        .collect()
 }
 
 fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {
