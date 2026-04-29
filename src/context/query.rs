@@ -54,9 +54,17 @@ fn load_project_memories(
     let mut memories = Vec::new();
     let mut seen_ids = HashSet::new();
 
-    let recent =
-        memory::get_recent_memories(conn, project, policy.limits.candidate_fetch_limit as i64)
-            .unwrap_or_default();
+    let excluded_types = policy
+        .section(SectionKind::MemoryIndex)
+        .map(|section| section.exclude_types.as_slice())
+        .unwrap_or(&[]);
+    let recent = memory::get_recent_memories_excluding_types(
+        conn,
+        project,
+        excluded_types,
+        policy.limits.candidate_fetch_limit as i64,
+    )
+    .unwrap_or_default();
     for memory in recent {
         if seen_ids.insert(memory.id) {
             memories.push(memory);
@@ -80,12 +88,12 @@ fn load_project_memories(
         }
     }
 
+    memories
+        .retain(|memory| policy.allows_memory_type(SectionKind::MemoryIndex, &memory.memory_type));
     let mut selected = limit_self_diagnostic_memories(
         deduplicate_memory_clusters(memories, current_branch),
         policy.limits.self_diagnostic_limit,
     );
-    selected
-        .retain(|memory| policy.allows_memory_type(SectionKind::MemoryIndex, &memory.memory_type));
     sort_memories_by_branch(&mut selected, current_branch);
     selected
         .into_iter()

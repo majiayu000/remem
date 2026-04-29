@@ -9,7 +9,7 @@ use super::policy::{ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
     render_core_memory_with_limits, render_empty_state, render_memory_index_with_limits,
-    render_recent_sessions, render_workstreams,
+    render_recent_sessions, render_workstreams_with_limits,
 };
 use super::types::ContextRequest;
 
@@ -90,7 +90,12 @@ pub fn generate_context(
         render_memory_index_with_limits(&mut output, &loaded.memories, &render_limits);
     }
     if !loaded.workstreams.is_empty() {
-        render_workstreams(&mut output, &loaded.workstreams);
+        render_workstreams_with_limits(
+            &mut output,
+            &loaded.workstreams,
+            policy.section_item_limit(SectionKind::Workstreams, 5),
+            policy.section_char_limit(SectionKind::Workstreams, 1_200),
+        );
     }
     if !loaded.summaries.is_empty() {
         render_recent_sessions(&mut output, &loaded.summaries);
@@ -103,6 +108,7 @@ pub fn generate_context(
         preference_count,
         loaded.summaries.len()
     ));
+    enforce_total_char_limit(&mut output, policy.limits.total_char_limit);
     print!("{}", output);
 
     timer.done(&format!(
@@ -155,6 +161,24 @@ fn render_preferences_to_buffer(
         limits.preference_char_limit,
     )?;
     Ok((output, count))
+}
+
+pub(in crate::context) fn enforce_total_char_limit(output: &mut String, char_limit: usize) {
+    if char_limit == 0 || output.chars().count() <= char_limit {
+        return;
+    }
+
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let marker_chars = marker.chars().count();
+    if marker_chars >= char_limit {
+        *output = output.chars().take(char_limit).collect();
+        return;
+    }
+
+    let keep_chars = char_limit - marker_chars;
+    let mut truncated: String = output.chars().take(keep_chars).collect();
+    truncated.push_str(marker);
+    *output = truncated;
 }
 
 fn build_context_header(project: &str, current_branch: Option<&str>) -> String {

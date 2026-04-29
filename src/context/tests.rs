@@ -5,9 +5,10 @@ use rusqlite::{params, Connection};
 
 use super::policy::{ContextLimits, ContextPolicy};
 use super::query::{load_context_data, query_recent_summaries};
+use super::render::enforce_total_char_limit;
 use super::sections::{
     render_core_memory, render_memory_index, render_memory_index_with_limits,
-    render_recent_sessions, render_workstreams,
+    render_recent_sessions, render_workstreams, render_workstreams_with_limits,
 };
 use super::types::SessionSummaryBrief;
 
@@ -101,6 +102,38 @@ fn render_workstreams_includes_next_action_when_present() {
     render_workstreams(&mut output, &workstreams);
 
     assert!(output.contains("#7 [active] Refactor context -> split renderers"));
+}
+
+#[test]
+fn render_workstreams_respects_item_and_char_limits() {
+    let mut output = String::new();
+    let workstreams = vec![
+        sample_workstream(1, "First stream", Some("ship the first fix")),
+        sample_workstream(2, "Second stream", Some("ship the second fix")),
+        sample_workstream(3, "Third stream", Some("ship the third fix")),
+    ];
+
+    render_workstreams_with_limits(&mut output, &workstreams, 2, 200);
+
+    assert!(output.contains("#1 [active] First stream"));
+    assert!(output.contains("#2 [active] Second stream"));
+    assert!(!output.contains("#3 [active] Third stream"));
+    assert!(output.chars().count() <= 200);
+}
+
+#[test]
+fn render_workstreams_stops_at_char_limit() {
+    let mut output = String::new();
+    let workstreams = vec![
+        sample_workstream(1, "First", Some("fix")),
+        sample_workstream(2, "Second", Some("fix")),
+    ];
+
+    render_workstreams_with_limits(&mut output, &workstreams, 10, 48);
+
+    assert!(output.contains("#1 [active] First"));
+    assert!(!output.contains("#2 [active] Second"));
+    assert!(output.chars().count() <= 48);
 }
 
 #[test]
@@ -437,6 +470,72 @@ fn load_context_data_excludes_preferences_from_main_memory_pool() {
 }
 
 #[test]
+fn load_context_data_excludes_preferences_before_candidate_limit() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/computer";
+    let now = chrono::Utc::now().timestamp();
+
+    for idx in 0..130 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("preference-topic-{idx}")),
+            "preference",
+            &format!("Preference {idx}"),
+            "User prefers evidence-backed coordination",
+            now - idx,
+        );
+    }
+    insert_memory(
+        &conn,
+        200,
+        project,
+        Some("context-budget-decision"),
+        "decision",
+        "Use host-aware context compiler",
+        "Split preferences from the main memory index",
+        now - 1_000,
+    );
+    insert_memory(
+        &conn,
+        201,
+        project,
+        Some("context-budget-bugfix"),
+        "bugfix",
+        "Keep core memories visible",
+        "Filter preferences before applying the candidate cap",
+        now - 1_001,
+    );
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert!(loaded
+        .memories
+        .iter()
+        .all(|memory| memory.memory_type != "preference"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Use host-aware context compiler"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Keep core memories visible"));
+}
+
+#[test]
+fn enforce_total_char_limit_truncates_rendered_output() {
+    let mut output = format!("{}{}", "# [/tmp/demo] context\n", "x".repeat(500));
+
+    enforce_total_char_limit(&mut output, 120);
+
+    assert!(output.chars().count() <= 120);
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
 fn context_limits_env_override_and_legacy_alias_are_respected() {
     let mut vars = std::collections::HashMap::new();
     vars.insert("REMEM_CONTEXT_OBSERVATIONS", "7".to_string());
@@ -707,6 +806,22 @@ fn sample_memory_with_epoch(
         status: "active".to_string(),
         branch: None,
         scope: "project".to_string(),
+    }
+}
+
+fn sample_workstream(id: i64, title: &str, next_action: Option<&str>) -> WorkStream {
+    WorkStream {
+        id,
+        project: "demo/project".to_string(),
+        title: title.to_string(),
+        description: None,
+        status: WorkStreamStatus::Active,
+        progress: None,
+        next_action: next_action.map(str::to_string),
+        blockers: None,
+        created_at_epoch: 0,
+        updated_at_epoch: id,
+        completed_at_epoch: None,
     }
 }
 
