@@ -3,7 +3,7 @@ mod candidates;
 mod constants;
 mod merge;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use candidates::load_clusters;
 pub(crate) use candidates::Cluster;
 use merge::{merge_cluster, MergeDecision};
@@ -105,6 +105,17 @@ async fn process_clusters(
         ),
     );
 
+    let total_failures = merge_failures + apply_failures;
+    if merged == 0 && skipped == 0 && total_failures > 0 {
+        return Err(anyhow!(
+            "project={} all {} cluster attempts failed (merge_failures={} apply_failures={})",
+            project,
+            total_failures,
+            merge_failures,
+            apply_failures
+        ));
+    }
+
     Ok(())
 }
 
@@ -199,7 +210,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_clusters_skips_when_all_cluster_merges_fail() {
+    async fn process_clusters_fails_when_all_cluster_merges_fail() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         setup_memory_schema(&conn);
         let project = "test-dream-all-fail";
@@ -208,11 +219,16 @@ mod tests {
             make_cluster([201, 202], ["broken-topic-c", "broken-topic-d"]),
         ];
 
-        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+        let error = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
             Box::pin(async move { Err(anyhow!("synthetic merge failure")) })
         })
         .await
-        .expect("dream processing should skip failed clusters without retrying the whole job");
+        .expect_err("dream processing should fail when every cluster attempt fails");
+
+        assert!(
+            error.to_string().contains("all 2 cluster attempts failed"),
+            "error should report total failure: {error}"
+        );
     }
 
     #[tokio::test]
