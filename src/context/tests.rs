@@ -3,9 +3,13 @@ use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
+use super::policy::{ContextLimits, ContextPolicy};
 use super::query::{load_context_data, query_recent_summaries};
+use super::render::enforce_total_char_limit;
 use super::sections::{
-    render_core_memory, render_memory_index, render_recent_sessions, render_workstreams,
+    render_core_memory, render_core_memory_with_limits, render_memory_index,
+    render_memory_index_with_limits, render_recent_sessions, render_recent_sessions_with_limit,
+    render_workstreams, render_workstreams_with_limits,
 };
 use super::types::SessionSummaryBrief;
 
@@ -27,6 +31,29 @@ fn render_recent_sessions_truncates_completed_line() {
 }
 
 #[test]
+fn render_recent_sessions_respects_char_limit() {
+    let mut output = String::new();
+    let summaries = vec![
+        SessionSummaryBrief {
+            request: "Short followup".to_string(),
+            completed: Some("done".to_string()),
+            created_at_epoch: 1_710_000_000,
+        },
+        SessionSummaryBrief {
+            request: "Second session should not fit".to_string(),
+            completed: Some("done".to_string()),
+            created_at_epoch: 1_710_000_100,
+        },
+    ];
+
+    render_recent_sessions_with_limit(&mut output, &summaries, 70);
+
+    assert!(output.contains("Short followup"));
+    assert!(!output.contains("Second session should not fit"));
+    assert!(output.chars().count() <= 70);
+}
+
+#[test]
 fn render_memory_index_prioritizes_known_types() {
     let mut output = String::new();
     let memories = vec![
@@ -42,6 +69,60 @@ fn render_memory_index_prioritizes_known_types() {
     let custom_pos = output.find("**custom**").unwrap();
     assert!(decision_pos < bugfix_pos);
     assert!(bugfix_pos < custom_pos);
+}
+
+#[test]
+fn render_memory_index_excludes_preferences() {
+    let mut output = String::new();
+    let memories = vec![
+        sample_memory(1, "preference", "Preference title"),
+        sample_memory(2, "decision", "Decision title"),
+    ];
+
+    render_memory_index(&mut output, &memories);
+
+    assert!(output.contains("Decision title"));
+    assert!(!output.contains("Preference title"));
+    assert!(!output.contains("**Preferences**"));
+}
+
+#[test]
+fn render_memory_index_respects_item_limit() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        memory_index_limit: 2,
+        ..ContextLimits::default()
+    };
+    let memories = vec![
+        sample_memory(1, "decision", "Decision one"),
+        sample_memory(2, "decision", "Decision two"),
+        sample_memory(3, "decision", "Decision three"),
+    ];
+
+    render_memory_index_with_limits(&mut output, &memories, &limits);
+
+    assert!(output.contains("Decision one"));
+    assert!(output.contains("Decision two"));
+    assert!(!output.contains("Decision three"));
+}
+
+#[test]
+fn render_memory_index_truncates_first_item_to_char_limit() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        memory_index_char_limit: 48,
+        ..ContextLimits::default()
+    };
+    let long_title = "Decision title that is far too long for the index budget";
+    let memories = vec![sample_memory(1, "decision", long_title)];
+
+    let rendered = render_memory_index_with_limits(&mut output, &memories, &limits);
+    let body = output.strip_prefix("## Index\n").unwrap().trim_end();
+
+    assert_eq!(rendered, 1);
+    assert!(body.chars().count() <= limits.memory_index_char_limit);
+    assert!(output.contains("..."));
+    assert!(!output.contains(long_title));
 }
 
 #[test]
@@ -67,6 +148,38 @@ fn render_workstreams_includes_next_action_when_present() {
 }
 
 #[test]
+fn render_workstreams_respects_item_and_char_limits() {
+    let mut output = String::new();
+    let workstreams = vec![
+        sample_workstream(1, "First stream", Some("ship the first fix")),
+        sample_workstream(2, "Second stream", Some("ship the second fix")),
+        sample_workstream(3, "Third stream", Some("ship the third fix")),
+    ];
+
+    render_workstreams_with_limits(&mut output, &workstreams, 2, 200);
+
+    assert!(output.contains("#1 [active] First stream"));
+    assert!(output.contains("#2 [active] Second stream"));
+    assert!(!output.contains("#3 [active] Third stream"));
+    assert!(output.chars().count() <= 200);
+}
+
+#[test]
+fn render_workstreams_stops_at_char_limit() {
+    let mut output = String::new();
+    let workstreams = vec![
+        sample_workstream(1, "First", Some("fix")),
+        sample_workstream(2, "Second", Some("fix")),
+    ];
+
+    render_workstreams_with_limits(&mut output, &workstreams, 10, 48);
+
+    assert!(output.contains("#1 [active] First"));
+    assert!(!output.contains("#2 [active] Second"));
+    assert!(output.chars().count() <= 48);
+}
+
+#[test]
 fn render_core_memory_prioritizes_higher_score_memories() {
     let mut output = String::new();
     let now = chrono::Utc::now().timestamp();
@@ -80,6 +193,25 @@ fn render_core_memory_prioritizes_higher_score_memories() {
     let high_pos = output.find("**#2 Higher score**").unwrap();
     let low_pos = output.find("**#1 Lower score**").unwrap();
     assert!(high_pos < low_pos);
+}
+
+#[test]
+fn render_core_memory_truncates_first_item_to_char_limit() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        core_char_limit: 120,
+        ..ContextLimits::default()
+    };
+    let mut long_memory = sample_memory(1, "decision", "Compact title");
+    long_memory.text = "x".repeat(500);
+    let memories = vec![long_memory];
+
+    render_core_memory_with_limits(&mut output, &memories, &limits);
+
+    let body = output.strip_prefix("## Core\n").unwrap().trim_end();
+    assert!(output.chars().count() <= limits.core_char_limit);
+    assert!(body.chars().count() <= limits.core_char_limit);
+    assert!(output.contains("..."));
 }
 
 #[test]
@@ -292,7 +424,7 @@ fn load_context_data_keeps_current_branch_memories_before_limit() {
 
     let loaded = load_context_data(&conn, project, Some("fix/context-selection"));
 
-    assert_eq!(loaded.memories.len(), 50);
+    assert!(loaded.memories.len() > ContextLimits::default().memory_index_limit);
     assert!(loaded
         .memories
         .iter()
@@ -341,6 +473,185 @@ fn load_context_data_limits_memory_self_diagnostics_before_index_rendering() {
         .memories
         .iter()
         .any(|memory| memory.title == "Fix guard path source selection"));
+}
+
+#[test]
+fn load_context_data_excludes_preferences_from_main_memory_pool() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/computer";
+    let now = chrono::Utc::now().timestamp();
+
+    for idx in 0..60 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("preference-topic-{idx}")),
+            "preference",
+            &format!("Preference {idx}"),
+            "User prefers evidence-backed coordination",
+            now - idx,
+        );
+    }
+    insert_memory(
+        &conn,
+        100,
+        project,
+        Some("context-budget-decision"),
+        "decision",
+        "Use host-aware context compiler",
+        "Split preferences from the main memory index",
+        now - 100,
+    );
+    insert_memory(
+        &conn,
+        101,
+        project,
+        Some("context-budget-discovery"),
+        "discovery",
+        "Preference flood starves core memories",
+        "The main index was dominated by preferences",
+        now - 101,
+    );
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert!(!loaded
+        .memories
+        .iter()
+        .any(|memory| memory.memory_type == "preference"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Use host-aware context compiler"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Preference flood starves core memories"));
+}
+
+#[test]
+fn load_context_data_excludes_preferences_before_candidate_limit() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/computer";
+    let now = chrono::Utc::now().timestamp();
+
+    for idx in 0..130 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("preference-topic-{idx}")),
+            "preference",
+            &format!("Preference {idx}"),
+            "User prefers evidence-backed coordination",
+            now - idx,
+        );
+    }
+    insert_memory(
+        &conn,
+        200,
+        project,
+        Some("context-budget-decision"),
+        "decision",
+        "Use host-aware context compiler",
+        "Split preferences from the main memory index",
+        now - 1_000,
+    );
+    insert_memory(
+        &conn,
+        201,
+        project,
+        Some("context-budget-bugfix"),
+        "bugfix",
+        "Keep core memories visible",
+        "Filter preferences before applying the candidate cap",
+        now - 1_001,
+    );
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert!(loaded
+        .memories
+        .iter()
+        .all(|memory| memory.memory_type != "preference"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Use host-aware context compiler"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Keep core memories visible"));
+}
+
+#[test]
+fn enforce_total_char_limit_truncates_rendered_output() {
+    let mut output = format!("{}{}", "# [/tmp/demo] context\n", "x".repeat(500));
+
+    enforce_total_char_limit(&mut output, 120);
+
+    assert!(output.chars().count() <= 120);
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn context_limits_env_override_and_legacy_alias_are_respected() {
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("REMEM_CONTEXT_OBSERVATIONS", "7".to_string());
+    vars.insert("REMEM_CONTEXT_CORE_ITEM_LIMIT", "3".to_string());
+    vars.insert("REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT", "900".to_string());
+
+    let limits = ContextLimits::from_env_reader(|key| vars.get(key).cloned());
+
+    assert_eq!(limits.memory_index_limit, 7);
+    assert_eq!(limits.core_item_limit, 3);
+    assert_eq!(limits.preference_char_limit, 900);
+}
+
+#[test]
+fn context_limits_new_memory_index_env_wins_over_legacy_alias() {
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("REMEM_CONTEXT_OBSERVATIONS", "7".to_string());
+    vars.insert("REMEM_CONTEXT_MEMORY_INDEX_LIMIT", "11".to_string());
+
+    let limits = ContextLimits::from_env_reader(|key| vars.get(key).cloned());
+
+    assert_eq!(limits.memory_index_limit, 11);
+}
+
+#[test]
+fn load_context_data_keeps_core_candidates_when_index_limit_is_small() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/vibeguard";
+    let now = chrono::Utc::now().timestamp();
+    let limits = ContextLimits {
+        memory_index_limit: 1,
+        core_item_limit: 4,
+        ..ContextLimits::default()
+    };
+    let policy = ContextPolicy::from_limits(limits);
+
+    for idx in 0..8 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("decision-topic-{idx}")),
+            "decision",
+            &format!("Decision {idx}"),
+            "Decision body",
+            now - idx,
+        );
+    }
+
+    let loaded = super::query::load_context_data_with_policy(&conn, project, None, &policy);
+
+    assert!(loaded.memories.len() > limits.memory_index_limit);
+    assert!(loaded.memories.len() >= limits.core_item_limit);
 }
 
 #[test]
@@ -559,6 +870,22 @@ fn sample_memory_with_epoch(
         status: "active".to_string(),
         branch: None,
         scope: "project".to_string(),
+    }
+}
+
+fn sample_workstream(id: i64, title: &str, next_action: Option<&str>) -> WorkStream {
+    WorkStream {
+        id,
+        project: "demo/project".to_string(),
+        title: title.to_string(),
+        description: None,
+        status: WorkStreamStatus::Active,
+        progress: None,
+        next_action: next_action.map(str::to_string),
+        blockers: None,
+        created_at_epoch: 0,
+        updated_at_epoch: id,
+        completed_at_epoch: None,
     }
 }
 

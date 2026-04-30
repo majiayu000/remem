@@ -301,14 +301,19 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Custom API endpoint |
 | `REMEM_DEBUG` | - | Enable debug logging |
-| `REMEM_CONTEXT_OBSERVATIONS` | `50` | Max observations loaded in context |
-| `REMEM_CONTEXT_FULL_COUNT` | `10` | Observations shown with full narrative |
-| `REMEM_CONTEXT_SESSION_COUNT` | `10` | Session summaries shown |
-| `REMEM_CONTEXT_OBSERVATION_TYPES` | `bugfix,feature,...` | Observation types to load |
-| `REMEM_CONTEXT_FULL_FIELD` | `narrative` | Field for full display (narrative/facts) |
-| `REMEM_CONTEXT_SHOW_READ_TOKENS` | `true` | Show read token statistics |
-| `REMEM_CONTEXT_SHOW_WORK_TOKENS` | `true` | Show work token statistics |
-| `REMEM_CONTEXT_SHOW_LAST_SUMMARY` | `true` | Show last session summary |
+| `REMEM_CONTEXT_HOST` | `auto` | Context host profile override: `claude-code`, `codex-cli`, or `unknown` |
+| `REMEM_CONTEXT_TOTAL_CHAR_LIMIT` | `12000` | Soft character cap for rendered context |
+| `REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT` | `120` | Candidate memories fetched before section selection |
+| `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` | `50` | Non-preference memories shown in the main memory index |
+| `REMEM_CONTEXT_OBSERVATIONS` | `50` | Deprecated alias for `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` |
+| `REMEM_CONTEXT_MEMORY_INDEX_CHAR_LIMIT` | `4000` | Main memory index character budget |
+| `REMEM_CONTEXT_CORE_ITEM_LIMIT` | `6` | Core memory item budget |
+| `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `3000` | Core memory character budget |
+| `REMEM_CONTEXT_SESSION_COUNT` | `5` | Session summaries shown |
+| `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | Self-diagnostic memory cap |
+| `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
+| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `10` | Global preference query limit |
+| `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | Preference section character budget |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI path |
 | `REMEM_CODEX_PATH` | `codex` | Codex CLI path |
 | `REMEM_CODEX_MODEL` | - | Optional Codex CLI model override |

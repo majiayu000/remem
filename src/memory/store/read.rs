@@ -8,6 +8,46 @@ pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Resu
     list_memories(conn, project, None, limit, 0, false, None)
 }
 
+pub fn get_recent_memories_excluding_types(
+    conn: &Connection,
+    project: &str,
+    excluded_types: &[&str],
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
+    conditions.push("status = 'active'".to_string());
+
+    if !excluded_types.is_empty() {
+        let placeholders: Vec<String> = excluded_types
+            .iter()
+            .map(|memory_type| {
+                let placeholder = format!("?{idx}");
+                params.push(Box::new((*memory_type).to_string()));
+                idx += 1;
+                placeholder
+            })
+            .collect();
+        conditions.push(format!("memory_type NOT IN ({})", placeholders.join(", ")));
+    }
+
+    params.push(Box::new(limit));
+    let sql = format!(
+        "SELECT {} FROM memories \
+         WHERE {} \
+         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+        MEMORY_COLS,
+        conditions.join(" AND "),
+        idx,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&params);
+    let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
+    crate::db_query::collect_rows(rows)
+}
+
 pub fn get_memories_by_type(
     conn: &Connection,
     project: &str,

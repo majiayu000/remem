@@ -14,13 +14,14 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Context {
             cwd,
             session_id,
+            host,
             color,
         } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
             let cwd = resolve_cwd_arg(cwd);
-            context::generate_context(&cwd, session_id.as_deref(), color)?;
+            context::generate_context(&cwd, session_id.as_deref(), color, host.as_deref())?;
         }
         Commands::SessionInit => {
             if remem_hooks_disabled() {

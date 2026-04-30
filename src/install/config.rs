@@ -53,10 +53,24 @@ impl HookStrategy {
             Self::Codex => "codex-cli",
         }
     }
+
+    fn context_host(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex-cli",
+        }
+    }
 }
 
 fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
-    if subcommand == "summarize" {
+    if subcommand == "context" {
+        format!(
+            "REMEM_CONTEXT_HOST={} {} {}",
+            strategy.context_host(),
+            bin,
+            subcommand
+        )
+    } else if subcommand == "summarize" {
         match strategy.flush_executor() {
             Some(flush_executor) => format!(
                 "REMEM_SUMMARY_EXECUTOR={} REMEM_FLUSH_EXECUTOR={} {} {}",
