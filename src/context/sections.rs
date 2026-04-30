@@ -11,7 +11,9 @@ pub(super) use empty::render_empty_state;
 #[cfg(test)]
 pub(super) use index::render_memory_index;
 pub(super) use index::render_memory_index_with_limits;
+#[cfg(test)]
 pub(super) use sessions::render_recent_sessions;
+pub(super) use sessions::render_recent_sessions_with_limit;
 #[cfg(test)]
 pub(super) use workstreams::render_workstreams;
 pub(super) use workstreams::render_workstreams_with_limits;

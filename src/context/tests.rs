@@ -7,8 +7,9 @@ use super::policy::{ContextLimits, ContextPolicy};
 use super::query::{load_context_data, query_recent_summaries};
 use super::render::enforce_total_char_limit;
 use super::sections::{
-    render_core_memory, render_memory_index, render_memory_index_with_limits,
-    render_recent_sessions, render_workstreams, render_workstreams_with_limits,
+    render_core_memory, render_core_memory_with_limits, render_memory_index,
+    render_memory_index_with_limits, render_recent_sessions, render_recent_sessions_with_limit,
+    render_workstreams, render_workstreams_with_limits,
 };
 use super::types::SessionSummaryBrief;
 
@@ -27,6 +28,29 @@ fn render_recent_sessions_truncates_completed_line() {
     assert!(output.contains("=> "));
     assert!(output.contains("..."));
     assert!(!output.contains("ignored"));
+}
+
+#[test]
+fn render_recent_sessions_respects_char_limit() {
+    let mut output = String::new();
+    let summaries = vec![
+        SessionSummaryBrief {
+            request: "Short followup".to_string(),
+            completed: Some("done".to_string()),
+            created_at_epoch: 1_710_000_000,
+        },
+        SessionSummaryBrief {
+            request: "Second session should not fit".to_string(),
+            completed: Some("done".to_string()),
+            created_at_epoch: 1_710_000_100,
+        },
+    ];
+
+    render_recent_sessions_with_limit(&mut output, &summaries, 70);
+
+    assert!(output.contains("Short followup"));
+    assert!(!output.contains("Second session should not fit"));
+    assert!(output.chars().count() <= 70);
 }
 
 #[test]
@@ -169,6 +193,25 @@ fn render_core_memory_prioritizes_higher_score_memories() {
     let high_pos = output.find("**#2 Higher score**").unwrap();
     let low_pos = output.find("**#1 Lower score**").unwrap();
     assert!(high_pos < low_pos);
+}
+
+#[test]
+fn render_core_memory_truncates_first_item_to_char_limit() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        core_char_limit: 120,
+        ..ContextLimits::default()
+    };
+    let mut long_memory = sample_memory(1, "decision", "Compact title");
+    long_memory.text = "x".repeat(500);
+    let memories = vec![long_memory];
+
+    render_core_memory_with_limits(&mut output, &memories, &limits);
+
+    let body = output.strip_prefix("## Core\n").unwrap().trim_end();
+    assert!(output.chars().count() <= limits.core_char_limit);
+    assert!(body.chars().count() <= limits.core_char_limit);
+    assert!(output.contains("..."));
 }
 
 #[test]

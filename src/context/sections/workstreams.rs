@@ -17,12 +17,13 @@ pub(in crate::context) fn render_workstreams_with_limits(
 
     let header = "## WorkStreams\n";
     let header_chars = header.chars().count();
-    if header_chars >= char_limit {
+    let trailer_chars = 1;
+    if header_chars + trailer_chars >= char_limit {
         return;
     }
 
     let mut section = String::from(header);
-    let mut total_chars = header_chars;
+    let mut total_chars = header_chars + trailer_chars;
     let mut rendered = 0usize;
 
     for workstream in workstreams.iter().take(item_limit) {

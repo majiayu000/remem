@@ -9,7 +9,7 @@ use super::policy::{ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
     render_core_memory_with_limits, render_empty_state, render_memory_index_with_limits,
-    render_recent_sessions, render_workstreams_with_limits,
+    render_recent_sessions_with_limit, render_workstreams_with_limits,
 };
 use super::types::ContextRequest;
 
@@ -100,7 +100,11 @@ pub fn generate_context(
         );
     }
     if !loaded.summaries.is_empty() {
-        render_recent_sessions(&mut output, &loaded.summaries);
+        render_recent_sessions_with_limit(
+            &mut output,
+            &loaded.summaries,
+            policy.section_char_limit(SectionKind::Sessions, 2_200),
+        );
     }
 
     output.push_str(&format!(
