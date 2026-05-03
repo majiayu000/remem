@@ -33,7 +33,7 @@
 # 方式 1：Homebrew
 brew install majiayu000/tap/remem
 
-# 方式 2：快速安装（GitHub Release 预编译二进制）
+# 方式 2：快速安装（GitHub Release 预编译二进制，并自动配置 hooks）
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # 固定版本、指定安装目录，或只安装二进制不改 hooks/MCP
@@ -57,7 +57,7 @@ cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
 
-# 配置检测到的 Claude Code/Codex hooks + MCP
+# 如果使用 Cargo 或源码安装，配置检测到的 Claude Code/Codex hooks + MCP
 remem install
 
 # 可选：明确指定安装目标
@@ -66,6 +66,32 @@ remem install --dry-run         # 预览配置改动
 ```
 
 安装后重启对应的 AI 编程工具。
+
+### 更新已有安装
+
+手动替换二进制后，需要重新执行 `remem install`，让已有 Claude Code 和
+Codex hook 命令刷新到当前 host-aware 配置：
+
+```bash
+cargo build --release
+cp target/release/remem ~/.local/bin/
+codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
+remem install --target all
+```
+
+验证已安装 hooks 是否包含 host-specific context 命令：
+
+```bash
+jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.claude/settings.json
+jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
+```
+
+期望包含：
+
+```text
+REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context
+REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context
+```
 
 ## 在 Codex 中使用
 
