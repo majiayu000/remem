@@ -4,8 +4,8 @@ use rusqlite::Connection;
 use crate::memory::{self, Memory};
 
 use super::{
-    add_preference, dedup_with_claude_md, query_global_preferences, remove_preference,
-    render_preferences,
+    add_preference, dedup_with_claude_md, query_global_preferences, query_project_preferences,
+    remove_preference, render_preferences, render_preferences_with_limits,
 };
 
 fn setup_test_db() -> Connection {
@@ -82,6 +82,106 @@ fn test_render_preferences_with_data() -> Result<()> {
     render_preferences(&mut output, &conn, "test/proj", "/nonexistent")?;
     assert!(output.contains("## Your Preferences"));
     assert!(output.contains("Use Chinese comments"));
+    Ok(())
+}
+
+#[test]
+fn test_project_preferences_exclude_global_overlay() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("local-pref"),
+        "Preference: Local workflow",
+        "Use the local project workflow",
+        "preference",
+        None,
+    )?;
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "other/proj",
+        Some("global-pref"),
+        "Preference: AtlasCloud markdown",
+        "Verify AtlasCloud markdown rendering",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let prefs = query_project_preferences(&conn, "test/proj", 20)?;
+    assert_eq!(prefs.len(), 1);
+    assert!(prefs[0].text.contains("local project workflow"));
+    assert!(!prefs[0].text.contains("AtlasCloud"));
+    Ok(())
+}
+
+#[test]
+fn test_render_preferences_global_limit_zero_does_not_leak_global() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "infra/aip",
+        Some("atlas-pref"),
+        "Preference: AtlasCloud markdown",
+        "Verify AtlasCloud markdown rendering",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let mut output = String::new();
+    let rendered = render_preferences_with_limits(
+        &mut output,
+        &conn,
+        "work/life/x",
+        "/nonexistent",
+        20,
+        0,
+        1500,
+    )?;
+
+    assert_eq!(rendered, 0);
+    assert!(!output.contains("AtlasCloud"));
+    Ok(())
+}
+
+#[test]
+fn test_render_preferences_global_limit_explicitly_opted_in() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "infra/aip",
+        Some("atlas-pref"),
+        "Preference: AtlasCloud markdown",
+        "Verify AtlasCloud markdown rendering",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let mut output = String::new();
+    let rendered = render_preferences_with_limits(
+        &mut output,
+        &conn,
+        "work/life/x",
+        "/nonexistent",
+        20,
+        1,
+        1500,
+    )?;
+
+    assert_eq!(rendered, 1);
+    assert!(output.contains("AtlasCloud"));
     Ok(())
 }
 

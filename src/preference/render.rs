@@ -1,9 +1,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::memory::{self, Memory};
+use crate::memory::Memory;
 
-use super::query_global_preferences;
+use super::{query_global_preferences, query_project_preferences};
 
 pub fn dedup_with_claude_md(prefs: &[Memory], cwd: &str) -> Vec<usize> {
     let claude_md_path = std::path::Path::new(cwd).join("CLAUDE.md");
@@ -31,7 +31,7 @@ pub fn render_preferences(
     project: &str,
     cwd: &str,
 ) -> Result<()> {
-    render_preferences_with_limits(output, conn, project, cwd, 20, 10, 1500).map(|_| ())
+    render_preferences_with_limits(output, conn, project, cwd, 20, 0, 1500).map(|_| ())
 }
 
 pub fn render_preferences_with_limits(
@@ -43,8 +43,7 @@ pub fn render_preferences_with_limits(
     global_limit: usize,
     char_limit: usize,
 ) -> Result<usize> {
-    let project_prefs =
-        memory::get_memories_by_type(conn, project, "preference", project_limit as i64)?;
+    let project_prefs = query_project_preferences(conn, project, project_limit)?;
     let global_prefs = query_global_preferences(conn, global_limit).unwrap_or_default();
 
     let mut all_prefs = project_prefs;

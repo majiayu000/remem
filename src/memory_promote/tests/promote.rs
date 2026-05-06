@@ -60,6 +60,29 @@ fn test_promote_multi_learned() {
 }
 
 #[test]
+fn test_promote_preference_defaults_to_project_scope() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let count = promote_summary_to_memories(
+        &conn,
+        "session-1",
+        "test/proj",
+        Some("Capture local preference"),
+        None,
+        None,
+        Some("Always run project-specific smoke tests"),
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+
+    let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].memory_type, "preference");
+    assert_eq!(memories[0].scope, "project");
+}
+
+#[test]
 fn test_promote_content_format() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);

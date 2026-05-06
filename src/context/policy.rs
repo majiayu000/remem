@@ -44,7 +44,7 @@ impl Default for ContextLimits {
             session_limit: 5,
             self_diagnostic_limit: 2,
             preference_project_limit: 20,
-            preference_global_limit: 10,
+            preference_global_limit: 0,
             preference_char_limit: 1_500,
         }
     }

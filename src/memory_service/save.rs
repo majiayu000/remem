@@ -18,14 +18,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         .as_ref()
         .and_then(|files| serde_json::to_string(files).ok());
 
-    let scope = req
-        .scope
-        .as_deref()
-        .unwrap_or(if memory_type == "preference" {
-            "global"
-        } else {
-            "project"
-        });
+    let scope = req.scope.as_deref().unwrap_or("project");
     let mut local_copy = prepare_local_copy(project, title, req)?;
     write_local_copy(&mut local_copy)?;
 

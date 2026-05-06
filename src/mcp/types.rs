@@ -72,7 +72,7 @@ pub(super) struct SaveMemoryParams {
     )]
     pub local_path: Option<String>,
     #[schemars(
-        description = "Memory scope: 'project' (default, only this project) or 'global' (visible in all projects). Use 'global' for user preferences and cross-project knowledge."
+        description = "Memory scope: 'project' (default, only this project) or 'global' (visible in all projects). Use 'global' only for explicitly cross-project preferences or knowledge."
     )]
     pub scope: Option<String>,
 }
