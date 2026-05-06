@@ -137,10 +137,10 @@ Stop hook fires
 New session starts
        │
        ▼
-  Load preferences (project + global)
+  Load preferences (project + explicit global opt-in)
        │
        ├─ Project preferences from memories table
-       ├─ Global preferences (topic_key in 3+ projects)
+       ├─ Global preferences only when the global limit is explicitly enabled
        ├─ Dedup against CLAUDE.md (skip already present)
        │
        ▼
@@ -264,16 +264,17 @@ Memories have a `scope` field: `project` (default) or `global`.
 
 | Scope | Visibility | Auto-assigned to |
 |-------|-----------|------------------|
-| `project` | Only in the originating project | decision, bugfix, discovery, architecture |
-| `global` | All projects | preference |
+| `project` | Only in the originating project | decision, bugfix, discovery, architecture, preference |
+| `global` | All projects | Explicit opt-in only |
 
 **How it works automatically:**
-- When a session summary is promoted to memories, `preference` type automatically gets `scope=global`
-- When Claude calls `save_memory(type="preference")`, scope defaults to `global`
-- Other types (decision, bugfix, etc.) stay `project`-scoped
-- Context injection query: `WHERE (project = ? OR scope = 'global')`
+- When a session summary is promoted to memories, `preference` type defaults to `scope=project`
+- When Claude calls `save_memory(type="preference")`, scope defaults to `project`
+- All memory types stay project-scoped unless the caller explicitly requests `scope=global`
+- General memory retrieval still uses the overlay query `WHERE (project = ? OR scope = 'global')`
+- SessionStart preference rendering uses project preferences by default; global preference injection is disabled unless `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` is set above `0`
 
-**No manual action needed.** Preferences learned in project A automatically appear in project B's context.
+Global preferences require deliberate action. Preferences learned in project A do not automatically appear in project B's SessionStart context.
 
 The `save_memory` MCP tool accepts an optional `scope` parameter for explicit control. The CLI supports `remem preferences add --global "text"` for manual global preferences.
 
@@ -312,7 +313,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_SESSION_COUNT` | `5` | Session summaries shown |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | Self-diagnostic memory cap |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
-| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `10` | Global preference query limit |
+| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | Preference section character budget |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI path |
 | `REMEM_CODEX_PATH` | `codex` | Codex CLI path |
@@ -393,4 +394,4 @@ memories_fts (title, content)                                    -- FTS5 trigram
 - **Branch-aware memories**: Memories tagged with git branch, current branch prioritized in context
 - **Auto-promotion**: Session summaries automatically distilled into typed memories (decision/bugfix/preference/discovery)
 - **Preference-first context**: Preferences rendered before core memories, always visible at session start
-- **Global scope for preferences**: Preferences auto-scoped as `global`, visible across all projects without manual action. Other memory types stay `project`-scoped. Inspired by Augment's User Rules vs Workspace Rules separation
+- **Explicit global scope for preferences**: Preferences stay `project`-scoped by default. Cross-project preferences require explicit `scope=global` and SessionStart global preference injection is disabled by default. Inspired by Augment's User Rules vs Workspace Rules separation

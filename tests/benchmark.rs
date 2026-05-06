@@ -626,11 +626,11 @@ fn bench_summary_parse_full() -> Result<()> {
     assert!(
         p.request
             .as_ref()
-            .is_some_and(|r| r.contains("global memory scope")),
+            .is_some_and(|r| r.contains("SessionStart preferences")),
         "request field should be extracted"
     );
     assert!(
-        p.decisions.as_ref().is_some_and(|d| d.contains("global")),
+        p.decisions.as_ref().is_some_and(|d| d.contains("project")),
         "decisions field should be extracted"
     );
     assert!(
@@ -746,12 +746,19 @@ fn bench_summary_promote_creates_memories() -> Result<()> {
         "Preferences should be promoted to memories"
     );
 
-    // Verify preference is auto-scoped as global
-    let global_prefs: Vec<_> = preferences.iter().filter(|m| m.scope == "global").collect();
+    // Verify promoted preferences follow the current project-scope default.
+    let project_prefs: Vec<_> = preferences
+        .iter()
+        .filter(|m| m.scope == "project")
+        .collect();
     eprintln!(
-        "[Promote] global preferences: {}/{}",
-        global_prefs.len(),
+        "[Promote] project preferences: {}/{}",
+        project_prefs.len(),
         preferences.len()
+    );
+    assert!(
+        !project_prefs.is_empty(),
+        "Promoted preferences should default to project scope"
     );
 
     Ok(())
