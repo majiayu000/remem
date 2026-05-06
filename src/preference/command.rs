@@ -23,7 +23,7 @@ pub fn list_preferences(conn: &Connection, project: &str) -> Result<()> {
     }
 
     if !global_prefs.is_empty() {
-        println!("\nGlobal preferences (3+ projects):");
+        println!("\nGlobal preferences:");
         for pref in &global_prefs {
             let text_preview: String = pref.text.chars().take(80).collect();
             println!("  [{}] {} (from: {})", pref.id, text_preview, pref.project);

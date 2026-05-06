@@ -186,7 +186,7 @@ fn test_render_preferences_global_limit_explicitly_opted_in() -> Result<()> {
 }
 
 #[test]
-fn test_global_preferences_threshold() -> Result<()> {
+fn test_global_preferences_require_explicit_global_scope() -> Result<()> {
     let conn = setup_test_db();
     for project in &["proj-a", "proj-b", "proj-c"] {
         memory::insert_memory(
@@ -200,24 +200,30 @@ fn test_global_preferences_threshold() -> Result<()> {
             None,
         )?;
     }
-    memory::insert_memory(
+
+    let global = query_global_preferences(&conn, 10)?;
+    assert!(
+        global.is_empty(),
+        "Repeated project-scoped topic_key values must not become global preferences"
+    );
+
+    memory::insert_memory_full(
         &conn,
         None,
         "proj-a",
-        Some("local-pref"),
-        "Preference: Use tabs",
-        "Use tabs for indentation",
+        Some("explicit-global"),
+        "Preference: Explicit global",
+        "Use explicit global preferences only",
         "preference",
+        None,
+        None,
+        "global",
         None,
     )?;
 
     let global = query_global_preferences(&conn, 10)?;
-    assert_eq!(
-        global.len(),
-        1,
-        "Only preferences in 3+ projects should be returned"
-    );
-    assert!(global[0].text.contains("terse"));
+    assert_eq!(global.len(), 1);
+    assert!(global[0].text.contains("explicit global"));
     Ok(())
 }
 
