@@ -4,8 +4,8 @@ use rusqlite::Connection;
 use crate::memory::{self, Memory};
 
 use super::{
-    add_preference, dedup_with_claude_md, query_global_preferences, remove_preference,
-    render_preferences,
+    add_preference, dedup_with_claude_md, query_global_preferences, query_project_preferences,
+    remove_preference, render_preferences, render_preferences_with_limits,
 };
 
 fn setup_test_db() -> Connection {
@@ -86,7 +86,107 @@ fn test_render_preferences_with_data() -> Result<()> {
 }
 
 #[test]
-fn test_global_preferences_threshold() -> Result<()> {
+fn test_project_preferences_exclude_global_overlay() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("local-pref"),
+        "Preference: Local workflow",
+        "Use the local project workflow",
+        "preference",
+        None,
+    )?;
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "other/proj",
+        Some("global-pref"),
+        "Preference: AtlasCloud markdown",
+        "Verify AtlasCloud markdown rendering",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let prefs = query_project_preferences(&conn, "test/proj", 20)?;
+    assert_eq!(prefs.len(), 1);
+    assert!(prefs[0].text.contains("local project workflow"));
+    assert!(!prefs[0].text.contains("AtlasCloud"));
+    Ok(())
+}
+
+#[test]
+fn test_render_preferences_global_limit_zero_does_not_leak_global() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "infra/aip",
+        Some("atlas-pref"),
+        "Preference: AtlasCloud markdown",
+        "Verify AtlasCloud markdown rendering",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let mut output = String::new();
+    let rendered = render_preferences_with_limits(
+        &mut output,
+        &conn,
+        "work/life/x",
+        "/nonexistent",
+        20,
+        0,
+        1500,
+    )?;
+
+    assert_eq!(rendered, 0);
+    assert!(!output.contains("AtlasCloud"));
+    Ok(())
+}
+
+#[test]
+fn test_render_preferences_global_limit_explicitly_opted_in() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "infra/aip",
+        Some("atlas-pref"),
+        "Preference: AtlasCloud markdown",
+        "Verify AtlasCloud markdown rendering",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let mut output = String::new();
+    let rendered = render_preferences_with_limits(
+        &mut output,
+        &conn,
+        "work/life/x",
+        "/nonexistent",
+        20,
+        1,
+        1500,
+    )?;
+
+    assert_eq!(rendered, 1);
+    assert!(output.contains("AtlasCloud"));
+    Ok(())
+}
+
+#[test]
+fn test_global_preferences_require_explicit_global_scope() -> Result<()> {
     let conn = setup_test_db();
     for project in &["proj-a", "proj-b", "proj-c"] {
         memory::insert_memory(
@@ -100,24 +200,30 @@ fn test_global_preferences_threshold() -> Result<()> {
             None,
         )?;
     }
-    memory::insert_memory(
+
+    let global = query_global_preferences(&conn, 10)?;
+    assert!(
+        global.is_empty(),
+        "Repeated project-scoped topic_key values must not become global preferences"
+    );
+
+    memory::insert_memory_full(
         &conn,
         None,
         "proj-a",
-        Some("local-pref"),
-        "Preference: Use tabs",
-        "Use tabs for indentation",
+        Some("explicit-global"),
+        "Preference: Explicit global",
+        "Use explicit global preferences only",
         "preference",
+        None,
+        None,
+        "global",
         None,
     )?;
 
     let global = query_global_preferences(&conn, 10)?;
-    assert_eq!(
-        global.len(),
-        1,
-        "Only preferences in 3+ projects should be returned"
-    );
-    assert!(global[0].text.contains("terse"));
+    assert_eq!(global.len(), 1);
+    assert!(global[0].text.contains("explicit global"));
     Ok(())
 }
 

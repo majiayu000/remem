@@ -3,10 +3,10 @@ use rusqlite::{params, Connection};
 
 use crate::memory;
 
-use super::query_global_preferences;
+use super::{query_global_preferences, query_project_preferences};
 
 pub fn list_preferences(conn: &Connection, project: &str) -> Result<()> {
-    let project_prefs = memory::get_memories_by_type(conn, project, "preference", 50)?;
+    let project_prefs = query_project_preferences(conn, project, 50)?;
     let global_prefs = query_global_preferences(conn, 10).unwrap_or_default();
 
     if project_prefs.is_empty() && global_prefs.is_empty() {
@@ -23,7 +23,7 @@ pub fn list_preferences(conn: &Connection, project: &str) -> Result<()> {
     }
 
     if !global_prefs.is_empty() {
-        println!("\nGlobal preferences (3+ projects):");
+        println!("\nGlobal preferences:");
         for pref in &global_prefs {
             let text_preview: String = pref.text.chars().take(80).collect();
             println!("  [{}] {} (from: {})", pref.id, text_preview, pref.project);

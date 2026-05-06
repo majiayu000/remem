@@ -83,7 +83,7 @@ struct ContextLimits {
     session_limit: usize,               // default 5
     self_diagnostic_limit: usize,       // default 2
     preference_project_limit: usize,    // default 20
-    preference_global_limit: usize,     // default 10
+    preference_global_limit: usize,     // default 0
     preference_char_limit: usize,       // default 1500
 }
 ```
@@ -110,7 +110,7 @@ struct ContextLimits {
 | `REMEM_CONTEXT_SESSION_COUNT` | `5` | session summary 上限 |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | self-diagnostic 记忆上限 |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | 项目偏好查询上限 |
-| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `10` | 全局偏好查询上限 |
+| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | 全局偏好查询上限；默认关闭 |
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | preference section 字符预算 |
 
 兼容策略：

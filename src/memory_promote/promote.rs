@@ -68,7 +68,7 @@ pub fn promote_summary_to_memories(
                 "preference",
                 None,
                 None,
-                "global",
+                "project",
                 None,
             )?;
             count += 1;

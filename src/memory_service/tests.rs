@@ -55,6 +55,30 @@ fn resolve_tilde_path_is_rejected() {
 }
 
 #[test]
+fn save_memory_preference_defaults_to_project_scope() {
+    let _dir = ScopedTestDataDir::new("preference-default-project-scope");
+    let conn = db::open_db().expect("db should open");
+    let req = SaveMemoryRequest {
+        text: "Prefer project-specific workflow notes".to_string(),
+        title: Some("Preference".to_string()),
+        project: Some("proj".to_string()),
+        memory_type: Some("preference".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("preference save should succeed");
+    let scope: String = conn
+        .query_row(
+            "SELECT scope FROM memories WHERE id = ?1",
+            [saved.id],
+            |row| row.get(0),
+        )
+        .expect("scope query should succeed");
+    assert_eq!(scope, "project");
+}
+
+#[test]
 fn save_memory_outside_local_path_does_not_persist_memory() {
     let _dir = ScopedTestDataDir::new("save-outside-path-no-db-write");
     let conn = db::open_db().expect("db should open");

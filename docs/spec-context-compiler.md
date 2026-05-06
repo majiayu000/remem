@@ -282,7 +282,7 @@ New env names:
 | `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `3000` | core memory char cap |
 | `REMEM_CONTEXT_SESSION_COUNT` | `5` | recent session summary cap |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | project preference query cap |
-| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `10` | global preference query cap |
+| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | global preference query cap; disabled by default |
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | rendered preference char cap |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | self-diagnostic memory cap |
 

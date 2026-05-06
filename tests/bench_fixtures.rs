@@ -417,8 +417,8 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
             "300 second cooldown between summary generations for same project",
         ),
         (
-            "Preference auto-promotion",
-            "Preferences from session summaries auto-promoted to global scope",
+            "Preference project-scope default",
+            "Preferences from session summaries stay project-scoped unless explicitly global",
         ),
         (
             "Docker build optimization",
@@ -484,15 +484,15 @@ pub fn search_eval_memories() -> Vec<MemorySeed> {
 
 pub fn summary_xml_with_all_fields() -> String {
     "<summary>\n\
-     <request>Add global memory scope for cross-project preference sharing</request>\n\
-     <completed>Implemented scope field on Memory struct, updated insert/query paths, \
-     added auto-promotion of preferences to global scope</completed>\n\
-     <decisions>Use 'global' scope string instead of boolean flag for extensibility. \
-     Preferences are auto-promoted to global scope during summary processing.</decisions>\n\
+     <request>Isolate SessionStart preferences to the active project</request>\n\
+     <completed>Implemented project-only preference query paths and disabled default \
+     global preference injection for SessionStart</completed>\n\
+     <decisions>Use 'project' as the default scope for promoted preferences. \
+     Require explicit scope=global for cross-project preference sharing.</decisions>\n\
      <learned>FTS5 trigram tokenizer handles Chinese characters well but requires \
      LIKE fallback for tokens under 3 characters</learned>\n\
-     <next_steps>Add scope filter to MCP search tool. Write migration for existing \
-     preferences to global scope.</next_steps>\n\
+     <next_steps>Keep global preference injection opt-in and verify SessionStart output \
+     from an unrelated project before release.</next_steps>\n\
      <preferences>Always use English for code comments and commit messages. \
      Prefer cargo check before cargo test for faster feedback.</preferences>\n\
      </summary>"
