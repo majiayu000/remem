@@ -38,7 +38,9 @@ impl MemoryServer {
                 memory_type: params.r#type.clone(),
                 limit: params.limit.unwrap_or(20),
                 offset: params.offset.unwrap_or(0),
-                include_stale: params.include_stale.unwrap_or(true),
+                include_stale: params
+                    .include_stale
+                    .unwrap_or_else(memory_service::default_include_stale),
                 branch: params.branch.clone(),
                 multi_hop: requested_multi_hop,
             };

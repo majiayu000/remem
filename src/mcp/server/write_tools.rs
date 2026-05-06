@@ -4,7 +4,12 @@ use serde_json::json;
 
 use super::super::types::{SaveMemoryParams, TimelineReportParams};
 use super::MemoryServer;
-use crate::memory_service;
+use crate::{db, memory_service};
+
+fn current_branch() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    db::detect_git_branch(cwd.to_str()?)
+}
 
 #[tool_router(router = tool_router_write, vis = "pub(super)")]
 impl MemoryServer {
@@ -42,7 +47,7 @@ impl MemoryServer {
                 files: params.files.clone(),
                 scope: params.scope.clone(),
                 created_at_epoch: None,
-                branch: None,
+                branch: current_branch(),
                 local_path: params.local_path.clone(),
                 local_copy_enabled: None,
             };
