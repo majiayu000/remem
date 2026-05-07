@@ -72,7 +72,14 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
     let response = call_summary_ai(&project, &user_message)
         .await
         .map_err(|err| {
-            let _ = db::release_summarize_lock(&conn, &project);
+            if let Err(release_err) = db::release_summarize_lock(&conn, &project) {
+                crate::log::error(
+                    "summary-job",
+                    &format!(
+                        "[LOCK LEAK] failed to release summarize lock for {project}: {release_err}"
+                    ),
+                );
+            }
             anyhow::anyhow!("summary ai failed: {}", err)
         })?;
     let Some(summary) = parse_summary(&response) else {

@@ -75,7 +75,17 @@ struct HookInput {
 }
 
 pub(crate) fn parse_tool_hook(raw_json: &str) -> Option<ParsedHookEvent> {
-    let hook: HookInput = serde_json::from_str(raw_json).ok()?;
+    let hook: HookInput = match serde_json::from_str(raw_json) {
+        Ok(hook) => hook,
+        Err(e) => {
+            let preview: String = raw_json.chars().take(512).collect();
+            crate::log::error(
+                "adapter",
+                &format!("failed to parse hook payload: {e}; raw (truncated): {preview}"),
+            );
+            return None;
+        }
+    };
     let session_id = hook.session_id?;
     let cwd = hook.cwd;
     let project = db::project_from_cwd(cwd.as_deref().unwrap_or("."));

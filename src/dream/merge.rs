@@ -88,6 +88,13 @@ fn parse_response(response: &str) -> MergeDecision {
     let supersedes_raw = extract_tag(response, "supersedes").unwrap_or_default();
 
     if topic_key.is_empty() || title.is_empty() || content.is_empty() {
+        let preview: String = response.chars().take(512).collect();
+        crate::log::error(
+            "dream",
+            &format!(
+                "rejecting merge response: missing required tag(s) (topic_key/title/content); preview={preview}"
+            ),
+        );
         return MergeDecision::NoMerge;
     }
 

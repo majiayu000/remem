@@ -46,8 +46,18 @@ pub(super) async fn call_http(system: &str, user_message: &str) -> Result<AiCall
         .as_array()
         .and_then(|arr| arr.first())
         .and_then(|content| content["text"].as_str())
-        .unwrap_or("")
+        .ok_or_else(|| {
+            let preview: String = serde_json::to_string(&data)
+                .unwrap_or_default()
+                .chars()
+                .take(512)
+                .collect();
+            anyhow::anyhow!("Anthropic response missing content[0].text: {preview}")
+        })?
         .to_string();
+    if text.trim().is_empty() {
+        anyhow::bail!("Anthropic returned empty text body");
+    }
 
     Ok(AiCallResult {
         text,
