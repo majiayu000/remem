@@ -6,4 +6,4 @@ mod schema;
 mod tests;
 mod types;
 
-pub use report::run_doctor;
+pub(crate) use report::{run_doctor, DoctorOptions};
