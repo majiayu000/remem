@@ -37,6 +37,17 @@ fn exact_content_hash(content: &str) -> String {
 /// idempotent across repeated Stop-hook drains of the same transcript.
 /// Returns the row id of the existing or newly inserted message, or None
 /// when the content is empty.
+/// Outcome of a raw-message insert attempt.
+///
+/// `inserted == false` means a row with the same `(project, role,
+/// content_hash)` already existed and `id` points at the pre-existing row
+/// rather than a newly created one.
+#[derive(Debug, Clone, Copy)]
+pub struct RawInsertOutcome {
+    pub id: i64,
+    pub inserted: bool,
+}
+
 pub fn insert_raw_message(
     conn: &Connection,
     session_id: &str,
@@ -46,7 +57,7 @@ pub fn insert_raw_message(
     source: &str,
     branch: Option<&str>,
     cwd: Option<&str>,
-) -> Result<Option<i64>> {
+) -> Result<Option<RawInsertOutcome>> {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -63,14 +74,20 @@ pub fn insert_raw_message(
     )?;
 
     if inserted > 0 {
-        Ok(Some(conn.last_insert_rowid()))
+        Ok(Some(RawInsertOutcome {
+            id: conn.last_insert_rowid(),
+            inserted: true,
+        }))
     } else {
         let existing: i64 = conn.query_row(
             "SELECT id FROM raw_messages WHERE project = ?1 AND role = ?2 AND content_hash = ?3",
             params![project, role, hash],
             |row| row.get(0),
         )?;
-        Ok(Some(existing))
+        Ok(Some(RawInsertOutcome {
+            id: existing,
+            inserted: false,
+        }))
     }
 }
 
@@ -110,10 +127,7 @@ pub fn drain_transcript(
             continue;
         }
 
-        let before: i64 = conn
-            .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
-            .unwrap_or(0);
-        if let Err(error) = insert_raw_message(
+        match insert_raw_message(
             conn,
             session_id,
             project,
@@ -123,17 +137,14 @@ pub fn drain_transcript(
             branch,
             cwd,
         ) {
-            crate::log::warn(
-                "raw-archive",
-                &format!("insert raw message failed: {}", error),
-            );
-            continue;
-        }
-        let after: i64 = conn
-            .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
-            .unwrap_or(before);
-        if after > before {
-            new_rows += 1;
+            Ok(Some(outcome)) if outcome.inserted => new_rows += 1,
+            Ok(_) => {}
+            Err(error) => {
+                crate::log::warn(
+                    "raw-archive",
+                    &format!("insert raw message failed: {}", error),
+                );
+            }
         }
     }
     Ok(new_rows)
@@ -265,7 +276,8 @@ mod tests {
             None,
             None,
         )
-        .unwrap();
+        .unwrap()
+        .expect("first insert returns Some");
         let id2 = insert_raw_message(
             &conn,
             "s2",
@@ -276,8 +288,11 @@ mod tests {
             None,
             None,
         )
-        .unwrap();
-        assert_eq!(id1, id2);
+        .unwrap()
+        .expect("second insert returns Some");
+        assert_eq!(id1.id, id2.id);
+        assert!(id1.inserted, "first call must mark inserted");
+        assert!(!id2.inserted, "second call must mark not-inserted");
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
             .unwrap();
