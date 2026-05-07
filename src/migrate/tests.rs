@@ -269,6 +269,34 @@ fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
 }
 
 #[test]
+fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+
+    let binary_latest: i64 = MIGRATIONS.iter().map(|m| m.version).max().unwrap_or(0);
+    let future_version = binary_latest + 1;
+    conn.execute(
+        "INSERT INTO _schema_migrations (version, name, applied_at_epoch) VALUES (?1, ?2, ?3)",
+        rusqlite::params![future_version, "future", 1_700_000_000_i64],
+    )?;
+
+    let error = run_migrations(&conn).expect_err("newer DB schema must abort startup");
+    let message = error.to_string();
+    assert!(
+        message.contains(&format!("v{}", future_version))
+            && message.contains(&format!("v{}", binary_latest)),
+        "error must name both DB schema and binary versions: {}",
+        message
+    );
+    assert!(
+        message.to_lowercase().contains("upgrade"),
+        "error must point users at upgrading remem: {}",
+        message
+    );
+    Ok(())
+}
+
+#[test]
 fn applied_versions_propagates_row_error() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     // TEXT column so we can insert a non-numeric value that fails i64 deserialization.

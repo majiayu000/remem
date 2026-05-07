@@ -1,13 +1,26 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
 
-use super::state::{applied_versions, ensure_migration_table, mark_applied};
+use super::state::{applied_versions, ensure_migration_table, mark_applied, max_applied_version};
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
 
 pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
     ensure_migration_table(conn)?;
     transition_from_old_system(conn)?;
+
+    let binary_latest = MIGRATIONS
+        .iter()
+        .map(|m| m.version)
+        .max()
+        .unwrap_or(0);
+    let db_latest = max_applied_version(conn)?;
+    if db_latest > binary_latest {
+        return Err(anyhow!(
+            "database schema is at v{db_latest} but this binary only knows up to v{binary_latest}; \
+             please upgrade remem to a version that supports schema v{db_latest} before running again"
+        ));
+    }
 
     let applied = applied_versions(conn)?;
     for migration in MIGRATIONS {

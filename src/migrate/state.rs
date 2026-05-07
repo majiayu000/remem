@@ -29,6 +29,15 @@ pub(super) fn applied_versions(conn: &Connection) -> Result<Vec<i64>> {
     Ok(versions)
 }
 
+pub(super) fn max_applied_version(conn: &Connection) -> Result<i64> {
+    let version: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM _schema_migrations",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(version)
+}
+
 pub(super) fn mark_applied(conn: &Connection, version: i64, name: &str) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     conn.execute(
