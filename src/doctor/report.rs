@@ -5,7 +5,9 @@ use anyhow::Result;
 use super::database::{check_database, check_disk_space, check_pending_queue};
 use super::environment::{check_binary, check_hooks, check_mcp};
 use super::schema::check_schema_migration;
-use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status};
+use super::types::{
+    Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION,
+};
 
 /// Caller-supplied options for `remem doctor`. Defaulting all fields keeps
 /// the unit tests and any future callers small while letting `cli::dispatch`
@@ -99,6 +101,7 @@ fn write_json<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) -
     };
 
     let report = ReportJson {
+        schema_version: REPORT_SCHEMA_VERSION,
         version: env!("CARGO_PKG_VERSION"),
         status: overall.as_json_tag(),
         fails: outcome.fails,
@@ -187,6 +190,7 @@ mod tests {
         write_json(&mut buf, &checks, outcome).unwrap();
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(parsed["schema_version"], 1);
         assert_eq!(parsed["status"], "fail");
         assert_eq!(parsed["fails"], 1);
         assert_eq!(parsed["warns"], 0);
@@ -195,6 +199,46 @@ mod tests {
         assert_eq!(checks_json[0]["name"], "Database");
         assert_eq!(checks_json[0]["status"], "ok");
         assert_eq!(checks_json[1]["status"], "fail");
+    }
+
+    #[test]
+    fn json_output_for_all_ok_reports_status_ok_and_zero_counts() {
+        let checks = vec![
+            make("Binary", Status::Ok, "ok"),
+            make("Database", Status::Ok, "ok"),
+        ];
+        let outcome = tally(&checks);
+        let mut buf = Vec::new();
+        write_json(&mut buf, &checks, outcome).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(String::from_utf8(buf).unwrap().trim()).unwrap();
+        assert_eq!(parsed["status"], "ok");
+        assert_eq!(parsed["fails"], 0);
+        assert_eq!(parsed["warns"], 0);
+    }
+
+    #[test]
+    fn json_wins_over_quiet_when_both_set() {
+        // The contract: --json is the API surface, --quiet only suppresses
+        // the human formatter. With both flags the JSON object must still
+        // be emitted (otherwise scripts using `remem doctor --json --quiet`
+        // would see empty stdout).
+        let opts = DoctorOptions {
+            json: true,
+            quiet: true,
+        };
+        let checks = vec![make("Database", Status::Ok, "ok")];
+        let outcome = tally(&checks);
+        let mut buf = Vec::new();
+        if opts.json {
+            write_json(&mut buf, &checks, outcome).unwrap();
+        } else if !opts.quiet {
+            write_human(&mut buf, &checks, outcome).unwrap();
+        }
+        assert!(!buf.is_empty(), "json must win over quiet");
+        let text = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(parsed["status"], "ok");
     }
 
     #[test]

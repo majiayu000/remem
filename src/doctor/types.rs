@@ -71,9 +71,13 @@ impl DoctorOutcome {
     }
 }
 
+/// Current JSON contract version. Bump when removing or renaming a field;
+/// adding new optional fields does NOT require a bump.
+pub(crate) const REPORT_SCHEMA_VERSION: u32 = 1;
+
 /// JSON-stable shape for `remem doctor --json`. Field names and the
 /// `status` tag are part of the CLI's machine-readable contract; do not
-/// rename or reorder without bumping the documented contract.
+/// rename or reorder without bumping `REPORT_SCHEMA_VERSION`.
 #[derive(Serialize)]
 pub(crate) struct CheckJson<'a> {
     pub name: &'a str,
@@ -83,6 +87,7 @@ pub(crate) struct CheckJson<'a> {
 
 #[derive(Serialize)]
 pub(crate) struct ReportJson<'a> {
+    pub schema_version: u32,
     pub version: &'a str,
     pub status: &'a str,
     pub fails: usize,
