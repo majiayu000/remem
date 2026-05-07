@@ -44,17 +44,42 @@ where
 
     std::fs::create_dir_all(super::core::data_dir())?;
     let key_path = super::core::data_dir().join(".key");
-    let mut file = std::fs::File::create(&key_path)?;
-    file.write_all(key.as_bytes())?;
 
+    // Create the key file atomically with mode 0o600 on Unix to avoid the
+    // TOCTOU window between `File::create` (default umask, often 0o644) and
+    // `set_permissions(0o600)`. On non-Unix platforms we still rely on the
+    // OS-level ACL of the parent directory.
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        if let Err(e) = std::fs::set_permissions(&key_path, perms) {
-            crate::log::warn("db", &format!("cannot set key file permissions: {}", e));
-        }
-    }
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .mode(0o600)
+            .create_new(true)
+            .write(true)
+            .open(&key_path)
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    // Existing file: truncate, then enforce 0o600 explicitly.
+                    let file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&key_path)?;
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(
+                        &key_path,
+                        std::fs::Permissions::from_mode(0o600),
+                    )?;
+                    Ok::<_, std::io::Error>(file)
+                } else {
+                    Err(e)
+                }
+            })?
+    };
+
+    #[cfg(not(unix))]
+    let mut file = std::fs::File::create(&key_path)?;
+
+    file.write_all(key.as_bytes())?;
 
     Ok(key)
 }
@@ -68,11 +93,17 @@ pub fn encrypt_database(key: &str) -> Result<()> {
     let encrypted_path = db_file.with_extension("db.enc");
     let conn = Connection::open(&db_file)?;
     conn.execute_batch("PRAGMA busy_timeout=5000;")?;
+    // SQLite does not allow parameter binding for ATTACH ... KEY, so the
+    // path and key both need to be escaped as SQL string literals. The key
+    // is generated locally so it cannot contain a quote, but the path is
+    // derived from `data_dir()` which a user could in theory locate under
+    // an apostrophe-containing folder. Escape both consistently.
+    let encrypted_lit = encrypted_path.display().to_string().replace('\'', "''");
+    let key_lit = key.replace('\'', "''");
     conn.execute(
         &format!(
             "ATTACH DATABASE '{}' AS encrypted KEY '{}'",
-            encrypted_path.display(),
-            key.replace('\'', "''")
+            encrypted_lit, key_lit
         ),
         [],
     )?;
