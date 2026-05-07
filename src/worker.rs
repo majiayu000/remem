@@ -4,7 +4,12 @@ use tokio::time::{sleep, Duration};
 
 use crate::{db, observe_flush, summarize};
 
-const JOB_LEASE_SECS: i64 = 600;
+// Invariant: JOB_LEASE_SECS > JOB_TIMEOUT_SECS so the timeout always fires
+// before the lease expires. If the lease expired first, `requeue_stuck_jobs`
+// could hand the still-running job to another worker, causing duplicate
+// processing on hard kill (issue #73). The 60s grace covers post-timeout
+// bookkeeping (mark_job_failed_or_retry, db reopen).
+const JOB_LEASE_SECS: i64 = 480;
 const JOB_TIMEOUT_SECS: u64 = 420;
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +43,15 @@ async fn process_job(job: &db::Job) -> Result<()> {
 }
 
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
+    debug_assert!(
+        JOB_LEASE_SECS as u64 > JOB_TIMEOUT_SECS,
+        "JOB_LEASE_SECS must exceed JOB_TIMEOUT_SECS so timeout fires before lease expires"
+    );
+    debug_assert!(
+        (JOB_LEASE_SECS as u64) < JOB_TIMEOUT_SECS * 2,
+        "JOB_LEASE_SECS should stay within 2x of JOB_TIMEOUT_SECS to bound recovery latency"
+    );
+
     let lease_owner = format!(
         "worker-{}-{}",
         std::process::id(),
