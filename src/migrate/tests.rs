@@ -347,3 +347,24 @@ fn memory_cols_all_present_after_migration() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+
+    // Simulate a future binary having recorded a v99 migration into this DB.
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO _schema_migrations (version, name, applied_at_epoch) VALUES (?1, ?2, ?3)",
+        rusqlite::params![99i64, "future_feature", now],
+    )?;
+
+    let err = run_migrations(&conn).expect_err("re-running on a newer DB must fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("v99") && msg.contains("upgrade"),
+        "error should mention the newer schema version and prompt upgrade: {msg}"
+    );
+    Ok(())
+}
