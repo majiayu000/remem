@@ -41,15 +41,14 @@ pub(super) fn load_context_data_with_policy(
             );
             Vec::new()
         });
-    let workstreams = crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(
-        |e| {
+    let workstreams =
+        crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(|e| {
             crate::log::error(
                 "context",
                 &format!("failed to load active workstreams for {project}: {e}"),
             );
             Vec::new()
-        },
-    );
+        });
 
     LoadedContext {
         memories,
