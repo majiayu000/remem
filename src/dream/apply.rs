@@ -21,7 +21,21 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
         None,
     )?;
 
-    for id in &result.superseded_ids {
+    // Deduplicate before processing: a hallucinated duplicate id from the LLM
+    // would otherwise re-fire the `memories_au` trigger on the second pass,
+    // and the trigger's 'delete' against an already-removed FTS row can
+    // surface as `database disk image is malformed` and abort the
+    // transaction. `filter_superseded_ids` already drops out-of-cluster ids
+    // but does not deduplicate.
+    let mut seen = std::collections::HashSet::with_capacity(result.superseded_ids.len());
+    let unique_ids: Vec<i64> = result
+        .superseded_ids
+        .iter()
+        .copied()
+        .filter(|id| seen.insert(*id))
+        .collect();
+
+    for id in &unique_ids {
         // Read title/content first because the fts5 'delete' command
         // requires the currently-indexed values to match.
         let (title, content): (String, String) = tx.query_row(
@@ -121,7 +135,44 @@ mod tests {
                  WHERE memories_fts MATCH ?1 AND rowid = ?2",
             )
             .expect("prepare fts probe");
-        stmt.exists(params![term, id]).expect("fts probe should run")
+        stmt.exists(params![term, id])
+            .expect("fts probe should run")
+    }
+
+    #[test]
+    fn test_apply_handles_duplicate_superseded_ids() {
+        // Codex review: a hallucinated duplicate id from the LLM must not
+        // re-fire the memories_au trigger on a row that has already been
+        // removed from memories_fts (which can surface as "database disk
+        // image is malformed").
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            None,
+            "duplicateterm",
+            "duplicate content",
+            "decision",
+            None,
+        )
+        .expect("insert");
+
+        let result = MergeResult {
+            topic_key: "dup-merged".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id, old_id, old_id],
+        };
+        apply(&mut conn, &project, &result)
+            .expect("apply must succeed even with duplicate superseded ids");
+
+        assert_eq!(status_for_id(&conn, old_id), "stale");
+        assert!(
+            !fts_indexed(&conn, old_id, "duplicateterm"),
+            "duplicated supersede must still leave the row out of memories_fts"
+        );
     }
 
     #[test]
