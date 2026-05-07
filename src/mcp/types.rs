@@ -75,6 +75,18 @@ pub(super) struct SaveMemoryParams {
         description = "Memory scope: 'project' (default, only this project) or 'global' (visible in all projects). Use 'global' only for explicitly cross-project preferences or knowledge."
     )]
     pub scope: Option<String>,
+    #[schemars(
+        description = "Git branch label. If omitted, the server auto-detects from the MCP process current working directory. Pass an explicit value to override (e.g. when the calling agent is not running inside the project's git checkout)."
+    )]
+    pub branch: Option<String>,
+    #[schemars(
+        description = "Optional override for the memory's creation timestamp (Unix epoch seconds). Use only for backfilling historical entries; defaults to now when omitted."
+    )]
+    pub created_at_epoch: Option<i64>,
+    #[schemars(
+        description = "Override the local markdown backup toggle. Default behavior (when omitted) is controlled by the server config."
+    )]
+    pub local_copy_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
