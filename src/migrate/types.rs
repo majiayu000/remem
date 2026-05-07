@@ -15,6 +15,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_messages",
         sql: include_str!("../migrations/v002_raw_messages.sql"),
     },
+    Migration {
+        version: 3,
+        name: "memories_fts_active_filter",
+        sql: include_str!("../migrations/v003_memories_fts_active_filter.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

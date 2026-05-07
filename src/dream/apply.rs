@@ -163,6 +163,70 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_evicts_superseded_rows_from_fts() {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            None,
+            "old searchable title",
+            "supersededneedle older content",
+            "decision",
+            None,
+        )
+        .expect("insert old memory");
+
+        let pre_hits: Vec<i64> = conn
+            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
+            .unwrap()
+            .query_map(params!["supersededneedle"], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            pre_hits,
+            vec![old_id],
+            "FTS index should locate the original row before apply"
+        );
+
+        let result = MergeResult {
+            topic_key: "merged-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+        apply(&mut conn, &project, &result).expect("apply");
+
+        let post_hits: Vec<i64> = conn
+            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
+            .unwrap()
+            .query_map(params!["supersededneedle"], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            post_hits.is_empty(),
+            "FTS MATCH must not return superseded rows after apply, got: {post_hits:?}"
+        );
+
+        // The merged memory should still be searchable.
+        let merged_hits: Vec<i64> = conn
+            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
+            .unwrap()
+            .query_map(params!["Merged"], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            merged_hits.len(),
+            1,
+            "merged memory should remain indexed in FTS"
+        );
+    }
+
+    #[test]
     fn test_apply_is_atomic_on_invalid_superseded_id() {
         // ID 99999 does not exist — stale-mark must fail, and the upsert must be rolled back.
         let (mut conn, project) = setup();
