@@ -51,21 +51,10 @@ pub fn reset_v2_db_at(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::db::test_support::{cleanup_temp_db_files as cleanup, unique_temp_db_path};
 
     fn unique_temp_path() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let pid = std::process::id();
-        std::env::temp_dir().join(format!("remem-v2-test-{pid}-{nonce}.sqlite"))
-    }
-
-    fn cleanup(path: &Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
-        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        unique_temp_db_path("v2-db")
     }
 
     #[test]

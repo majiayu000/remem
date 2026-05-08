@@ -74,20 +74,15 @@ pub fn backup_db(src_path: &Path, dst_path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
 
     fn unique_temp_path() -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let pid = std::process::id();
-        std::env::temp_dir().join(format!("remem-admin-test-{pid}-{nonce}.sqlite"))
+        unique_temp_db_path("admin")
     }
 
     fn cleanup_paths(paths: &[&Path]) {
         for p in paths {
-            let _ = std::fs::remove_file(p);
+            cleanup_temp_db_files(p);
         }
     }
 

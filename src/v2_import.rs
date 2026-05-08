@@ -138,26 +138,12 @@ fn find_or_create_project(conn: &Connection, project_path: &str) -> Result<(i64,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_support::{cleanup_temp_db_files as cleanup, unique_temp_db_path};
     use crate::v2_db::open_v2_db_at;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_temp_path(label: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::temp_dir().join(format!(
-            "remem-import-{label}-{}-{}.sqlite",
-            std::process::id(),
-            nonce
-        ))
-    }
-
-    fn cleanup(path: &Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
-        let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+        unique_temp_db_path(&format!("import-{label}"))
     }
 
     fn create_v1_db(path: &Path) -> Connection {
