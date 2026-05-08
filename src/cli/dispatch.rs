@@ -4,7 +4,7 @@ use crate::{api, claude_memory, context, db, doctor, install, mcp, observe, summ
 
 use super::actions::{
     run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval,
-    run_eval_local, run_pending, run_preferences, run_search, run_show, run_status,
+    run_eval_local, run_import, run_pending, run_preferences, run_search, run_show, run_status,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -71,6 +71,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             run_dream(project.as_deref(), dry_run).await?;
         }
         Commands::Admin { action } => run_admin(action)?,
+        Commands::Import { action } => run_import(action)?,
     }
 
     Ok(())

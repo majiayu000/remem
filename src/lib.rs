@@ -51,6 +51,7 @@ pub mod temporal;
 pub mod timeline;
 pub mod v2_db;
 pub mod v2_gate;
+pub mod v2_import;
 pub mod vector;
 pub mod worker;
 pub mod workstream;
