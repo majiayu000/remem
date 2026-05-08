@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 pub(super) use crate::install::InstallTarget;
 
@@ -96,6 +97,11 @@ pub(super) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// v2 admin commands (backup/reset/import). See SPEC §4.1.
+    Admin {
+        #[command(subcommand)]
+        action: AdminAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -110,6 +116,16 @@ pub(in crate::cli) enum PreferenceAction {
     },
     Remove {
         id: i64,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum AdminAction {
+    /// Back up the v1 database to a timestamped file.
+    Backup {
+        /// Output path. Defaults to <data_dir>/backups/remem-v1-<ts>.sqlite.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
