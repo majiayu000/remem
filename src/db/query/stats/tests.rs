@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 use super::{DailyActivityStats, ProjectCount, SystemStats};
-use crate::db_query::{query_daily_activity_stats, query_system_stats, query_top_projects};
+use crate::db::query::{query_daily_activity_stats, query_system_stats, query_top_projects};
 
 fn setup_stats_schema(conn: &Connection) {
     conn.execute_batch(

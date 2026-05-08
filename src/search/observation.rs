@@ -2,8 +2,10 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::db::Observation;
-use crate::db_models::OBSERVATION_TYPES;
-use crate::db_query;
+use crate::db::models::OBSERVATION_TYPES;
+use crate::db::query::{
+    query_observations, search_observations_fts, search_observations_like,
+};
 
 use super::common::sanitize_fts_query;
 
@@ -22,7 +24,7 @@ pub fn search_observations(
             let has_short_token = tokens.iter().any(|token| token.chars().count() < 3);
 
             if has_short_token {
-                db_query::search_observations_like(
+                search_observations_like(
                     conn,
                     &tokens,
                     project,
@@ -33,7 +35,7 @@ pub fn search_observations(
                 )?
             } else {
                 let safe_query = sanitize_fts_query(query_text);
-                db_query::search_observations_fts(
+                search_observations_fts(
                     conn,
                     &safe_query,
                     project,
@@ -51,7 +53,7 @@ pub fn search_observations(
             if project_name.is_empty() {
                 return Ok(vec![]);
             }
-            db_query::query_observations(conn, project_name, &types, limit)?
+            query_observations(conn, project_name, &types, limit)?
         }
     };
 

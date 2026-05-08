@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use crate::db_pending::helpers::{append_ids, clamp_error, id_placeholders};
-use crate::db_pending::types::PendingObservation;
+use crate::db::pending::helpers::{append_ids, clamp_error, id_placeholders};
+use crate::db::pending::types::PendingObservation;
 
 pub fn claim_pending(
     conn: &Connection,

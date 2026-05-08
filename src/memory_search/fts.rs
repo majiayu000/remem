@@ -77,5 +77,5 @@ pub fn search_memories_fts_filtered(
     let mut stmt = conn.prepare(&sql)?;
     let refs = db::to_sql_refs(&param_values);
     let rows = stmt.query_map(refs.as_slice(), map_memory_row_pub)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }

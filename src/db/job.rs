@@ -4,7 +4,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use crate::db_models::{Job, JobType};
+pub use crate::db::models::{Job, JobType};
 
 pub use claim::claim_next_job;
 pub use enqueue::enqueue_job;

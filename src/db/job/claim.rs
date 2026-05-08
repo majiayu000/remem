@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::db_job::{Job, JobType};
+use crate::db::job::{Job, JobType};
 
 pub fn claim_next_job(
     conn: &mut Connection,

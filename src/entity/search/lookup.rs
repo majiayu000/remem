@@ -82,5 +82,5 @@ pub(super) fn query_memory_ids(
         params_vec.iter().map(|value| value.as_ref()).collect();
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, i64>(0))?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }

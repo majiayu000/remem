@@ -45,7 +45,7 @@ pub fn get_recent_memories_excluding_types(
     let mut stmt = conn.prepare(&sql)?;
     let refs = crate::db::to_sql_refs(&params);
     let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub fn get_memories_by_type(
@@ -99,7 +99,7 @@ pub fn list_memories(
     let mut stmt = conn.prepare(&sql)?;
     let refs = crate::db::to_sql_refs(&params);
     let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub fn get_memories_by_ids(
@@ -132,7 +132,7 @@ pub fn get_memories_by_ids(
     let mut stmt = conn.prepare(&sql)?;
     let refs = crate::db::to_sql_refs(&params);
     let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 #[cfg(test)]

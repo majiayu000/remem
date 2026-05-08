@@ -9,7 +9,7 @@ pub fn get_session_events(conn: &Connection, session_id: &str) -> Result<Vec<Eve
          created_at_epoch FROM events WHERE session_id = ?1 ORDER BY created_at_epoch ASC",
     )?;
     let rows = stmt.query_map(params![session_id], map_event_row)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub fn get_recent_events(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Event>> {
@@ -18,7 +18,7 @@ pub fn get_recent_events(conn: &Connection, project: &str, limit: i64) -> Result
          created_at_epoch FROM events WHERE project = ?1 ORDER BY created_at_epoch DESC LIMIT ?2",
     )?;
     let rows = stmt.query_map(params![project, limit], map_event_row)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub fn count_session_memories(conn: &Connection, session_id: &str) -> Result<i64> {
