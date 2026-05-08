@@ -7,8 +7,11 @@ mod tests;
 mod tests_convergence;
 mod transition;
 mod types;
+mod v2;
 
 pub(crate) use dry_run::dry_run_pending;
 pub(crate) use run::run_migrations;
+#[allow(unused_imports)]
+pub(crate) use v2::run_v2_migrations;
 #[cfg(test)]
 pub(crate) use types::MIGRATIONS;

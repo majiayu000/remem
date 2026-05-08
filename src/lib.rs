@@ -26,6 +26,7 @@ pub mod dream;
 pub mod entity;
 pub mod eval_local;
 pub mod eval_metrics;
+pub mod identity;
 pub mod install;
 pub mod log;
 pub mod mcp;
