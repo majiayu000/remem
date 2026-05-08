@@ -82,5 +82,10 @@ pub(in crate::cli) fn run_status() -> Result<()> {
         }
     }
 
+    println!();
+    for line in crate::v2_status::format_v2_summary() {
+        println!("{}", line);
+    }
+
     Ok(())
 }
