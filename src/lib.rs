@@ -19,6 +19,7 @@ pub mod db_models;
 pub mod db_pending;
 pub mod db_query;
 pub mod db_usage;
+pub mod db_worker;
 pub mod dedup;
 pub mod doctor;
 pub mod dream;
