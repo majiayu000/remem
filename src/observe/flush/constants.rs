@@ -1,5 +1,5 @@
-pub(crate) const OBSERVATION_PROMPT: &str = include_str!("../../prompts/observation.txt");
-pub(crate) const TASK_OBSERVATION_PROMPT: &str = include_str!("../../prompts/task_observation.txt");
+pub(crate) const OBSERVATION_PROMPT: &str = include_str!("../../../prompts/observation.txt");
+pub(crate) const TASK_OBSERVATION_PROMPT: &str = include_str!("../../../prompts/task_observation.txt");
 
 /// Max events per flush batch (prevents oversized AI input)
 pub(crate) const FLUSH_BATCH_SIZE: usize = 15;

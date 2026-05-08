@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use tokio::time::{sleep, Duration};
 
-use crate::{db, observe_flush, summarize};
+use crate::{db, observe, summarize};
 
 const JOB_LEASE_SECS: i64 = 600;
 const JOB_TIMEOUT_SECS: u64 = 420;
@@ -28,7 +28,7 @@ async fn process_job(job: &db::Job) -> Result<()> {
     match job.job_type {
         db::JobType::Observation => {
             let payload: ObservationPayload = serde_json::from_str(&job.payload_json)?;
-            let _ = observe_flush::flush_pending(&payload.session_id, &payload.project).await?;
+            let _ = observe::flush::flush_pending(&payload.session_id, &payload.project).await?;
             Ok(())
         }
         db::JobType::Summary => summarize::process_summary_job_input(&job.payload_json).await,
