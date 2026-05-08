@@ -49,6 +49,7 @@ pub mod search_multihop;
 pub mod summarize;
 pub mod temporal;
 pub mod timeline;
+pub mod v2_db;
 pub mod v2_gate;
 pub mod vector;
 pub mod worker;
