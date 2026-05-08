@@ -9,7 +9,9 @@
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
 
-/// Install-time host. Distinct from the v1 `context::host::InstallHost` (which
+use crate::git_util::resolve_toplevel;
+
+/// Install-time host. Distinct from the v1 `context::host::HostKind` (which
 /// allows `Unknown` for legacy detection): v2.1 M2 forbids `unknown`, and the
 /// value is always sourced from the install-baked `--host` argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,7 +33,7 @@ impl InstallHost {
 
     /// Parse from the `--host` CLI argument. v2.1 M2: any other value is an
     /// install error and must be refused at the boundary. `unknown` is
-    /// explicitly rejected here, in contrast to `context::host::InstallHost`.
+    /// explicitly rejected here, in contrast to `context::host::HostKind`.
     pub fn parse(s: &str) -> Result<Self> {
         match s {
             "claude-code" => Ok(InstallHost::ClaudeCode),
@@ -58,6 +60,14 @@ impl WorkspaceKey {
     pub fn from_cwd_and_toplevel(cwd: &Path, git_toplevel: Option<&Path>) -> Self {
         let root_path = git_toplevel.unwrap_or(cwd).to_path_buf();
         Self { root_path }
+    }
+
+    /// Convenience wrapper that resolves the git toplevel for `cwd` via the
+    /// `git` binary, falling back to `cwd` when the directory is outside any
+    /// git worktree or git is unavailable. Spawns one subprocess.
+    pub fn from_cwd(cwd: &Path) -> Self {
+        let toplevel = resolve_toplevel(cwd);
+        Self::from_cwd_and_toplevel(cwd, toplevel.as_deref())
     }
 }
 
