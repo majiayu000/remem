@@ -127,6 +127,12 @@ pub(in crate::cli) enum AdminAction {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Drop and re-initialize the v2 database (~/.remem/v2.sqlite).
+    /// Requires --confirm-destructive to actually run.
+    ResetV2 {
+        #[arg(long)]
+        confirm_destructive: bool,
+    },
 }
 
 #[derive(Subcommand)]

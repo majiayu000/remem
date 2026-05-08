@@ -8,7 +8,25 @@ use crate::cli::types::AdminAction;
 pub(in crate::cli) fn run_admin(action: AdminAction) -> Result<()> {
     match action {
         AdminAction::Backup { output } => run_backup(output),
+        AdminAction::ResetV2 {
+            confirm_destructive,
+        } => run_reset_v2(confirm_destructive),
     }
+}
+
+fn run_reset_v2(confirm_destructive: bool) -> Result<()> {
+    if !confirm_destructive {
+        anyhow::bail!(
+            "reset-v2 destroys the v2 database at {}.\n\
+             Re-run with --confirm-destructive to proceed.",
+            crate::v2_db::default_v2_db_path().display()
+        );
+    }
+    let path = crate::v2_db::default_v2_db_path();
+    crate::v2_db::reset_v2_db_at(&path)
+        .with_context(|| format!("reset v2 db at {}", path.display()))?;
+    println!("Reset v2 database at: {}", path.display());
+    Ok(())
 }
 
 fn run_backup(output: Option<PathBuf>) -> Result<()> {
@@ -109,6 +127,15 @@ mod tests {
         let dst = unique_temp_path();
         let err = backup_db(&src, &dst).unwrap_err().to_string();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn reset_v2_without_confirmation_returns_error() {
+        let action = AdminAction::ResetV2 {
+            confirm_destructive: false,
+        };
+        let err = run_admin(action).unwrap_err().to_string();
+        assert!(err.contains("--confirm-destructive"), "got: {err}");
     }
 
     #[test]
