@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::database::{check_database, check_disk_space, check_pending_queue};
+use super::database::{check_database, check_disk_space, check_pending_queue, check_worker_daemon};
 use super::environment::{check_binary, check_hooks, check_mcp};
 use super::schema::check_schema_migration;
 use super::types::Status;
@@ -13,6 +13,7 @@ pub fn run_doctor() -> Result<()> {
     let mut checks = vec![check_binary(), check_schema_migration(), check_database()];
     checks.extend(check_hooks());
     checks.extend(check_mcp());
+    checks.push(check_worker_daemon());
     checks.push(check_pending_queue());
     checks.push(check_disk_space());
 

@@ -248,8 +248,8 @@ mod tests {
         existing.write_all(b"preexisting-key")?;
         drop(existing);
 
-        let err = generate_cipher_key()
-            .expect_err("must not overwrite an existing cipher key file");
+        let err =
+            generate_cipher_key().expect_err("must not overwrite an existing cipher key file");
         assert!(
             err.to_string().contains("cannot create cipher key file"),
             "unexpected error: {}",
