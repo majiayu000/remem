@@ -62,43 +62,92 @@ pub(super) fn check_pending_queue() -> Check {
             };
         }
     };
-    let pending = stats.pending_observations;
-    let failed_pending = stats.failed_pending_observations;
-    let stuck_jobs = stats.stuck_jobs;
+    let detail = format!(
+        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} jobs pending, {} processing, {} failed, {} stuck",
+        stats.ready_pending_observations,
+        stats.delayed_pending_observations,
+        stats.processing_pending_observations,
+        stats.expired_processing_pending_observations,
+        stats.failed_pending_observations,
+        stats.pending_jobs,
+        stats.processing_jobs,
+        stats.failed_jobs,
+        stats.stuck_jobs,
+    );
 
-    if stuck_jobs > 0 {
+    if stats.expired_processing_pending_observations > 0 || stats.stuck_jobs > 0 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!(
-                "{} pending, {} failed, {} stuck jobs (will auto-recover)",
-                pending, failed_pending, stuck_jobs
-            ),
+            detail: format!("{} (will auto-recover)", detail),
         }
-    } else if failed_pending > 0 {
+    } else if stats.failed_pending_observations > 0 || stats.failed_jobs > 0 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!(
-                "{} pending, {} failed (inspect parsing/AI failures)",
-                pending, failed_pending
-            ),
+            detail: format!("{} (inspect failures)", detail),
         }
-    } else if pending > 100 {
+    } else if stats.ready_pending_observations > 100 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!(
-                "{} pending, {} failed (backlog building up)",
-                pending, failed_pending
-            ),
+            detail: format!("{} (backlog building up)", detail),
         }
     } else {
         Check {
             name: "Pending queue",
             status: Status::Ok,
-            detail: format!("{} pending, {} failed", pending, failed_pending),
+            detail,
         }
+    }
+}
+
+pub(super) fn check_worker_daemon() -> Check {
+    let conn = match db::open_db() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return Check {
+                name: "Worker daemon",
+                status: Status::Warn,
+                detail: "cannot open database".to_string(),
+            };
+        }
+    };
+
+    let stats = match db::query_system_stats(&conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check {
+                name: "Worker daemon",
+                status: Status::Warn,
+                detail: format!("cannot load heartbeat stats: {}", err),
+            };
+        }
+    };
+
+    match (
+        stats.worker_daemon_healthy,
+        stats.worker_heartbeat_owner,
+        stats.worker_heartbeat_age_secs,
+    ) {
+        (true, Some(owner), Some(age_secs)) => Check {
+            name: "Worker daemon",
+            status: Status::Ok,
+            detail: format!("healthy, last heartbeat {}s ago ({})", age_secs, owner),
+        },
+        (false, Some(owner), Some(age_secs)) => Check {
+            name: "Worker daemon",
+            status: Status::Warn,
+            detail: format!(
+                "stale, last heartbeat {}s ago ({}) — Stop hooks will use worker --once",
+                age_secs, owner
+            ),
+        },
+        _ => Check {
+            name: "Worker daemon",
+            status: Status::Ok,
+            detail: "not running; Stop hooks will use worker --once".to_string(),
+        },
     }
 }
 

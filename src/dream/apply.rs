@@ -21,7 +21,28 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
         None,
     )?;
 
-    for id in &result.superseded_ids {
+    // Deduplicate before processing: a hallucinated duplicate id from the LLM
+    // would otherwise re-fire the `memories_au` trigger on the second pass,
+    // and the trigger's 'delete' against an already-removed FTS row can
+    // surface as `database disk image is malformed` and abort the
+    // transaction. `filter_superseded_ids` already drops out-of-cluster ids
+    // but does not deduplicate.
+    let mut seen = std::collections::HashSet::with_capacity(result.superseded_ids.len());
+    let unique_ids: Vec<i64> = result
+        .superseded_ids
+        .iter()
+        .copied()
+        .filter(|id| seen.insert(*id))
+        .collect();
+
+    for id in &unique_ids {
+        // Read title/content first because the fts5 'delete' command
+        // requires the currently-indexed values to match.
+        let (title, content): (String, String) = tx.query_row(
+            "SELECT title, content FROM memories WHERE id = ?1 AND project = ?2",
+            params![id, project],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
         let updated = tx.execute(
             "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
             params![id, project],
@@ -33,6 +54,17 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
                 project
             ));
         }
+        // The `memories_au` trigger re-syncs the FTS row on every UPDATE,
+        // so a status flip leaves the (text-unchanged) row indexed in
+        // `memories_fts`. All search paths today filter by status='active',
+        // but the FTS index still grows monotonically as memories are
+        // superseded. Use the fts5 'delete' command with the now-stale
+        // row's title/content so the index tracks active rows only.
+        tx.execute(
+            "INSERT INTO memories_fts(memories_fts, rowid, title, content) \
+             VALUES ('delete', ?1, ?2, ?3)",
+            params![id, title, content],
+        )?;
     }
 
     tx.commit()?;
@@ -91,6 +123,91 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// Whether the FTS index can return `id` via a MATCH on the term.
+    /// For content='memories' fts5, rowid lookups proxy the source row,
+    /// so MATCH is the authoritative probe for index membership.
+    fn fts_indexed(conn: &Connection, id: i64, term: &str) -> bool {
+        let mut stmt = conn
+            .prepare(
+                "SELECT 1 FROM memories_fts \
+                 WHERE memories_fts MATCH ?1 AND rowid = ?2",
+            )
+            .expect("prepare fts probe");
+        stmt.exists(params![term, id])
+            .expect("fts probe should run")
+    }
+
+    #[test]
+    fn test_apply_handles_duplicate_superseded_ids() {
+        // Codex review: a hallucinated duplicate id from the LLM must not
+        // re-fire the memories_au trigger on a row that has already been
+        // removed from memories_fts (which can surface as "database disk
+        // image is malformed").
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            None,
+            "duplicateterm",
+            "duplicate content",
+            "decision",
+            None,
+        )
+        .expect("insert");
+
+        let result = MergeResult {
+            topic_key: "dup-merged".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id, old_id, old_id],
+        };
+        apply(&mut conn, &project, &result)
+            .expect("apply must succeed even with duplicate superseded ids");
+
+        assert_eq!(status_for_id(&conn, old_id), "stale");
+        assert!(
+            !fts_indexed(&conn, old_id, "duplicateterm"),
+            "duplicated supersede must still leave the row out of memories_fts"
+        );
+    }
+
+    #[test]
+    fn test_apply_removes_superseded_from_fts_index() {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            None,
+            "uniqueoldtitle",
+            "uniqueoldcontent",
+            "decision",
+            None,
+        )
+        .expect("insert");
+        assert!(
+            fts_indexed(&conn, old_id, "uniqueoldtitle"),
+            "fresh insert must be indexed in memories_fts"
+        );
+
+        let result = MergeResult {
+            topic_key: "fts-merged".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "New title".to_owned(),
+            content: "New content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+        apply(&mut conn, &project, &result).expect("apply");
+
+        assert_eq!(status_for_id(&conn, old_id), "stale");
+        assert!(
+            !fts_indexed(&conn, old_id, "uniqueoldtitle"),
+            "superseded memory must not match in memories_fts"
+        );
     }
 
     #[test]
