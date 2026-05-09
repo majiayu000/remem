@@ -151,6 +151,7 @@ mod tests {
     fn make_pending(long_response: String) -> PendingObservation {
         PendingObservation {
             id: 1,
+            host: "codex-cli".to_string(),
             session_id: "sess-test".to_string(),
             project: "test-proj".to_string(),
             tool_name: "Bash".to_string(),
