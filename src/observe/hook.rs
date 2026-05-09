@@ -58,6 +58,7 @@ pub async fn observe() -> Result<()> {
     let tool_response_str = event.tool_response.as_ref().map(|value| value.to_string());
     db::enqueue_pending(
         &conn,
+        adapter.name(),
         &event.session_id,
         &event.project,
         &event.tool_name,
