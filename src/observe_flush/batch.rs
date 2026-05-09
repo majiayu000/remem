@@ -3,12 +3,49 @@ use anyhow::Result;
 use crate::db;
 
 use super::action::flush_action_batches;
-use super::constants::{FLUSH_BATCH_SIZE, PENDING_LEASE_SECS};
+use super::constants::{
+    FLUSH_BATCH_SIZE, FLUSH_DRAIN_MAX_BATCHES, FLUSH_DRAIN_MAX_SECS, PENDING_LEASE_SECS,
+};
 use super::runtime::pending_retry_backoff_secs;
 use super::task::flush_single_task;
 
-pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationDrainOutcome {
+    Drained,
+    NeedsFollowUp,
+}
+
+pub async fn flush_pending(
+    host: &str,
+    session_id: &str,
+    project: &str,
+) -> Result<ObservationDrainOutcome> {
+    let started = std::time::Instant::now();
+    let mut batches = 0usize;
+
+    loop {
+        if batches >= FLUSH_DRAIN_MAX_BATCHES
+            || started.elapsed() >= std::time::Duration::from_secs(FLUSH_DRAIN_MAX_SECS)
+        {
+            return follow_up_if_needed(host, project, session_id);
+        }
+
+        match flush_pending_once(host, session_id, project).await? {
+            0 => return Ok(ObservationDrainOutcome::Drained),
+            _ => batches += 1,
+        }
+    }
+}
+
+async fn flush_pending_once(host: &str, session_id: &str, project: &str) -> Result<usize> {
     let mut conn = db::open_db()?;
+    let recovered = db::release_expired_pending_claims(&conn)?;
+    if recovered > 0 {
+        crate::log::warn(
+            "flush",
+            &format!("released {} expired pending claim(s)", recovered),
+        );
+    }
     let lease_owner = format!(
         "flush-{}-{}-{}",
         std::process::id(),
@@ -17,6 +54,8 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
     );
     let pending = db::claim_pending(
         &conn,
+        host,
+        project,
         session_id,
         FLUSH_BATCH_SIZE,
         &lease_owner,
@@ -121,4 +160,17 @@ pub async fn flush_pending(session_id: &str, project: &str) -> Result<usize> {
     ));
 
     Ok(total_observations)
+}
+
+fn follow_up_if_needed(
+    host: &str,
+    project: &str,
+    session_id: &str,
+) -> Result<ObservationDrainOutcome> {
+    let conn = db::open_db()?;
+    if db::count_pending_for_identity(&conn, host, project, session_id)? > 0 {
+        Ok(ObservationDrainOutcome::NeedsFollowUp)
+    } else {
+        Ok(ObservationDrainOutcome::Drained)
+    }
 }

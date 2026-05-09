@@ -25,25 +25,36 @@ pub async fn summarize() -> Result<()> {
     };
     let cwd = hook.cwd.as_deref().unwrap_or(".");
     let project = db::project_from_cwd(cwd);
+    let host = resolve_hook_host();
     let conn = db::open_db()?;
 
-    enqueue_summary_jobs(&conn, session_id, &project, &input)?;
-    spawn_worker_once()?;
+    enqueue_summary_jobs(&conn, &host, session_id, &project, &input)?;
+    if should_spawn_worker_once(&conn)? {
+        spawn_worker_once()?;
+    } else {
+        crate::log::info(
+            "summarize",
+            "worker daemon heartbeat healthy; skip worker --once",
+        );
+    }
     Ok(())
 }
 
 fn enqueue_summary_jobs(
     conn: &rusqlite::Connection,
+    host: &str,
     session_id: &str,
     project: &str,
     input: &str,
 ) -> Result<()> {
     let obs_payload = serde_json::json!({
+        "host": host,
         "session_id": session_id,
         "project": project,
     });
     db::enqueue_job(
         conn,
+        host,
         db::JobType::Observation,
         project,
         Some(session_id),
@@ -52,13 +63,14 @@ fn enqueue_summary_jobs(
     )?;
     db::enqueue_job(
         conn,
+        host,
         db::JobType::Summary,
         project,
         Some(session_id),
         input,
         100,
     )?;
-    db::enqueue_job(conn, db::JobType::Compress, project, None, "{}", 200)?;
+    db::enqueue_job(conn, host, db::JobType::Compress, project, None, "{}", 200)?;
     crate::log::info(
         "summarize",
         &format!(
@@ -67,6 +79,31 @@ fn enqueue_summary_jobs(
         ),
     );
     Ok(())
+}
+
+fn resolve_hook_host() -> String {
+    if let Ok(host) = std::env::var("REMEM_HOOK_HOST") {
+        if !host.trim().is_empty() {
+            return host;
+        }
+    }
+    if let Ok(host) = std::env::var("REMEM_CONTEXT_HOST") {
+        if !host.trim().is_empty() {
+            return host;
+        }
+    }
+    if let Ok(executor) = std::env::var("REMEM_SUMMARY_EXECUTOR") {
+        match executor.as_str() {
+            "codex-cli" => return "codex-cli".to_string(),
+            "claude-cli" => return "claude-code".to_string(),
+            _ => {}
+        }
+    }
+    "unknown".to_string()
+}
+
+fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
+    Ok(db::healthy_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
 }
 
 fn spawn_worker_once() -> Result<()> {
@@ -102,7 +139,9 @@ mod tests {
     use std::ffi::OsStr;
     use std::sync::Mutex;
 
-    use super::configure_worker_executor_env;
+    use crate::db::{self, test_support::ScopedTestDataDir};
+
+    use super::{configure_worker_executor_env, should_spawn_worker_once};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -173,6 +212,45 @@ mod tests {
                 assert_eq!(command_env(&command, "REMEM_SUMMARY_EXECUTOR"), None);
                 assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
             },
+        );
+    }
+
+    #[test]
+    fn missing_daemon_uses_stop_fallback_spawn() {
+        let _test_dir = ScopedTestDataDir::new("summary-missing-daemon");
+        let conn = db::open_db().expect("db should open");
+
+        assert!(
+            should_spawn_worker_once(&conn).expect("daemon check should run"),
+            "missing heartbeat should keep worker --once fallback"
+        );
+    }
+
+    #[test]
+    fn healthy_daemon_skips_stop_spawn() {
+        let _test_dir = ScopedTestDataDir::new("summary-healthy-daemon");
+        let conn = db::open_db().expect("db should open");
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(&conn, "worker-daemon", 123, now - 5, now - 5)
+            .expect("heartbeat should insert");
+
+        assert!(
+            !should_spawn_worker_once(&conn).expect("daemon check should run"),
+            "healthy heartbeat should skip worker --once fallback"
+        );
+    }
+
+    #[test]
+    fn stale_daemon_uses_stop_fallback_spawn() {
+        let _test_dir = ScopedTestDataDir::new("summary-stale-daemon");
+        let conn = db::open_db().expect("db should open");
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(&conn, "worker-daemon", 123, now - 900, now - 900)
+            .expect("heartbeat should insert");
+
+        assert!(
+            should_spawn_worker_once(&conn).expect("daemon check should run"),
+            "stale heartbeat should keep worker --once fallback"
         );
     }
 }
