@@ -62,10 +62,35 @@ fn full_migration_on_empty_db() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 15);
+    assert_eq!(user_version, 17);
+
+    let has_worker_heartbeats: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='worker_heartbeats'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(
+        has_worker_heartbeats,
+        "worker_heartbeats table should exist after migration"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_migrations_does_not_downgrade_newer_user_version() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+    conn.execute_batch("PRAGMA user_version = 99;")?;
+
+    run_migrations(&conn)?;
+
+    let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    assert_eq!(user_version, 99);
     Ok(())
 }
 
@@ -78,7 +103,7 @@ fn transition_from_old_system_skips_baseline() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
     Ok(())
 }
 
@@ -101,12 +126,12 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
 
     run_migrations(&conn)?;
 
-    // Should have auto-upgraded and marked baseline + raw_messages + memories_fts_active_filter as applied
+    // Should have auto-upgraded and marked all v1 migrations as applied.
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 15);
+    assert_eq!(user_version, 17);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -139,13 +164,27 @@ fn dry_run_pending_reports_no_pending_for_current_schema() -> Result<()> {
 }
 
 #[test]
+fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+    conn.execute_batch("PRAGMA user_version = 14;")?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.current_version, 17);
+    assert_eq!(result.pending_count, 0);
+    assert!(result.error.is_none());
+    Ok(())
+}
+
+#[test]
 fn dry_run_pending_reports_pending_for_new_db() -> Result<()> {
     let conn = Connection::open_in_memory()?;
 
     let result = dry_run_pending(&conn)?;
 
     assert_eq!(result.current_version, 0);
-    assert_eq!(result.pending_count, 3);
+    assert_eq!(result.pending_count, 5);
     assert!(result.error.is_none());
     Ok(())
 }
@@ -203,8 +242,8 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
     // After broken baseline backfill fails, dry_run reports the still-unapplied
-    // migrations (v2 raw_messages and v3 memories_fts_active_filter remain pending).
-    assert_eq!(result.pending_count, 2);
+    // migrations (v2+ remain pending in _schema_migrations).
+    assert_eq!(result.pending_count, 4);
     let error = result
         .error
         .expect("broken schema should surface in dry-run");

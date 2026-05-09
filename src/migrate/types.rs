@@ -17,8 +17,18 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 3,
+        name: "host_identity",
+        sql: include_str!("../migrations/v003_host_identity.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "worker_heartbeat",
+        sql: include_str!("../migrations/v004_worker_heartbeat.sql"),
+    },
+    Migration {
+        version: 5,
         name: "memories_fts_active_filter",
-        sql: include_str!("../migrations/v003_memories_fts_active_filter.sql"),
+        sql: include_str!("../migrations/v005_memories_fts_active_filter.sql"),
     },
 ];
 

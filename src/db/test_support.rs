@@ -60,3 +60,26 @@ impl Drop for ScopedTestDataDir {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+
+/// Generate a unique temp file path for a test sqlite db. Used by v2_db /
+/// admin / v2_import test modules; nonce is `pid + nanos` so concurrent
+/// `cargo test` runs do not collide. Caller owns cleanup (pair with
+/// `cleanup_temp_db_files` for `-wal` / `-shm` sidecars).
+pub fn unique_temp_db_path(label: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "remem-{label}-{}-{}.sqlite",
+        std::process::id(),
+        nonce
+    ))
+}
+
+/// Remove a sqlite test file along with its `-wal` / `-shm` sidecars.
+pub fn cleanup_temp_db_files(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+}
