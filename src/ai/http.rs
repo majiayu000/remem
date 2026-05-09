@@ -42,16 +42,82 @@ pub(super) async fn call_http(system: &str, user_message: &str) -> Result<AiCall
     }
 
     let data: serde_json::Value = resp.json().await?;
-    let text = data["content"]
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|content| content["text"].as_str())
-        .unwrap_or("")
-        .to_string();
+    let text = extract_text(&data)?;
 
     Ok(AiCallResult {
         text,
         executor: "http",
         model: model.to_string(),
     })
+}
+
+fn extract_text(data: &serde_json::Value) -> Result<String> {
+    let text = data["content"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|content| content["text"].as_str())
+        .ok_or_else(|| {
+            let snippet: String = serde_json::to_string(data)
+                .unwrap_or_default()
+                .chars()
+                .take(512)
+                .collect();
+            anyhow::anyhow!("Anthropic response missing content[0].text: {}", snippet)
+        })?
+        .to_string();
+
+    if text.trim().is_empty() {
+        anyhow::bail!("Anthropic returned empty text body");
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+mod http_tests {
+    use super::extract_text;
+    use serde_json::json;
+
+    #[test]
+    fn extracts_text_from_valid_response() {
+        let data = json!({
+            "content": [{"type": "text", "text": "hello"}]
+        });
+        assert_eq!(extract_text(&data).unwrap(), "hello");
+    }
+
+    #[test]
+    fn errors_on_tool_use_response_without_text_field() {
+        let data = json!({
+            "content": [{"type": "tool_use", "id": "abc", "name": "x", "input": {}}]
+        });
+        let err = extract_text(&data).unwrap_err().to_string();
+        assert!(err.contains("missing content[0].text"), "got: {err}");
+    }
+
+    #[test]
+    fn errors_on_missing_content_array() {
+        let data = json!({"id": "msg_1"});
+        let err = extract_text(&data).unwrap_err().to_string();
+        assert!(err.contains("missing content[0].text"), "got: {err}");
+    }
+
+    #[test]
+    fn errors_on_empty_content_array() {
+        let data = json!({"content": []});
+        assert!(extract_text(&data).is_err());
+    }
+
+    #[test]
+    fn errors_on_whitespace_only_text() {
+        let data = json!({"content": [{"type": "text", "text": "   \n"}]});
+        let err = extract_text(&data).unwrap_err().to_string();
+        assert!(err.contains("empty text body"), "got: {err}");
+    }
+
+    #[test]
+    fn errors_on_empty_string_text() {
+        let data = json!({"content": [{"type": "text", "text": ""}]});
+        let err = extract_text(&data).unwrap_err().to_string();
+        assert!(err.contains("empty text body"), "got: {err}");
+    }
 }
