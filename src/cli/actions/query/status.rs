@@ -30,8 +30,45 @@ pub(in crate::cli) fn run_status() -> Result<()> {
     println!("  Observations:  {:>6}", stats.active_observations);
     println!("  Sessions:      {:>6}", stats.session_summaries);
     println!("  Raw messages:  {:>6}", stats.raw_messages);
-    println!("  Pending:       {:>6}", stats.pending_observations);
-    println!("  Pending failed:{:>6}", stats.failed_pending_observations);
+    println!();
+    println!("Pending observations:");
+    println!("  Ready:        {:>6}", stats.ready_pending_observations);
+    println!("  Delayed:      {:>6}", stats.delayed_pending_observations);
+    println!(
+        "  Processing:   {:>6}",
+        stats.processing_pending_observations
+    );
+    println!(
+        "  Expired:      {:>6}",
+        stats.expired_processing_pending_observations
+    );
+    println!("  Failed:       {:>6}", stats.failed_pending_observations);
+    if let Some(epoch) = stats.oldest_ready_pending_epoch {
+        let age_secs = chrono::Utc::now().timestamp().saturating_sub(epoch);
+        println!("  Oldest ready: {:>6}s", age_secs);
+    }
+    println!();
+    println!("Jobs:");
+    println!("  Pending:      {:>6}", stats.pending_jobs);
+    println!("  Processing:   {:>6}", stats.processing_jobs);
+    println!("  Failed:       {:>6}", stats.failed_jobs);
+    println!("  Stuck:        {:>6}", stats.stuck_jobs);
+    println!();
+    println!("Worker daemon:");
+    let daemon_health = if stats.worker_daemon_healthy {
+        "healthy"
+    } else if stats.worker_heartbeat_age_secs.is_some() {
+        "stale"
+    } else {
+        "missing"
+    };
+    println!("  Health:       {:>7}", daemon_health);
+    if let Some(age_secs) = stats.worker_heartbeat_age_secs {
+        println!("  Last beat:    {:>6}s", age_secs);
+    }
+    if let Some(owner) = &stats.worker_heartbeat_owner {
+        println!("  Owner:        {}", owner);
+    }
     println!();
     println!("Today:");
     println!("  New memories:      {:>4}", daily_stats.memories);
@@ -43,6 +80,11 @@ pub(in crate::cli) fn run_status() -> Result<()> {
         for project in &top_projects {
             println!("  {:>4}  {}", project.count, project.project);
         }
+    }
+
+    println!();
+    for line in crate::v2_status::format_v2_summary() {
+        println!("{}", line);
     }
 
     Ok(())

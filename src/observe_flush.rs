@@ -7,3 +7,5 @@ mod runtime;
 mod task;
 
 pub use batch::flush_pending;
+pub use batch::ObservationDrainOutcome;
+pub(crate) use constants::OBSERVATION_FOLLOW_UP_PRIORITY;
