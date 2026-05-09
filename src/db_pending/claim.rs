@@ -6,6 +6,8 @@ use crate::db_pending::types::PendingObservation;
 
 pub fn claim_pending(
     conn: &Connection,
+    host: &str,
+    project: &str,
     session_id: &str,
     limit: usize,
     lease_owner: &str,
@@ -19,31 +21,45 @@ pub fn claim_pending(
              lease_expires_epoch = ?2,
              status = 'processing',
              attempt_count = COALESCE(attempt_count, 0) + 1,
-             updated_at_epoch = ?4
+             updated_at_epoch = ?6
          WHERE id IN (
              SELECT id FROM pending_observations
-             WHERE session_id = ?3
+             WHERE (host = ?3 OR host = 'unknown')
+               AND project = ?4
+               AND session_id = ?5
                AND status = 'pending'
-               AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?4)
-               AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?4)
+               AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?6)
+               AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?6)
              ORDER BY id ASC
-             LIMIT ?5
+             LIMIT ?7
          )
            AND status = 'pending'
-           AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?4)
-           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?4)",
-        params![lease_owner, lease_expires, session_id, now, limit as i64],
+           AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?6)
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?6)",
+        params![
+            lease_owner,
+            lease_expires,
+            host,
+            project,
+            session_id,
+            now,
+            limit as i64
+        ],
     )?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch, \
+        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch, \
                 updated_at_epoch, status, attempt_count, next_retry_epoch, last_error
          FROM pending_observations
-         WHERE session_id = ?1 AND lease_owner = ?2 AND status = 'processing'
+         WHERE (host = ?1 OR host = 'unknown')
+           AND project = ?2
+           AND session_id = ?3
+           AND lease_owner = ?4
+           AND status = 'processing'
          ORDER BY id ASC",
     )?;
     let rows = stmt.query_map(
-        params![session_id, lease_owner],
+        params![host, project, session_id, lease_owner],
         PendingObservation::from_row,
     )?;
     let mut result = Vec::new();
@@ -64,6 +80,22 @@ pub fn release_pending_claims(conn: &Connection, lease_owner: &str) -> Result<us
              updated_at_epoch = ?2
          WHERE lease_owner = ?1 AND status = 'processing'",
         params![lease_owner, now],
+    )?;
+    Ok(count)
+}
+
+pub fn release_expired_pending_claims(conn: &Connection) -> Result<usize> {
+    let now = chrono::Utc::now().timestamp();
+    let count = conn.execute(
+        "UPDATE pending_observations
+         SET lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             status = 'pending',
+             updated_at_epoch = ?1
+         WHERE status = 'processing'
+           AND lease_expires_epoch IS NOT NULL
+           AND lease_expires_epoch < ?1",
+        params![now],
     )?;
     Ok(count)
 }
