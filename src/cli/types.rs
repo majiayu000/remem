@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 pub(super) use crate::install::InstallTarget;
 
@@ -105,6 +106,16 @@ pub(super) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// v2 admin commands (backup/reset/import). See SPEC §4.1.
+    Admin {
+        #[command(subcommand)]
+        action: AdminAction,
+    },
+    /// v2 import commands (legacy v1 -> v2 best-effort).
+    Import {
+        #[command(subcommand)]
+        action: ImportAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -119,6 +130,38 @@ pub(in crate::cli) enum PreferenceAction {
     },
     Remove {
         id: i64,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum AdminAction {
+    /// Back up the v1 database to a timestamped file.
+    Backup {
+        /// Output path. Defaults to <data_dir>/backups/remem-v1-<ts>.sqlite.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Drop and re-initialize the v2 database (~/.remem/v2.sqlite).
+    /// Requires --confirm-destructive to actually run.
+    ResetV2 {
+        #[arg(long)]
+        confirm_destructive: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ImportAction {
+    /// Import v1 memories from a backup sqlite file. Per SPEC §17 D5,
+    /// transcripts are not replayed; only the v1 `memories` table is
+    /// migrated, with synthesized v2 provenance defaults.
+    Legacy {
+        /// v1 db path (typically a backup produced by `remem admin backup`).
+        #[arg(long)]
+        source: PathBuf,
+        /// Acknowledge that import is best-effort and skips constraint
+        /// violations rather than failing.
+        #[arg(long)]
+        best_effort: bool,
     },
 }
 
