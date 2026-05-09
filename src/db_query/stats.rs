@@ -10,8 +10,19 @@ pub struct SystemStats {
     pub session_summaries: i64,
     pub raw_messages: i64,
     pub pending_observations: i64,
+    pub ready_pending_observations: i64,
+    pub delayed_pending_observations: i64,
+    pub processing_pending_observations: i64,
+    pub expired_processing_pending_observations: i64,
     pub failed_pending_observations: i64,
+    pub oldest_ready_pending_epoch: Option<i64>,
+    pub pending_jobs: i64,
+    pub processing_jobs: i64,
+    pub failed_jobs: i64,
     pub stuck_jobs: i64,
+    pub worker_daemon_healthy: bool,
+    pub worker_heartbeat_owner: Option<String>,
+    pub worker_heartbeat_age_secs: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +38,14 @@ pub struct ProjectCount {
 }
 
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
+    let now = chrono::Utc::now().timestamp();
+    let worker_heartbeat = crate::db_worker::latest_worker_heartbeat(conn)?;
+    let worker_heartbeat_age_secs = worker_heartbeat
+        .as_ref()
+        .map(|heartbeat| now.saturating_sub(heartbeat.updated_at_epoch));
+    let worker_daemon_healthy = worker_heartbeat_age_secs
+        .map(|age| age <= crate::db_worker::WORKER_HEARTBEAT_HEALTH_SECS)
+        .unwrap_or(false);
     Ok(SystemStats {
         active_memories: conn.query_row(
             "SELECT COUNT(*) FROM memories WHERE status = 'active'",
@@ -47,17 +66,68 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             [],
             |row| row.get(0),
         )?,
+        ready_pending_observations: conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE status = 'pending'
+               AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?1)
+               AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?1)",
+            params![now],
+            |row| row.get(0),
+        )?,
+        delayed_pending_observations: conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE status = 'pending'
+               AND next_retry_epoch IS NOT NULL
+               AND next_retry_epoch > ?1",
+            params![now],
+            |row| row.get(0),
+        )?,
+        processing_pending_observations: conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'processing'",
+            [],
+            |row| row.get(0),
+        )?,
+        expired_processing_pending_observations: conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE status = 'processing'
+               AND lease_expires_epoch IS NOT NULL
+               AND lease_expires_epoch < ?1",
+            params![now],
+            |row| row.get(0),
+        )?,
         failed_pending_observations: conn.query_row(
             "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
             [],
             |row| row.get(0),
         )?,
+        oldest_ready_pending_epoch: conn.query_row(
+            "SELECT MIN(created_at_epoch) FROM pending_observations
+             WHERE status = 'pending'
+               AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?1)
+               AND (lease_owner IS NULL OR lease_expires_epoch IS NULL OR lease_expires_epoch < ?1)",
+            params![now],
+            |row| row.get(0),
+        )?,
+        pending_jobs: conn.query_row("SELECT COUNT(*) FROM jobs WHERE state = 'pending'", [], |row| {
+            row.get(0)
+        })?,
+        processing_jobs: conn.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE state = 'processing'",
+            [],
+            |row| row.get(0),
+        )?,
+        failed_jobs: conn.query_row("SELECT COUNT(*) FROM jobs WHERE state = 'failed'", [], |row| {
+            row.get(0)
+        })?,
         stuck_jobs: conn.query_row(
-            "SELECT COUNT(*) FROM jobs WHERE state = 'running' \
+            "SELECT COUNT(*) FROM jobs WHERE state = 'processing' \
              AND lease_expires_epoch < strftime('%s', 'now')",
             [],
             |row| row.get(0),
         )?,
+        worker_daemon_healthy,
+        worker_heartbeat_owner: worker_heartbeat.map(|heartbeat| heartbeat.owner),
+        worker_heartbeat_age_secs,
     })
 }
 
