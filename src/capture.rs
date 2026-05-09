@@ -8,6 +8,7 @@
 //! (capture path) plus SPEC-memory-system-v2.1-revisions §4 D1 for the
 //! `content_text` storage policy.
 
+mod blob;
 mod insert;
 mod types;
 

@@ -12,8 +12,10 @@ use crate::identity::{InstallHost, ProjectKey, SessionId, WorkspaceKey};
 const MAX_CONTENT_TEXT_BYTES: usize = 16 * 1024;
 
 /// Insert one normalized event into `captured_events`, creating any missing
-/// hosts / workspaces / projects / sessions rows along the way. Idempotent
-/// on `(host_id, session_id, event_id)`.
+/// hosts / workspaces / projects / sessions rows along the way. Oversize
+/// payloads spill into `event_blobs` per v2.1 §4 D1; `content_text` keeps
+/// a prefix + suffix summary so the row is still useful for FTS / preview.
+/// Idempotent on `(host_id, session_id, event_id)`.
 pub fn insert_captured_event(conn: &Connection, ev: &NormalizedEvent) -> Result<i64> {
     let host_id = lookup_host_id(conn, ev.identity.host)?;
     let workspace_id = ensure_workspace(conn, &ev.identity.workspace, ev.created_at_epoch)?;
@@ -28,9 +30,11 @@ pub fn insert_captured_event(conn: &Connection, ev: &NormalizedEvent) -> Result<
         ev.created_at_epoch,
     )?;
 
-    let (content_text, retention_class) =
-        compact_for_storage(ev.content_text.as_deref(), &ev.retention_class);
-    let content_hash = compute_content_hash(content_text.as_deref());
+    let storage = resolve_storage(conn, ev.content_text.as_deref(), ev.created_at_epoch)?;
+    let retention_class = match storage.kind {
+        StorageKind::Empty | StorageKind::Inline => ev.retention_class.clone(),
+        StorageKind::Spilled => "raw_compact".to_string(),
+    };
 
     conn.execute(
         "INSERT INTO captured_events(
@@ -42,9 +46,9 @@ pub fn insert_captured_event(conn: &Connection, ev: &NormalizedEvent) -> Result<
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5,
             ?6, ?7, ?8, ?9, ?10,
-            ?11, NULL, ?12,
-            ?13, ?14,
-            ?15, ?15
+            ?11, ?12, ?13,
+            ?14, ?15,
+            ?16, ?16
          )
          ON CONFLICT(host_id, session_id, event_id) DO NOTHING",
         params![
@@ -58,8 +62,9 @@ pub fn insert_captured_event(conn: &Connection, ev: &NormalizedEvent) -> Result<
             ev.event_type,
             ev.role,
             ev.tool_name,
-            content_text,
-            content_hash,
+            storage.content_text,
+            storage.content_blob_id,
+            storage.content_hash,
             ev.token_estimate,
             retention_class,
             ev.created_at_epoch,
@@ -173,32 +178,52 @@ pub fn ensure_session(
     Ok(conn.last_insert_rowid())
 }
 
-/// Apply the v2.1 §4 D1 storage policy. Returns `(content_text, retention)`.
-/// B.1 minimal version: ≤16 KiB → keep, >16 KiB → truncate to 16 KiB on a
-/// UTF-8 boundary + flip retention_class to "truncated". The 16-256 KiB and
-/// >256 KiB blob cases land in B.1.x once the event_blobs writer ships.
-fn compact_for_storage(
-    content: Option<&str>,
-    retention_class: &str,
-) -> (Option<String>, String) {
-    match content {
-        None => (None, retention_class.to_string()),
-        Some(text) if text.len() <= MAX_CONTENT_TEXT_BYTES => {
-            (Some(text.to_string()), retention_class.to_string())
-        }
-        Some(text) => {
-            let mut cut = MAX_CONTENT_TEXT_BYTES;
-            while cut > 0 && !text.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            (Some(text[..cut].to_string()), "truncated".to_string())
-        }
-    }
+enum StorageKind {
+    Empty,
+    Inline,
+    Spilled,
 }
 
-fn compute_content_hash(content: Option<&str>) -> String {
-    let bytes = content.unwrap_or("").as_bytes();
-    format!("{:016x}", crate::db::deterministic_hash(bytes))
+struct Storage {
+    kind: StorageKind,
+    content_text: Option<String>,
+    content_blob_id: Option<i64>,
+    content_hash: String,
+}
+
+/// Apply the v2.1 §4 D1 storage policy.
+/// - `None` content: empty hash, no inline text, no blob.
+/// - ≤16 KiB: inline as `content_text`, blob unused.
+/// - >16 KiB: spill the full text into `event_blobs`, keep a
+///   prefix+suffix+marker summary in `content_text`, flip retention to
+///   `raw_compact`. (B.1.y will add gzip beyond 256 KiB.)
+fn resolve_storage(conn: &Connection, content: Option<&str>, now: i64) -> Result<Storage> {
+    match content {
+        None => Ok(Storage {
+            kind: StorageKind::Empty,
+            content_text: None,
+            content_blob_id: None,
+            content_hash: format!("{:016x}", crate::db::deterministic_hash(&[])),
+        }),
+        Some(text) if text.len() <= MAX_CONTENT_TEXT_BYTES => Ok(Storage {
+            kind: StorageKind::Inline,
+            content_text: Some(text.to_string()),
+            content_blob_id: None,
+            content_hash: format!("{:016x}", crate::db::deterministic_hash(text.as_bytes())),
+        }),
+        Some(text) => {
+            let bytes = text.as_bytes();
+            let hash = format!("{:016x}", crate::db::deterministic_hash(bytes));
+            let blob_id = super::blob::insert_or_get_blob(conn, &hash, bytes, now)?;
+            let summary = super::blob::summarize_oversize(text, 1024, 1024);
+            Ok(Storage {
+                kind: StorageKind::Spilled,
+                content_text: Some(summary),
+                content_blob_id: Some(blob_id),
+                content_hash: hash,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -330,34 +355,62 @@ mod tests {
     }
 
     #[test]
-    fn oversize_content_is_truncated_and_marked() {
+    fn oversize_content_spills_to_event_blobs_and_marks_raw_compact() {
         let path = unique_temp_path();
         let conn = open_v2_db_at(&path).unwrap();
-        let big = "x".repeat(MAX_CONTENT_TEXT_BYTES + 100);
+        let big = "x".repeat(MAX_CONTENT_TEXT_BYTES + 5_000);
         let ev = make_event("big", &big);
         insert_captured_event(&conn, &ev).unwrap();
-        let (stored, retention): (String, String) = conn
+
+        let (stored_text, blob_id, retention): (String, Option<i64>, String) = conn
             .query_row(
-                "SELECT content_text, retention_class FROM captured_events",
+                "SELECT content_text, content_blob_id, retention_class FROM captured_events",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!(stored.len(), MAX_CONTENT_TEXT_BYTES);
-        assert_eq!(retention, "truncated");
+        let blob_id = blob_id.expect("blob id must be set for spilled content");
+
+        // content_text is the prefix/suffix summary, not the whole thing.
+        assert!(
+            stored_text.contains(&format!("{} bytes", big.len())),
+            "summary must include size marker"
+        );
+        assert!(stored_text.len() < MAX_CONTENT_TEXT_BYTES, "summary stays small");
+        assert_eq!(retention, "raw_compact");
+
+        // event_blobs has the full payload, plain encoding.
+        let (encoding, original, stored): (String, i64, i64) = conn
+            .query_row(
+                "SELECT content_encoding, original_bytes, stored_bytes FROM event_blobs WHERE id = ?1",
+                [blob_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(encoding, "plain");
+        assert_eq!(original, big.len() as i64);
+        assert_eq!(stored, original);
         cleanup_temp_db_files(&path);
     }
 
     #[test]
-    fn truncate_respects_utf8_boundaries() {
-        let mut s = "a".repeat(MAX_CONTENT_TEXT_BYTES - 1);
-        s.push('中');
-        s.push_str(&"b".repeat(50));
-        let (out, retention) = compact_for_storage(Some(&s), "raw_keep");
-        let out = out.unwrap();
-        assert!(out.is_char_boundary(out.len()), "must end on a UTF-8 boundary");
-        assert!(out.len() <= MAX_CONTENT_TEXT_BYTES);
-        assert_eq!(retention, "truncated");
+    fn duplicate_oversize_content_dedupes_blob() {
+        let path = unique_temp_path();
+        let conn = open_v2_db_at(&path).unwrap();
+        let big = "y".repeat(MAX_CONTENT_TEXT_BYTES + 1);
+        let ev_a = make_event("dup-a", &big);
+        let ev_b = make_event("dup-b", &big);
+        insert_captured_event(&conn, &ev_a).unwrap();
+        insert_captured_event(&conn, &ev_b).unwrap();
+        let blob_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM event_blobs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blob_count, 1, "same content_hash must dedupe to 1 blob");
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM captured_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(event_count, 2, "two distinct events still recorded");
+        cleanup_temp_db_files(&path);
     }
 
     #[test]
