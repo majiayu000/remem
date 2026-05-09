@@ -385,7 +385,7 @@ fn query_summary_batch(
             })
         },
     )?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {

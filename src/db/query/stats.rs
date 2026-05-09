@@ -39,12 +39,12 @@ pub struct ProjectCount {
 
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
-    let worker_heartbeat = crate::db_worker::latest_worker_heartbeat(conn)?;
+    let worker_heartbeat = crate::db::worker::latest_worker_heartbeat(conn)?;
     let worker_heartbeat_age_secs = worker_heartbeat
         .as_ref()
         .map(|heartbeat| now.saturating_sub(heartbeat.updated_at_epoch));
     let worker_daemon_healthy = worker_heartbeat_age_secs
-        .map(|age| age <= crate::db_worker::WORKER_HEARTBEAT_HEALTH_SECS)
+        .map(|age| age <= crate::db::worker::WORKER_HEARTBEAT_HEALTH_SECS)
         .unwrap_or(false);
     Ok(SystemStats {
         active_memories: conn.query_row(
