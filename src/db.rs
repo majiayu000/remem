@@ -10,6 +10,7 @@ pub use crate::db_models::*;
 pub use crate::db_pending::*;
 pub use crate::db_query::*;
 pub use crate::db_usage::*;
+pub use crate::db_worker::*;
 
 pub use core::*;
 pub use crypto::*;

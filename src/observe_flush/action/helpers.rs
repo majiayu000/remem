@@ -8,6 +8,7 @@ pub(crate) fn clone_pending_batch(
         .iter()
         .map(|pending| db::PendingObservation {
             id: pending.id,
+            host: pending.host.clone(),
             session_id: pending.session_id.clone(),
             project: pending.project.clone(),
             tool_name: pending.tool_name.clone(),
