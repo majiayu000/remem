@@ -144,8 +144,14 @@ mod tests {
 
     #[test]
     fn install_host_round_trip() {
-        assert_eq!(InstallHost::parse("claude-code").unwrap(), InstallHost::ClaudeCode);
-        assert_eq!(InstallHost::parse("codex-cli").unwrap(), InstallHost::CodexCli);
+        assert_eq!(
+            InstallHost::parse("claude-code").unwrap(),
+            InstallHost::ClaudeCode
+        );
+        assert_eq!(
+            InstallHost::parse("codex-cli").unwrap(),
+            InstallHost::CodexCli
+        );
         assert_eq!(InstallHost::ClaudeCode.as_db_value(), "claude-code");
         assert_eq!(InstallHost::CodexCli.as_db_value(), "codex-cli");
     }

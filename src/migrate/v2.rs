@@ -144,6 +144,9 @@ mod tests {
              VALUES (NULL, 'global', 'preference', 'k1', 't2', '[]', 0.9, 'active', 0, 0)",
             [],
         );
-        assert!(dup.is_err(), "expected UNIQUE violation on duplicate topic_key");
+        assert!(
+            dup.is_err(),
+            "expected UNIQUE violation on duplicate topic_key"
+        );
     }
 }

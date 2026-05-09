@@ -23,8 +23,8 @@ pub fn open_v2_db_at(path: &Path) -> Result<Connection> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create v2 db parent {}", parent.display()))?;
     }
-    let conn = Connection::open(path)
-        .with_context(|| format!("open v2 db at {}", path.display()))?;
+    let conn =
+        Connection::open(path).with_context(|| format!("open v2 db at {}", path.display()))?;
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;

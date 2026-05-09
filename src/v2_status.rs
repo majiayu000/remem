@@ -26,8 +26,7 @@ pub fn format_v2_summary_at(path: &Path) -> Vec<String> {
         ));
         lines.push("  Status:   not initialized".to_string());
         lines.push(
-            "  Hint:     run `remem admin reset-v2 --confirm-destructive` to create"
-                .to_string(),
+            "  Hint:     run `remem admin reset-v2 --confirm-destructive` to create".to_string(),
         );
     }
     lines

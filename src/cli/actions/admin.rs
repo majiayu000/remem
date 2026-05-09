@@ -73,8 +73,8 @@ pub fn backup_db(src_path: &Path, dst_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
+    use chrono::TimeZone;
 
     fn unique_temp_path() -> PathBuf {
         unique_temp_db_path("admin")

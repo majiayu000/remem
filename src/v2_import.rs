@@ -80,16 +80,20 @@ pub fn import_legacy_memories(v1_path: &Path, v2_conn: &Connection) -> Result<Im
                 evidence_event_ids, confidence, status, created_at_epoch, updated_at_epoch)
              VALUES (?1, ?2, ?3, ?4, ?5, '[]', 0.7, ?6, ?7, ?8)",
             rusqlite::params![
-                project_id, scope, memory_type, topic_key, text, status, created_at, updated_at
+                project_id,
+                scope,
+                memory_type,
+                topic_key,
+                text,
+                status,
+                created_at,
+                updated_at
             ],
         );
         match result {
             Ok(_) => stats.memories_imported += 1,
             Err(e) => {
-                crate::log::warn(
-                    "import",
-                    &format!("skipped v1 memory id={v1_id}: {e}"),
-                );
+                crate::log::warn("import", &format!("skipped v1 memory id={v1_id}: {e}"));
                 stats.memories_skipped += 1;
             }
         }
@@ -174,7 +178,9 @@ mod tests {
         let v1 = unique_temp_path("missing");
         let v2 = unique_temp_path("v2-empty");
         let v2_conn = open_v2_db_at(&v2).unwrap();
-        let err = import_legacy_memories(&v1, &v2_conn).unwrap_err().to_string();
+        let err = import_legacy_memories(&v1, &v2_conn)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("not found"), "got: {err}");
         cleanup(&v2);
     }
@@ -276,7 +282,10 @@ mod tests {
         let v2_conn = open_v2_db_at(&v2_path).unwrap();
         let stats = import_legacy_memories(&v1_path, &v2_conn).unwrap();
         assert_eq!(stats.memories_imported, 1);
-        assert_eq!(stats.memories_skipped, 1, "second row violates UNIQUE topic");
+        assert_eq!(
+            stats.memories_skipped, 1,
+            "second row violates UNIQUE topic"
+        );
         cleanup(&v1_path);
         cleanup(&v2_path);
     }

@@ -150,7 +150,10 @@ mod tests {
         assert!(err.contains("user_version=4"), "got: {err}");
         assert!(err.contains("remem admin backup"), "got: {err}");
         assert!(err.contains("remem admin reset-v2"), "got: {err}");
-        assert!(err.contains("Read-only commands remain available"), "got: {err}");
+        assert!(
+            err.contains("Read-only commands remain available"),
+            "got: {err}"
+        );
     }
 
     #[test]
