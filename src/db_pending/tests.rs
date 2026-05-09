@@ -1,24 +1,47 @@
 use rusqlite::{params, Connection};
 
-use super::{claim_pending, delete_pending_claimed, enqueue_pending, retry_pending_claimed};
+use super::{
+    claim_pending, delete_pending_claimed, enqueue_pending, release_expired_pending_claims,
+    retry_pending_claimed,
+};
 use crate::migrate::MIGRATIONS;
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
-    conn.execute_batch(MIGRATIONS[0].sql)
-        .expect("baseline schema should load");
+    for migration in MIGRATIONS {
+        conn.execute_batch(migration.sql)
+            .expect("schema migration should load");
+    }
     conn
 }
 
 #[test]
 fn claim_pending_only_returns_requested_session_rows() {
     let conn = setup_conn();
-    let expected_id = enqueue_pending(&conn, "session-a", "proj", "tool", None, None, None)
-        .expect("first pending row should be queued");
-    enqueue_pending(&conn, "session-b", "proj", "tool", None, None, None)
-        .expect("second pending row should be queued");
+    let expected_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("first pending row should be queued");
+    enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-b",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("second pending row should be queued");
 
-    let claimed = claim_pending(&conn, "session-a", 5, "worker-a", 60)
+    let claimed = claim_pending(&conn, "codex-cli", "proj", "session-a", 5, "worker-a", 60)
         .expect("session-specific claim should succeed");
 
     assert_eq!(claimed.len(), 1);
@@ -28,11 +51,117 @@ fn claim_pending_only_returns_requested_session_rows() {
 }
 
 #[test]
+fn claim_pending_respects_host_project_session_identity() {
+    let conn = setup_conn();
+    let expected_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj-a",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("target row should be queued");
+    enqueue_pending(
+        &conn,
+        "claude-code",
+        "session-a",
+        "proj-a",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("different host row should be queued");
+    enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj-b",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("different project row should be queued");
+
+    let claimed = claim_pending(
+        &conn,
+        "codex-cli",
+        "proj-a",
+        "session-a",
+        10,
+        "worker-a",
+        60,
+    )
+    .expect("identity claim should succeed");
+
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].id, expected_id);
+    assert_eq!(claimed[0].host, "codex-cli");
+    assert_eq!(claimed[0].project, "proj-a");
+    assert_eq!(claimed[0].session_id, "session-a");
+}
+
+#[test]
+fn claim_pending_allows_legacy_unknown_host_for_matching_identity() {
+    let conn = setup_conn();
+    let legacy_id = enqueue_pending(
+        &conn,
+        "unknown",
+        "session-a",
+        "proj-a",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("legacy row should be queued");
+    enqueue_pending(
+        &conn,
+        "unknown",
+        "session-a",
+        "proj-b",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("different legacy project row should be queued");
+
+    let claimed = claim_pending(
+        &conn,
+        "codex-cli",
+        "proj-a",
+        "session-a",
+        10,
+        "worker-a",
+        60,
+    )
+    .expect("legacy-compatible claim should succeed");
+
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].id, legacy_id);
+    assert_eq!(claimed[0].host, "unknown");
+}
+
+#[test]
 fn retry_pending_claimed_resets_status_and_sets_next_retry() {
     let conn = setup_conn();
-    let pending_id = enqueue_pending(&conn, "session-a", "proj", "tool", None, None, None)
-        .expect("pending row should be queued");
-    let claimed = claim_pending(&conn, "session-a", 1, "worker-a", 60)
+    let pending_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("pending row should be queued");
+    let claimed = claim_pending(&conn, "codex-cli", "proj", "session-a", 1, "worker-a", 60)
         .expect("pending row should be claimed");
     let lower_bound = chrono::Utc::now().timestamp() + 120;
 
@@ -68,15 +197,44 @@ fn retry_pending_claimed_resets_status_and_sets_next_retry() {
 #[test]
 fn delete_pending_claimed_only_deletes_processing_rows_for_owner() {
     let conn = setup_conn();
-    let owned_id = enqueue_pending(&conn, "session-a", "proj", "tool", None, None, None)
-        .expect("owned row should be queued");
-    let pending_id = enqueue_pending(&conn, "session-a", "proj", "tool", None, None, None)
-        .expect("unclaimed row should be queued");
-    let other_owner_id = enqueue_pending(&conn, "session-b", "proj", "tool", None, None, None)
-        .expect("other owner row should be queued");
+    let owned_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("owned row should be queued");
+    let pending_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("unclaimed row should be queued");
+    let other_owner_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-b",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("other owner row should be queued");
 
-    claim_pending(&conn, "session-a", 1, "worker-a", 60).expect("worker a should claim its row");
-    claim_pending(&conn, "session-b", 1, "worker-b", 60).expect("worker b should claim its row");
+    claim_pending(&conn, "codex-cli", "proj", "session-a", 1, "worker-a", 60)
+        .expect("worker a should claim its row");
+    claim_pending(&conn, "codex-cli", "proj", "session-b", 1, "worker-b", 60)
+        .expect("worker b should claim its row");
 
     let deleted =
         delete_pending_claimed(&conn, "worker-a", &[owned_id, pending_id, other_owner_id])
@@ -91,4 +249,91 @@ fn delete_pending_claimed_only_deletes_processing_rows_for_owner() {
         .collect::<rusqlite::Result<Vec<_>>>()
         .expect("row collection should succeed");
     assert_eq!(remaining_ids, vec![pending_id, other_owner_id]);
+}
+
+#[test]
+fn release_expired_pending_claims_resets_only_expired_processing_rows() {
+    let conn = setup_conn();
+    let expired_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-a",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("expired row should be queued");
+    let fresh_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-b",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("fresh row should be queued");
+    let pending_id = enqueue_pending(
+        &conn,
+        "codex-cli",
+        "session-c",
+        "proj",
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("pending row should be queued");
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'old-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![expired_id, now - 1],
+    )
+    .expect("expired row should update");
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'fresh-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![fresh_id, now + 60],
+    )
+    .expect("fresh row should update");
+
+    let released = release_expired_pending_claims(&conn).expect("release should succeed");
+
+    assert_eq!(released, 1);
+    let rows = conn
+        .prepare(
+            "SELECT id, status, lease_owner
+             FROM pending_observations
+             ORDER BY id ASC",
+        )
+        .expect("select should prepare")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .expect("rows should load")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("rows should collect");
+
+    assert_eq!(
+        rows,
+        vec![
+            (expired_id, "pending".to_string(), None),
+            (
+                fresh_id,
+                "processing".to_string(),
+                Some("fresh-worker".to_string())
+            ),
+            (pending_id, "pending".to_string(), None),
+        ]
+    );
 }

@@ -6,10 +6,11 @@ use super::transition::backfill_to_baseline;
 use super::types::{DryRunResult, Migration, MIGRATIONS, OLD_BASELINE_VERSION};
 
 pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
-    let current_version: i64 = real_conn
+    let raw_current_version: i64 = real_conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
-    let applied = infer_applied_versions(real_conn, current_version)?;
+    let applied = infer_applied_versions(real_conn, raw_current_version)?;
+    let current_version = logical_current_version(raw_current_version, &applied);
 
     let test_conn = Connection::open_in_memory()?;
     if let Err(error) = clone_schema(real_conn, &test_conn) {
@@ -19,7 +20,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
             error: Some(format!("schema clone: {}", error)),
         });
     }
-    if current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
+    if raw_current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
         if let Err(error) = backfill_to_baseline(&test_conn) {
             return Ok(DryRunResult {
                 current_version,
@@ -85,6 +86,13 @@ fn infer_applied_versions(conn: &Connection, current_version: i64) -> Result<Vec
         return Ok(vec![1]);
     }
     Ok(Vec::new())
+}
+
+fn logical_current_version(raw_current_version: i64, applied: &[i64]) -> i64 {
+    let Some(latest_applied) = applied.iter().max() else {
+        return raw_current_version;
+    };
+    raw_current_version.max(OLD_BASELINE_VERSION - 1 + latest_applied)
 }
 
 fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {

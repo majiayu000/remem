@@ -45,7 +45,10 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
         .last()
         .map(|migration| migration.version)
         .unwrap_or(0);
-    let user_version = OLD_BASELINE_VERSION - 1 + latest;
+    let current_user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+    let user_version = current_user_version.max(OLD_BASELINE_VERSION - 1 + latest);
     conn.execute_batch(&format!("PRAGMA user_version = {}", user_version))?;
     Ok(())
 }
