@@ -43,6 +43,36 @@ impl InstallHost {
             )),
         }
     }
+
+    /// Resolve the install-time host from environment variables. Existing
+    /// install paths already inject host identity per hook (the `--host`
+    /// CLI flag in v2.1 M2 is one option; the shipped install uses env
+    /// vars). Priority order matches the install layout:
+    ///   1. `REMEM_HOOK_ADAPTER` (set on observe hook command)
+    ///   2. `REMEM_CONTEXT_HOST` (set on context / summarize hook command)
+    ///   3. `REMEM_HOST` (explicit override for wrapper scripts)
+    pub fn from_env() -> Result<Self> {
+        Self::from_env_reader(|key| std::env::var(key).ok())
+    }
+
+    /// Internal: closure-based variant so unit tests can pin env values
+    /// without racing against process-wide environment mutation.
+    pub(crate) fn from_env_reader<F>(read: F) -> Result<Self>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        for key in ["REMEM_HOOK_ADAPTER", "REMEM_CONTEXT_HOST", "REMEM_HOST"] {
+            if let Some(value) = read(key) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Self::parse(trimmed).map_err(|e| anyhow!("env {key}: {e}"));
+                }
+            }
+        }
+        Err(anyhow!(
+            "no install host env var set; expected REMEM_HOOK_ADAPTER, REMEM_CONTEXT_HOST, or REMEM_HOST"
+        ))
+    }
 }
 
 /// Workspace identity synthesized from cwd + `git rev-parse
@@ -161,6 +191,70 @@ mod tests {
         let err = InstallHost::parse("unknown").unwrap_err().to_string();
         assert!(err.contains("invalid host"));
         assert!(InstallHost::parse("").is_err());
+    }
+
+    #[test]
+    fn from_env_reader_uses_hook_adapter_first() {
+        let host = InstallHost::from_env_reader(|key| match key {
+            "REMEM_HOOK_ADAPTER" => Some("codex-cli".into()),
+            "REMEM_CONTEXT_HOST" => Some("claude-code".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(host, InstallHost::CodexCli);
+    }
+
+    #[test]
+    fn from_env_reader_falls_back_to_context_host() {
+        let host = InstallHost::from_env_reader(|key| match key {
+            "REMEM_CONTEXT_HOST" => Some("claude-code".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(host, InstallHost::ClaudeCode);
+    }
+
+    #[test]
+    fn from_env_reader_falls_back_to_remem_host() {
+        let host = InstallHost::from_env_reader(|key| match key {
+            "REMEM_HOST" => Some("codex-cli".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(host, InstallHost::CodexCli);
+    }
+
+    #[test]
+    fn from_env_reader_returns_error_when_no_var_set() {
+        let err = InstallHost::from_env_reader(|_| None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no install host"), "got: {err}");
+    }
+
+    #[test]
+    fn from_env_reader_rejects_invalid_value() {
+        let err = InstallHost::from_env_reader(|key| {
+            if key == "REMEM_HOOK_ADAPTER" {
+                Some("bogus".into())
+            } else {
+                None
+            }
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("invalid host"), "got: {err}");
+    }
+
+    #[test]
+    fn from_env_reader_skips_empty_value() {
+        let host = InstallHost::from_env_reader(|key| match key {
+            "REMEM_HOOK_ADAPTER" => Some("".into()),
+            "REMEM_CONTEXT_HOST" => Some("codex-cli".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(host, InstallHost::CodexCli);
     }
 
     #[test]
