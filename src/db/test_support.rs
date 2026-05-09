@@ -65,17 +65,19 @@ impl Drop for ScopedTestDataDir {
 }
 
 /// Generate a unique temp file path for a test sqlite db. Used by schema,
-/// admin, and import test modules; nonce is `pid + nanos` so concurrent
-/// `cargo test` runs do not collide. Caller owns cleanup (pair with
+/// admin, import, and capture test modules. Combines `pid + nanos +
+/// process-local atomic counter` so quick successive calls under the cargo
+/// default thread pool cannot collide (pid+nanos alone occasionally aliases
+/// on macOS when two threads sample SystemTime within the same nanosecond
+/// resolution bucket). Caller owns cleanup (pair with
 /// `cleanup_temp_db_files` for `-wal` / `-shm` sidecars).
 pub fn unique_temp_db_path(label: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
         "remem-{label}-{}-{nonce}-{counter}.sqlite",
         std::process::id(),
