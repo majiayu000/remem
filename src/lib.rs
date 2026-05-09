@@ -14,6 +14,7 @@ pub mod db;
 pub mod doctor;
 pub mod dream;
 pub mod eval;
+pub mod extraction;
 pub mod git_util;
 pub mod identity;
 pub mod install;
