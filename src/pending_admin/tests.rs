@@ -5,8 +5,10 @@ use crate::{db, migrate::MIGRATIONS};
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
-    conn.execute_batch(MIGRATIONS[0].sql)
-        .expect("baseline schema should load");
+    for migration in MIGRATIONS {
+        conn.execute_batch(migration.sql)
+            .expect("schema migration should load");
+    }
     conn
 }
 
@@ -17,8 +19,17 @@ fn insert_failed_row(
     updated_at_epoch: i64,
     last_error: &str,
 ) -> i64 {
-    let id = db::enqueue_pending(conn, session_id, project, "tool", None, None, None)
-        .expect("pending row should enqueue");
+    let id = db::enqueue_pending(
+        conn,
+        "codex-cli",
+        session_id,
+        project,
+        "tool",
+        None,
+        None,
+        None,
+    )
+    .expect("pending row should enqueue");
     conn.execute(
         "UPDATE pending_observations
          SET status = 'failed',

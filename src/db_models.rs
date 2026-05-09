@@ -85,6 +85,7 @@ impl JobType {
 #[derive(Debug, Clone)]
 pub struct Job {
     pub id: i64,
+    pub host: String,
     pub job_type: JobType,
     pub project: String,
     pub session_id: Option<String>,
