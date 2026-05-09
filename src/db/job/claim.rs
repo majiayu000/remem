@@ -48,7 +48,7 @@ pub fn claim_next_job(
 
 fn load_claimed_job(conn: &Connection, job_id: i64) -> Result<Job> {
     let row = conn.query_row(
-        "SELECT id, job_type, project, session_id, payload_json, attempt_count, max_attempts
+        "SELECT id, host, job_type, project, session_id, payload_json, attempt_count, max_attempts
          FROM jobs WHERE id = ?1",
         params![job_id],
         |row| {
@@ -56,21 +56,23 @@ fn load_claimed_job(conn: &Connection, job_id: i64) -> Result<Job> {
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         },
     )?;
 
     Ok(Job {
         id: row.0,
-        job_type: JobType::from_db(&row.1)?,
-        project: row.2,
-        session_id: row.3,
-        payload_json: row.4,
-        attempt_count: row.5,
-        max_attempts: row.6,
+        host: row.1,
+        job_type: JobType::from_db(&row.2)?,
+        project: row.3,
+        session_id: row.4,
+        payload_json: row.5,
+        attempt_count: row.6,
+        max_attempts: row.7,
     })
 }

@@ -6,9 +6,10 @@ pub mod observation;
 pub mod pending;
 pub mod query;
 pub mod summarize;
-pub mod usage;
 #[cfg(test)]
 pub mod test_support;
+pub mod usage;
+pub mod worker;
 
 pub use core::*;
 pub use crypto::*;
@@ -19,3 +20,4 @@ pub use pending::*;
 pub use query::*;
 pub use summarize::*;
 pub use usage::*;
+pub use worker::*;

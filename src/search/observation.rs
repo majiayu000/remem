@@ -1,11 +1,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::db::Observation;
 use crate::db::models::OBSERVATION_TYPES;
-use crate::db::query::{
-    query_observations, search_observations_fts, search_observations_like,
-};
+use crate::db::query::{query_observations, search_observations_fts, search_observations_like};
+use crate::db::Observation;
 
 use super::common::sanitize_fts_query;
 

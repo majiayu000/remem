@@ -5,6 +5,7 @@ use crate::db::job::JobType;
 
 pub fn enqueue_job(
     conn: &Connection,
+    host: &str,
     job_type: JobType,
     project: &str,
     session_id: Option<&str>,
@@ -14,13 +15,14 @@ pub fn enqueue_job(
     let existing: Option<i64> = conn
         .query_row(
             "SELECT id FROM jobs
-             WHERE job_type = ?1
-               AND project = ?2
-               AND COALESCE(session_id, '') = COALESCE(?3, '')
+             WHERE host = ?1
+               AND job_type = ?2
+               AND project = ?3
+               AND COALESCE(session_id, '') = COALESCE(?4, '')
                AND state IN ('pending', 'processing')
              ORDER BY id DESC
              LIMIT 1",
-            params![job_type.as_str(), project, session_id],
+            params![host, job_type.as_str(), project, session_id],
             |row| row.get(0),
         )
         .optional()?;
@@ -31,11 +33,12 @@ pub fn enqueue_job(
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "INSERT INTO jobs
-         (job_type, project, session_id, payload_json, state, priority,
+         (host, job_type, project, session_id, payload_json, state, priority,
           attempt_count, max_attempts, lease_owner, lease_expires_epoch,
           next_retry_epoch, last_error, created_at_epoch, updated_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, 'pending', ?5, 0, 6, NULL, NULL, ?6, NULL, ?6, ?6)",
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, 0, 6, NULL, NULL, ?7, NULL, ?7, ?7)",
         params![
+            host,
             job_type.as_str(),
             project,
             session_id,

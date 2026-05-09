@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::db::to_sql_refs;
 use crate::db::query::push_project_filter;
+use crate::db::to_sql_refs;
 
 use super::types::{MonthRow, RecentObservation};
 
