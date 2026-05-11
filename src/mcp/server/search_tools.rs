@@ -48,10 +48,12 @@ impl MemoryServer {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
                 e.to_string()
             })?;
+            let req_limit = req.limit;
+            let req_offset = req.offset;
             let memory_service::SearchResultSet {
                 memories,
                 multi_hop,
-                has_more: _,
+                has_more,
                 raw_hits,
             } = search_set;
 
@@ -112,7 +114,7 @@ impl MemoryServer {
                 ),
             );
 
-            if multi_hop.is_some() || !raw_hits_json.is_empty() {
+            if multi_hop.is_some() || !raw_hits_json.is_empty() || has_more {
                 let mut response = serde_json::json!({ "results": search_results });
                 if let Some(meta) = multi_hop {
                     response["multi_hop"] = serde_json::json!({
@@ -123,6 +125,10 @@ impl MemoryServer {
                 if !raw_hits_json.is_empty() {
                     response["raw_hits"] =
                         serde_json::to_value(&raw_hits_json).map_err(|e| e.to_string())?;
+                }
+                if has_more {
+                    response["has_more"] = serde_json::Value::Bool(true);
+                    response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
                 }
                 serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
             } else {

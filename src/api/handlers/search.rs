@@ -8,7 +8,9 @@ use axum::{
 use crate::memory_service;
 
 use super::super::helpers::{error_response, memory_to_item, open_request_db};
-use super::super::types::{DbState, MemoryItem, Meta, MultiHopInfo, SearchParams, SearchResponse};
+use super::super::types::{
+    DbState, MemoryItem, Meta, MultiHopInfo, RawHitItem, SearchParams, SearchResponse,
+};
 
 pub(in crate::api) fn search_request_from_params(
     params: SearchParams,
@@ -42,10 +44,26 @@ pub(in crate::api) async fn handle_search(
     let limit = req.limit;
     let offset = req.offset;
 
+    const RAW_PREVIEW_CHARS: usize = 300;
+
     match memory_service::search_memories(&conn, &req) {
         Ok(results) => {
             let count = results.memories.len();
             let items: Vec<MemoryItem> = results.memories.iter().map(memory_to_item).collect();
+            let raw_hits: Vec<RawHitItem> = results
+                .raw_hits
+                .into_iter()
+                .map(|msg| RawHitItem {
+                    id: msg.id,
+                    session_id: msg.session_id,
+                    project: msg.project,
+                    role: msg.role,
+                    preview: msg.content.chars().take(RAW_PREVIEW_CHARS).collect(),
+                    source: msg.source,
+                    branch: msg.branch,
+                    created_at_epoch: msg.created_at_epoch,
+                })
+                .collect();
             Json(SearchResponse {
                 data: items,
                 meta: Meta {
@@ -58,6 +76,7 @@ pub(in crate::api) async fn handle_search(
                     hops: meta.hops,
                     entities_discovered: meta.entities_discovered,
                 }),
+                raw_hits,
             })
             .into_response()
         }
