@@ -18,7 +18,7 @@ struct GoldenQuery {
 
 pub(in crate::cli) fn run_eval_local() -> Result<()> {
     let conn = db::open_db()?;
-    let report = crate::eval_local::run_eval(&conn)?;
+    let report = crate::eval::local::run_eval(&conn)?;
     print!("{}", report);
     Ok(())
 }
@@ -49,10 +49,10 @@ pub(in crate::cli) fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
         )?;
         let result_ids: Vec<i64> = results.iter().map(|memory| memory.id).collect();
 
-        let rr = crate::eval_metrics::reciprocal_rank(&result_ids, &query.relevant_ids);
-        let precision = crate::eval_metrics::precision_at_k(&result_ids, &query.relevant_ids, k);
-        let recall = crate::eval_metrics::recall_at_k(&result_ids, &query.relevant_ids, k);
-        let hit = crate::eval_metrics::hit_at_k(&result_ids, &query.relevant_ids, k);
+        let rr = crate::eval::metrics::reciprocal_rank(&result_ids, &query.relevant_ids);
+        let precision = crate::eval::metrics::precision_at_k(&result_ids, &query.relevant_ids, k);
+        let recall = crate::eval::metrics::recall_at_k(&result_ids, &query.relevant_ids, k);
+        let hit = crate::eval::metrics::hit_at_k(&result_ids, &query.relevant_ids, k);
         let status = eval_status(query, &results, hit);
 
         println!(

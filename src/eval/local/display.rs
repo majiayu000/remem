@@ -1,4 +1,4 @@
-use crate::eval_local::types::EvalReport;
+use crate::eval::local::types::EvalReport;
 
 const MAX_GOOD_TITLE_LEN: usize = 120;
 
