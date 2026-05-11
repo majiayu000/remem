@@ -72,18 +72,11 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
     let response = call_summary_ai(&project, &user_message)
         .await
         .map_err(|err| {
-            if let Err(release_err) = db::release_summarize_lock(&conn, &project) {
-                crate::log::error(
-                    "summary-job",
-                    &format!(
-                        "[LOCK LEAK] failed to release summarize lock for {project}: {release_err}"
-                    ),
-                );
-            }
+            release_lock_or_log(&conn, &project, "ai-failure");
             anyhow::anyhow!("summary ai failed: {}", err)
         })?;
     let Some(summary) = parse_summary(&response) else {
-        let _ = db::release_summarize_lock(&conn, &project);
+        release_lock_or_log(&conn, &project, "ai-skipped");
         crate::log::info("summary-job", "session skipped by AI");
         return Ok(());
     };
@@ -98,6 +91,17 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
     )?;
     sync_native_memory(cwd, &project);
     Ok(())
+}
+
+fn release_lock_or_log(conn: &rusqlite::Connection, project: &str, reason: &str) {
+    if let Err(e) = db::release_summarize_lock(conn, project) {
+        crate::log::error(
+            "summary-job",
+            &format!(
+                "[LOCK LEAK] failed to release summarize lock for {project} after {reason}: {e}"
+            ),
+        );
+    }
 }
 
 fn prepare_assistant_message(message: String) -> Option<String> {

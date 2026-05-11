@@ -15,7 +15,7 @@ pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project], map_workstream_row)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub fn query_workstreams(
@@ -47,7 +47,7 @@ pub fn query_workstreams(
     } else {
         stmt.query_map(params![project], map_workstream_row)?
     };
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub(crate) fn map_workstream_row(row: &rusqlite::Row) -> rusqlite::Result<WorkStream> {

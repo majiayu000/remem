@@ -64,7 +64,16 @@ pub(super) enum Commands {
         action: PendingAction,
     },
     Status,
-    Doctor,
+    Doctor {
+        /// Emit a single JSON object with per-check status. Stable shape;
+        /// fields: `version`, `status`, `fails`, `warns`, `checks[]`.
+        #[arg(long)]
+        json: bool,
+        /// Suppress human-readable output. Useful when only the exit code
+        /// matters (CI/scripts). Has no effect when `--json` is set.
+        #[arg(long, short)]
+        quiet: bool,
+    },
     Search {
         query: String,
         #[arg(long, short)]

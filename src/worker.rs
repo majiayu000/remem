@@ -3,10 +3,17 @@ use serde::Deserialize;
 use std::ffi::OsString;
 use tokio::time::{sleep, Duration};
 
-use crate::{db, observe_flush, summarize};
+use crate::{db, observe, summarize};
 
-const JOB_LEASE_SECS: i64 = 600;
+// The lease is the maximum time another worker will wait before requeuing a
+// job whose owner died, so `JOB_LEASE_SECS` must always exceed
+// `JOB_TIMEOUT_SECS`. Otherwise a job that legitimately runs near the
+// timeout could be claimed by a second worker before its current owner has
+// given up, causing duplicate processing on hard kills. The grace window
+// (60s) gives the active worker time to fail the timeout check and release.
 const JOB_TIMEOUT_SECS: u64 = 420;
+const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
+const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const STALE_PENDING_AGE_SECS: i64 = 60;
 const STALE_PENDING_SCAN_LIMIT: i64 = 8;
 
@@ -103,7 +110,7 @@ fn enqueue_stale_observation_jobs(conn: &rusqlite::Connection) -> Result<usize> 
             &identity.project,
             Some(&identity.session_id),
             &payload.to_string(),
-            observe_flush::OBSERVATION_FOLLOW_UP_PRIORITY,
+            observe::flush::OBSERVATION_FOLLOW_UP_PRIORITY,
         )?;
         queued += 1;
     }
@@ -130,10 +137,10 @@ async fn process_job(job: &db::Job) -> Result<JobOutcome> {
             let payload: ObservationPayload = serde_json::from_str(&job.payload_json)?;
             let host = payload.host.unwrap_or_else(|| job.host.clone());
             let outcome =
-                observe_flush::flush_pending(&host, &payload.session_id, &payload.project).await?;
+                observe::flush::flush_pending(&host, &payload.session_id, &payload.project).await?;
             match outcome {
-                observe_flush::ObservationDrainOutcome::Drained => Ok(JobOutcome::Done),
-                observe_flush::ObservationDrainOutcome::NeedsFollowUp => {
+                observe::flush::ObservationDrainOutcome::Drained => Ok(JobOutcome::Done),
+                observe::flush::ObservationDrainOutcome::NeedsFollowUp => {
                     Ok(JobOutcome::ObservationNeedsFollowUp {
                         host,
                         session_id: payload.session_id,
@@ -234,7 +241,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                         &project,
                         Some(&session_id),
                         &payload_json,
-                        observe_flush::OBSERVATION_FOLLOW_UP_PRIORITY,
+                        observe::flush::OBSERVATION_FOLLOW_UP_PRIORITY,
                     )?;
                     crate::log::info(
                         "worker",

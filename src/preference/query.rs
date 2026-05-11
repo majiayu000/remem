@@ -22,7 +22,7 @@ pub fn query_project_preferences(
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project, limit as i64], memory::map_memory_row_pub)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }
 
 pub fn query_global_preferences(conn: &Connection, limit: usize) -> Result<Vec<Memory>> {
@@ -40,5 +40,5 @@ pub fn query_global_preferences(conn: &Connection, limit: usize) -> Result<Vec<M
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![limit as i64], memory::map_memory_row_pub)?;
-    crate::db_query::collect_rows(rows)
+    crate::db::query::collect_rows(rows)
 }

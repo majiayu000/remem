@@ -115,13 +115,13 @@ pub mod tests_helper {
             );
             CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
                 INSERT INTO memories_fts(rowid, title, content)
-                VALUES (new.id, new.title, new.content);
+                SELECT new.id, new.title, new.content WHERE new.status = 'active';
             END;
             CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
                 INSERT INTO memories_fts(memories_fts, rowid, title, content)
                 VALUES ('delete', old.id, old.title, old.content);
                 INSERT INTO memories_fts(rowid, title, content)
-                VALUES (new.id, new.title, new.content);
+                SELECT new.id, new.title, new.content WHERE new.status = 'active';
             END;
             CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
                 INSERT INTO memories_fts(memories_fts, rowid, title, content)

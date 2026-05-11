@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::db_job::JobType;
+use crate::db::job::JobType;
 
 pub fn enqueue_job(
     conn: &Connection,
