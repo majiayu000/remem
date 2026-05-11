@@ -1,5 +1,9 @@
 use std::sync::LazyLock;
 
+pub mod claude;
+pub mod codex;
+pub(crate) mod common;
+
 /// Normalized event parsed from a hook's raw JSON input.
 pub struct ParsedHookEvent {
     pub session_id: String,
@@ -41,8 +45,8 @@ pub trait ToolAdapter: Send + Sync {
 
 static ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
     vec![
-        Box::new(crate::adapter_claude::ClaudeCodeAdapter),
-        Box::new(crate::adapter_codex::CodexAdapter),
+        Box::new(crate::adapter::claude::ClaudeCodeAdapter),
+        Box::new(crate::adapter::codex::CodexAdapter),
     ]
 });
 

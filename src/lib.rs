@@ -5,9 +5,14 @@
 )]
 
 pub mod adapter;
-pub mod adapter_claude;
-pub mod adapter_codex;
-mod adapter_common;
+#[deprecated(note = "use remem::adapter::claude instead")]
+pub mod adapter_claude {
+    pub use crate::adapter::claude::*;
+}
+#[deprecated(note = "use remem::adapter::codex instead")]
+pub mod adapter_codex {
+    pub use crate::adapter::codex::*;
+}
 pub mod ai;
 pub mod api;
 pub mod claude_memory;
