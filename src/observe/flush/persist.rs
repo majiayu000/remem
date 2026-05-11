@@ -22,7 +22,7 @@ pub(crate) fn persist_flush_batch(
 
     for obs in observations {
         let duplicate_id = if let Some(narrative) = &obs.narrative {
-            crate::dedup::check_duplicate(&tx, project, narrative, None)?
+            crate::memory::dedup::check_duplicate(&tx, project, narrative, None)?
         } else {
             None
         };

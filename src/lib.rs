@@ -10,7 +10,6 @@ pub mod api;
 pub mod cli;
 pub mod context;
 pub mod db;
-pub mod dedup;
 pub mod doctor;
 pub mod dream;
 pub mod entity;

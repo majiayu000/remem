@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::dedup::{find_hash_duplicates, mark_duplicate_accessed};
+use crate::memory::dedup::{find_hash_duplicates, mark_duplicate_accessed};
 
 /// Check if new observation is a duplicate using three-layer funnel.
 /// Returns Some(duplicate_id) if duplicate found, None if unique.

@@ -1,3 +1,4 @@
+pub mod dedup;
 pub mod events;
 pub mod format;
 pub mod preference;
