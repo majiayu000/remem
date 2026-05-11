@@ -32,7 +32,6 @@ pub mod memory_search;
 pub mod memory_service;
 pub mod migrate;
 pub mod observe;
-pub mod observe_flush;
 pub mod pending_admin;
 pub mod preference;
 pub mod project_id;
