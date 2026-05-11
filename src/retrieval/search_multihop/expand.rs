@@ -27,7 +27,8 @@ pub(crate) fn collect_second_hop_ids(
     let mut second_hop_ids = Vec::new();
 
     for entity_name in discovered_entities {
-        let entity_results = crate::entity::search_by_entity(conn, entity_name, project, fetch)?;
+        let entity_results =
+            crate::retrieval::entity::search_by_entity(conn, entity_name, project, fetch)?;
         push_unique_ids(&mut second_hop_ids, entity_results, first_hop_set);
     }
 

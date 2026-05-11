@@ -125,11 +125,11 @@ pub fn insert_memory_full(
 }
 
 fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str, message: &str) {
-    let entities = crate::entity::extract_entities(title, content);
+    let entities = crate::retrieval::entity::extract_entities(title, content);
     if entities.is_empty() {
         return;
     }
-    if let Err(e) = crate::entity::link_entities(conn, id, &entities) {
+    if let Err(e) = crate::retrieval::entity::link_entities(conn, id, &entities) {
         crate::log::warn("memory", &format!("{} for id={}: {}", message, id, e));
     }
 }

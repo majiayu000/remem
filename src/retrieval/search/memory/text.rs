@@ -58,7 +58,7 @@ pub(super) fn search_with_query(
         channels.push(fts.iter().map(|memory| memory.id).collect());
     }
 
-    let entity_ids = crate::entity::search_by_entity_filtered(
+    let entity_ids = crate::retrieval::entity::search_by_entity_filtered(
         conn,
         query_text,
         project,

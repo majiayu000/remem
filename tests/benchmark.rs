@@ -11,8 +11,8 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use remem::{
-    entity, memory,
-    retrieval::{search, search_multihop},
+    memory,
+    retrieval::{entity, search, search_multihop},
     summarize,
 };
 

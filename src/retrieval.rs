@@ -1,3 +1,4 @@
+pub mod entity;
 pub mod memory_search;
 pub mod query_expand;
 pub mod search;

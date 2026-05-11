@@ -1,4 +1,4 @@
-use crate::entity::extract_entities;
+use crate::retrieval::entity::extract_entities;
 
 #[test]
 fn extract_tool_names() {
