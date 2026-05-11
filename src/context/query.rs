@@ -33,10 +33,22 @@ pub(super) fn load_context_data_with_policy(
     let mut memories = load_project_memories(conn, project, current_branch, policy);
     sort_memories_by_branch(&mut memories, current_branch);
 
-    let summaries =
-        query_recent_summaries(conn, project, policy.limits.session_limit).unwrap_or_default();
+    let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
+        .unwrap_or_else(|e| {
+            crate::log::error(
+                "context",
+                &format!("failed to load recent summaries for {project}: {e}"),
+            );
+            Vec::new()
+        });
     let workstreams =
-        crate::workstream::query_active_workstreams(conn, project).unwrap_or_default();
+        crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(|e| {
+            crate::log::error(
+                "context",
+                &format!("failed to load active workstreams for {project}: {e}"),
+            );
+            Vec::new()
+        });
 
     LoadedContext {
         memories,
