@@ -1,22 +1,21 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-const V2_BASELINE_SQL: &str = include_str!("../migrations/v2_001_baseline.sql");
-const V2_SCHEMA_VERSION: i64 = 1;
+const BASELINE_SQL: &str = include_str!("../../migrations/schema_001_baseline.sql");
+const SCHEMA_VERSION: i64 = 1;
 
-/// Apply the v2 baseline migration to a fresh `~/.remem/v2.sqlite` connection.
-/// Independent from v1 migrations: the v2 DB file never sees v001-v004.
-pub(crate) fn run_v2_migrations(conn: &Connection) -> Result<()> {
+/// Apply the normalized schema baseline migration to a fresh schema database.
+pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
     let current: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
-    if current >= V2_SCHEMA_VERSION {
+    if current >= SCHEMA_VERSION {
         return Ok(());
     }
-    conn.execute_batch(V2_BASELINE_SQL)
-        .context("v2_001_baseline migration failed")?;
-    conn.execute_batch(&format!("PRAGMA user_version = {}", V2_SCHEMA_VERSION))?;
-    crate::log::info("migrate", "applied v2_001_baseline");
+    conn.execute_batch(BASELINE_SQL)
+        .context("schema_001_baseline migration failed")?;
+    conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION))?;
+    crate::log::info("migrate", "applied schema_001_baseline");
     Ok(())
 }
 
@@ -51,9 +50,9 @@ mod tests {
     }
 
     #[test]
-    fn v2_baseline_creates_all_tables() {
+    fn schema_baseline_creates_all_tables() {
         let conn = open_in_memory();
-        run_v2_migrations(&conn).expect("v2 migration");
+        run_migrations(&conn).expect("schema migration");
         for table in [
             "hosts",
             "workspaces",
@@ -74,17 +73,17 @@ mod tests {
     }
 
     #[test]
-    fn v2_baseline_creates_memories_fts() {
+    fn schema_baseline_creates_memories_fts() {
         let conn = open_in_memory();
-        run_v2_migrations(&conn).expect("v2 migration");
+        run_migrations(&conn).expect("schema migration");
         // FTS5 virtual tables show up as 'table' rows in sqlite_master.
         assert!(table_exists(&conn, "memories_fts"));
     }
 
     #[test]
-    fn v2_baseline_creates_critical_indexes() {
+    fn schema_baseline_creates_critical_indexes() {
         let conn = open_in_memory();
-        run_v2_migrations(&conn).expect("v2 migration");
+        run_migrations(&conn).expect("schema migration");
         for idx in [
             "idx_sessions_host_project_seen",
             "idx_captured_events_session_event",
@@ -97,9 +96,9 @@ mod tests {
     }
 
     #[test]
-    fn v2_baseline_seeds_two_hosts() {
+    fn schema_baseline_seeds_two_hosts() {
         let conn = open_in_memory();
-        run_v2_migrations(&conn).expect("v2 migration");
+        run_migrations(&conn).expect("schema migration");
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM hosts", [], |row| row.get(0))
             .unwrap();
@@ -115,10 +114,10 @@ mod tests {
     }
 
     #[test]
-    fn v2_baseline_is_idempotent() {
+    fn schema_baseline_is_idempotent() {
         let conn = open_in_memory();
-        run_v2_migrations(&conn).expect("first run");
-        run_v2_migrations(&conn).expect("second run");
+        run_migrations(&conn).expect("first run");
+        run_migrations(&conn).expect("second run");
         let host_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM hosts", [], |row| row.get(0))
             .unwrap();
@@ -126,9 +125,9 @@ mod tests {
     }
 
     #[test]
-    fn v2_baseline_rejects_unique_topic_collision() {
+    fn schema_baseline_rejects_unique_topic_collision() {
         let conn = open_in_memory();
-        run_v2_migrations(&conn).expect("v2 migration");
+        run_migrations(&conn).expect("schema migration");
         // Insert two memories with same (scope, project_id=NULL, topic_key).
         // The expression-based unique index must reject the second one.
         conn.execute(

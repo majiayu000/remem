@@ -1,6 +1,6 @@
-//! Typed identity for v2 capture / extraction / memory rows.
+//! Typed identity for capture, extraction, and memory rows.
 //!
-//! Per SPEC-memory-system-v2.1-revisions §1 M1, the v2 six-tuple
+//! The identity tuple
 //! `(host, workspace, project, session_id, turn_id, event_id)` is a mix of
 //! host-supplied and remem-synthesized fields. This module owns the synthesis
 //! rules and the typed wrappers; nothing else should construct these values
@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crate::git_util::resolve_toplevel;
 
-/// Install-time host. Distinct from the v1 `context::host::HostKind` (which
-/// allows `Unknown` for legacy detection): v2.1 M2 forbids `unknown`, and the
+/// Install-time host. Distinct from `context::host::HostKind` (which
+/// allows `Unknown` for detection): schema writes forbid `unknown`, and the
 /// value is always sourced from the install-baked `--host` argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InstallHost {
@@ -31,7 +31,7 @@ impl InstallHost {
         }
     }
 
-    /// Parse from the `--host` CLI argument. v2.1 M2: any other value is an
+    /// Parse from the `--host` CLI argument. Any other value is an
     /// install error and must be refused at the boundary. `unknown` is
     /// explicitly rejected here, in contrast to `context::host::HostKind`.
     pub fn parse(s: &str) -> Result<Self> {
@@ -39,13 +39,13 @@ impl InstallHost {
             "claude-code" => Ok(InstallHost::ClaudeCode),
             "codex-cli" => Ok(InstallHost::CodexCli),
             other => Err(anyhow!(
-                "invalid host '{other}'; v2 requires --host claude-code or --host codex-cli"
+                "invalid host '{other}'; schema writes require --host claude-code or --host codex-cli"
             )),
         }
     }
 }
 
-/// Workspace identity. v2.1 M1: synthesized from cwd + `git rev-parse
+/// Workspace identity synthesized from cwd + `git rev-parse
 /// --show-toplevel`, falling back to cwd when the directory is not a git
 /// worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -27,7 +27,6 @@ pub mod raw_archive;
 pub mod retrieval;
 pub mod summarize;
 pub mod timeline;
-pub mod v2;
 pub mod vector;
 pub mod worker;
 pub mod workstream;

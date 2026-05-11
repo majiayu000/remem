@@ -64,8 +64,8 @@ impl Drop for ScopedTestDataDir {
     }
 }
 
-/// Generate a unique temp file path for a test sqlite db. Used by v2 db /
-/// admin / v2 import test modules; nonce is `pid + nanos` so concurrent
+/// Generate a unique temp file path for a test sqlite db. Used by schema,
+/// admin, and import test modules; nonce is `pid + nanos` so concurrent
 /// `cargo test` runs do not collide. Caller owns cleanup (pair with
 /// `cleanup_temp_db_files` for `-wal` / `-shm` sidecars).
 pub fn unique_temp_db_path(label: &str) -> PathBuf {

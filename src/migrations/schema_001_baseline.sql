@@ -1,6 +1,5 @@
--- v2_001_baseline: full v2 memory-system schema for a fresh ~/.remem/v2.sqlite
--- file. v1 (~/.remem/remem.db) is untouched. Per SPEC-memory-system-v2-no-compat
--- §6 + SPEC-memory-system-v2.1-revisions §4 (D1/D2/D4).
+-- schema_001_baseline: full memory-system schema for a fresh ~/.remem/schema.sqlite
+-- file. The existing remem.db file is untouched.
 
 PRAGMA foreign_keys = ON;
 
@@ -64,7 +63,7 @@ CREATE TABLE IF NOT EXISTS captured_events (
     session_row_id INTEGER NOT NULL REFERENCES sessions(id),
     session_id TEXT NOT NULL,
     turn_id TEXT,
-    event_id TEXT NOT NULL,                     -- v2.1 M1: remem-synthesized
+    event_id TEXT NOT NULL,                     -- remem-synthesized
     event_type TEXT NOT NULL,                   -- user_message|assistant_message|tool_call|tool_result|file_edit|session_stop
     role TEXT,
     tool_name TEXT,
@@ -175,7 +174,7 @@ CREATE TABLE IF NOT EXISTS rule_candidates (
     updated_at_epoch INTEGER NOT NULL
 );
 
--- === Operational (§6.13 with v2.1 M4 mode column) ===
+-- === Operational ===
 
 CREATE TABLE IF NOT EXISTS worker_heartbeats (
     owner TEXT PRIMARY KEY,
@@ -249,7 +248,7 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(rowid, text) VALUES (new.id, new.text);
 END;
 
--- === Seed hosts (only the two that v2 supports per §4.2 + v2.1 M2) ===
+-- === Seed hosts ===
 
 INSERT OR IGNORE INTO hosts(name, enabled, created_at_epoch) VALUES
     ('claude-code', 1, strftime('%s', 'now')),
