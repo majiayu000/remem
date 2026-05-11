@@ -160,7 +160,9 @@ fn redact_secrets(text: &str) -> String {
                 continue;
             }
         }
-        let ch = rest.chars().next().unwrap();
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
         out.push(ch);
         i += ch.len_utf8();
     }

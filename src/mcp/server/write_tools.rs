@@ -6,9 +6,10 @@ use super::super::types::{SaveMemoryParams, TimelineReportParams};
 use super::MemoryServer;
 use crate::{db, memory_service};
 
-fn current_branch() -> Option<String> {
+fn detect_branch_from_cwd() -> Option<String> {
     let cwd = std::env::current_dir().ok()?;
-    db::detect_git_branch(cwd.to_str()?)
+    let cwd_str = cwd.to_str()?;
+    db::detect_git_branch(cwd_str)
 }
 
 #[tool_router(router = tool_router_write, vis = "pub(super)")]
@@ -37,7 +38,12 @@ impl MemoryServer {
                 params.text.len(),
             ),
         );
-        self.with_conn(|conn| {
+        let branch = params
+            .branch
+            .clone()
+            .filter(|b| !b.trim().is_empty())
+            .or_else(detect_branch_from_cwd);
+        self.with_conn(move |conn| {
             let req = memory_service::SaveMemoryRequest {
                 text: params.text.clone(),
                 title: params.title.clone(),
@@ -46,10 +52,10 @@ impl MemoryServer {
                 memory_type: params.memory_type.clone(),
                 files: params.files.clone(),
                 scope: params.scope.clone(),
-                created_at_epoch: None,
-                branch: current_branch(),
+                created_at_epoch: params.created_at_epoch,
+                branch,
                 local_path: params.local_path.clone(),
-                local_copy_enabled: None,
+                local_copy_enabled: params.local_copy_enabled,
             };
             let saved = memory_service::save_memory(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
