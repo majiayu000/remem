@@ -1,9 +1,11 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use crate::claude_memory::index::ensure_memory_index;
-use crate::claude_memory::paths::claude_memory_dir;
-use crate::claude_memory::render::{max_sessions, render_memory_content, SessionRow, REMEM_FILE};
+use crate::context::claude_memory::index::ensure_memory_index;
+use crate::context::claude_memory::paths::claude_memory_dir;
+use crate::context::claude_memory::render::{
+    max_sessions, render_memory_content, SessionRow, REMEM_FILE,
+};
 
 pub fn sync_to_claude_memory(cwd: &str, project: &str) -> Result<()> {
     let conn = crate::db::open_db()?;

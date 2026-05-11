@@ -72,7 +72,7 @@ pub(super) fn finalize_summary(
 }
 
 pub(super) fn sync_native_memory(cwd: &str, project: &str) {
-    if let Err(err) = crate::claude_memory::sync_to_claude_memory(cwd, project) {
+    if let Err(err) = crate::context::claude_memory::sync_to_claude_memory(cwd, project) {
         crate::log::warn(
             "summary-job",
             &format!("claude memory sync failed: {}", err),
