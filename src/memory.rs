@@ -1,5 +1,6 @@
 pub mod events;
 pub mod format;
+pub mod preference;
 pub mod promote;
 pub mod service;
 pub mod store;

@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{db, preference};
+use crate::{db, memory::preference};
 
 use super::shared::resolve_cwd_project;
 use crate::cli::types::PreferenceAction;

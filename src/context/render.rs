@@ -159,7 +159,7 @@ fn render_preferences_to_buffer(
 ) -> Result<(String, usize)> {
     let mut output = String::new();
     let limits = &policy.limits;
-    let count = crate::preference::render_preferences_with_limits(
+    let count = crate::memory::preference::render_preferences_with_limits(
         &mut output,
         conn,
         project,

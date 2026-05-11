@@ -24,7 +24,6 @@ pub mod memory;
 pub mod migrate;
 pub mod observe;
 pub mod pending_admin;
-pub mod preference;
 pub mod project_id;
 pub mod raw_archive;
 pub mod retrieval;
