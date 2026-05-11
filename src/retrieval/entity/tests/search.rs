@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use super::support::setup_entity_schema;
-use crate::entity::{
+use crate::retrieval::entity::{
     expand_via_entity_graph, expand_via_entity_graph_filtered, link_entities, search_by_entity,
     search_by_entity_filtered,
 };

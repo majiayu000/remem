@@ -12,7 +12,6 @@ pub mod context;
 pub mod db;
 pub mod doctor;
 pub mod dream;
-pub mod entity;
 pub mod eval;
 pub mod git_util;
 pub mod identity;

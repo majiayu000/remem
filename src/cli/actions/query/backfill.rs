@@ -40,9 +40,9 @@ where
 
     for row in rows {
         let (id, title, content) = row?;
-        let entities = crate::entity::extract_entities(&title, &content);
+        let entities = crate::retrieval::entity::extract_entities(&title, &content);
         if !entities.is_empty() {
-            crate::entity::link_entities(conn, id, &entities)?;
+            crate::retrieval::entity::link_entities(conn, id, &entities)?;
             total_entities += entities.len();
         }
         memories_processed += 1;

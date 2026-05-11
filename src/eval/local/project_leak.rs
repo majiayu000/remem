@@ -18,7 +18,9 @@ pub(super) fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport>
 
     for project in &projects {
         for entity in project_entities(conn, project)? {
-            for memory_id in crate::entity::search_by_entity(conn, &entity, Some(project), 20)? {
+            for memory_id in
+                crate::retrieval::entity::search_by_entity(conn, &entity, Some(project), 20)?
+            {
                 let memory_project: String = conn
                     .query_row(
                         "SELECT project FROM memories WHERE id = ?1",
