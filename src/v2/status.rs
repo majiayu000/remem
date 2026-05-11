@@ -1,10 +1,10 @@
 //! Render v2 schema status lines for `remem status` (and later `remem doctor`).
 //! Pure formatting, no DB connection required — only checks for the presence
-//! of the v2 file at `crate::v2_db::default_v2_db_path()`.
+//! of the v2 file at `crate::v2::db::default_v2_db_path()`.
 
 use std::path::Path;
 
-use crate::v2_db::default_v2_db_path;
+use crate::v2::db::default_v2_db_path;
 
 /// Render the v2 status block at the default path (`~/.remem/v2.sqlite`).
 pub fn format_v2_summary() -> Vec<String> {

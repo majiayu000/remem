@@ -150,7 +150,7 @@ fn find_or_create_project(conn: &Connection, project_path: &str) -> Result<(i64,
 mod tests {
     use super::*;
     use crate::db::test_support::{cleanup_temp_db_files as cleanup, unique_temp_db_path};
-    use crate::v2_db::open_v2_db_at;
+    use crate::v2::db::open_v2_db_at;
     use std::path::PathBuf;
 
     fn unique_temp_path(label: &str) -> PathBuf {
