@@ -106,12 +106,12 @@ pub(super) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// v2 admin commands (backup/reset/import). See SPEC §4.1.
+    /// Admin commands for database backup and schema reset.
     Admin {
         #[command(subcommand)]
         action: AdminAction,
     },
-    /// v2 import commands (legacy v1 -> v2 best-effort).
+    /// Import commands for moving older backup rows into the schema database.
     Import {
         #[command(subcommand)]
         action: ImportAction,
@@ -135,15 +135,16 @@ pub(in crate::cli) enum PreferenceAction {
 
 #[derive(Subcommand)]
 pub(in crate::cli) enum AdminAction {
-    /// Back up the v1 database to a timestamped file.
+    /// Back up the existing remem database to a timestamped file.
     Backup {
-        /// Output path. Defaults to <data_dir>/backups/remem-v1-<ts>.sqlite.
+        /// Output path. Defaults to <data_dir>/backups/remem-backup-<ts>.sqlite.
         #[arg(long)]
         output: Option<PathBuf>,
     },
-    /// Drop and re-initialize the v2 database (~/.remem/v2.sqlite).
+    /// Drop and re-initialize the schema database (~/.remem/schema.sqlite).
     /// Requires --confirm-destructive to actually run.
-    ResetV2 {
+    #[command(name = "reset-schema")]
+    ResetSchema {
         #[arg(long)]
         confirm_destructive: bool,
     },
@@ -151,11 +152,11 @@ pub(in crate::cli) enum AdminAction {
 
 #[derive(Subcommand)]
 pub(in crate::cli) enum ImportAction {
-    /// Import v1 memories from a backup sqlite file. Per SPEC §17 D5,
-    /// transcripts are not replayed; only the v1 `memories` table is
-    /// migrated, with synthesized v2 provenance defaults.
-    Legacy {
-        /// v1 db path (typically a backup produced by `remem admin backup`).
+    /// Import memories from an older backup sqlite file. Transcripts are not
+    /// replayed; only the old `memories` table is imported, with synthesized
+    /// provenance defaults.
+    Backup {
+        /// Backup sqlite path produced by `remem admin backup`.
         #[arg(long)]
         source: PathBuf,
         /// Acknowledge that import is best-effort and skips constraint

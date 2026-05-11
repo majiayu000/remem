@@ -8,24 +8,24 @@ use crate::cli::types::AdminAction;
 pub(in crate::cli) fn run_admin(action: AdminAction) -> Result<()> {
     match action {
         AdminAction::Backup { output } => run_backup(output),
-        AdminAction::ResetV2 {
+        AdminAction::ResetSchema {
             confirm_destructive,
-        } => run_reset_v2(confirm_destructive),
+        } => run_reset_schema(confirm_destructive),
     }
 }
 
-fn run_reset_v2(confirm_destructive: bool) -> Result<()> {
+fn run_reset_schema(confirm_destructive: bool) -> Result<()> {
     if !confirm_destructive {
         anyhow::bail!(
-            "reset-v2 destroys the v2 database at {}.\n\
+            "reset-schema destroys the schema database at {}.\n\
              Re-run with --confirm-destructive to proceed.",
-            crate::v2::db::default_v2_db_path().display()
+            crate::db::schema::default_path().display()
         );
     }
-    let path = crate::v2::db::default_v2_db_path();
-    crate::v2::db::reset_v2_db_at(&path)
-        .with_context(|| format!("reset v2 db at {}", path.display()))?;
-    println!("Reset v2 database at: {}", path.display());
+    let path = crate::db::schema::default_path();
+    crate::db::schema::reset_at(&path)
+        .with_context(|| format!("reset schema db at {}", path.display()))?;
+    println!("Reset schema database at: {}", path.display());
     Ok(())
 }
 
@@ -33,23 +33,23 @@ fn run_backup(output: Option<PathBuf>) -> Result<()> {
     let src_path = crate::db::db_path();
     if !src_path.exists() {
         anyhow::bail!(
-            "v1 database not found at {}. Nothing to back up.",
+            "remem database not found at {}. Nothing to back up.",
             src_path.display()
         );
     }
     let dst_path = output.unwrap_or_else(|| default_backup_path(Local::now()));
     backup_db(&src_path, &dst_path)?;
-    println!("Backed up v1 database to: {}", dst_path.display());
+    println!("Backed up remem database to: {}", dst_path.display());
     Ok(())
 }
 
-/// `<data_dir>/backups/remem-v1-YYYYMMDD-HHMMSS.sqlite` for the given moment.
+/// `<data_dir>/backups/remem-backup-YYYYMMDD-HHMMSS.sqlite` for the given moment.
 /// Pure path construction — no IO — so tests can pin the timestamp.
 pub fn default_backup_path(now: DateTime<Local>) -> PathBuf {
     let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
     crate::db::data_dir()
         .join("backups")
-        .join(format!("remem-v1-{timestamp}.sqlite"))
+        .join(format!("remem-backup-{timestamp}.sqlite"))
 }
 
 /// Copy the SQLite file at `src_path` to `dst_path` via the SQLite Online
@@ -139,7 +139,7 @@ mod tests {
         let path = default_backup_path(dt);
         let s = path.to_string_lossy();
         assert!(s.contains("backups"), "got {s}");
-        assert!(s.contains("remem-v1-20260508-143045.sqlite"), "got {s}");
+        assert!(s.contains("remem-backup-20260508-143045.sqlite"), "got {s}");
     }
 
     #[test]
@@ -194,8 +194,8 @@ mod tests {
     }
 
     #[test]
-    fn reset_v2_without_confirmation_returns_error() {
-        let action = AdminAction::ResetV2 {
+    fn reset_schema_without_confirmation_returns_error() {
+        let action = AdminAction::ResetSchema {
             confirm_destructive: false,
         };
         let err = run_admin(action).unwrap_err().to_string();

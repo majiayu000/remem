@@ -83,7 +83,7 @@ pub(in crate::cli) fn run_status() -> Result<()> {
     }
 
     println!();
-    for line in crate::v2::status::format_v2_summary() {
+    for line in crate::db::schema::status::format_summary() {
         println!("{}", line);
     }
 

@@ -5,6 +5,7 @@ pub mod models;
 pub mod observation;
 pub mod pending;
 pub mod query;
+pub mod schema;
 pub mod summarize;
 #[cfg(test)]
 pub mod test_support;

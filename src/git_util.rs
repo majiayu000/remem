@@ -1,4 +1,4 @@
-//! Minimal git CLI helpers used by v2 capture identity. The pure parser is
+//! Minimal git CLI helpers used by capture identity. The pure parser is
 //! split from the side-effecting subprocess spawn so the parser stays
 //! unit-testable; the spawn itself is documented but not unit-tested (it
 //! would require tempdir + git init in the test environment, which adds an
