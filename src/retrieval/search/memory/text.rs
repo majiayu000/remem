@@ -31,7 +31,7 @@ pub(super) fn search_with_query(
 ) -> Result<Vec<Memory>> {
     let page_target = (limit.max(1) + offset.max(0) + 1).max(2);
     let fetch = page_target * 3;
-    let expanded = crate::query_expand::expand_query(query_text);
+    let expanded = crate::retrieval::query_expand::expand_query(query_text);
     let expanded_refs: Vec<&str> = expanded.iter().map(|token| token.as_str()).collect();
     let long_tokens: Vec<&str> = expanded_refs
         .iter()
@@ -39,7 +39,7 @@ pub(super) fn search_with_query(
         .copied()
         .collect();
 
-    let core_tokens = crate::query_expand::core_tokens(query_text);
+    let core_tokens = crate::retrieval::query_expand::core_tokens(query_text);
     let core_refs: Vec<&str> = core_tokens.iter().map(|token| token.as_str()).collect();
     let mut channels: Vec<Vec<i64>> = Vec::new();
 
@@ -71,8 +71,8 @@ pub(super) fn search_with_query(
         channels.push(entity_ids);
     }
 
-    if let Some(temporal_constraint) = crate::temporal::extract_temporal(query_text) {
-        let temporal_ids = crate::temporal::search_by_time_filtered(
+    if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {
+        let temporal_ids = crate::retrieval::temporal::search_by_time_filtered(
             conn,
             &temporal_constraint,
             project,

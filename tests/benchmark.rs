@@ -10,7 +10,11 @@ mod bench_fixtures;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{entity, memory, search, search_multihop, summarize};
+use remem::{
+    entity, memory,
+    retrieval::{search, search_multihop},
+    summarize,
+};
 
 use bench_fixtures::{
     coding_session_fixtures, insert_memory_at, insert_seed_memories, search_eval_memories,

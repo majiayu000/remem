@@ -3,7 +3,8 @@ use rmcp::{tool, tool_router};
 
 use super::super::types::{GetObservationsParams, TimelineParams};
 use super::MemoryServer;
-use crate::{db, memory, search};
+use crate::retrieval::search;
+use crate::{db, memory};
 
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {

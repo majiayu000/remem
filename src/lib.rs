@@ -33,19 +33,35 @@ pub mod mcp;
 pub mod memory;
 pub mod memory_format;
 pub mod memory_promote;
-pub mod memory_search;
 pub mod memory_service;
 pub mod migrate;
 pub mod observe;
 pub mod pending_admin;
 pub mod preference;
 pub mod project_id;
-pub mod query_expand;
 pub mod raw_archive;
-pub mod search;
-pub mod search_multihop;
+pub mod retrieval;
+#[deprecated(note = "use remem::retrieval::memory_search instead")]
+pub mod memory_search {
+    pub use crate::retrieval::memory_search::*;
+}
+#[deprecated(note = "use remem::retrieval::query_expand instead")]
+pub mod query_expand {
+    pub use crate::retrieval::query_expand::*;
+}
+#[deprecated(note = "use remem::retrieval::search instead")]
+pub mod search {
+    pub use crate::retrieval::search::*;
+}
+#[deprecated(note = "use remem::retrieval::search_multihop instead")]
+pub mod search_multihop {
+    pub use crate::retrieval::search_multihop::*;
+}
 pub mod summarize;
-pub mod temporal;
+#[deprecated(note = "use remem::retrieval::temporal instead")]
+pub mod temporal {
+    pub use crate::retrieval::temporal::*;
+}
 pub mod timeline;
 pub mod v2;
 #[deprecated(note = "use remem::v2::db instead")]
@@ -84,5 +100,34 @@ mod legacy_v2_module_path_tests {
         ) -> anyhow::Result<crate::v2_import::ImportStats> =
             crate::v2_import::import_legacy_memories;
         let _format_summary: fn() -> Vec<String> = crate::v2_status::format_v2_summary;
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod legacy_retrieval_module_path_tests {
+    #[test]
+    fn legacy_retrieval_module_paths_still_compile() {
+        let _search: fn(
+            &rusqlite::Connection,
+            Option<&str>,
+            Option<&str>,
+            Option<&str>,
+            i64,
+            i64,
+            bool,
+        ) -> anyhow::Result<Vec<crate::memory::Memory>> = crate::search::search;
+        let _multi_hop: fn(
+            &rusqlite::Connection,
+            &str,
+            Option<&str>,
+            i64,
+        ) -> anyhow::Result<crate::search_multihop::MultiHopResult> =
+            crate::search_multihop::search_multi_hop;
+        let _expand_query: fn(&str) -> Vec<String> = crate::query_expand::expand_query;
+        let _temporal: fn(&str) -> Option<crate::temporal::TemporalConstraint> =
+            crate::temporal::extract_temporal;
+        let _project_filter: fn(&str, usize) -> String =
+            crate::memory_search::project_or_global_clause;
     }
 }

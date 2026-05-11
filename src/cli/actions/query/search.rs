@@ -9,7 +9,15 @@ pub(in crate::cli) fn run_search(
     limit: i64,
 ) -> Result<()> {
     let conn = db::open_db()?;
-    let results = crate::search::search(&conn, Some(query), project, memory_type, limit, 0, false)?;
+    let results = crate::retrieval::search::search(
+        &conn,
+        Some(query),
+        project,
+        memory_type,
+        limit,
+        0,
+        false,
+    )?;
 
     if results.is_empty() {
         println!("No results found.");
