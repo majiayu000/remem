@@ -7,7 +7,7 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
     let tx = conn.transaction()?;
 
     // Upsert the merged memory (reuses existing topic_key upsert logic)
-    crate::memory::insert_memory_full(
+    let merged_id = crate::memory::insert_memory_full(
         &tx,
         Some("dream"),
         project,
@@ -32,7 +32,7 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
         .superseded_ids
         .iter()
         .copied()
-        .filter(|id| seen.insert(*id))
+        .filter(|id| *id != merged_id && seen.insert(*id))
         .collect();
 
     for id in &unique_ids {
@@ -189,6 +189,42 @@ mod tests {
         assert!(
             !fts_indexed(&conn, old_id, "uniqueoldtitle"),
             "superseded memory must not match in memories_fts"
+        );
+    }
+
+    #[test]
+    fn test_apply_keeps_reused_topic_key_merge_active() {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            Some("reused-topic"),
+            "Old reused title",
+            "oldreusedneedle content",
+            "decision",
+            None,
+        )
+        .expect("insert");
+
+        let result = MergeResult {
+            topic_key: "reused-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged reused title".to_owned(),
+            content: "mergedreusedneedle content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+        apply(&mut conn, &project, &result).expect("apply");
+
+        assert_eq!(status_for_id(&conn, old_id), "active");
+        assert_eq!(active_count(&conn, &project, "reused-topic"), 1);
+        assert!(
+            fts_indexed(&conn, old_id, "mergedreusedneedle"),
+            "merged memory must remain searchable after topic_key reuse"
+        );
+        assert!(
+            !fts_indexed(&conn, old_id, "oldreusedneedle"),
+            "old content must not remain indexed after the upsert"
         );
     }
 
