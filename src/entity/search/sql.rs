@@ -1,5 +1,5 @@
 pub(super) fn project_filter_sql(param_idx: usize) -> String {
-    crate::memory_search::project_or_global_clause("m.project", param_idx)
+    crate::retrieval::memory_search::project_or_global_clause("m.project", param_idx)
 }
 
 pub(super) fn branch_filter_sql(param_idx: usize) -> String {

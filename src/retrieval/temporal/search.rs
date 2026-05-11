@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{types::ToSql, Connection};
 
-use crate::temporal::types::TemporalConstraint;
+use crate::retrieval::temporal::types::TemporalConstraint;
 
 /// Search memories within a time range, sorted by recency.
 pub fn search_by_time(
@@ -34,7 +34,7 @@ pub fn search_by_time_filtered(
         conditions.push("status = 'active'".to_string());
     }
     if let Some(project) = project {
-        conditions.push(crate::memory_search::project_or_global_clause(
+        conditions.push(crate::retrieval::memory_search::project_or_global_clause(
             "project", idx,
         ));
         params_vec.push(Box::new(project.to_string()));

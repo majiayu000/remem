@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::memory::types::{map_memory_row, Memory, MEMORY_COLS};
-use crate::memory_search::push_project_filter_required;
+use crate::retrieval::memory_search::push_project_filter_required;
 
 pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Result<Vec<Memory>> {
     list_memories(conn, project, None, limit, 0, false, None)

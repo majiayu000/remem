@@ -84,7 +84,7 @@ fn load_project_memories(
     }
 
     let project_query = project.rsplit('/').next().unwrap_or(project);
-    if let Ok(searched) = crate::search::search(
+    if let Ok(searched) = crate::retrieval::search::search(
         conn,
         Some(project_query),
         Some(project),

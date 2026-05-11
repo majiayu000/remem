@@ -17,7 +17,7 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
         return multi_hop_search(conn, query, req.project.as_deref(), limit, req);
     }
 
-    let mut memories = crate::search::search_with_branch(
+    let mut memories = crate::retrieval::search::search_with_branch(
         conn,
         query,
         req.project.as_deref(),
@@ -46,8 +46,12 @@ fn multi_hop_search(
     req: &SearchRequest,
 ) -> Result<SearchResultSet> {
     if let Some(query_text) = query.filter(|query_text| !query_text.is_empty()) {
-        let mut result =
-            crate::search_multihop::search_multi_hop(conn, query_text, project, limit + 1)?;
+        let mut result = crate::retrieval::search_multihop::search_multi_hop(
+            conn,
+            query_text,
+            project,
+            limit + 1,
+        )?;
         let has_more = result.memories.len() as i64 > limit;
         result.memories.truncate(limit as usize);
         let raw_hits = maybe_fallback_raw(conn, req, result.memories.len());

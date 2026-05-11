@@ -26,7 +26,8 @@ pub(super) fn check_self_retrieval(conn: &Connection) -> Result<SelfRetrievalRep
             continue;
         }
         let query = words.join(" ");
-        let results = crate::search::search(conn, Some(&query), Some(project), None, 20, 0, true)?;
+        let results =
+            crate::retrieval::search::search(conn, Some(&query), Some(project), None, 20, 0, true)?;
         if results.iter().any(|memory| memory.id == *id) {
             found += 1;
         }

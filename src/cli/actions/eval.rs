@@ -38,7 +38,7 @@ pub(in crate::cli) fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
     println!("remem eval — {} queries, k={}\n", dataset.queries.len(), k);
 
     for query in &dataset.queries {
-        let results = crate::search::search(
+        let results = crate::retrieval::search::search(
             &conn,
             Some(&query.query),
             query.project.as_deref(),

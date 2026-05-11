@@ -33,7 +33,8 @@ pub fn search_multi_hop(
     limit: i64,
 ) -> Result<MultiHopResult> {
     let fetch = limit.max(0) * 3;
-    let first_hop = crate::search::search(conn, Some(query), project, None, fetch, 0, true)?;
+    let first_hop =
+        crate::retrieval::search::search(conn, Some(query), project, None, fetch, 0, true)?;
     let first_hop_ids: Vec<i64> = first_hop.iter().map(|memory| memory.id).collect();
 
     if first_hop.is_empty() {

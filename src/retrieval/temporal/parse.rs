@@ -1,4 +1,4 @@
-use crate::temporal::types::TemporalConstraint;
+use crate::retrieval::temporal::types::TemporalConstraint;
 
 /// Try to extract a time range from query text. Returns None if no temporal expression found.
 pub fn extract_temporal(query: &str) -> Option<TemporalConstraint> {

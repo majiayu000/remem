@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{db, entity, memory, memory_service, search};
+use remem::{db, entity, memory, memory_service, retrieval::search};
 
 fn setup_observation_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
