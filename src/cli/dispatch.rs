@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{api, claude_memory, context, db, doctor, install, mcp, observe, summarize, worker};
+use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
     run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval,
@@ -49,7 +49,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::SyncMemory { cwd } => {
             let cwd = resolve_cwd_arg(cwd);
             let project = db::project_from_cwd(&cwd);
-            claude_memory::sync_to_claude_memory(&cwd, &project)?;
+            context::claude_memory::sync_to_claude_memory(&cwd, &project)?;
         }
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::Pending { action } => run_pending(action)?,

@@ -1,3 +1,4 @@
+pub mod claude_memory;
 mod format;
 mod host;
 mod memory_traits;
