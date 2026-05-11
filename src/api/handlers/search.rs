@@ -22,7 +22,9 @@ pub(in crate::api) fn search_request_from_params(
         memory_type: params.memory_type,
         limit,
         offset,
-        include_stale: params.include_stale.unwrap_or(false),
+        include_stale: params
+            .include_stale
+            .unwrap_or_else(memory_service::default_include_stale),
         branch: params.branch,
         multi_hop: params.multi_hop.unwrap_or(false),
     }

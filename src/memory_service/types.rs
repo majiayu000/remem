@@ -10,6 +10,14 @@ pub struct SearchRequest {
     pub multi_hop: bool,
 }
 
+/// Canonical default for `include_stale` across every adapter (MCP, REST, CLI).
+///
+/// Stale memories are kept by default so callers see the full history. Adapters
+/// that want curated-only results must opt in by passing `Some(false)`.
+pub fn default_include_stale() -> bool {
+    true
+}
+
 #[derive(Debug, Clone)]
 pub struct MultiHopMeta {
     pub hops: u8,
