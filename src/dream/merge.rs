@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 
 use super::candidates::{Cluster, MemoryCandidate};
 use super::constants::DREAM_PROMPT;
@@ -31,7 +31,7 @@ pub(super) async fn merge_cluster(cluster: &Cluster, project: &str) -> Result<Me
     )
     .await?;
 
-    Ok(filter_superseded_ids(parse_response(&response), cluster))
+    Ok(filter_superseded_ids(parse_response(&response)?, cluster))
 }
 
 fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDecision {
@@ -76,40 +76,51 @@ fn build_user_message(members: &[MemoryCandidate]) -> String {
     msg
 }
 
-fn parse_response(response: &str) -> MergeDecision {
+fn parse_response(response: &str) -> Result<MergeDecision> {
     if response.contains("<no_merge") {
-        return MergeDecision::NoMerge;
+        return Ok(MergeDecision::NoMerge);
     }
 
-    let topic_key = extract_tag(response, "topic_key").unwrap_or_default();
-    let memory_type = extract_tag(response, "type").unwrap_or_default();
-    let title = extract_tag(response, "title").unwrap_or_default();
-    let content = extract_tag(response, "content").unwrap_or_default();
+    let topic_key = require_tag(response, "topic_key")?;
+    let title = require_tag(response, "title")?;
+    let content = require_tag(response, "content")?;
+
+    let memory_type = extract_tag(response, "type")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "discovery".to_owned());
+
     let supersedes_raw = extract_tag(response, "supersedes").unwrap_or_default();
-
-    if topic_key.is_empty() || title.is_empty() || content.is_empty() {
-        return MergeDecision::NoMerge;
-    }
-
     let superseded_ids: Vec<i64> = supersedes_raw
         .split_whitespace()
         .filter_map(|s| s.parse::<i64>().ok())
         .collect();
     if superseded_ids.is_empty() {
-        return MergeDecision::NoMerge;
+        return Ok(MergeDecision::NoMerge);
     }
 
-    MergeDecision::Merge(MergeResult {
+    Ok(MergeDecision::Merge(MergeResult {
         topic_key,
-        memory_type: if memory_type.is_empty() {
-            "discovery".to_owned()
-        } else {
-            memory_type
-        },
+        memory_type,
         title,
         content,
         superseded_ids,
-    })
+    }))
+}
+
+fn require_tag(response: &str, tag: &str) -> Result<String> {
+    extract_tag(response, tag)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            crate::log::error(
+                "dream",
+                &format!(
+                    "merge response missing or empty <{}>; raw excerpt: {}",
+                    tag,
+                    redact_excerpt(response)
+                ),
+            );
+            anyhow!("merge response missing or empty <{}>", tag)
+        })
 }
 
 fn extract_tag(text: &str, tag: &str) -> Option<String> {
@@ -118,6 +129,58 @@ fn extract_tag(text: &str, tag: &str) -> Option<String> {
     let start = text.find(&open)? + open.len();
     let end = text[start..].find(&close)? + start;
     Some(text[start..end].trim().to_owned())
+}
+
+fn redact_excerpt(response: &str) -> String {
+    const MAX_CHARS: usize = 200;
+    let mut excerpt: String = response.chars().take(MAX_CHARS).collect();
+    if response.chars().count() > MAX_CHARS {
+        excerpt.push_str("...");
+    }
+    redact_secrets(&excerpt)
+}
+
+fn redact_secrets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let rest = &text[i..];
+        if let Some(prefix_len) = secret_prefix_len(rest) {
+            let after = &rest[prefix_len..];
+            let token_len = after
+                .char_indices()
+                .find(|(_, c)| !is_secret_token_char(*c))
+                .map(|(idx, _)| idx)
+                .unwrap_or(after.len());
+            if token_len >= 8 {
+                out.push_str(&rest[..prefix_len]);
+                out.push_str("[REDACTED]");
+                i += prefix_len + token_len;
+                continue;
+            }
+        }
+        let Some(ch) = rest.chars().next() else {
+            break;
+        };
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+fn secret_prefix_len(s: &str) -> Option<usize> {
+    const PREFIXES: &[&str] = &["sk-", "sk_", "Bearer ", "bearer ", "ghp_", "ghs_", "xoxb-"];
+    for p in PREFIXES {
+        if s.starts_with(p) {
+            return Some(p.len());
+        }
+    }
+    None
+}
+
+fn is_secret_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
 fn xml_escape(s: &str) -> String {
@@ -140,7 +203,7 @@ mod tests {
 <content>Use JWT for stateless auth. Previously: session cookies.</content>
 <supersedes>42 17</supersedes>
 </memory>"#;
-        match parse_response(response) {
+        match parse_response(response).expect("expected Ok") {
             MergeDecision::Merge(r) => {
                 assert_eq!(r.topic_key, "auth-design");
                 assert_eq!(r.memory_type, "decision");
@@ -153,13 +216,70 @@ mod tests {
     #[test]
     fn test_parse_no_merge() {
         let response = r#"<no_merge reason="entries cover different topics"/>"#;
-        assert!(matches!(parse_response(response), MergeDecision::NoMerge));
+        assert!(matches!(
+            parse_response(response).expect("expected Ok"),
+            MergeDecision::NoMerge
+        ));
     }
 
     #[test]
-    fn test_parse_missing_fields_becomes_no_merge() {
+    fn test_parse_missing_required_tag_errors() {
         let response = "<memory><topic_key>k</topic_key></memory>";
-        assert!(matches!(parse_response(response), MergeDecision::NoMerge));
+        let err = parse_response(response).expect_err("expected Err");
+        assert!(
+            err.to_string().contains("<title>"),
+            "error should name the missing tag, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_whitespace_only_required_tag_errors() {
+        let response = r#"<memory>
+<topic_key>k</topic_key>
+<title>   </title>
+<content>C</content>
+<supersedes>1</supersedes>
+</memory>"#;
+        let err = parse_response(response).expect_err("expected Err");
+        assert!(err.to_string().contains("<title>"));
+    }
+
+    #[test]
+    fn test_parse_empty_topic_key_errors() {
+        let response = r#"<memory>
+<topic_key></topic_key>
+<title>T</title>
+<content>C</content>
+<supersedes>1</supersedes>
+</memory>"#;
+        let err = parse_response(response).expect_err("expected Err");
+        assert!(err.to_string().contains("<topic_key>"));
+    }
+
+    #[test]
+    fn test_parse_empty_content_errors() {
+        let response = r#"<memory>
+<topic_key>k</topic_key>
+<title>T</title>
+<content></content>
+<supersedes>1</supersedes>
+</memory>"#;
+        let err = parse_response(response).expect_err("expected Err");
+        assert!(err.to_string().contains("<content>"));
+    }
+
+    #[test]
+    fn test_parse_missing_type_defaults_to_discovery() {
+        let response = r#"<memory>
+<topic_key>k</topic_key>
+<title>T</title>
+<content>C</content>
+<supersedes>1</supersedes>
+</memory>"#;
+        match parse_response(response).expect("expected Ok") {
+            MergeDecision::Merge(r) => assert_eq!(r.memory_type, "discovery"),
+            MergeDecision::NoMerge => panic!("expected Merge"),
+        }
     }
 
     #[test]
@@ -241,6 +361,26 @@ mod tests {
 <content>C</content>
 <supersedes></supersedes>
 </memory>"#;
-        assert!(matches!(parse_response(response), MergeDecision::NoMerge));
+        assert!(matches!(
+            parse_response(response).expect("expected Ok"),
+            MergeDecision::NoMerge
+        ));
+    }
+
+    #[test]
+    fn test_redact_secrets_strips_bearer_and_sk_keys() {
+        let raw = "Authorization: Bearer abcd1234EFGH5678 token sk-ABCDEFGH123 ok";
+        let redacted = redact_secrets(raw);
+        assert!(!redacted.contains("abcd1234EFGH5678"));
+        assert!(!redacted.contains("ABCDEFGH123"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_redact_excerpt_truncates() {
+        let long = "x".repeat(500);
+        let excerpt = redact_excerpt(&long);
+        assert!(excerpt.ends_with("..."));
+        assert!(excerpt.chars().count() <= 203);
     }
 }

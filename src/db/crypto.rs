@@ -42,17 +42,75 @@ where
         .map(|byte| format!("{:02x}", byte))
         .collect();
 
-    std::fs::create_dir_all(super::core::data_dir())?;
-    let key_path = super::core::data_dir().join(".key");
-    let mut file = std::fs::File::create(&key_path)?;
-    file.write_all(key.as_bytes())?;
+    let data_dir = super::core::data_dir();
+    std::fs::create_dir_all(&data_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir_perms = std::fs::Permissions::from_mode(0o700);
+        std::fs::set_permissions(&data_dir, dir_perms).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot set data dir permissions to 0700 ({}): {}",
+                data_dir.display(),
+                e
+            )
+        })?;
+    }
+
+    let key_path = data_dir.join(".key");
+
+    #[cfg(unix)]
+    let mut file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .mode(0o600)
+            .create_new(true)
+            .write(true)
+            .open(&key_path)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot create cipher key file at {}: {}",
+                    key_path.display(),
+                    e
+                )
+            })?
+    };
+
+    #[cfg(not(unix))]
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&key_path)
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "cannot create cipher key file at {}: {}",
+                key_path.display(),
+                e
+            )
+        })?;
+
+    if let Err(e) = file.write_all(key.as_bytes()) {
+        drop(file);
+        let _ = std::fs::remove_file(&key_path);
+        return Err(anyhow::anyhow!(
+            "failed to write cipher key to {}: {}",
+            key_path.display(),
+            e
+        ));
+    }
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        if let Err(e) = std::fs::set_permissions(&key_path, perms) {
-            crate::log::warn("db", &format!("cannot set key file permissions: {}", e));
+        let file_perms = std::fs::Permissions::from_mode(0o600);
+        if let Err(e) = std::fs::set_permissions(&key_path, file_perms) {
+            drop(file);
+            let _ = std::fs::remove_file(&key_path);
+            return Err(anyhow::anyhow!(
+                "cannot enforce 0600 on cipher key file {}: {} (key file removed)",
+                key_path.display(),
+                e
+            ));
         }
     }
 
@@ -66,12 +124,24 @@ pub fn encrypt_database(key: &str) -> Result<()> {
     }
 
     let encrypted_path = db_file.with_extension("db.enc");
+    let encrypted_path_str = encrypted_path.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "encrypted database path is not valid UTF-8: {}",
+            encrypted_path.display()
+        )
+    })?;
+    if encrypted_path_str.contains('\0') {
+        anyhow::bail!(
+            "encrypted database path contains a NUL byte: {}",
+            encrypted_path.display()
+        );
+    }
     let conn = Connection::open(&db_file)?;
     conn.execute_batch("PRAGMA busy_timeout=5000;")?;
     conn.execute(
         &format!(
             "ATTACH DATABASE '{}' AS encrypted KEY '{}'",
-            encrypted_path.display(),
+            encrypted_path_str.replace('\'', "''"),
             key.replace('\'', "''")
         ),
         [],
@@ -120,5 +190,74 @@ mod tests {
 
         assert!(err.to_string().contains("OS randomness unavailable"));
         assert!(!test_dir.path.join(".key").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generate_cipher_key_writes_file_with_0600_and_dir_with_0700() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let test_dir = ScopedTestDataDir::new("cipher-key-perms");
+        std::fs::create_dir_all(&test_dir.path)?;
+
+        let _ = generate_cipher_key()?;
+
+        let file_mode = std::fs::metadata(test_dir.path.join(".key"))?
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600, "key file must be 0600");
+
+        let dir_mode = std::fs::metadata(&test_dir.path)?.permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "data dir must be 0700");
+        Ok(())
+    }
+
+    #[test]
+    fn encrypt_database_escapes_single_quote_in_path() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("encrypt-quote'path");
+        std::fs::create_dir_all(&test_dir.path)?;
+
+        let db_path = test_dir.db_path();
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])?;
+            conn.execute("INSERT INTO t (v) VALUES ('hello')", [])?;
+        }
+
+        let key = generate_cipher_key()?;
+        encrypt_database(&key)?;
+
+        assert!(
+            test_dir.path.join("remem.db.bak").exists(),
+            "backup should exist after encrypt"
+        );
+        assert!(db_path.exists(), "encrypted db should be at original path");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generate_cipher_key_refuses_to_overwrite_existing_key() -> Result<()> {
+        use std::io::Write;
+
+        let test_dir = ScopedTestDataDir::new("cipher-key-no-overwrite");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let key_path = test_dir.path.join(".key");
+        let mut existing = std::fs::File::create(&key_path)?;
+        existing.write_all(b"preexisting-key")?;
+        drop(existing);
+
+        let err =
+            generate_cipher_key().expect_err("must not overwrite an existing cipher key file");
+        assert!(
+            err.to_string().contains("cannot create cipher key file"),
+            "unexpected error: {}",
+            err
+        );
+
+        let preserved = std::fs::read_to_string(&key_path)?;
+        assert_eq!(preserved, "preexisting-key");
+        Ok(())
     }
 }

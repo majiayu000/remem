@@ -29,7 +29,8 @@ fn search_request_from_params_clamps_limit_and_offset() {
 
     assert_eq!(request.limit, 100);
     assert_eq!(request.offset, 0);
-    assert!(!request.include_stale);
+    // Canonical default for `include_stale` is `true` so MCP and REST agree.
+    assert!(request.include_stale);
     assert!(!request.multi_hop);
 }
 

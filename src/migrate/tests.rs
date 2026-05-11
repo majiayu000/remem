@@ -62,10 +62,10 @@ fn full_migration_on_empty_db() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 16);
+    assert_eq!(user_version, 17);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -103,7 +103,7 @@ fn transition_from_old_system_skips_baseline() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
     Ok(())
 }
 
@@ -126,12 +126,12 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
 
     run_migrations(&conn)?;
 
-    // Should have auto-upgraded and marked baseline + raw_messages as applied
+    // Should have auto-upgraded and marked all v1 migrations as applied.
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 16);
+    assert_eq!(user_version, 17);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -171,7 +171,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 16);
+    assert_eq!(result.current_version, 17);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())
@@ -184,7 +184,7 @@ fn dry_run_pending_reports_pending_for_new_db() -> Result<()> {
     let result = dry_run_pending(&conn)?;
 
     assert_eq!(result.current_version, 0);
-    assert_eq!(result.pending_count, 4);
+    assert_eq!(result.pending_count, 5);
     assert!(result.error.is_none());
     Ok(())
 }
@@ -242,8 +242,8 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
     // After broken baseline backfill fails, dry_run reports the still-unapplied
-    // migrations (v2 raw_messages is not yet in _schema_migrations).
-    assert_eq!(result.pending_count, 3);
+    // migrations (v2+ remain pending in _schema_migrations).
+    assert_eq!(result.pending_count, 4);
     let error = result
         .error
         .expect("broken schema should surface in dry-run");
@@ -384,5 +384,26 @@ fn memory_cols_all_present_after_migration() -> Result<()> {
         expected_cols
     );
 
+    Ok(())
+}
+
+#[test]
+fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+
+    // Simulate a future binary having recorded a v99 migration into this DB.
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO _schema_migrations (version, name, applied_at_epoch) VALUES (?1, ?2, ?3)",
+        rusqlite::params![99i64, "future_feature", now],
+    )?;
+
+    let err = run_migrations(&conn).expect_err("re-running on a newer DB must fail");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("v99") && msg.contains("upgrade"),
+        "error should mention the newer schema version and prompt upgrade: {msg}"
+    );
     Ok(())
 }

@@ -4,8 +4,7 @@ use serde_json::json;
 
 use super::super::types::{SaveMemoryParams, TimelineReportParams};
 use super::MemoryServer;
-use crate::db;
-use crate::memory_service;
+use crate::{db, memory_service};
 
 fn detect_branch_from_cwd() -> Option<String> {
     let cwd = std::env::current_dir().ok()?;

@@ -1,3 +1,4 @@
+pub mod flush;
 mod hook;
 mod native;
 mod parse;

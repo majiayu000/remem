@@ -9,5 +9,6 @@ pub use local_copy::{resolve_local_note_path, sanitize_segment};
 pub use save::save_memory;
 pub use search::search_memories;
 pub use types::{
-    MultiHopMeta, SaveMemoryRequest, SaveMemoryResult, SearchRequest, SearchResultSet,
+    default_include_stale, MultiHopMeta, SaveMemoryRequest, SaveMemoryResult, SearchRequest,
+    SearchResultSet,
 };

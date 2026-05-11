@@ -84,7 +84,7 @@ mod tests {
     };
 
     fn setup(conn: &Connection) {
-        conn.execute_batch(include_str!("migrations/v004_worker_heartbeat.sql"))
+        conn.execute_batch(include_str!("../migrations/v004_worker_heartbeat.sql"))
             .expect("heartbeat migration should run");
     }
 

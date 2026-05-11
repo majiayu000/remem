@@ -65,7 +65,7 @@ async fn maybe_compress(project: &str) -> Result<()> {
     Ok(())
 }
 
-fn build_compress_events(old_obs: &[crate::db_models::Observation]) -> String {
+fn build_compress_events(old_obs: &[crate::db::models::Observation]) -> String {
     let mut events = String::from("<old_observations>\n");
     for obs in old_obs {
         events.push_str(&format!(

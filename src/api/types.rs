@@ -22,6 +22,23 @@ pub(super) struct SearchResponse {
     pub meta: Meta,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multi_hop: Option<MultiHopInfo>,
+    /// Raw archive hits attached as fallback when curated memories are sparse.
+    /// Only present when the underlying service returned non-empty raw_hits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub raw_hits: Vec<RawHitItem>,
+}
+
+#[derive(Serialize)]
+pub(super) struct RawHitItem {
+    pub id: i64,
+    pub session_id: String,
+    pub project: String,
+    pub role: String,
+    pub preview: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub created_at_epoch: i64,
 }
 
 #[derive(Serialize)]
