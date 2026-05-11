@@ -43,6 +43,41 @@ pub mod summarize;
 pub mod temporal;
 pub mod timeline;
 pub mod v2;
+#[deprecated(note = "use remem::v2::db instead")]
+pub mod v2_db {
+    pub use crate::v2::db::*;
+}
+#[deprecated(note = "use remem::v2::gate instead")]
+pub mod v2_gate {
+    pub use crate::v2::gate::*;
+}
+#[deprecated(note = "use remem::v2::import instead")]
+pub mod v2_import {
+    pub use crate::v2::import::*;
+}
+#[deprecated(note = "use remem::v2::status instead")]
+pub mod v2_status {
+    pub use crate::v2::status::*;
+}
 pub mod vector;
 pub mod worker;
 pub mod workstream;
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod legacy_v2_module_path_tests {
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn legacy_v2_module_paths_still_compile() {
+        let _default_path: fn() -> PathBuf = crate::v2_db::default_v2_db_path;
+        let _detect_kind: fn(&rusqlite::Connection) -> anyhow::Result<crate::v2_gate::DbKind> =
+            crate::v2_gate::detect_db_kind;
+        let _import_legacy: fn(
+            &Path,
+            &rusqlite::Connection,
+        ) -> anyhow::Result<crate::v2_import::ImportStats> =
+            crate::v2_import::import_legacy_memories;
+        let _format_summary: fn() -> Vec<String> = crate::v2_status::format_v2_summary;
+    }
+}
