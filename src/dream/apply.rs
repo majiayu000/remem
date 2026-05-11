@@ -36,13 +36,6 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
         .collect();
 
     for id in &unique_ids {
-        // Read title/content first because the fts5 'delete' command
-        // requires the currently-indexed values to match.
-        let (title, content): (String, String) = tx.query_row(
-            "SELECT title, content FROM memories WHERE id = ?1 AND project = ?2",
-            params![id, project],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
         let updated = tx.execute(
             "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
             params![id, project],
@@ -54,17 +47,6 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
                 project
             ));
         }
-        // The `memories_au` trigger re-syncs the FTS row on every UPDATE,
-        // so a status flip leaves the (text-unchanged) row indexed in
-        // `memories_fts`. All search paths today filter by status='active',
-        // but the FTS index still grows monotonically as memories are
-        // superseded. Use the fts5 'delete' command with the now-stale
-        // row's title/content so the index tracks active rows only.
-        tx.execute(
-            "INSERT INTO memories_fts(memories_fts, rowid, title, content) \
-             VALUES ('delete', ?1, ?2, ?3)",
-            params![id, title, content],
-        )?;
     }
 
     tx.commit()?;
@@ -277,6 +259,70 @@ mod tests {
 
         assert_eq!(active_count(&conn, &project, "merged-topic"), 0);
         assert_eq!(status_for_id(&conn, old_id), "active");
+    }
+
+    #[test]
+    fn test_apply_evicts_superseded_rows_from_fts() {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            None,
+            "old searchable title",
+            "supersededneedle older content",
+            "decision",
+            None,
+        )
+        .expect("insert old memory");
+
+        let pre_hits: Vec<i64> = conn
+            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
+            .unwrap()
+            .query_map(params!["supersededneedle"], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            pre_hits,
+            vec![old_id],
+            "FTS index should locate the original row before apply"
+        );
+
+        let result = MergeResult {
+            topic_key: "merged-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+        apply(&mut conn, &project, &result).expect("apply");
+
+        let post_hits: Vec<i64> = conn
+            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
+            .unwrap()
+            .query_map(params!["supersededneedle"], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            post_hits.is_empty(),
+            "FTS MATCH must not return superseded rows after apply, got: {post_hits:?}"
+        );
+
+        // The merged memory should still be searchable.
+        let merged_hits: Vec<i64> = conn
+            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
+            .unwrap()
+            .query_map(params!["Merged"], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            merged_hits.len(),
+            1,
+            "merged memory should remain indexed in FTS"
+        );
     }
 
     #[test]
