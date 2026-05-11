@@ -5,8 +5,15 @@ use tokio::time::{sleep, Duration};
 
 use crate::{db, observe_flush, summarize};
 
-const JOB_LEASE_SECS: i64 = 600;
+// The lease is the maximum time another worker will wait before requeuing a
+// job whose owner died, so `JOB_LEASE_SECS` must always exceed
+// `JOB_TIMEOUT_SECS`. Otherwise a job that legitimately runs near the
+// timeout could be claimed by a second worker before its current owner has
+// given up, causing duplicate processing on hard kills. The grace window
+// (60s) gives the active worker time to fail the timeout check and release.
 const JOB_TIMEOUT_SECS: u64 = 420;
+const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
+const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const STALE_PENDING_AGE_SECS: i64 = 60;
 const STALE_PENDING_SCAN_LIMIT: i64 = 8;
 
