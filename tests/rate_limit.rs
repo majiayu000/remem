@@ -125,7 +125,7 @@ fn setup_memory_schema(conn: &Connection) -> Result<()> {
 
 #[test]
 fn bash_skip_filter_stays_in_observe_module() {
-    use remem::adapter_claude::should_skip_bash_command;
+    use remem::adapter::claude::should_skip_bash_command;
     assert!(should_skip_bash_command("git status"));
     assert!(should_skip_bash_command("  ls -la  "));
     assert!(should_skip_bash_command("cargo build --release"));
