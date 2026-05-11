@@ -27,7 +27,7 @@ pub struct RawMessage {
 }
 
 /// Exact byte-for-byte hash of the raw message content. Distinct from
-/// `memory_promote::slug::content_hash`, which normalizes whitespace/case for
+/// `memory::promote::slug::content_hash`, which normalizes whitespace/case for
 /// semantic dedup of curated memories.
 fn exact_content_hash(content: &str) -> String {
     format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))

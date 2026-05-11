@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::db;
-use crate::memory_format;
+use crate::memory::format;
 
 use super::constants::{MIN_TASK_RESPONSE_LEN, TASK_OBSERVATION_PROMPT};
 use super::context::{build_existing_context, build_session_events_xml};
@@ -88,7 +88,7 @@ where
         &format!("AI response {}ms {}B", ai_ms, response.len()),
     );
 
-    let observations = memory_format::parse_observations(&response);
+    let observations = format::parse_observations(&response);
     if observations.is_empty() {
         let reason = "no observations extracted from task response";
         crate::log::warn("flush-task", reason);

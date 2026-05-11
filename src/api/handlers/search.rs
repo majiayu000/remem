@@ -5,20 +5,18 @@ use axum::{
     Json,
 };
 
-use crate::memory_service;
+use crate::memory::service;
 
 use super::super::helpers::{error_response, memory_to_item, open_request_db};
 use super::super::types::{
     DbState, MemoryItem, Meta, MultiHopInfo, RawHitItem, SearchParams, SearchResponse,
 };
 
-pub(in crate::api) fn search_request_from_params(
-    params: SearchParams,
-) -> memory_service::SearchRequest {
+pub(in crate::api) fn search_request_from_params(params: SearchParams) -> service::SearchRequest {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    memory_service::SearchRequest {
+    service::SearchRequest {
         query: params.query,
         project: params.project,
         memory_type: params.memory_type,
@@ -26,7 +24,7 @@ pub(in crate::api) fn search_request_from_params(
         offset,
         include_stale: params
             .include_stale
-            .unwrap_or_else(memory_service::default_include_stale),
+            .unwrap_or_else(service::default_include_stale),
         branch: params.branch,
         multi_hop: params.multi_hop.unwrap_or(false),
     }
@@ -46,7 +44,7 @@ pub(in crate::api) async fn handle_search(
 
     const RAW_PREVIEW_CHARS: usize = 300;
 
-    match memory_service::search_memories(&conn, &req) {
+    match service::search_memories(&conn, &req) {
         Ok(results) => {
             let count = results.memories.len();
             let items: Vec<MemoryItem> = results.memories.iter().map(memory_to_item).collect();

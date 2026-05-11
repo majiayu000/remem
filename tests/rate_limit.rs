@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{db, entity, memory, memory_service, retrieval::search};
+use remem::{db, entity, memory, memory::service, retrieval::search};
 
 fn setup_observation_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -368,16 +368,16 @@ fn branch_filter_happens_before_pagination_for_query_search() -> Result<()> {
 }
 
 #[test]
-fn memory_service_reports_exact_has_more() -> Result<()> {
+fn service_reports_exact_has_more() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn)?;
 
     insert_memory_row(&conn, 1, "proj", "first", 300, "active", None)?;
     insert_memory_row(&conn, 2, "proj", "second", 200, "active", None)?;
 
-    let first_page = memory_service::search_memories(
+    let first_page = service::search_memories(
         &conn,
-        &memory_service::SearchRequest {
+        &service::SearchRequest {
             project: Some("proj".to_string()),
             limit: 1,
             ..Default::default()
@@ -386,9 +386,9 @@ fn memory_service_reports_exact_has_more() -> Result<()> {
     assert_eq!(first_page.memories.len(), 1);
     assert!(first_page.has_more);
 
-    let second_page = memory_service::search_memories(
+    let second_page = service::search_memories(
         &conn,
-        &memory_service::SearchRequest {
+        &service::SearchRequest {
             project: Some("proj".to_string()),
             limit: 1,
             offset: 1,
@@ -449,9 +449,9 @@ fn standard_search_does_not_implicitly_expand_multi_hop() -> Result<()> {
     entity::link_entities(&conn, tom, &["Tom".to_string()])?;
     entity::link_entities(&conn, sarah, &["Sarah".to_string()])?;
 
-    let standard = memory_service::search_memories(
+    let standard = service::search_memories(
         &conn,
-        &memory_service::SearchRequest {
+        &service::SearchRequest {
             query: Some("Melanie kids".to_string()),
             project: Some("personal".to_string()),
             limit: 10,
@@ -517,9 +517,9 @@ fn explicit_multi_hop_returns_related_memories() -> Result<()> {
     entity::link_entities(&conn, tom, &["Tom".to_string()])?;
     entity::link_entities(&conn, sarah, &["Sarah".to_string()])?;
 
-    let multi = memory_service::search_memories(
+    let multi = service::search_memories(
         &conn,
-        &memory_service::SearchRequest {
+        &service::SearchRequest {
             query: Some("Melanie kids".to_string()),
             project: Some("personal".to_string()),
             limit: 10,

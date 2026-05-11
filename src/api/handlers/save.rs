@@ -1,6 +1,6 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
-use crate::memory_service;
+use crate::memory::service;
 
 use super::super::helpers::{error_response, open_request_db};
 use super::super::types::{DbState, SaveMemoryRequest, SaveMemoryResponse};
@@ -14,7 +14,7 @@ pub(in crate::api) async fn handle_save_memory(
         Err(response) => return response,
     };
 
-    let save_req = memory_service::SaveMemoryRequest {
+    let save_req = service::SaveMemoryRequest {
         text: req.text,
         title: req.title,
         project: req.project,
@@ -28,7 +28,7 @@ pub(in crate::api) async fn handle_save_memory(
         local_copy_enabled: req.local_copy_enabled,
     };
 
-    match memory_service::save_memory(&conn, &save_req) {
+    match service::save_memory(&conn, &save_req) {
         Ok(saved) => (
             StatusCode::CREATED,
             Json(SaveMemoryResponse {

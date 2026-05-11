@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::memory_format::{xml_escape_attr, xml_escape_text, OBSERVATION_TYPES};
+use crate::memory::format::{xml_escape_attr, xml_escape_text, OBSERVATION_TYPES};
 
 pub(crate) fn build_existing_context(conn: &rusqlite::Connection, project: &str) -> Result<String> {
     let recent_obs = db::query_observations(conn, project, OBSERVATION_TYPES, 10)?;

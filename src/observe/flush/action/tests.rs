@@ -1,5 +1,5 @@
 use super::helpers::{collect_observation_titles, split_timeout_range};
-use crate::memory_format::ParsedObservation;
+use crate::memory::format::ParsedObservation;
 
 #[test]
 fn split_timeout_range_splits_evenly_when_possible() {

@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::memory_format;
+use crate::memory::format;
 
 use super::constants::{COMPRESS_BATCH, COMPRESS_PROMPT, COMPRESS_THRESHOLD, KEEP_RECENT};
 
@@ -49,7 +49,7 @@ async fn maybe_compress(project: &str) -> Result<()> {
         }
     };
 
-    let compressed = memory_format::parse_observations(&response);
+    let compressed = format::parse_observations(&response);
     if !compressed.is_empty() {
         store_compressed_observations(&conn, project, &response, &compressed)?;
     }
@@ -70,10 +70,10 @@ fn build_compress_events(old_obs: &[crate::db::models::Observation]) -> String {
     for obs in old_obs {
         events.push_str(&format!(
             "<observation type=\"{}\">\n<title>{}</title>\n<subtitle>{}</subtitle>\n<narrative>{}</narrative>\n</observation>\n",
-            memory_format::xml_escape_attr(&obs.r#type),
-            memory_format::xml_escape_text(obs.title.as_deref().unwrap_or("")),
-            memory_format::xml_escape_text(obs.subtitle.as_deref().unwrap_or("")),
-            memory_format::xml_escape_text(obs.narrative.as_deref().unwrap_or("")),
+            format::xml_escape_attr(&obs.r#type),
+            format::xml_escape_text(obs.title.as_deref().unwrap_or("")),
+            format::xml_escape_text(obs.subtitle.as_deref().unwrap_or("")),
+            format::xml_escape_text(obs.narrative.as_deref().unwrap_or("")),
         ));
     }
     events.push_str("</old_observations>");
@@ -84,7 +84,7 @@ fn store_compressed_observations(
     conn: &rusqlite::Connection,
     project: &str,
     response: &str,
-    compressed: &[memory_format::ParsedObservation],
+    compressed: &[format::ParsedObservation],
 ) -> Result<()> {
     let memory_session_id = format!("compressed-{}", chrono::Utc::now().timestamp());
     let usage = response.len() as i64 / 4;
