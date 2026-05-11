@@ -1,4 +1,4 @@
-use super::super::promote::promote_summary_to_memories;
+use super::super::promote_summary_to_memories;
 use super::super::slug::content_hash;
 use crate::memory::tests_helper::setup_memory_schema;
 

@@ -1,8 +1,8 @@
 mod format;
-mod promote;
 mod slug;
+mod summary;
 #[cfg(test)]
 mod tests;
 
-pub use promote::promote_summary_to_memories;
 pub use slug::slugify_for_topic;
+pub use summary::promote_summary_to_memories;
