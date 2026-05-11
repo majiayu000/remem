@@ -3,7 +3,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use super::super::types::SearchParams;
 use super::MemoryServer;
 use crate::db::test_support::ScopedTestDataDir;
-use crate::memory_service::{resolve_local_note_path, sanitize_segment};
+use crate::memory::service::{resolve_local_note_path, sanitize_segment};
 
 #[test]
 fn sanitize_segment_collapses_invalid_chars() {

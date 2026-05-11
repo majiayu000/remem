@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::memory_format;
+use crate::memory::format;
 
 use super::super::parse::ParsedSummary;
 
@@ -82,10 +82,7 @@ pub(super) fn sync_native_memory(cwd: &str, project: &str) {
 
 fn push_summary_tag(parts: &mut Vec<String>, tag: &str, value: Option<&str>) {
     if let Some(value) = value {
-        parts.push(format!(
-            "<{tag}>{}</{tag}>",
-            memory_format::xml_escape_text(value)
-        ));
+        parts.push(format!("<{tag}>{}</{tag}>", format::xml_escape_text(value)));
     }
 }
 

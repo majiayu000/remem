@@ -1,5 +1,5 @@
 use crate::db;
-use crate::memory_format::ParsedObservation;
+use crate::memory::format::ParsedObservation;
 
 pub(crate) fn clone_pending_batch(
     batch: &[&db::PendingObservation],

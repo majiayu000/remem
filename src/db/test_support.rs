@@ -1,6 +1,9 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex, MutexGuard, OnceLock,
+};
 
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -66,14 +69,16 @@ impl Drop for ScopedTestDataDir {
 /// `cargo test` runs do not collide. Caller owns cleanup (pair with
 /// `cleanup_temp_db_files` for `-wal` / `-shm` sidecars).
 pub fn unique_temp_db_path(label: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!(
-        "remem-{label}-{}-{}.sqlite",
+        "remem-{label}-{}-{nonce}-{counter}.sqlite",
         std::process::id(),
-        nonce
     ))
 }
 

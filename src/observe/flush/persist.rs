@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::memory_format::ParsedObservation;
+use crate::memory::format::ParsedObservation;
 
 pub(crate) fn persist_flush_batch(
     conn: &mut rusqlite::Connection,

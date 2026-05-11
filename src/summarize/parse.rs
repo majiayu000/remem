@@ -1,4 +1,4 @@
-use crate::memory_format;
+use crate::memory::format;
 
 pub struct ParsedSummary {
     pub request: Option<String>,
@@ -20,14 +20,14 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
     if !text.contains("<summary>") || !text.contains("</summary>") {
         return None;
     }
-    let content = memory_format::extract_field(text, "summary").unwrap_or_default();
+    let content = format::extract_field(text, "summary").unwrap_or_default();
 
     Some(ParsedSummary {
-        request: memory_format::extract_field(&content, "request"),
-        completed: memory_format::extract_field(&content, "completed"),
-        decisions: memory_format::extract_field(&content, "decisions"),
-        learned: memory_format::extract_field(&content, "learned"),
-        next_steps: memory_format::extract_field(&content, "next_steps"),
-        preferences: memory_format::extract_field(&content, "preferences"),
+        request: format::extract_field(&content, "request"),
+        completed: format::extract_field(&content, "completed"),
+        decisions: format::extract_field(&content, "decisions"),
+        learned: format::extract_field(&content, "learned"),
+        next_steps: format::extract_field(&content, "next_steps"),
+        preferences: format::extract_field(&content, "preferences"),
     })
 }

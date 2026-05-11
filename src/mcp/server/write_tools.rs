@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::super::types::{SaveMemoryParams, TimelineReportParams};
 use super::MemoryServer;
-use crate::{db, memory_service};
+use crate::{db, memory::service};
 
 fn detect_branch_from_cwd() -> Option<String> {
     let cwd = std::env::current_dir().ok()?;
@@ -44,7 +44,7 @@ impl MemoryServer {
             .filter(|b| !b.trim().is_empty())
             .or_else(detect_branch_from_cwd);
         self.with_conn(move |conn| {
-            let req = memory_service::SaveMemoryRequest {
+            let req = service::SaveMemoryRequest {
                 text: params.text.clone(),
                 title: params.title.clone(),
                 project: params.project.clone(),
@@ -57,7 +57,7 @@ impl MemoryServer {
                 local_path: params.local_path.clone(),
                 local_copy_enabled: params.local_copy_enabled,
             };
-            let saved = memory_service::save_memory(conn, &req).map_err(|e| {
+            let saved = service::save_memory(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
                 e.to_string()
             })?;

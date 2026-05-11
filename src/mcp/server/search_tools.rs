@@ -3,7 +3,7 @@ use rmcp::{tool, tool_router};
 
 use super::super::types::{RawSearchHit, SearchParams, SearchResult};
 use super::MemoryServer;
-use crate::memory_service;
+use crate::memory::service;
 
 const RAW_PREVIEW_CHARS: usize = 300;
 
@@ -32,7 +32,7 @@ impl MemoryServer {
             ),
         );
         self.with_conn(|conn| {
-            let req = memory_service::SearchRequest {
+            let req = service::SearchRequest {
                 query: params.query.clone(),
                 project: params.project.clone(),
                 memory_type: params.r#type.clone(),
@@ -40,17 +40,17 @@ impl MemoryServer {
                 offset: params.offset.unwrap_or(0),
                 include_stale: params
                     .include_stale
-                    .unwrap_or_else(memory_service::default_include_stale),
+                    .unwrap_or_else(service::default_include_stale),
                 branch: params.branch.clone(),
                 multi_hop: requested_multi_hop,
             };
-            let search_set = memory_service::search_memories(conn, &req).map_err(|e| {
+            let search_set = service::search_memories(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
                 e.to_string()
             })?;
             let req_limit = req.limit;
             let req_offset = req.offset;
-            let memory_service::SearchResultSet {
+            let service::SearchResultSet {
                 memories,
                 multi_hop,
                 has_more,

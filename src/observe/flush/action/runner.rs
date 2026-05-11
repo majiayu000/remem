@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::memory_format;
+use crate::memory::format;
 
 use super::super::constants::{FLUSH_RETRY_MIN_BATCH_SIZE, OBSERVATION_PROMPT};
 use super::super::context::{build_existing_context, build_session_events_xml};
@@ -113,7 +113,7 @@ pub(crate) async fn flush_action_batches(
             ),
         );
 
-        let observations = memory_format::parse_observations(&response);
+        let observations = format::parse_observations(&response);
         if observations.is_empty() {
             crate::log::info(
                 "flush",
