@@ -54,7 +54,13 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::Pending { action } => run_pending(action)?,
         Commands::Status => run_status()?,
-        Commands::Doctor => doctor::run_doctor()?,
+        Commands::Doctor { json, quiet } => {
+            let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;
+            let code = outcome.exit_code();
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
         Commands::Search {
             query,
             project,
