@@ -27,8 +27,15 @@ pub fn import_legacy_memories(v1_path: &Path, v2_conn: &Connection) -> Result<Im
     if !v1_path.exists() {
         return Err(anyhow!("source v1 db not found at {}", v1_path.display()));
     }
-    let v1 = Connection::open_with_flags(v1_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+    let mut v1 = Connection::open_with_flags(v1_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("open v1 source {}", v1_path.display()))?;
+    let has_cipher_key = crate::db::apply_cipher_key_if_available(&v1)
+        .with_context(|| format!("unlock v1 source {}", v1_path.display()))?;
+    if has_cipher_key && !crate::db::can_read_schema(&v1) {
+        drop(v1);
+        v1 = Connection::open_with_flags(v1_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("reopen unencrypted v1 source {}", v1_path.display()))?;
+    }
 
     let mut stmt = v1.prepare(
         "SELECT id, project, topic_key, title, content, memory_type, scope, status,
@@ -173,6 +180,30 @@ mod tests {
         conn
     }
 
+    fn create_encrypted_v1_db(path: &Path, key: &str) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        conn.pragma_update(None, "key", key).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT,
+                project TEXT NOT NULL,
+                topic_key TEXT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                files TEXT,
+                created_at_epoch INTEGER NOT NULL,
+                updated_at_epoch INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                branch TEXT,
+                scope TEXT DEFAULT 'project'
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
     #[test]
     fn missing_source_returns_error() {
         let v1 = unique_temp_path("missing");
@@ -211,6 +242,37 @@ mod tests {
         assert_eq!(mem_count, 1);
         cleanup(&v1_path);
         cleanup(&v2_path);
+    }
+
+    #[test]
+    fn imports_encrypted_v1_with_cipher_key() {
+        let test_dir = crate::db::test_support::ScopedTestDataDir::new("v2-import-encrypted");
+        std::fs::create_dir_all(&test_dir.path).unwrap();
+        let key = "import-test-key";
+        std::fs::write(test_dir.path.join(".key"), key).unwrap();
+        let v1_path = test_dir.path.join("legacy.sqlite");
+        let v2_path = test_dir.path.join("v2.sqlite");
+        {
+            let v1 = create_encrypted_v1_db(&v1_path, key);
+            v1.execute(
+                "INSERT INTO memories(project, topic_key, title, content, memory_type,
+                  status, scope, created_at_epoch, updated_at_epoch)
+                 VALUES ('/repo/encrypted', 'encrypted-topic', 'encrypted title',
+                  'encrypted content', 'discovery', 'active', 'project', 100, 200)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let v2_conn = open_v2_db_at(&v2_path).unwrap();
+        let stats = import_legacy_memories(&v1_path, &v2_conn).unwrap();
+
+        assert_eq!(stats.memories_imported, 1);
+        let text: String = v2_conn
+            .query_row("SELECT text FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert!(text.contains("encrypted title"), "got: {text}");
+        assert!(text.contains("encrypted content"), "got: {text}");
     }
 
     #[test]

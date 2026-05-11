@@ -67,9 +67,7 @@ pub fn open_db() -> Result<Connection> {
     let conn = Connection::open(&path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
 
-    if let Some(key) = super::crypto::load_cipher_key() {
-        conn.pragma_update(None, "key", &key)?;
-    }
+    super::crypto::apply_cipher_key_if_available(&conn)?;
 
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",

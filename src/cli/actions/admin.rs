@@ -63,17 +63,53 @@ pub fn backup_db(src_path: &Path, dst_path: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create backup dir {}", parent.display()))?;
     }
-    let src = Connection::open(src_path)
+    let mut src = Connection::open(src_path)
         .with_context(|| format!("open source db {}", src_path.display()))?;
+    let has_cipher_key = crate::db::apply_cipher_key_if_available(&src)
+        .with_context(|| format!("unlock source db {}", src_path.display()))?;
+    if has_cipher_key {
+        if crate::db::can_read_schema(&src) {
+            backup_encrypted_db(&src, dst_path)?;
+            return Ok(());
+        }
+        drop(src);
+        src = Connection::open(src_path)
+            .with_context(|| format!("reopen unencrypted source db {}", src_path.display()))?;
+    }
     src.backup(DatabaseName::Main, dst_path, None)
         .with_context(|| format!("write backup to {}", dst_path.display()))?;
+    Ok(())
+}
+
+fn backup_encrypted_db(src: &Connection, dst_path: &Path) -> Result<()> {
+    if dst_path.exists() {
+        anyhow::bail!(
+            "backup destination already exists at {}",
+            dst_path.display()
+        );
+    }
+    let dst = dst_path.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "backup destination path is not valid UTF-8: {}",
+            dst_path.display()
+        )
+    })?;
+    if dst.contains('\0') {
+        anyhow::bail!(
+            "backup destination path contains a NUL byte: {}",
+            dst_path.display()
+        );
+    }
+    let dst_lit = dst.replace('\'', "''");
+    src.execute(&format!("VACUUM INTO '{dst_lit}'"), [])
+        .with_context(|| format!("write encrypted backup to {}", dst_path.display()))?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
+    use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path, ScopedTestDataDir};
     use chrono::TimeZone;
 
     fn unique_temp_path() -> PathBuf {
@@ -84,6 +120,17 @@ mod tests {
         for p in paths {
             cleanup_temp_db_files(p);
         }
+    }
+
+    fn create_encrypted_test_db(path: &Path, key: &str) {
+        let conn = Connection::open(path).expect("open encrypted test db");
+        conn.pragma_update(None, "key", key)
+            .expect("apply test key");
+        conn.execute_batch(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT); \
+             INSERT INTO t(id, v) VALUES (42, 'hello-encrypted');",
+        )
+        .expect("seed encrypted test db");
     }
 
     #[test]
@@ -114,6 +161,28 @@ mod tests {
             .unwrap();
         assert_eq!(v, "hello");
         cleanup_paths(&[&src, &dst]);
+    }
+
+    #[test]
+    fn backup_copies_encrypted_source_with_cipher_key() {
+        let test_dir = ScopedTestDataDir::new("admin-encrypted-backup");
+        std::fs::create_dir_all(&test_dir.path).unwrap();
+        let key = "backup-test-key";
+        std::fs::write(test_dir.path.join(".key"), key).unwrap();
+        let src = test_dir.db_path();
+        let dst = test_dir.path.join("backup.sqlite");
+        create_encrypted_test_db(&src, key);
+
+        backup_db(&src, &dst).expect("encrypted backup");
+
+        let restored = Connection::open(&dst).unwrap();
+        restored
+            .pragma_update(None, "key", key)
+            .expect("apply backup key");
+        let v: String = restored
+            .query_row("SELECT v FROM t WHERE id = 42", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(v, "hello-encrypted");
     }
 
     #[test]

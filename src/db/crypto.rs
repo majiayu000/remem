@@ -20,6 +20,21 @@ pub(super) fn load_cipher_key() -> Option<String> {
     None
 }
 
+pub(crate) fn apply_cipher_key_if_available(conn: &Connection) -> Result<bool> {
+    if let Some(key) = load_cipher_key() {
+        conn.pragma_update(None, "key", &key)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+pub(crate) fn can_read_schema(conn: &Connection) -> bool {
+    conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .is_ok()
+}
+
 pub fn generate_cipher_key() -> Result<String> {
     generate_cipher_key_with(getrandom::fill)
 }
