@@ -19,11 +19,11 @@ fn run_reset_v2(confirm_destructive: bool) -> Result<()> {
         anyhow::bail!(
             "reset-v2 destroys the v2 database at {}.\n\
              Re-run with --confirm-destructive to proceed.",
-            crate::v2_db::default_v2_db_path().display()
+            crate::v2::db::default_v2_db_path().display()
         );
     }
-    let path = crate::v2_db::default_v2_db_path();
-    crate::v2_db::reset_v2_db_at(&path)
+    let path = crate::v2::db::default_v2_db_path();
+    crate::v2::db::reset_v2_db_at(&path)
         .with_context(|| format!("reset v2 db at {}", path.display()))?;
     println!("Reset v2 database at: {}", path.display());
     Ok(())
