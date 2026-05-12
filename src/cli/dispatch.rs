@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
+use crate::{api, context, db, doctor, extraction, install, mcp, observe, summarize};
 
 use super::actions::{
     run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval,
@@ -41,7 +41,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             }
             summarize::summarize().await?;
         }
-        Commands::Worker { once } => worker::run(once, 2000).await?,
+        Commands::Worker { once } => extraction::worker::run(once, 2000).await?,
         Commands::Mcp => mcp::run_mcp_server().await?,
         Commands::Install { target, dry_run } => install::install(target, dry_run)?,
         Commands::Uninstall { target, dry_run } => install::uninstall(target, dry_run)?,

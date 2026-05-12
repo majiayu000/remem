@@ -47,15 +47,15 @@ pub fn oldest_ready_epoch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema::open_at as open_schema_at;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
     use crate::extraction::claim::mark_task_delayed;
     use crate::extraction::enqueue::{enqueue_extraction_task, EnqueueRequest};
     use crate::extraction::types::TaskKind;
-    use crate::v2_db::open_v2_db_at;
 
     fn fresh() -> (Connection, std::path::PathBuf, i64, i64, i64) {
         let path = unique_temp_db_path("extr-q");
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         conn.execute(
             "INSERT INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
              VALUES ('/tmp/repo', 0, 0)",
@@ -72,11 +72,9 @@ mod tests {
         .unwrap();
         let proj_id = conn.last_insert_rowid();
         let host_id: i64 = conn
-            .query_row(
-                "SELECT id FROM hosts WHERE name = 'codex-cli'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT id FROM hosts WHERE name = 'codex-cli'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         (conn, path, host_id, ws_id, proj_id)
     }

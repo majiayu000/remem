@@ -3,13 +3,13 @@ use crate::identity::CaptureIdentity;
 /// Normalized hook event ready for `captured_events` insertion.
 ///
 /// Adapters (Claude Code / Codex CLI) translate raw hook payloads into this
-/// shape; the capture entry point sees only `NormalizedEvent` so v2 storage
+/// shape; the capture entry point sees only `NormalizedEvent` so storage
 /// stays host-agnostic.
 #[derive(Debug, Clone)]
 pub struct NormalizedEvent {
     pub identity: CaptureIdentity,
     /// One of: `user_message` | `assistant_message` | `tool_call` |
-    /// `tool_result` | `file_edit` | `session_stop` (v2 SPEC §7.2).
+    /// `tool_result` | `file_edit` | `session_stop`.
     pub event_type: String,
     /// `user` | `assistant` | `tool` | `system` (free-form for now).
     pub role: Option<String>,

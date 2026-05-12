@@ -79,12 +79,12 @@ pub fn enqueue_extraction_task(conn: &Connection, req: EnqueueRequest) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema::open_at as open_schema_at;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
-    use crate::v2_db::open_v2_db_at;
 
     fn fresh() -> (Connection, std::path::PathBuf) {
         let path = unique_temp_db_path("extr-enq");
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         // Seed minimal FK rows.
         conn.execute(
             "INSERT INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
@@ -104,11 +104,9 @@ mod tests {
     }
 
     fn host_codex(conn: &Connection) -> i64 {
-        conn.query_row(
-            "SELECT id FROM hosts WHERE name = 'codex-cli'",
-            [],
-            |r| r.get(0),
-        )
+        conn.query_row("SELECT id FROM hosts WHERE name = 'codex-cli'", [], |r| {
+            r.get(0)
+        })
         .unwrap()
     }
 

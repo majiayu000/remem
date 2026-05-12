@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 
-/// v2 SPEC §8.1 task kinds. Priority order is encoded by the caller via the
+/// Extraction task kinds. Priority order is encoded by the caller via the
 /// `priority` column (lower number = higher priority); this enum carries
 /// only the canonical name written into `extraction_tasks.task_kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

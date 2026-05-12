@@ -1,7 +1,6 @@
-//! `event_blobs` writer for the v2 capture path. SPEC-memory-system-v2.1
-//! §4 D1 spills oversize content out of the inline `content_text` column
-//! and into this table; B.1.x stores plain bytes, B.1.y will add gzip for
-//! payloads above 256 KiB.
+//! `event_blobs` writer for the capture path. Oversize content is stored
+//! outside the inline `content_text` column while the event row keeps a
+//! compact preview.
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -59,18 +58,18 @@ pub fn summarize_oversize(content: &str, prefix_bytes: usize, suffix_bytes: usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema::open_at as open_schema_at;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
-    use crate::v2_db::open_v2_db_at;
 
-    fn open_v2() -> (rusqlite::Connection, std::path::PathBuf) {
+    fn open_schema() -> (rusqlite::Connection, std::path::PathBuf) {
         let path = unique_temp_db_path("blob");
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         (conn, path)
     }
 
     #[test]
     fn insert_blob_writes_row_with_plain_encoding() {
-        let (conn, path) = open_v2();
+        let (conn, path) = open_schema();
         let bytes = b"hello world";
         let id = insert_or_get_blob(&conn, "h1", bytes, 100).unwrap();
         assert!(id > 0);
@@ -83,13 +82,13 @@ mod tests {
             .unwrap();
         assert_eq!(encoding, "plain");
         assert_eq!(original, bytes.len() as i64);
-        assert_eq!(stored, original, "B.1.x stores plain — no compression");
+        assert_eq!(stored, original, "plain storage keeps byte counts aligned");
         cleanup_temp_db_files(&path);
     }
 
     #[test]
     fn duplicate_hash_dedupes_to_same_row() {
-        let (conn, path) = open_v2();
+        let (conn, path) = open_schema();
         let id1 = insert_or_get_blob(&conn, "dup", b"payload", 100).unwrap();
         let id2 = insert_or_get_blob(&conn, "dup", b"payload", 200).unwrap();
         assert_eq!(id1, id2);
@@ -106,7 +105,10 @@ mod tests {
         let summary = summarize_oversize(&content, 16, 16);
         assert!(summary.starts_with("AAAAAAAAAAAAAAAA"), "16-byte prefix");
         assert!(summary.ends_with("AAAAAAAAAAAAAAAA"), "16-byte suffix");
-        assert!(summary.contains("4000 bytes"), "size marker present: {summary}");
+        assert!(
+            summary.contains("4000 bytes"),
+            "size marker present: {summary}"
+        );
     }
 
     #[test]

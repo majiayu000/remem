@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::types::TaskKind;
 
@@ -18,6 +18,33 @@ pub struct ClaimedTask {
     pub cursor_event_id: Option<i64>,
     pub high_watermark_event_id: Option<i64>,
     pub attempts: i64,
+}
+
+/// Claim one ready task across all host/project identities.
+pub fn claim_next_ready_task(
+    conn: &Connection,
+    lease_owner: &str,
+    lease_secs: i64,
+    now: i64,
+) -> Result<Option<ClaimedTask>> {
+    let candidate_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM extraction_tasks
+             WHERE status IN ('pending', 'delayed')
+               AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?1)
+               AND (lease_owner IS NULL OR lease_expires_epoch IS NULL
+                    OR lease_expires_epoch < ?1)
+             ORDER BY priority ASC, created_at_epoch ASC, id ASC
+             LIMIT 1",
+            params![now],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let Some(id) = candidate_id else {
+        return Ok(None);
+    };
+    claim_task_by_id(conn, id, lease_owner, now + lease_secs.max(1), now)
 }
 
 /// Claim up to `limit` ready tasks under `(host_id, project_id)`. Ready
@@ -47,59 +74,76 @@ pub fn claim_ready_tasks(
              ORDER BY priority ASC, created_at_epoch ASC, id ASC
              LIMIT ?4",
         )?
-        .query_map(
-            params![host_id, project_id, now, limit as i64],
-            |row| row.get::<_, i64>(0),
-        )?
+        .query_map(params![host_id, project_id, now, limit as i64], |row| {
+            row.get::<_, i64>(0)
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut claimed = Vec::with_capacity(candidate_ids.len());
     for id in candidate_ids {
-        let updated = conn.execute(
-            "UPDATE extraction_tasks
-             SET status = 'processing',
-                 lease_owner = ?1,
-                 lease_expires_epoch = ?2,
-                 attempts = attempts + 1,
-                 next_retry_epoch = NULL,
-                 updated_at_epoch = ?3
-             WHERE id = ?4
-               AND status IN ('pending', 'delayed')",
-            params![lease_owner, lease_expires, now, id],
-        )?;
-        if updated == 0 {
-            // Lost race — another worker claimed in between SELECT and UPDATE.
-            continue;
+        if let Some(task) = claim_task_by_id(conn, id, lease_owner, lease_expires, now)? {
+            claimed.push(task);
         }
-        let task = conn.query_row(
-            "SELECT id, task_kind, host_id, project_id, session_row_id,
-                    cursor_event_id, high_watermark_event_id, attempts
-             FROM extraction_tasks WHERE id = ?1",
-            [id],
-            |row| {
-                let kind_str: String = row.get(1)?;
-                let task_kind = TaskKind::parse(&kind_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        1,
-                        rusqlite::types::Type::Text,
-                        Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
-                    )
-                })?;
-                Ok(ClaimedTask {
-                    id: row.get(0)?,
-                    task_kind,
-                    host_id: row.get(2)?,
-                    project_id: row.get(3)?,
-                    session_row_id: row.get(4)?,
-                    cursor_event_id: row.get(5)?,
-                    high_watermark_event_id: row.get(6)?,
-                    attempts: row.get(7)?,
-                })
-            },
-        )?;
-        claimed.push(task);
     }
     Ok(claimed)
+}
+
+fn claim_task_by_id(
+    conn: &Connection,
+    id: i64,
+    lease_owner: &str,
+    lease_expires: i64,
+    now: i64,
+) -> Result<Option<ClaimedTask>> {
+    let updated = conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'processing',
+             lease_owner = ?1,
+             lease_expires_epoch = ?2,
+             attempts = attempts + 1,
+             next_retry_epoch = NULL,
+             updated_at_epoch = ?3
+         WHERE id = ?4
+           AND status IN ('pending', 'delayed')",
+        params![lease_owner, lease_expires, now, id],
+    )?;
+    if updated == 0 {
+        return Ok(None);
+    }
+    load_claimed_task(conn, id).map(Some)
+}
+
+fn load_claimed_task(conn: &Connection, id: i64) -> Result<ClaimedTask> {
+    conn.query_row(
+        "SELECT id, task_kind, host_id, project_id, session_row_id,
+                cursor_event_id, high_watermark_event_id, attempts
+         FROM extraction_tasks WHERE id = ?1",
+        [id],
+        |row| {
+            let kind_str: String = row.get(1)?;
+            let task_kind = TaskKind::parse(&kind_str).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    )),
+                )
+            })?;
+            Ok(ClaimedTask {
+                id: row.get(0)?,
+                task_kind,
+                host_id: row.get(2)?,
+                project_id: row.get(3)?,
+                session_row_id: row.get(4)?,
+                cursor_event_id: row.get(5)?,
+                high_watermark_event_id: row.get(6)?,
+                attempts: row.get(7)?,
+            })
+        },
+    )
+    .map_err(Into::into)
 }
 
 /// Reset processing rows whose lease has expired back to `pending` so
@@ -121,14 +165,9 @@ pub fn recover_expired_leases(conn: &Connection, now: i64) -> Result<usize> {
 }
 
 /// Mark a task done. `new_cursor` is the event id range advanced by this
-/// run (per v2.1 §1 M4 progress invariant: progress is event-range-based,
+/// run. Progress is event-range-based,
 /// not observation-count-based). When `None`, leaves the cursor alone.
-pub fn mark_task_done(
-    conn: &Connection,
-    id: i64,
-    new_cursor: Option<i64>,
-    now: i64,
-) -> Result<()> {
+pub fn mark_task_done(conn: &Connection, id: i64, new_cursor: Option<i64>, now: i64) -> Result<()> {
     conn.execute(
         "UPDATE extraction_tasks
          SET status = 'done',
@@ -184,13 +223,13 @@ pub fn mark_task_failed(conn: &Connection, id: i64, last_error: &str, now: i64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema::open_at as open_schema_at;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
     use crate::extraction::enqueue::{enqueue_extraction_task, EnqueueRequest};
-    use crate::v2_db::open_v2_db_at;
 
     fn fresh() -> (Connection, std::path::PathBuf, i64, i64, i64) {
         let path = unique_temp_db_path("extr-claim");
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         conn.execute(
             "INSERT INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
              VALUES ('/tmp/repo', 0, 0)",
@@ -207,11 +246,9 @@ mod tests {
         .unwrap();
         let proj_id = conn.last_insert_rowid();
         let host_id: i64 = conn
-            .query_row(
-                "SELECT id FROM hosts WHERE name = 'codex-cli'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT id FROM hosts WHERE name = 'codex-cli'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         (conn, path, host_id, ws_id, proj_id)
     }

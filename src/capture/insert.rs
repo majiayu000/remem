@@ -4,23 +4,24 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::types::NormalizedEvent;
 use crate::identity::{InstallHost, ProjectKey, SessionId, WorkspaceKey};
 
-/// Per SPEC-memory-system-v2.1-revisions §4 D1 — content_text up to 16 KiB
-/// stays inline; bigger payloads spill into `event_blobs` (full prefix /
-/// suffix + digest, gzip beyond 256 KiB). B.1 ships only the inline path
-/// and truncates oversize content with `retention_class = "truncated"`; the
-/// blob spill writer lands in B.1.x.
+/// `content_text` stays inline up to 16 KiB; bigger payloads spill into
+/// `event_blobs` while keeping a prefix/suffix summary in the event row.
 const MAX_CONTENT_TEXT_BYTES: usize = 16 * 1024;
 
 /// Insert one normalized event into `captured_events`, creating any missing
 /// hosts / workspaces / projects / sessions rows along the way. Oversize
-/// payloads spill into `event_blobs` per v2.1 §4 D1; `content_text` keeps
+/// payloads spill into `event_blobs`; `content_text` keeps
 /// a prefix + suffix summary so the row is still useful for FTS / preview.
 /// Idempotent on `(host_id, session_id, event_id)`.
 pub fn insert_captured_event(conn: &Connection, ev: &NormalizedEvent) -> Result<i64> {
     let host_id = lookup_host_id(conn, ev.identity.host)?;
     let workspace_id = ensure_workspace(conn, &ev.identity.workspace, ev.created_at_epoch)?;
-    let project_id =
-        ensure_project(conn, workspace_id, &ev.identity.project, ev.created_at_epoch)?;
+    let project_id = ensure_project(
+        conn,
+        workspace_id,
+        &ev.identity.project,
+        ev.created_at_epoch,
+    )?;
     let session_row_id = ensure_session(
         conn,
         host_id,
@@ -74,11 +75,7 @@ pub fn insert_captured_event(conn: &Connection, ev: &NormalizedEvent) -> Result<
     let id: i64 = conn.query_row(
         "SELECT id FROM captured_events
          WHERE host_id = ?1 AND session_id = ?2 AND event_id = ?3",
-        params![
-            host_id,
-            ev.identity.session_id.0,
-            ev.identity.event_id.0
-        ],
+        params![host_id, ev.identity.session_id.0, ev.identity.event_id.0],
         |row| row.get(0),
     )?;
     Ok(id)
@@ -92,7 +89,7 @@ fn lookup_host_id(conn: &Connection, host: InstallHost) -> Result<i64> {
     )
     .with_context(|| {
         format!(
-            "host '{}' not seeded in v2 schema; run admin reset-v2 to initialize",
+            "host '{}' is not seeded in the schema database; run admin reset-schema to initialize",
             host.as_db_value()
         )
     })
@@ -118,12 +115,7 @@ fn ensure_workspace(conn: &Connection, ws: &WorkspaceKey, now: i64) -> Result<i6
     Ok(conn.last_insert_rowid())
 }
 
-fn ensure_project(
-    conn: &Connection,
-    workspace_id: i64,
-    p: &ProjectKey,
-    now: i64,
-) -> Result<i64> {
+fn ensure_project(conn: &Connection, workspace_id: i64, p: &ProjectKey, now: i64) -> Result<i64> {
     let path_str = p.project_path.to_string_lossy();
     if let Some(id) = conn
         .query_row(
@@ -191,12 +183,12 @@ struct Storage {
     content_hash: String,
 }
 
-/// Apply the v2.1 §4 D1 storage policy.
+/// Apply the capture storage policy.
 /// - `None` content: empty hash, no inline text, no blob.
 /// - ≤16 KiB: inline as `content_text`, blob unused.
 /// - >16 KiB: spill the full text into `event_blobs`, keep a
 ///   prefix+suffix+marker summary in `content_text`, flip retention to
-///   `raw_compact`. (B.1.y will add gzip beyond 256 KiB.)
+///   `raw_compact`.
 fn resolve_storage(conn: &Connection, content: Option<&str>, now: i64) -> Result<Storage> {
     match content {
         None => Ok(Storage {
@@ -229,11 +221,11 @@ fn resolve_storage(conn: &Connection, content: Option<&str>, now: i64) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::schema::open_at as open_schema_at;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
     use crate::identity::{
         CaptureIdentity, EventId, InstallHost, ProjectKey, SessionId, TurnId, WorkspaceKey,
     };
-    use crate::v2_db::open_v2_db_at;
     use std::path::Path;
 
     fn unique_temp_path() -> std::path::PathBuf {
@@ -272,7 +264,7 @@ mod tests {
     #[test]
     fn insert_creates_fk_chain_and_returns_id() {
         let path = unique_temp_path();
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         let ev = make_event("a", "hello");
         let id = insert_captured_event(&conn, &ev).unwrap();
         assert!(id > 0);
@@ -299,7 +291,7 @@ mod tests {
     #[test]
     fn duplicate_event_id_is_idempotent() {
         let path = unique_temp_path();
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         let ev = make_event("dup", "same");
         let id1 = insert_captured_event(&conn, &ev).unwrap();
         let id2 = insert_captured_event(&conn, &ev).unwrap();
@@ -314,15 +306,14 @@ mod tests {
     #[test]
     fn same_session_multiple_events_reuse_session_row() {
         let path = unique_temp_path();
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
 
         let ws = WorkspaceKey::from_cwd_and_toplevel(Path::new("/tmp/r"), None);
         let project = ProjectKey::from_workspace(ws.clone(), Some("r"));
         let sid = SessionId("shared-session".into());
         let turn = Some(TurnId("turn1".into()));
         for n in 0..3 {
-            let event_id =
-                EventId::synthesize(turn.as_ref(), "PostToolUse", Some(&n.to_string()));
+            let event_id = EventId::synthesize(turn.as_ref(), "PostToolUse", Some(&n.to_string()));
             let identity = CaptureIdentity {
                 host: InstallHost::CodexCli,
                 workspace: ws.clone(),
@@ -357,7 +348,7 @@ mod tests {
     #[test]
     fn oversize_content_spills_to_event_blobs_and_marks_raw_compact() {
         let path = unique_temp_path();
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         let big = "x".repeat(MAX_CONTENT_TEXT_BYTES + 5_000);
         let ev = make_event("big", &big);
         insert_captured_event(&conn, &ev).unwrap();
@@ -376,7 +367,10 @@ mod tests {
             stored_text.contains(&format!("{} bytes", big.len())),
             "summary must include size marker"
         );
-        assert!(stored_text.len() < MAX_CONTENT_TEXT_BYTES, "summary stays small");
+        assert!(
+            stored_text.len() < MAX_CONTENT_TEXT_BYTES,
+            "summary stays small"
+        );
         assert_eq!(retention, "raw_compact");
 
         // event_blobs has the full payload, plain encoding.
@@ -396,7 +390,7 @@ mod tests {
     #[test]
     fn duplicate_oversize_content_dedupes_blob() {
         let path = unique_temp_path();
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         let big = "y".repeat(MAX_CONTENT_TEXT_BYTES + 1);
         let ev_a = make_event("dup-a", &big);
         let ev_b = make_event("dup-b", &big);
@@ -416,7 +410,7 @@ mod tests {
     #[test]
     fn lookup_host_id_returns_seeded_rows() {
         let path = unique_temp_path();
-        let conn = open_v2_db_at(&path).unwrap();
+        let conn = open_schema_at(&path).unwrap();
         let claude = lookup_host_id(&conn, InstallHost::ClaudeCode).unwrap();
         let codex = lookup_host_id(&conn, InstallHost::CodexCli).unwrap();
         assert_ne!(claude, codex);
