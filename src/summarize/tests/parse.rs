@@ -10,6 +10,10 @@ fn parse_summary_extracts_fields() {
 <learned>FTS5 handles CJK</learned>
 <next_steps>Add benchmarks</next_steps>
 <preferences>Prefer concise output</preferences>
+<workstream>Search quality repair</workstream>
+<workstream_progress>Parser and ranking fixes landed</workstream_progress>
+<workstream_next>Add benchmark coverage</workstream_next>
+<workstream_blockers>Need larger CJK fixture set</workstream_blockers>
 </summary>
 "#;
     let parsed = parse_summary(xml).expect("summary should parse");
@@ -19,6 +23,19 @@ fn parse_summary_extracts_fields() {
     assert_eq!(parsed.learned.as_deref(), Some("FTS5 handles CJK"));
     assert_eq!(parsed.next_steps.as_deref(), Some("Add benchmarks"));
     assert_eq!(parsed.preferences.as_deref(), Some("Prefer concise output"));
+    assert_eq!(parsed.workstream.as_deref(), Some("Search quality repair"));
+    assert_eq!(
+        parsed.workstream_progress.as_deref(),
+        Some("Parser and ranking fixes landed")
+    );
+    assert_eq!(
+        parsed.workstream_next.as_deref(),
+        Some("Add benchmark coverage")
+    );
+    assert_eq!(
+        parsed.workstream_blockers.as_deref(),
+        Some("Need larger CJK fixture set")
+    );
 }
 
 #[test]
@@ -38,6 +55,7 @@ fn parse_summary_returns_some_for_empty_summary_block() {
     let parsed = parsed.unwrap();
     assert!(parsed.request.is_none());
     assert!(parsed.completed.is_none());
+    assert!(parsed.workstream.is_none());
 }
 
 #[test]

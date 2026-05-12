@@ -7,6 +7,10 @@ pub struct ParsedSummary {
     pub learned: Option<String>,
     pub next_steps: Option<String>,
     pub preferences: Option<String>,
+    pub workstream: Option<String>,
+    pub workstream_progress: Option<String>,
+    pub workstream_next: Option<String>,
+    pub workstream_blockers: Option<String>,
 }
 
 pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
@@ -29,5 +33,9 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
         learned: format::extract_field(&content, "learned"),
         next_steps: format::extract_field(&content, "next_steps"),
         preferences: format::extract_field(&content, "preferences"),
+        workstream: format::extract_field(&content, "workstream"),
+        workstream_progress: format::extract_field(&content, "workstream_progress"),
+        workstream_next: format::extract_field(&content, "workstream_next"),
+        workstream_blockers: format::extract_field(&content, "workstream_blockers"),
     })
 }
