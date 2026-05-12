@@ -72,9 +72,9 @@ pub fn open_db() -> Result<Connection> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;
-    crate::vector::load_vec_extension(&conn)?;
+    crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::run_migrations(&conn)?;
-    crate::vector::ensure_vec_table(&conn)?;
+    crate::retrieval::vector::ensure_vec_table(&conn)?;
     Ok(conn)
 }
 
