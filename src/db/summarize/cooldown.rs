@@ -72,3 +72,16 @@ pub fn release_summarize_lock(conn: &Connection, project: &str) -> Result<()> {
     )?;
     Ok(())
 }
+
+pub fn clear_summarize_cooldown_for_message(
+    conn: &Connection,
+    project: &str,
+    message_hash: &str,
+) -> Result<usize> {
+    let deleted = conn.execute(
+        "DELETE FROM summarize_cooldown
+         WHERE project = ?1 AND last_message_hash = ?2",
+        params![project, message_hash],
+    )?;
+    Ok(deleted)
+}

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::db;
 use crate::memory::format;
@@ -37,7 +37,7 @@ pub(super) fn finalize_summary(
     summary: ParsedSummary,
 ) -> Result<()> {
     let usage = summary_text_usage(&summary);
-    let _deleted = db::finalize_summarize(
+    let _deleted = match db::finalize_summarize(
         conn,
         memory_sid,
         project,
@@ -50,7 +50,13 @@ pub(super) fn finalize_summary(
         summary.preferences.as_deref(),
         None,
         usage,
-    )?;
+    ) {
+        Ok(deleted) => deleted,
+        Err(err) => {
+            release_lock_after_error(conn, project, "finalize-failure");
+            return Err(err);
+        }
+    };
     db::release_summarize_lock(conn, project)?;
     crate::log::info(
         "summary-job",
@@ -67,6 +73,9 @@ pub(super) fn finalize_summary(
         summary.preferences.as_deref(),
     ) {
         crate::log::warn("summary-job", &format!("memory promotion failed: {}", err));
+        db::clear_summarize_cooldown_for_message(conn, project, msg_hash)
+            .context("failed to clear summary retry marker after memory promotion failure")?;
+        return Err(err).context("memory promotion failed");
     }
     Ok(())
 }
@@ -100,4 +109,82 @@ fn summary_text_usage(summary: &ParsedSummary) -> i64 {
     .map(str::len)
     .sum::<usize>();
     (total_len / 4) as i64
+}
+
+fn release_lock_after_error(conn: &rusqlite::Connection, project: &str, reason: &str) {
+    if let Err(e) = db::release_summarize_lock(conn, project) {
+        crate::log::error(
+            "summary-job",
+            &format!(
+                "[LOCK LEAK] failed to release summarize lock for {project} after {reason}: {e}"
+            ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use rusqlite::{params, Connection};
+
+    use crate::{db, summarize::ParsedSummary};
+
+    use super::finalize_summary;
+
+    #[test]
+    fn promotion_failure_releases_lock_and_clears_retry_marker() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+
+        let project = "proj/promotion-failure";
+        let session_id = "content-session-1";
+        let memory_sid = "memory-session-1";
+        let msg_hash = "message-hash-1";
+
+        assert!(db::try_acquire_summarize_lock(&mut conn, project, 60)?);
+        conn.execute_batch("DROP TABLE memories;")?;
+
+        let err = finalize_summary(
+            &mut conn,
+            session_id,
+            memory_sid,
+            project,
+            msg_hash,
+            ParsedSummary {
+                request: Some("Capture decisions from a summary".to_string()),
+                completed: Some("Saved session summary".to_string()),
+                decisions: Some(
+                    "Use a retryable worker failure when summary promotion cannot persist"
+                        .to_string(),
+                ),
+                learned: None,
+                next_steps: None,
+                preferences: None,
+            },
+        )
+        .expect_err("promotion failure should surface to the worker");
+
+        assert!(
+            err.to_string().contains("memory promotion failed"),
+            "unexpected error: {err:#}"
+        );
+
+        let locks: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM summarize_locks WHERE project = ?1",
+            params![project],
+            |row| row.get(0),
+        )?;
+        assert_eq!(locks, 0, "summarize lock should be released");
+
+        assert!(
+            !db::is_summarize_on_cooldown(&conn, project, 60 * 60)?,
+            "cooldown should not suppress retry after promotion failure"
+        );
+        assert!(
+            !db::is_duplicate_message(&conn, project, msg_hash)?,
+            "duplicate marker should not suppress retry after promotion failure"
+        );
+
+        Ok(())
+    }
 }
