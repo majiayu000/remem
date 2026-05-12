@@ -22,7 +22,6 @@ pub mod memory;
 pub mod migrate;
 pub mod observe;
 pub mod project_id;
-pub mod raw_archive;
 pub mod retrieval;
 pub mod summarize;
 pub mod timeline;

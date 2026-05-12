@@ -126,7 +126,7 @@ fn capture_raw_archive(
     let cwd_opt = Some(cwd);
 
     if let Some(transcript_path) = hook.transcript_path.as_deref() {
-        match crate::raw_archive::drain_transcript(
+        match crate::memory::raw_archive::drain_transcript(
             conn,
             transcript_path,
             session_id,
@@ -147,13 +147,13 @@ fn capture_raw_archive(
             ),
         }
     } else if let Some(last) = hook.last_assistant_message.as_deref() {
-        if let Err(error) = crate::raw_archive::insert_raw_message(
+        if let Err(error) = crate::memory::raw_archive::insert_raw_message(
             conn,
             session_id,
             project,
-            crate::raw_archive::ROLE_ASSISTANT,
+            crate::memory::raw_archive::ROLE_ASSISTANT,
             last,
-            crate::raw_archive::SOURCE_HOOK,
+            crate::memory::raw_archive::SOURCE_HOOK,
             branch.as_deref(),
             cwd_opt,
         ) {

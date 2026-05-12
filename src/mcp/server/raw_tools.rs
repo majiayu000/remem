@@ -3,7 +3,7 @@ use rmcp::{tool, tool_router};
 
 use super::super::types::{RawSearchHit, SearchRawParams};
 use super::MemoryServer;
-use crate::raw_archive;
+use crate::memory::raw_archive;
 
 const PREVIEW_CHARS: usize = 300;
 

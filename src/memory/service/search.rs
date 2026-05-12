@@ -81,7 +81,7 @@ fn maybe_fallback_raw(
     conn: &Connection,
     req: &SearchRequest,
     curated_len: usize,
-) -> Vec<crate::raw_archive::RawMessage> {
+) -> Vec<crate::memory::raw_archive::RawMessage> {
     if curated_len >= RAW_FALLBACK_THRESHOLD {
         return vec![];
     }
@@ -93,14 +93,14 @@ fn maybe_fallback_raw(
     else {
         return vec![];
     };
-    let raw_req = crate::raw_archive::RawSearchRequest {
+    let raw_req = crate::memory::raw_archive::RawSearchRequest {
         query: query.to_string(),
         project: req.project.clone(),
         role: None,
         limit: RAW_FALLBACK_LIMIT,
         offset: 0,
     };
-    match crate::raw_archive::search_raw_messages(conn, &raw_req) {
+    match crate::memory::raw_archive::search_raw_messages(conn, &raw_req) {
         Ok(hits) => hits,
         Err(error) => {
             crate::log::warn("search", &format!("raw archive fallback failed: {}", error));
