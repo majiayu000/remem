@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use crate::pending_admin::types::FailedPendingRow;
+use super::types::FailedPendingRow;
 
 pub fn list_failed(
     conn: &Connection,

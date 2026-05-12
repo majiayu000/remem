@@ -1,15 +1,14 @@
 use anyhow::Result;
 
-use crate::{db, pending_admin};
-
 use crate::cli::types::PendingAction;
+use crate::db;
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     let conn = db::open_db()?;
 
     match action {
         PendingAction::ListFailed { project, limit } => {
-            let rows = pending_admin::list_failed(&conn, project.as_deref(), limit)?;
+            let rows = db::pending::admin::list_failed(&conn, project.as_deref(), limit)?;
             if rows.is_empty() {
                 println!("No failed pending observations.");
                 return Ok(());
@@ -34,14 +33,15 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             }
         }
         PendingAction::RetryFailed { project, limit } => {
-            let count = pending_admin::retry_failed(&conn, project.as_deref(), limit)?;
+            let count = db::pending::admin::retry_failed(&conn, project.as_deref(), limit)?;
             println!("Moved {} failed rows back to pending.", count);
         }
         PendingAction::PurgeFailed {
             project,
             older_than_days,
         } => {
-            let count = pending_admin::purge_failed(&conn, project.as_deref(), older_than_days)?;
+            let count =
+                db::pending::admin::purge_failed(&conn, project.as_deref(), older_than_days)?;
             println!(
                 "Purged {} failed rows older than {} day(s).",
                 count, older_than_days

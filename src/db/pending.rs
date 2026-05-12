@@ -1,3 +1,4 @@
+pub mod admin;
 mod claim;
 mod helpers;
 mod query;
