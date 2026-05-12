@@ -7,7 +7,16 @@ use crate::observe::short_path;
 #[cfg(test)]
 mod tests;
 
-const ACTION_TOOLS: &[&str] = &["Write", "Edit", "NotebookEdit", "Bash", "Task", "Agent"];
+const ACTION_TOOLS: &[&str] = &[
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "Bash",
+    "Grep",
+    "Glob",
+    "Task",
+    "Agent",
+];
 
 const SKIP_TOOLS: &[&str] = &[
     "ListMcpResourcesTool",
@@ -60,11 +69,9 @@ const BASH_SKIP_PREFIXES: &[&str] = &[
     "htop",
     "df ",
     "du ",
-    "grep ",
-    "rg ",
-    "find ",
-    "git grep",
 ];
+
+const SEARCH_RESPONSE_PREVIEW_BYTES: usize = 240;
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
@@ -112,11 +119,345 @@ pub fn should_skip_bash_command(cmd: &str) -> bool {
     let trimmed = cmd.trim();
     let lowered = trimmed.to_lowercase();
 
+    if is_search_command(trimmed, &lowered) {
+        return !is_bounded_search_command(trimmed, &lowered);
+    }
+
     BASH_SKIP_PREFIXES
         .iter()
         .any(|prefix| lowered.starts_with(prefix))
         || lowered.contains("| grep ")
         || is_read_only_polling_cmd(&lowered)
+}
+
+pub(crate) fn pending_tool_input(
+    tool_name: &str,
+    input: &Option<serde_json::Value>,
+) -> Option<String> {
+    if !is_search_tool_input(tool_name, input) {
+        return input.as_ref().map(|value| value.to_string());
+    }
+
+    let value = input.as_ref()?;
+    let mut sanitized = serde_json::Map::new();
+    match tool_name {
+        "Bash" => {
+            let command = value.get("command")?.as_str()?;
+            sanitized.insert(
+                "command".to_string(),
+                serde_json::Value::String(redact_and_truncate(command, 400)),
+            );
+        }
+        "Grep" => {
+            if let Some(pattern) = value.get("pattern").and_then(|pattern| pattern.as_str()) {
+                sanitized.insert(
+                    "pattern".to_string(),
+                    serde_json::Value::String(redact_and_truncate(pattern, 160)),
+                );
+            }
+            if let Some(path) = value.get("path").and_then(|path| path.as_str()) {
+                sanitized.insert(
+                    "path".to_string(),
+                    serde_json::Value::String(redact_and_truncate(path, 240)),
+                );
+            }
+        }
+        "Glob" => {
+            if let Some(pattern) = value.get("pattern").and_then(|pattern| pattern.as_str()) {
+                sanitized.insert(
+                    "pattern".to_string(),
+                    serde_json::Value::String(redact_and_truncate(pattern, 240)),
+                );
+            }
+        }
+        _ => {}
+    }
+    Some(serde_json::Value::Object(sanitized).to_string())
+}
+
+pub(crate) fn pending_tool_response(
+    tool_name: &str,
+    input: &Option<serde_json::Value>,
+    response: &Option<serde_json::Value>,
+) -> Option<String> {
+    if !is_search_tool_input(tool_name, input) {
+        return response.as_ref().map(|value| value.to_string());
+    }
+
+    Some(search_response_metadata(response.as_ref()).to_string())
+}
+
+fn is_search_tool_input(tool_name: &str, input: &Option<serde_json::Value>) -> bool {
+    match tool_name {
+        "Grep" | "Glob" => true,
+        "Bash" => input
+            .as_ref()
+            .and_then(|value| value.get("command"))
+            .and_then(|command| command.as_str())
+            .is_some_and(|command| {
+                is_bounded_search_command(command.trim(), &command.trim().to_lowercase())
+            }),
+        _ => false,
+    }
+}
+
+fn is_bounded_search_command(trimmed: &str, lowered: &str) -> bool {
+    let tokens = shell_like_tokens(trimmed);
+    if tokens.is_empty() {
+        return false;
+    }
+
+    if tokens.first().is_some_and(|token| token == "find") {
+        return find_has_target_path(&tokens);
+    }
+
+    if lowered.starts_with("git grep ") {
+        return true;
+    }
+
+    if tokens.first().is_some_and(|token| token == "rg") {
+        return search_has_explicit_scope(&tokens[1..], 1);
+    }
+
+    if tokens.first().is_some_and(|token| token == "grep") {
+        return search_has_explicit_scope(&tokens[1..], 1);
+    }
+
+    false
+}
+
+fn is_search_command(trimmed: &str, lowered: &str) -> bool {
+    let tokens = shell_like_tokens(trimmed);
+    tokens
+        .first()
+        .is_some_and(|token| matches!(token.as_str(), "rg" | "grep" | "find"))
+        || lowered.starts_with("git grep ")
+}
+
+fn shell_like_tokens(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if let Some(open) = quote {
+            if ch == open {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(current.to_lowercase());
+                current.clear();
+            }
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    if !current.is_empty() {
+        tokens.push(current.to_lowercase());
+    }
+
+    tokens
+}
+
+fn search_has_explicit_scope(tokens: &[String], required_query_terms: usize) -> bool {
+    let mut query_terms = 0usize;
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        if token == "--" {
+            return tokens[index + 1..]
+                .iter()
+                .any(|candidate| is_scoped_path(candidate));
+        }
+        if token.starts_with('-') {
+            if option_supplies_query(token) {
+                query_terms += 1;
+                index += 1;
+                continue;
+            }
+            if option_consumes_next(token) {
+                if option_consumes_query(token) && index + 1 < tokens.len() {
+                    query_terms += 1;
+                }
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+
+        if query_terms < required_query_terms {
+            query_terms += 1;
+            index += 1;
+            continue;
+        }
+
+        if is_scoped_path(token) {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn option_consumes_query(token: &str) -> bool {
+    matches!(token, "-e" | "--regexp")
+}
+
+fn option_supplies_query(token: &str) -> bool {
+    token.starts_with("-e") && token.len() > 2 || token.starts_with("--regexp=")
+}
+
+fn option_consumes_next(token: &str) -> bool {
+    matches!(
+        token,
+        "-e" | "--regexp"
+            | "-f"
+            | "--file"
+            | "-g"
+            | "--glob"
+            | "--type"
+            | "-t"
+            | "--type-not"
+            | "-T"
+            | "-m"
+            | "--max-count"
+            | "-A"
+            | "--after-context"
+            | "-B"
+            | "--before-context"
+            | "-C"
+            | "--context"
+    )
+}
+
+fn find_has_target_path(tokens: &[String]) -> bool {
+    tokens
+        .iter()
+        .skip(1)
+        .find(|token| !token.starts_with('-') && !find_expression_token(token))
+        .is_some_and(|path| is_scoped_path(path))
+}
+
+fn find_expression_token(token: &str) -> bool {
+    matches!(
+        token,
+        "!" | "(" | ")" | "-name" | "-iname" | "-path" | "-type" | "-maxdepth" | "-mindepth"
+    )
+}
+
+fn is_scoped_path(token: &str) -> bool {
+    token != "." && token != "/" && token != "~" && !token.starts_with('|')
+}
+
+fn search_response_metadata(response: Option<&serde_json::Value>) -> serde_json::Value {
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "kind".to_string(),
+        serde_json::Value::String("bounded_search_metadata".to_string()),
+    );
+
+    let Some(value) = response else {
+        return serde_json::Value::Object(meta);
+    };
+
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(code) = object.get("exitCode").and_then(|code| code.as_i64()) {
+                meta.insert("exitCode".to_string(), serde_json::json!(code));
+            }
+            for key in ["stdout", "output", "result"] {
+                if let Some(text) = object.get(key).and_then(|field| field.as_str()) {
+                    add_text_metadata(&mut meta, key, text, false);
+                }
+            }
+            if let Some(stderr) = object.get("stderr").and_then(|field| field.as_str()) {
+                add_text_metadata(&mut meta, "stderr", stderr, true);
+            }
+            for key in ["files", "matches"] {
+                if let Some(items) = object.get(key).and_then(|field| field.as_array()) {
+                    meta.insert(format!("{key}_count"), serde_json::json!(items.len()));
+                }
+            }
+        }
+        serde_json::Value::String(text) => add_text_metadata(&mut meta, "output", text, false),
+        serde_json::Value::Array(items) => {
+            meta.insert("result_count".to_string(), serde_json::json!(items.len()));
+        }
+        _ => {}
+    }
+
+    serde_json::Value::Object(meta)
+}
+
+fn add_text_metadata(
+    meta: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    text: &str,
+    include_preview: bool,
+) {
+    meta.insert(format!("{key}_bytes"), serde_json::json!(text.len()));
+    meta.insert(
+        format!("{key}_lines"),
+        serde_json::json!(text.lines().count()),
+    );
+    if include_preview {
+        meta.insert(
+            format!("{key}_preview"),
+            serde_json::Value::String(redact_and_truncate(text, SEARCH_RESPONSE_PREVIEW_BYTES)),
+        );
+    }
+}
+
+fn redact_and_truncate(text: &str, max_bytes: usize) -> String {
+    let redacted = text
+        .split_whitespace()
+        .map(redact_token)
+        .collect::<Vec<_>>()
+        .join(" ");
+    db::truncate_str(&redacted, max_bytes).to_string()
+}
+
+fn redact_token(token: &str) -> &str {
+    let trimmed =
+        token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
+    if trimmed.starts_with("sk-")
+        || trimmed.starts_with("ghp_")
+        || trimmed.starts_with("github_pat_")
+        || trimmed.starts_with("xoxb-")
+        || (trimmed.len() >= 32
+            && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
+            && trimmed.chars().any(|ch| ch.is_ascii_digit()))
+    {
+        "[REDACTED]"
+    } else {
+        token
+    }
 }
 
 fn is_read_only_polling_cmd(cmd_lower: &str) -> bool {
@@ -190,6 +531,7 @@ fn bash_event(
     response: &Option<serde_json::Value>,
 ) -> Option<EventSummary> {
     let command = input.as_ref()?.get("command")?.as_str()?;
+    let is_search = is_search_tool_input("Bash", input);
     let exit_code = response
         .as_ref()
         .and_then(|value| value.get("exitCode"))
@@ -200,21 +542,30 @@ fn bash_event(
             .as_ref()
             .and_then(|value| value.get("stderr"))
             .and_then(|stderr| stderr.as_str())
-            .map(|stderr| db::truncate_str(stderr, 500).to_string())
+            .map(|stderr| {
+                if is_search {
+                    redact_and_truncate(stderr, SEARCH_RESPONSE_PREVIEW_BYTES)
+                } else {
+                    db::truncate_str(stderr, 500).to_string()
+                }
+            })
     } else {
         None
     };
     let code_label = exit_code
         .map(|code| code.to_string())
         .unwrap_or_else(|| "?".into());
+    let event_type = if is_search { "search" } else { "bash" };
+    let verb = if is_search { "Search" } else { "Run" };
+    let command_label = if is_search {
+        redact_and_truncate(command.trim(), 60)
+    } else {
+        db::truncate_str(command.trim(), 60).to_string()
+    };
 
     Some(EventSummary {
-        event_type: "bash".into(),
-        summary: format!(
-            "Run `{}` (exit {})",
-            db::truncate_str(command.trim(), 60),
-            code_label
-        ),
+        event_type: event_type.into(),
+        summary: format!("{} `{}` (exit {})", verb, command_label, code_label),
         detail: stderr,
         files_json: None,
         exit_code,
@@ -232,7 +583,7 @@ fn grep_event(input: &Option<serde_json::Value>) -> Option<EventSummary> {
         event_type: "search".into(),
         summary: format!(
             "Grep '{}' in {}",
-            db::truncate_str(pattern, 40),
+            redact_and_truncate(pattern, 40),
             short_path(path)
         ),
         detail: None,
@@ -245,7 +596,7 @@ fn glob_event(input: &Option<serde_json::Value>) -> Option<EventSummary> {
     let pattern = input.as_ref()?.get("pattern")?.as_str().unwrap_or("?");
     Some(EventSummary {
         event_type: "search".into(),
-        summary: format!("Glob {}", pattern),
+        summary: format!("Glob {}", redact_and_truncate(pattern, 80)),
         detail: None,
         files_json: None,
         exit_code: None,

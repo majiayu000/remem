@@ -35,7 +35,7 @@ impl HookStrategy {
 
     fn observe_matcher(self) -> &'static str {
         match self {
-            Self::ClaudeCode => "Write|Edit|NotebookEdit|Bash|Task",
+            Self::ClaudeCode => "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task",
             Self::Codex => "Bash",
         }
     }

@@ -3,11 +3,19 @@ use crate::adapter::{ParsedHookEvent, ToolAdapter};
 use super::{should_skip_bash_command, ClaudeCodeAdapter};
 
 #[test]
-fn skip_read_only_search_commands() {
-    assert!(should_skip_bash_command("grep -rn \"foo\" src/"));
-    assert!(should_skip_bash_command("rg -n foo src"));
-    assert!(should_skip_bash_command("find src -name '*.ts'"));
-    assert!(should_skip_bash_command("git grep -n startIngestionJob"));
+fn capture_targeted_search_commands() {
+    assert!(!should_skip_bash_command("grep -rn \"foo\" src/"));
+    assert!(!should_skip_bash_command("rg -n foo src"));
+    assert!(!should_skip_bash_command("find src -name '*.ts'"));
+    assert!(!should_skip_bash_command("git grep -n startIngestionJob"));
+}
+
+#[test]
+fn skip_unbounded_or_piped_search_commands() {
+    assert!(should_skip_bash_command("rg foo"));
+    assert!(should_skip_bash_command("grep foo"));
+    assert!(should_skip_bash_command("find . -name '*.rs'"));
+    assert!(should_skip_bash_command("ps aux | grep remem"));
 }
 
 #[test]

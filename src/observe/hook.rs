@@ -54,8 +54,13 @@ pub async fn observe() -> Result<()> {
         summary.exit_code,
     )?;
 
-    let tool_input_str = event.tool_input.as_ref().map(|value| value.to_string());
-    let tool_response_str = event.tool_response.as_ref().map(|value| value.to_string());
+    let tool_input_str =
+        crate::adapter::common::pending_tool_input(&event.tool_name, &event.tool_input);
+    let tool_response_str = crate::adapter::common::pending_tool_response(
+        &event.tool_name,
+        &event.tool_input,
+        &event.tool_response,
+    );
     db::enqueue_pending(
         &conn,
         adapter.name(),

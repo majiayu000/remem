@@ -1,6 +1,9 @@
 use crate::db::test_support::ScopedTestDataDir;
 
-use super::parse_tool_hook;
+use super::{
+    event_summary, parse_tool_hook, pending_tool_input, pending_tool_response,
+    should_skip_bash_command, should_skip_tool,
+};
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
     let log_path = scoped.path.join("remem.log");
@@ -75,4 +78,116 @@ fn truncates_long_payload_in_error_log() {
     unsafe {
         std::env::remove_var("REMEM_STDERR_TO_LOG");
     }
+}
+
+#[test]
+fn grep_and_glob_are_captured_as_search_events() {
+    assert!(!should_skip_tool("Grep"));
+    assert!(!should_skip_tool("Glob"));
+
+    let grep_summary = event_summary(
+        "Grep",
+        &Some(serde_json::json!({
+            "pattern": "PendingObservation",
+            "path": "/Users/apple/Desktop/code/AI/tool/remem/src"
+        })),
+        &None,
+    )
+    .expect("Grep should classify");
+    assert_eq!(grep_summary.event_type, "search");
+    assert!(grep_summary.summary.contains("PendingObservation"));
+
+    let glob_summary = event_summary(
+        "Glob",
+        &Some(serde_json::json!({"pattern": "src/**/*.rs"})),
+        &None,
+    )
+    .expect("Glob should classify");
+    assert_eq!(glob_summary.event_type, "search");
+    assert!(glob_summary.summary.contains("src/**/*.rs"));
+}
+
+#[test]
+fn targeted_bash_search_commands_are_captured() {
+    assert!(!should_skip_bash_command(
+        "rg -n \"event_summary\" src/adapter"
+    ));
+    assert!(!should_skip_bash_command(
+        "rg -e \"event_summary\" src/adapter"
+    ));
+    assert!(!should_skip_bash_command(
+        "grep -R \"enqueue_pending\" src/observe"
+    ));
+    assert!(!should_skip_bash_command(
+        "grep -e \"enqueue_pending\" src/observe"
+    ));
+    assert!(!should_skip_bash_command("find src/adapter -name '*.rs'"));
+    assert!(!should_skip_bash_command("git grep -n event_summary"));
+
+    let summary = event_summary(
+        "Bash",
+        &Some(serde_json::json!({"command": "rg -n \"event_summary\" src/adapter"})),
+        &Some(serde_json::json!({"exitCode": 0, "stdout": "src/adapter/common.rs:140:pub(crate) fn event_summary"})),
+    )
+    .expect("targeted search Bash should classify");
+    assert_eq!(summary.event_type, "search");
+    assert!(summary.summary.contains("Search `rg -n"));
+}
+
+#[test]
+fn noisy_commands_still_skip() {
+    assert!(should_skip_bash_command("git status --short"));
+    assert!(should_skip_bash_command("ls -la"));
+    assert!(should_skip_bash_command("cargo check"));
+    assert!(should_skip_bash_command(
+        "curl -s http://localhost:9800/tasks/1"
+    ));
+    assert!(should_skip_bash_command("ps aux | grep remem"));
+    assert!(should_skip_bash_command("rg event_summary"));
+    assert!(should_skip_bash_command("find . -name '*.rs'"));
+}
+
+#[test]
+fn discovery_pending_payload_keeps_bounded_metadata_not_raw_output() {
+    let input = Some(serde_json::json!({"command": "rg -n sk-secret src/adapter"}));
+    let long_stdout = format!(
+        "src/a.rs:1:{}\n{}",
+        "A".repeat(64),
+        "src/b.rs:2:".repeat(200)
+    );
+    let response = Some(serde_json::json!({
+        "exitCode": 0,
+        "stdout": long_stdout,
+        "stderr": format!("warning token sk-{} {}", "x".repeat(80), "E".repeat(600))
+    }));
+
+    let tool_input = pending_tool_input("Bash", &input).expect("input payload");
+    assert!(tool_input.contains("[REDACTED]"));
+    assert!(!tool_input.contains("sk-secret"));
+
+    let tool_response = pending_tool_response("Bash", &input, &response).expect("response payload");
+    assert!(tool_response.contains("bounded_search_metadata"));
+    assert!(tool_response.contains("stdout_bytes"));
+    assert!(tool_response.contains("stderr_preview"));
+    assert!(!tool_response.contains("src/a.rs:1"));
+    assert!(!tool_response.contains(&"E".repeat(300)));
+    assert!(!tool_response.contains("sk-"));
+}
+
+#[test]
+fn grep_glob_pending_payload_uses_metadata_only_response() {
+    let input = Some(serde_json::json!({"pattern": "session_id", "path": "src"}));
+    let response = Some(serde_json::json!({
+        "files": ["src/adapter/common.rs", "src/observe/hook.rs"],
+        "output": "src/adapter/common.rs: session_id\nsrc/observe/hook.rs: session_id"
+    }));
+
+    let tool_input = pending_tool_input("Grep", &input).expect("grep input payload");
+    assert!(tool_input.contains("session_id"));
+    assert!(tool_input.contains("src"));
+
+    let tool_response = pending_tool_response("Grep", &input, &response).expect("grep response");
+    assert!(tool_response.contains("files_count"));
+    assert!(tool_response.contains("output_bytes"));
+    assert!(!tool_response.contains("src/adapter/common.rs: session_id"));
 }

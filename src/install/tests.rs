@@ -18,6 +18,10 @@ fn build_hooks_contains_expected_claude_commands() {
         "REMEM_HOOK_ADAPTER=claude-code /tmp/remem observe"
     );
     assert_eq!(
+        hooks["PostToolUse"][0]["matcher"],
+        "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task"
+    );
+    assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "REMEM_SUMMARY_EXECUTOR=claude-cli /tmp/remem summarize"
     );

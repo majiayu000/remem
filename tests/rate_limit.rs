@@ -133,6 +133,8 @@ fn bash_skip_filter_stays_in_observe_module() {
     assert!(should_skip_bash_command("git status"));
     assert!(should_skip_bash_command("  ls -la  "));
     assert!(should_skip_bash_command("cargo build --release"));
+    assert!(should_skip_bash_command("rg unscoped-query"));
+    assert!(!should_skip_bash_command("rg unscoped-query src"));
     assert!(!should_skip_bash_command("git commit -m 'fix'"));
     assert!(!should_skip_bash_command("cargo test"));
 }
