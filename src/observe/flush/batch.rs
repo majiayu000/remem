@@ -15,6 +15,12 @@ pub enum ObservationDrainOutcome {
     NeedsFollowUp,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlushPendingOnceOutcome {
+    NoPending,
+    Advanced,
+}
+
 pub async fn flush_pending(
     host: &str,
     session_id: &str,
@@ -31,13 +37,17 @@ pub async fn flush_pending(
         }
 
         match flush_pending_once(host, session_id, project).await? {
-            0 => return Ok(ObservationDrainOutcome::Drained),
-            _ => batches += 1,
+            FlushPendingOnceOutcome::NoPending => return Ok(ObservationDrainOutcome::Drained),
+            FlushPendingOnceOutcome::Advanced => batches += 1,
         }
     }
 }
 
-async fn flush_pending_once(host: &str, session_id: &str, project: &str) -> Result<usize> {
+async fn flush_pending_once(
+    host: &str,
+    session_id: &str,
+    project: &str,
+) -> Result<FlushPendingOnceOutcome> {
     let mut conn = db::open_db()?;
     let recovered = db::release_expired_pending_claims(&conn)?;
     if recovered > 0 {
@@ -64,7 +74,7 @@ async fn flush_pending_once(host: &str, session_id: &str, project: &str) -> Resu
 
     if pending.is_empty() {
         crate::log::info("flush", "no pending observations");
-        return Ok(0);
+        return Ok(FlushPendingOnceOutcome::NoPending);
     }
 
     let timer = crate::log::Timer::start(
@@ -149,7 +159,7 @@ async fn flush_pending_once(host: &str, session_id: &str, project: &str) -> Resu
 
     if total_observations == 0 {
         timer.done("0 observations");
-        return Ok(0);
+        return Ok(FlushPendingOnceOutcome::Advanced);
     }
 
     timer.done(&format!(
@@ -159,7 +169,7 @@ async fn flush_pending_once(host: &str, session_id: &str, project: &str) -> Resu
         titles.join(", "),
     ));
 
-    Ok(total_observations)
+    Ok(FlushPendingOnceOutcome::Advanced)
 }
 
 fn follow_up_if_needed(
@@ -172,5 +182,110 @@ fn follow_up_if_needed(
         Ok(ObservationDrainOutcome::NeedsFollowUp)
     } else {
         Ok(ObservationDrainOutcome::Drained)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::params;
+
+    use crate::db;
+    use crate::db::test_support::ScopedTestDataDir;
+    use crate::observe::flush::constants::FLUSH_BATCH_SIZE;
+
+    use super::{
+        flush_pending, flush_pending_once, FlushPendingOnceOutcome, ObservationDrainOutcome,
+    };
+
+    #[tokio::test]
+    async fn flush_pending_once_reports_no_pending_explicitly() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("flush-batch-no-pending");
+        let _conn = db::open_db()?;
+
+        let outcome = flush_pending_once("codex-cli", "sess-empty", "proj-empty").await?;
+
+        assert_eq!(outcome, FlushPendingOnceOutcome::NoPending);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn flush_pending_continues_after_zero_observation_claimed_batch() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("flush-batch-zero-continues");
+        let conn = db::open_db()?;
+        for idx in 0..(FLUSH_BATCH_SIZE + 1) {
+            db::enqueue_pending(
+                &conn,
+                "codex-cli",
+                "sess-zero",
+                "proj-zero",
+                "Task",
+                Some(&format!("task {idx}")),
+                Some("short"),
+                None,
+            )?;
+        }
+
+        let outcome = flush_pending("codex-cli", "sess-zero", "proj-zero").await?;
+
+        assert_eq!(outcome, ObservationDrainOutcome::Drained);
+        let failed_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE session_id = ?1 AND project = ?2 AND status = 'failed'",
+            params!["sess-zero", "proj-zero"],
+            |row| row.get(0),
+        )?;
+        let pending_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE session_id = ?1 AND project = ?2 AND status = 'pending'",
+            params!["sess-zero", "proj-zero"],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(failed_count, (FLUSH_BATCH_SIZE + 1) as i64);
+        assert_eq!(pending_count, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn flush_pending_returns_follow_up_when_drain_budget_leaves_pending_rows(
+    ) -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("flush-batch-follow-up");
+        let conn = db::open_db()?;
+        let rows = FLUSH_BATCH_SIZE * (super::FLUSH_DRAIN_MAX_BATCHES + 1);
+        for idx in 0..rows {
+            db::enqueue_pending(
+                &conn,
+                "codex-cli",
+                "sess-follow",
+                "proj-follow",
+                "Task",
+                Some(&format!("task {idx}")),
+                Some("short"),
+                None,
+            )?;
+        }
+
+        let outcome = flush_pending("codex-cli", "sess-follow", "proj-follow").await?;
+
+        assert_eq!(outcome, ObservationDrainOutcome::NeedsFollowUp);
+        let failed_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE session_id = ?1 AND project = ?2 AND status = 'failed'",
+            params!["sess-follow", "proj-follow"],
+            |row| row.get(0),
+        )?;
+        let pending_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pending_observations
+             WHERE session_id = ?1 AND project = ?2 AND status = 'pending'",
+            params!["sess-follow", "proj-follow"],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            failed_count,
+            (FLUSH_BATCH_SIZE * super::FLUSH_DRAIN_MAX_BATCHES) as i64
+        );
+        assert_eq!(pending_count, FLUSH_BATCH_SIZE as i64);
+        Ok(())
     }
 }
