@@ -3,7 +3,7 @@
 //! compact preview.
 
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 /// Insert a plain-encoded blob row for `content_bytes`. If a row with the
 /// same `content_hash` already exists, return the existing id without
@@ -14,24 +14,19 @@ pub fn insert_or_get_blob(
     content_bytes: &[u8],
     now: i64,
 ) -> Result<i64> {
-    if let Some(id) = conn
-        .query_row(
-            "SELECT id FROM event_blobs WHERE content_hash = ?1",
-            [content_hash],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?
-    {
-        return Ok(id);
-    }
     let original = content_bytes.len() as i64;
     conn.execute(
-        "INSERT INTO event_blobs(content_hash, content_encoding, content_bytes,
+        "INSERT OR IGNORE INTO event_blobs(content_hash, content_encoding, content_bytes,
             original_bytes, stored_bytes, created_at_epoch)
          VALUES (?1, 'plain', ?2, ?3, ?3, ?4)",
         params![content_hash, content_bytes, original, now],
     )?;
-    Ok(conn.last_insert_rowid())
+    conn.query_row(
+        "SELECT id FROM event_blobs WHERE content_hash = ?1",
+        [content_hash],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(Into::into)
 }
 
 /// Build the inline `content_text` summary for an oversize event:

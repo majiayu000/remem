@@ -104,7 +104,10 @@ fn claim_task_by_id(
              next_retry_epoch = NULL,
              updated_at_epoch = ?3
          WHERE id = ?4
-           AND status IN ('pending', 'delayed')",
+           AND status IN ('pending', 'delayed')
+           AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?3)
+           AND (lease_owner IS NULL OR lease_expires_epoch IS NULL
+                OR lease_expires_epoch < ?3)",
         params![lease_owner, lease_expires, now, id],
     )?;
     if updated == 0 {

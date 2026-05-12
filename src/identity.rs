@@ -46,8 +46,8 @@ impl InstallHost {
 
     /// Resolve the install-time host from environment variables. Existing
     /// install paths already inject host identity per hook (the `--host`
-    /// CLI flag in v2.1 M2 is one option; the shipped install uses env
-    /// vars). Priority order matches the install layout:
+    /// CLI flag is one option; the shipped install uses env vars). Priority
+    /// order matches the install layout:
     ///   1. `REMEM_HOOK_ADAPTER` (set on observe hook command)
     ///   2. `REMEM_CONTEXT_HOST` (set on context / summarize hook command)
     ///   3. `REMEM_HOST` (explicit override for wrapper scripts)

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 use super::types::NormalizedEvent;
 use crate::identity::{InstallHost, ProjectKey, SessionId, WorkspaceKey};
@@ -97,44 +97,34 @@ fn lookup_host_id(conn: &Connection, host: InstallHost) -> Result<i64> {
 
 fn ensure_workspace(conn: &Connection, ws: &WorkspaceKey, now: i64) -> Result<i64> {
     let path_str = ws.root_path.to_string_lossy();
-    if let Some(id) = conn
-        .query_row(
-            "SELECT id FROM workspaces WHERE root_path = ?1",
-            [path_str.as_ref()],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?
-    {
-        return Ok(id);
-    }
     conn.execute(
-        "INSERT INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
+        "INSERT OR IGNORE INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
          VALUES (?1, ?2, ?2)",
         params![path_str.as_ref(), now],
     )?;
-    Ok(conn.last_insert_rowid())
+    conn.query_row(
+        "SELECT id FROM workspaces WHERE root_path = ?1",
+        [path_str.as_ref()],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(Into::into)
 }
 
 fn ensure_project(conn: &Connection, workspace_id: i64, p: &ProjectKey, now: i64) -> Result<i64> {
     let path_str = p.project_path.to_string_lossy();
-    if let Some(id) = conn
-        .query_row(
-            "SELECT id FROM projects
-             WHERE workspace_id = ?1 AND project_path = ?2",
-            params![workspace_id, path_str.as_ref()],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?
-    {
-        return Ok(id);
-    }
     conn.execute(
-        "INSERT INTO projects(workspace_id, project_path, project_key,
+        "INSERT OR IGNORE INTO projects(workspace_id, project_path, project_key,
             created_at_epoch, updated_at_epoch)
          VALUES (?1, ?2, ?3, ?4, ?4)",
         params![workspace_id, path_str.as_ref(), p.project_key, now],
     )?;
-    Ok(conn.last_insert_rowid())
+    conn.query_row(
+        "SELECT id FROM projects
+         WHERE workspace_id = ?1 AND project_path = ?2",
+        params![workspace_id, path_str.as_ref()],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(Into::into)
 }
 
 /// Find or create the session row and bump its `last_seen_at_epoch`.
@@ -146,28 +136,25 @@ pub fn ensure_session(
     session_id: &SessionId,
     now: i64,
 ) -> Result<i64> {
-    if let Some(id) = conn
-        .query_row(
-            "SELECT id FROM sessions
-             WHERE host_id = ?1 AND project_id = ?2 AND session_id = ?3",
-            params![host_id, project_id, session_id.0],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?
-    {
-        conn.execute(
-            "UPDATE sessions SET last_seen_at_epoch = ?1 WHERE id = ?2",
-            params![now, id],
-        )?;
-        return Ok(id);
-    }
     conn.execute(
-        "INSERT INTO sessions(host_id, workspace_id, project_id, session_id,
+        "INSERT OR IGNORE INTO sessions(host_id, workspace_id, project_id, session_id,
             started_at_epoch, last_seen_at_epoch, status)
          VALUES (?1, ?2, ?3, ?4, ?5, ?5, 'active')",
         params![host_id, workspace_id, project_id, session_id.0, now],
     )?;
-    Ok(conn.last_insert_rowid())
+    conn.execute(
+        "UPDATE sessions
+         SET last_seen_at_epoch = MAX(last_seen_at_epoch, ?1)
+         WHERE host_id = ?2 AND project_id = ?3 AND session_id = ?4",
+        params![now, host_id, project_id, session_id.0],
+    )?;
+    conn.query_row(
+        "SELECT id FROM sessions
+         WHERE host_id = ?1 AND project_id = ?2 AND session_id = ?3",
+        params![host_id, project_id, session_id.0],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(Into::into)
 }
 
 enum StorageKind {
@@ -186,9 +173,8 @@ struct Storage {
 /// Apply the capture storage policy.
 /// - `None` content: empty hash, no inline text, no blob.
 /// - ≤16 KiB: inline as `content_text`, blob unused.
-/// - >16 KiB: spill the full text into `event_blobs`, keep a
-///   prefix+suffix+marker summary in `content_text`, flip retention to
-///   `raw_compact`.
+/// - Over 16 KiB: spill the full text into `event_blobs`; `content_text`
+///   keeps a compact prefix/suffix summary and retention becomes `raw_compact`.
 fn resolve_storage(conn: &Connection, content: Option<&str>, now: i64) -> Result<Storage> {
     match content {
         None => Ok(Storage {

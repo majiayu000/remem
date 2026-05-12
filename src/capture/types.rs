@@ -19,7 +19,7 @@ pub struct NormalizedEvent {
     pub content_text: Option<String>,
     pub token_estimate: i64,
     /// Initial retention class assigned by the adapter; `insert` may flip it
-    /// to `"truncated"` when content overflows the direct-storage budget.
+    /// to `"raw_compact"` when content overflows the direct-storage budget.
     pub retention_class: String,
     pub created_at_epoch: i64,
 }

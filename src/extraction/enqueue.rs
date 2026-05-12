@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 use super::types::TaskKind;
 
@@ -23,30 +23,6 @@ pub struct EnqueueRequest<'a> {
 /// only when the new value is strictly greater than the current). Returns
 /// the row id of the new or existing task.
 pub fn enqueue_extraction_task(conn: &Connection, req: EnqueueRequest) -> Result<i64> {
-    if let Some((id, current_hwm)) = conn
-        .query_row(
-            "SELECT id, high_watermark_event_id FROM extraction_tasks
-             WHERE idempotency_key = ?1",
-            [req.idempotency_key],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
-        )
-        .optional()?
-    {
-        let bumped = match (current_hwm, req.high_watermark_event_id) {
-            (Some(curr), Some(new)) if new > curr => Some(new),
-            (None, Some(new)) => Some(new),
-            _ => None,
-        };
-        if let Some(new_hwm) = bumped {
-            conn.execute(
-                "UPDATE extraction_tasks
-                 SET high_watermark_event_id = ?1, updated_at_epoch = ?2
-                 WHERE id = ?3",
-                params![new_hwm, req.now, id],
-            )?;
-        }
-        return Ok(id);
-    }
     conn.execute(
         "INSERT INTO extraction_tasks(
             task_kind, host_id, workspace_id, project_id, session_row_id,
@@ -54,13 +30,28 @@ pub fn enqueue_extraction_task(conn: &Connection, req: EnqueueRequest) -> Result
             cursor_event_id, high_watermark_event_id,
             attempts, next_retry_epoch, lease_owner, lease_expires_epoch,
             last_error, created_at_epoch, updated_at_epoch
-         ) VALUES (
+             ) VALUES (
             ?1, ?2, ?3, ?4, ?5,
             ?6, 'pending', ?7,
             NULL, ?8,
             0, NULL, NULL, NULL,
             NULL, ?9, ?9
-         )",
+         )
+         ON CONFLICT(idempotency_key) DO UPDATE SET
+             high_watermark_event_id = CASE
+                 WHEN excluded.high_watermark_event_id IS NOT NULL
+                  AND (extraction_tasks.high_watermark_event_id IS NULL
+                       OR excluded.high_watermark_event_id > extraction_tasks.high_watermark_event_id)
+                 THEN excluded.high_watermark_event_id
+                 ELSE extraction_tasks.high_watermark_event_id
+             END,
+             updated_at_epoch = CASE
+                 WHEN excluded.high_watermark_event_id IS NOT NULL
+                  AND (extraction_tasks.high_watermark_event_id IS NULL
+                       OR excluded.high_watermark_event_id > extraction_tasks.high_watermark_event_id)
+                 THEN excluded.updated_at_epoch
+                 ELSE extraction_tasks.updated_at_epoch
+             END",
         params![
             req.task_kind.as_db_value(),
             req.host_id,
@@ -73,7 +64,12 @@ pub fn enqueue_extraction_task(conn: &Connection, req: EnqueueRequest) -> Result
             req.now,
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    conn.query_row(
+        "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
+        [req.idempotency_key],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(Into::into)
 }
 
 #[cfg(test)]
