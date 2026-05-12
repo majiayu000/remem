@@ -3,6 +3,7 @@ pub mod events;
 pub mod format;
 pub mod preference;
 pub mod promote;
+pub mod raw_archive;
 pub mod service;
 pub mod store;
 pub mod types;
