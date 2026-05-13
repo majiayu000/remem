@@ -30,7 +30,7 @@ impl HookStrategy {
     }
 
     fn include_observe(self) -> bool {
-        true
+        matches!(self, Self::ClaudeCode)
     }
 
     fn observe_matcher(self) -> &'static str {

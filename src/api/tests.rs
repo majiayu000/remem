@@ -157,4 +157,9 @@ async fn status_handler_matches_shared_system_stats() {
         serde_json::from_slice(&body).expect("status response should be valid json");
     assert_eq!(payload["memories"], stats.active_memories);
     assert_eq!(payload["observations"], stats.active_observations);
+    assert_eq!(payload["captured_events"], stats.captured_events);
+    assert_eq!(
+        payload["pending_extraction_tasks"],
+        stats.pending_extraction_tasks
+    );
 }

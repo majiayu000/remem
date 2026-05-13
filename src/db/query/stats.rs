@@ -9,6 +9,12 @@ pub struct SystemStats {
     pub active_observations: i64,
     pub session_summaries: i64,
     pub raw_messages: i64,
+    pub captured_events: i64,
+    pub pending_extraction_tasks: i64,
+    pub processing_extraction_tasks: i64,
+    pub failed_extraction_tasks: i64,
+    pub oldest_pending_extraction_epoch: Option<i64>,
+    pub pending_memory_candidates: i64,
     pub pending_observations: i64,
     pub ready_pending_observations: i64,
     pub delayed_pending_observations: i64,
@@ -40,12 +46,14 @@ pub struct ProjectCount {
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
     let worker_heartbeat = crate::db::worker::latest_worker_heartbeat(conn)?;
+    let healthy_worker_heartbeat = crate::db::worker::healthy_worker_heartbeat(
+        conn,
+        crate::db::worker::WORKER_HEARTBEAT_HEALTH_SECS,
+    )?;
     let worker_heartbeat_age_secs = worker_heartbeat
         .as_ref()
         .map(|heartbeat| now.saturating_sub(heartbeat.updated_at_epoch));
-    let worker_daemon_healthy = worker_heartbeat_age_secs
-        .map(|age| age <= crate::db::worker::WORKER_HEARTBEAT_HEALTH_SECS)
-        .unwrap_or(false);
+    let worker_daemon_healthy = healthy_worker_heartbeat.is_some();
     Ok(SystemStats {
         active_memories: conn.query_row(
             "SELECT COUNT(*) FROM memories WHERE status = 'active'",
@@ -61,6 +69,34 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             row.get(0)
         })?,
         raw_messages: conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?,
+        captured_events: conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| {
+            row.get(0)
+        })?,
+        pending_extraction_tasks: conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )?,
+        processing_extraction_tasks: conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'processing'",
+            [],
+            |row| row.get(0),
+        )?,
+        failed_extraction_tasks: conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'failed'",
+            [],
+            |row| row.get(0),
+        )?,
+        oldest_pending_extraction_epoch: conn.query_row(
+            "SELECT MIN(created_at_epoch) FROM extraction_tasks WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )?,
+        pending_memory_candidates: conn.query_row(
+            "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'pending_review'",
+            [],
+            |row| row.get(0),
+        )?,
         pending_observations: conn.query_row(
             "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
             [],

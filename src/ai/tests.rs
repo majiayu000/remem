@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use super::config::resolve_model_for_api;
 use super::pricing::{estimate_cost_usd, pricing_for_model};
-use super::{executor_for_operation, AiExecutor};
+use super::{executor_for_operation, stable_working_dir, AiExecutor};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -176,4 +176,14 @@ fn legacy_global_executor_still_only_affects_summary_directly() {
             assert_eq!(executor_for_operation("dream"), None);
         },
     );
+}
+
+#[test]
+fn stable_working_dir_uses_data_dir_even_if_caller_cwd_disappears() {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("ai-stable-cwd");
+
+    let got = stable_working_dir();
+
+    assert_eq!(got, data_dir.path);
+    assert!(got.is_dir());
 }

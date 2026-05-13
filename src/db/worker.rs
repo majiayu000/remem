@@ -54,24 +54,57 @@ pub fn healthy_worker_heartbeat(
     max_age_secs: i64,
 ) -> Result<Option<WorkerHeartbeat>> {
     let now = chrono::Utc::now().timestamp();
-    conn.query_row(
+    let mut stmt = conn.prepare(
         "SELECT owner, pid, started_at_epoch, updated_at_epoch
          FROM worker_heartbeats
          WHERE updated_at_epoch >= ?1
          ORDER BY updated_at_epoch DESC, owner ASC
-         LIMIT 1",
-        params![now.saturating_sub(max_age_secs)],
-        |row| {
-            Ok(WorkerHeartbeat {
-                owner: row.get(0)?,
-                pid: row.get(1)?,
-                started_at_epoch: row.get(2)?,
-                updated_at_epoch: row.get(3)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(Into::into)
+         LIMIT 10",
+    )?;
+    let rows = stmt.query_map(params![now.saturating_sub(max_age_secs)], |row| {
+        Ok(WorkerHeartbeat {
+            owner: row.get(0)?,
+            pid: row.get(1)?,
+            started_at_epoch: row.get(2)?,
+            updated_at_epoch: row.get(3)?,
+        })
+    })?;
+
+    for row in rows {
+        let heartbeat = row?;
+        if heartbeat_process_alive(heartbeat.pid) {
+            return Ok(Some(heartbeat));
+        }
+    }
+    Ok(None)
+}
+
+fn heartbeat_process_alive(pid: Option<i64>) -> bool {
+    let Some(pid) = pid else {
+        return false;
+    };
+    if pid <= 0 || pid > i64::from(i32::MAX) {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if result == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_heartbeat_process_alive(pid: Option<i64>) -> bool {
+    heartbeat_process_alive(pid)
 }
 
 #[cfg(test)]
@@ -79,8 +112,8 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        healthy_worker_heartbeat, latest_worker_heartbeat, upsert_worker_heartbeat,
-        WORKER_HEARTBEAT_HEALTH_SECS,
+        healthy_worker_heartbeat, latest_worker_heartbeat, test_heartbeat_process_alive,
+        upsert_worker_heartbeat, WORKER_HEARTBEAT_HEALTH_SECS,
     };
 
     fn setup(conn: &Connection) {
@@ -94,9 +127,11 @@ mod tests {
         setup(&conn);
         let now = chrono::Utc::now().timestamp();
 
-        upsert_worker_heartbeat(&conn, "worker-old", 10, now - 900, now - 900)
+        let current_pid = i64::from(std::process::id());
+
+        upsert_worker_heartbeat(&conn, "worker-old", current_pid, now - 900, now - 900)
             .expect("old heartbeat should insert");
-        upsert_worker_heartbeat(&conn, "worker-new", 11, now - 10, now - 10)
+        upsert_worker_heartbeat(&conn, "worker-new", current_pid, now - 10, now - 10)
             .expect("new heartbeat should insert");
 
         let latest = latest_worker_heartbeat(&conn)
@@ -122,5 +157,26 @@ mod tests {
         let healthy = healthy_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)
             .expect("healthy heartbeat query should run");
         assert!(healthy.is_none());
+    }
+
+    #[test]
+    fn recent_heartbeat_with_dead_pid_is_not_healthy() {
+        let conn = Connection::open_in_memory().expect("db should open");
+        setup(&conn);
+        let now = chrono::Utc::now().timestamp();
+
+        upsert_worker_heartbeat(&conn, "worker-dead", i64::from(i32::MAX), now, now)
+            .expect("dead heartbeat should insert");
+
+        let healthy = healthy_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)
+            .expect("healthy heartbeat query should run");
+        assert!(healthy.is_none());
+    }
+
+    #[test]
+    fn current_process_pid_is_alive() {
+        assert!(test_heartbeat_process_alive(Some(i64::from(
+            std::process::id()
+        ))));
     }
 }

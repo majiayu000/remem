@@ -28,6 +28,20 @@ pub async fn summarize() -> Result<()> {
     let host = resolve_hook_host();
     let conn = db::open_db()?;
 
+    db::record_captured_event(
+        &conn,
+        &db::CaptureEventInput {
+            host: &host,
+            session_id,
+            project: &project,
+            cwd: Some(cwd),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content: &input,
+            task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+        },
+    )?;
     enqueue_summary_jobs(&conn, &host, session_id, &project, &input)?;
     if should_spawn_worker_once(&conn)? {
         spawn_worker_once()?;
@@ -47,20 +61,23 @@ fn enqueue_summary_jobs(
     project: &str,
     input: &str,
 ) -> Result<()> {
-    let obs_payload = serde_json::json!({
-        "host": host,
-        "session_id": session_id,
-        "project": project,
-    });
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Observation,
-        project,
-        Some(session_id),
-        &obs_payload.to_string(),
-        50,
-    )?;
+    let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
+    if ready_pending > 0 {
+        let obs_payload = serde_json::json!({
+            "host": host,
+            "session_id": session_id,
+            "project": project,
+        });
+        db::enqueue_job(
+            conn,
+            host,
+            db::JobType::Observation,
+            project,
+            Some(session_id),
+            &obs_payload.to_string(),
+            50,
+        )?;
+    }
     db::enqueue_job(
         conn,
         host,
@@ -74,8 +91,8 @@ fn enqueue_summary_jobs(
     crate::log::info(
         "summarize",
         &format!(
-            "QUEUED observation+summary session={} project={}",
-            session_id, project
+            "QUEUED summary session={} project={} observation_pending={}",
+            session_id, project, ready_pending
         ),
     );
     Ok(())
@@ -108,6 +125,7 @@ fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
 
 fn spawn_worker_once() -> Result<()> {
     let exe = std::env::current_exe()?;
+    let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
     let stderr_cfg = match stderr_file {
         Some(file) => std::process::Stdio::from(file),
@@ -117,6 +135,7 @@ fn spawn_worker_once() -> Result<()> {
     command
         .arg("worker")
         .arg("--once")
+        .current_dir(&worker_dir)
         .env("REMEM_STDERR_TO_LOG", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -124,6 +143,22 @@ fn spawn_worker_once() -> Result<()> {
     configure_worker_executor_env(&mut command);
     let _child = command.spawn()?;
     Ok(())
+}
+
+fn stable_worker_dir() -> std::path::PathBuf {
+    let data_dir = crate::db::data_dir();
+    if let Err(err) = std::fs::create_dir_all(&data_dir) {
+        crate::log::warn(
+            "summarize",
+            &format!(
+                "failed to create worker dir {}: {}; falling back to temp dir",
+                data_dir.display(),
+                err
+            ),
+        );
+        return std::env::temp_dir();
+    }
+    data_dir
 }
 
 fn configure_worker_executor_env(command: &mut std::process::Command) {
@@ -141,7 +176,10 @@ mod tests {
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{configure_worker_executor_env, should_spawn_worker_once};
+    use super::{
+        configure_worker_executor_env, enqueue_summary_jobs, should_spawn_worker_once,
+        stable_worker_dir,
+    };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -231,8 +269,14 @@ mod tests {
         let _test_dir = ScopedTestDataDir::new("summary-healthy-daemon");
         let conn = db::open_db().expect("db should open");
         let now = chrono::Utc::now().timestamp();
-        db::upsert_worker_heartbeat(&conn, "worker-daemon", 123, now - 5, now - 5)
-            .expect("heartbeat should insert");
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )
+        .expect("heartbeat should insert");
 
         assert!(
             !should_spawn_worker_once(&conn).expect("daemon check should run"),
@@ -252,5 +296,79 @@ mod tests {
             should_spawn_worker_once(&conn).expect("daemon check should run"),
             "stale heartbeat should keep worker --once fallback"
         );
+    }
+
+    #[test]
+    fn stable_worker_dir_uses_data_dir() {
+        let data_dir = ScopedTestDataDir::new("summary-worker-dir");
+
+        let got = stable_worker_dir();
+
+        assert_eq!(got, data_dir.path);
+        assert!(got.is_dir());
+    }
+
+    #[test]
+    fn enqueue_summary_jobs_skips_observation_job_when_no_pending_events() {
+        let _test_dir = ScopedTestDataDir::new("summary-no-pending-observation");
+        let conn = db::open_db().expect("db should open");
+
+        enqueue_summary_jobs(
+            &conn,
+            "codex-cli",
+            "sess-no-pending",
+            "/tmp/remem",
+            r#"{"session_id":"sess-no-pending"}"#,
+        )
+        .expect("summary jobs should enqueue");
+
+        let jobs = job_types(&conn);
+        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
+    }
+
+    #[test]
+    fn enqueue_summary_jobs_keeps_observation_job_when_pending_events_exist() {
+        let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
+        let conn = db::open_db().expect("db should open");
+        db::enqueue_pending(
+            &conn,
+            "claude-code",
+            "sess-with-pending",
+            "/tmp/remem",
+            "Edit",
+            Some(r#"{"file_path":"src/lib.rs"}"#),
+            None,
+            Some("/tmp/remem"),
+        )
+        .expect("pending observation should insert");
+
+        enqueue_summary_jobs(
+            &conn,
+            "claude-code",
+            "sess-with-pending",
+            "/tmp/remem",
+            r#"{"session_id":"sess-with-pending"}"#,
+        )
+        .expect("summary jobs should enqueue");
+
+        let jobs = job_types(&conn);
+        assert_eq!(
+            jobs,
+            vec![
+                "observation".to_string(),
+                "summary".to_string(),
+                "compress".to_string()
+            ]
+        );
+    }
+
+    fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT job_type FROM jobs ORDER BY id ASC")
+            .expect("job query should prepare");
+        stmt.query_map([], |row| row.get(0))
+            .expect("job query should run")
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .expect("job rows should collect")
     }
 }

@@ -138,8 +138,22 @@ fn probe_hooks(probe: HostProbe) -> Check {
         .iter()
         .filter(|event| event_has_remem_hook(&doc, event))
         .count();
+    let deprecated_codex_observe =
+        probe.name == "codex" && event_has_remem_observe_hook(&doc, "PostToolUse");
 
     if found == events.len() {
+        if deprecated_codex_observe {
+            return Check {
+                name,
+                status: Status::Warn,
+                detail: format!(
+                    "{}/{} registered in {}; remove Codex PostToolUse observe to avoid unbounded Bash backlog",
+                    found,
+                    events.len(),
+                    probe.hooks_path.display()
+                ),
+            };
+        }
         Check {
             name,
             status: Status::Ok,
@@ -240,7 +254,7 @@ fn display_mcp_paths(paths: &[PathBuf]) -> String {
 
 fn expected_hook_events(host: &str) -> &'static [&'static str] {
     match host {
-        "codex" => &["SessionStart", "PostToolUse", "Stop"],
+        "codex" => &["SessionStart", "Stop"],
         _ => &["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"],
     }
 }
@@ -287,6 +301,28 @@ fn entry_has_remem_hook(entry: &Value) -> bool {
             hook.get("command")
                 .and_then(|command| command.as_str())
                 .is_some_and(|command| command.contains("remem"))
+        })
+}
+
+fn event_has_remem_observe_hook(doc: &Value, event: &str) -> bool {
+    doc.get("hooks")
+        .and_then(|hooks| hooks.get(event))
+        .and_then(|entries| entries.as_array())
+        .into_iter()
+        .flatten()
+        .any(entry_has_remem_observe_hook)
+}
+
+fn entry_has_remem_observe_hook(entry: &Value) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|hooks| hooks.as_array())
+        .into_iter()
+        .flatten()
+        .any(|hook| {
+            hook.get("command")
+                .and_then(|command| command.as_str())
+                .is_some_and(|command| command.contains("remem") && command.contains(" observe"))
         })
 }
 
@@ -340,12 +376,37 @@ mod tests {
         });
 
         assert!(matches!(check.status, Status::Warn));
-        assert!(check.detail.contains("1/3 registered"), "{}", check.detail);
+        assert!(check.detail.contains("1/2 registered"), "{}", check.detail);
     }
 
     #[test]
     fn probe_hooks_accepts_codex_strategy() {
         let dir = temp_path("doctor-codex-hooks");
+        let hooks_path = dir.join("hooks.json");
+        std::fs::write(
+            &hooks_path,
+            r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
+    "Stop": [{ "hooks": [{ "command": "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize" }] }]
+  }
+}"#,
+        )
+        .unwrap();
+
+        let check = probe_hooks(HostProbe {
+            name: "codex",
+            hooks_path,
+            mcp_paths: vec![dir.join("config.toml")],
+        });
+
+        assert!(matches!(check.status, Status::Ok));
+        assert!(check.detail.contains("2/2 registered"), "{}", check.detail);
+    }
+
+    #[test]
+    fn probe_hooks_warns_on_codex_posttool_observe() {
+        let dir = temp_path("doctor-codex-observe-warning");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
             &hooks_path,
@@ -365,8 +426,12 @@ mod tests {
             mcp_paths: vec![dir.join("config.toml")],
         });
 
-        assert!(matches!(check.status, Status::Ok));
-        assert!(check.detail.contains("3/3 registered"), "{}", check.detail);
+        assert!(matches!(check.status, Status::Warn));
+        assert!(
+            check.detail.contains("PostToolUse observe"),
+            "{}",
+            check.detail
+        );
     }
 
     #[test]
@@ -433,7 +498,6 @@ command = "/tmp/remem"
             r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
-    "PostToolUse": [{ "hooks": [{ "command": "/tmp/remem observe" }] }],
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize" }] }]
   }
 }"#,

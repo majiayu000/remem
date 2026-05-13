@@ -194,8 +194,14 @@ fn check_worker_daemon_reports_healthy_heartbeat() {
     let _test_dir = ScopedTestDataDir::new("doctor-worker-healthy");
     let conn = db::open_db().expect("db should open");
     let now = chrono::Utc::now().timestamp();
-    db::upsert_worker_heartbeat(&conn, "worker-daemon", 123, now - 5, now - 5)
-        .expect("heartbeat should insert");
+    db::upsert_worker_heartbeat(
+        &conn,
+        "worker-daemon",
+        i64::from(std::process::id()),
+        now - 5,
+        now - 5,
+    )
+    .expect("heartbeat should insert");
     drop(conn);
 
     let check = check_worker_daemon();

@@ -23,6 +23,18 @@ fn setup_stats_schema(conn: &Connection) {
         CREATE TABLE raw_messages (
             id INTEGER PRIMARY KEY
         );
+        CREATE TABLE captured_events (
+            id INTEGER PRIMARY KEY
+        );
+        CREATE TABLE extraction_tasks (
+            id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL
+        );
+        CREATE TABLE memory_candidates (
+            id INTEGER PRIMARY KEY,
+            review_status TEXT NOT NULL
+        );
         CREATE TABLE pending_observations (
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
@@ -78,6 +90,28 @@ fn query_system_stats_and_related_views_share_one_definition() {
     .expect("stale observation insert should succeed");
     conn.execute("INSERT INTO session_summaries (id) VALUES (1)", [])
         .expect("summary insert should succeed");
+    conn.execute("INSERT INTO captured_events (id) VALUES (1)", [])
+        .expect("captured event insert should succeed");
+    conn.execute(
+        "INSERT INTO extraction_tasks (status, created_at_epoch) VALUES ('pending', 90)",
+        [],
+    )
+    .expect("pending extraction task insert should succeed");
+    conn.execute(
+        "INSERT INTO extraction_tasks (status, created_at_epoch) VALUES ('processing', 95)",
+        [],
+    )
+    .expect("processing extraction task insert should succeed");
+    conn.execute(
+        "INSERT INTO extraction_tasks (status, created_at_epoch) VALUES ('failed', 96)",
+        [],
+    )
+    .expect("failed extraction task insert should succeed");
+    conn.execute(
+        "INSERT INTO memory_candidates (review_status) VALUES ('pending_review')",
+        [],
+    )
+    .expect("memory candidate insert should succeed");
     conn.execute(
         "INSERT INTO pending_observations (status, created_at_epoch) VALUES ('pending', 100)",
         [],
@@ -121,8 +155,8 @@ fn query_system_stats_and_related_views_share_one_definition() {
     .expect("failed job insert should succeed");
     conn.execute(
         "INSERT INTO worker_heartbeats (owner, pid, started_at_epoch, updated_at_epoch)
-         VALUES ('worker-a', 123, strftime('%s', 'now') - 10, strftime('%s', 'now') - 10)",
-        [],
+         VALUES ('worker-a', ?1, strftime('%s', 'now') - 10, strftime('%s', 'now') - 10)",
+        [i64::from(std::process::id())],
     )
     .expect("heartbeat insert should succeed");
 
@@ -134,6 +168,12 @@ fn query_system_stats_and_related_views_share_one_definition() {
             active_observations: 1,
             session_summaries: 1,
             raw_messages: 0,
+            captured_events: 1,
+            pending_extraction_tasks: 1,
+            processing_extraction_tasks: 1,
+            failed_extraction_tasks: 1,
+            oldest_pending_extraction_epoch: Some(90),
+            pending_memory_candidates: 1,
             pending_observations: 2,
             ready_pending_observations: 1,
             delayed_pending_observations: 1,

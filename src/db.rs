@@ -1,3 +1,4 @@
+pub mod capture;
 pub mod core;
 pub mod crypto;
 pub mod job;
@@ -12,6 +13,7 @@ pub mod test_support;
 pub mod usage;
 pub mod worker;
 
+pub use capture::*;
 pub use core::*;
 pub use crypto::*;
 pub use job::*;

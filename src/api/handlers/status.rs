@@ -26,6 +26,9 @@ pub(in crate::api) async fn handle_status(State(_state): State<DbState>) -> impl
         "version": env!("CARGO_PKG_VERSION"),
         "memories": stats.active_memories,
         "observations": stats.active_observations,
+        "captured_events": stats.captured_events,
+        "pending_extraction_tasks": stats.pending_extraction_tasks,
+        "pending_memory_candidates": stats.pending_memory_candidates,
     }))
     .into_response()
 }

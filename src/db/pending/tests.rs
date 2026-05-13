@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 
+use super::queue::MAX_PENDING_FIELD_BYTES;
 use super::{
     claim_pending, delete_pending_claimed, enqueue_pending, release_expired_pending_claims,
     retry_pending_claimed,
@@ -48,6 +49,38 @@ fn claim_pending_only_returns_requested_session_rows() {
     assert_eq!(claimed[0].id, expected_id);
     assert_eq!(claimed[0].session_id, "session-a");
     assert_eq!(claimed[0].status, "processing");
+}
+
+#[test]
+fn enqueue_pending_bounds_large_tool_payloads() {
+    let conn = setup_conn();
+    let oversized_input = "input ".repeat(MAX_PENDING_FIELD_BYTES);
+    let oversized_response = "响应".repeat(MAX_PENDING_FIELD_BYTES);
+
+    let id = enqueue_pending(
+        &conn,
+        "claude-code",
+        "session-a",
+        "proj",
+        "Edit",
+        Some(&oversized_input),
+        Some(&oversized_response),
+        Some("/tmp/proj"),
+    )
+    .expect("large pending row should be queued");
+
+    let (stored_input, stored_response): (String, String) = conn
+        .query_row(
+            "SELECT tool_input, tool_response FROM pending_observations WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("stored payload should load");
+
+    assert!(stored_input.len() <= MAX_PENDING_FIELD_BYTES);
+    assert!(stored_response.len() <= MAX_PENDING_FIELD_BYTES);
+    assert!(stored_input.contains("remem truncated legacy pending field"));
+    assert!(stored_response.contains("remem truncated legacy pending field"));
 }
 
 #[test]

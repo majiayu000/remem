@@ -7,11 +7,11 @@
 │              Host Hooks (Claude Code / Codex)              │
 │                                                            │
 │  Claude Code: SessionStart/UserPromptSubmit/PostToolUse/Stop│
-│  Codex:       SessionStart/PostToolUse(Bash)/Stop           │
+│  Codex:       SessionStart/Stop                             │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
 │  UserPromptSubmit ──→ session-init  (Claude Code only)     │
-│  PostToolUse ───────→ observe       (Claude all, Codex Bash)│
+│  PostToolUse ───────→ observe       (Claude Code)           │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
                │                      │
@@ -38,6 +38,18 @@
 │  summarize_cooldown   ai_usage_events                      │
 └───────────────────────────────────────────────────────────┘
 ```
+
+Codex legacy `PostToolUse(Bash)` observe hooks are treated as opt-in only:
+they are skipped unless `REMEM_ENABLE_CODEX_BASH_OBSERVE=1` is set. This keeps
+Bash-heavy sessions from creating an unbounded pending-observation backlog
+before the v2 coalesced capture path is enabled.
+
+The v2 capture path is now present in the main database as a first production
+slice: hooks write append-only `captured_events`, large evidence goes to
+`event_blobs`, and `extraction_tasks` coalesces pending extraction by
+host/project/session/task kind. This ledger is evidence and scheduling state;
+durable memory is still created only after extraction, candidate review, and
+promotion.
 
 ## Module Overview (~9000 lines Rust)
 
@@ -76,7 +88,20 @@
 
 ## Data Flow
 
-### 1. Observation Capture (PostToolUse → observe)
+### 1. Capture Ledger (hook/session evidence → captured_events)
+
+```
+Hook/session payload
+       │
+       ├─ Normalize host/workspace/project/session identity
+       ├─ Store raw evidence in captured_events/event_blobs
+       └─ Coalesce extraction_tasks by host/project/session/task kind
+```
+
+This path is intentionally light: it does not call an LLM and it does not
+create one job per tool call.
+
+### 2. Legacy Observation Capture (Claude PostToolUse → observe)
 
 ```
 Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
@@ -84,14 +109,13 @@ Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
                │              └─ Skip: git status/log/diff, ls, cat,
                │                      npm install, cargo build (read-only)
                │
-               └─ Accept: Claude Write/Edit/NotebookEdit/Bash/Task/Agent,
-                          Codex Bash
+               └─ Accept: Claude Write/Edit/NotebookEdit/Bash/Task/Agent
                   Skip: Read, Glob, Grep, metadata-only tools
 ```
 
 Each queued event stores: session_id, project, tool_name, tool_input, tool_response (truncated to 4KB).
 
-### 2. Batch Distillation (Stop → summarize → flush)
+### 3. Batch Distillation (Stop → summarize → flush)
 
 ```
 Stop hook fires
