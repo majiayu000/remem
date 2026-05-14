@@ -14,6 +14,7 @@ use crate::{db, observe, summarize};
 const JOB_TIMEOUT_SECS: u64 = 420;
 const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
 const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
+const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
 const STALE_PENDING_AGE_SECS: i64 = 60;
 const STALE_PENDING_SCAN_LIMIT: i64 = 8;
 
@@ -190,6 +191,16 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                 &format!("released {} expired pending claim(s)", recovered_pending),
             );
         }
+        let recovered_extraction = db::release_expired_extraction_task_leases(&conn)?;
+        if recovered_extraction > 0 {
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "released {} expired extraction task lease(s)",
+                    recovered_extraction
+                ),
+            );
+        }
         let queued_stale = enqueue_stale_observation_jobs(&conn)?;
         if queued_stale > 0 {
             crate::log::info(
@@ -198,81 +209,93 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             );
         }
 
-        let Some(job) = db::claim_next_job(&mut conn, &lease_owner, JOB_LEASE_SECS)? else {
-            if once {
-                break;
-            }
-            sleep(Duration::from_millis(idle_sleep_ms.max(100))).await;
-            continue;
-        };
+        if let Some(job) = db::claim_next_job(&mut conn, &lease_owner, JOB_LEASE_SECS)? {
+            crate::log::info(
+                "worker",
+                &format!(
+                    "claimed id={} type={} project={} attempt={}/{}",
+                    job.id,
+                    job.job_type.as_str(),
+                    job.project,
+                    job.attempt_count + 1,
+                    job.max_attempts
+                ),
+            );
 
-        crate::log::info(
-            "worker",
-            &format!(
-                "claimed id={} type={} project={} attempt={}/{}",
-                job.id,
-                job.job_type.as_str(),
-                job.project,
-                job.attempt_count + 1,
-                job.max_attempts
-            ),
-        );
-
-        let scoped_executor = ScopedExecutorEnv::for_job(&job);
-        let timed =
-            tokio::time::timeout(Duration::from_secs(JOB_TIMEOUT_SECS), process_job(&job)).await;
-        drop(scoped_executor);
-        let conn = db::open_db()?;
-        match timed {
-            Ok(Ok(outcome)) => {
-                db::mark_job_done(&conn, job.id, &lease_owner)?;
-                crate::log::info("worker", &format!("done id={}", job.id));
-                if let JobOutcome::ObservationNeedsFollowUp {
-                    host,
-                    session_id,
-                    project,
-                    payload_json,
-                } = outcome
-                {
-                    let follow_up_id = db::enqueue_job(
-                        &conn,
-                        &host,
-                        db::JobType::Observation,
-                        &project,
-                        Some(&session_id),
-                        &payload_json,
-                        observe::flush::OBSERVATION_FOLLOW_UP_PRIORITY,
-                    )?;
-                    crate::log::info(
+            let scoped_executor = ScopedExecutorEnv::for_job(&job);
+            let timed =
+                tokio::time::timeout(Duration::from_secs(JOB_TIMEOUT_SECS), process_job(&job))
+                    .await;
+            drop(scoped_executor);
+            let conn = db::open_db()?;
+            match timed {
+                Ok(Ok(outcome)) => {
+                    db::mark_job_done(&conn, job.id, &lease_owner)?;
+                    crate::log::info("worker", &format!("done id={}", job.id));
+                    if let JobOutcome::ObservationNeedsFollowUp {
+                        host,
+                        session_id,
+                        project,
+                        payload_json,
+                    } = outcome
+                    {
+                        let follow_up_id = db::enqueue_job(
+                            &conn,
+                            &host,
+                            db::JobType::Observation,
+                            &project,
+                            Some(&session_id),
+                            &payload_json,
+                            observe::flush::OBSERVATION_FOLLOW_UP_PRIORITY,
+                        )?;
+                        crate::log::info(
+                            "worker",
+                            &format!("queued observation follow-up id={}", follow_up_id),
+                        );
+                    }
+                }
+                Ok(Err(e)) => {
+                    let msg = e.to_string();
+                    let backoff = retry_backoff_secs(job.attempt_count);
+                    db::mark_job_failed_or_retry(&conn, job.id, &lease_owner, &msg, backoff)?;
+                    crate::log::warn(
                         "worker",
-                        &format!("queued observation follow-up id={}", follow_up_id),
+                        &format!(
+                            "job id={} failed: {} (retry in {}s)",
+                            job.id,
+                            crate::db::truncate_str(&msg, 300),
+                            backoff
+                        ),
+                    );
+                }
+                Err(_) => {
+                    let msg = format!("job timed out after {}s", JOB_TIMEOUT_SECS);
+                    let backoff = retry_backoff_secs(job.attempt_count);
+                    db::mark_job_failed_or_retry(&conn, job.id, &lease_owner, &msg, backoff)?;
+                    crate::log::warn(
+                        "worker",
+                        &format!("job id={} timeout (retry in {}s)", job.id, backoff),
                     );
                 }
             }
-            Ok(Err(e)) => {
-                let msg = e.to_string();
-                let backoff = retry_backoff_secs(job.attempt_count);
-                db::mark_job_failed_or_retry(&conn, job.id, &lease_owner, &msg, backoff)?;
-                crate::log::warn(
-                    "worker",
-                    &format!(
-                        "job id={} failed: {} (retry in {}s)",
-                        job.id,
-                        crate::db::truncate_str(&msg, 300),
-                        backoff
-                    ),
-                );
-            }
-            Err(_) => {
-                let msg = format!("job timed out after {}s", JOB_TIMEOUT_SECS);
-                let backoff = retry_backoff_secs(job.attempt_count);
-                db::mark_job_failed_or_retry(&conn, job.id, &lease_owner, &msg, backoff)?;
-                crate::log::warn(
-                    "worker",
-                    &format!("job id={} timeout (retry in {}s)", job.id, backoff),
-                );
-            }
+            continue;
         }
+
+        if crate::extraction_worker::run_next(
+            &lease_owner,
+            JOB_LEASE_SECS,
+            EXTRACTION_TASK_TIMEOUT_SECS,
+        )
+        .await?
+        {
+            continue;
+        }
+
+        if once {
+            break;
+        }
+        sleep(Duration::from_millis(idle_sleep_ms.max(100))).await;
+        continue;
     }
 
     if !once {
@@ -611,6 +634,47 @@ EOF
 
         let _ = std::fs::remove_file(&stub_codex);
         test_result
+    }
+
+    #[tokio::test]
+    async fn worker_marks_unimplemented_extraction_task_failed() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-extraction-unimplemented");
+        let conn = db::open_db()?;
+        let outcome = db::record_captured_event(
+            &conn,
+            &db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-extract",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: r#"{"session_id":"sess-extract"}"#,
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+        let task_id = outcome
+            .extraction_task_id
+            .expect("capture should coalesce extraction task");
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let (status, attempts, last_error): (String, i64, Option<String>) = conn.query_row(
+            "SELECT status, attempts, last_error FROM extraction_tasks WHERE id = ?1",
+            params![task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        anyhow::ensure!(status == "failed", "expected failed task, got {status}");
+        anyhow::ensure!(attempts == 1, "expected one attempt, got {attempts}");
+        anyhow::ensure!(
+            last_error
+                .as_deref()
+                .is_some_and(|err| err.contains("not implemented")),
+            "expected explicit unimplemented error"
+        );
+        Ok(())
     }
 
     #[tokio::test]

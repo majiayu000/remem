@@ -13,6 +13,7 @@ pub mod db;
 pub mod doctor;
 pub mod dream;
 pub mod eval;
+mod extraction_worker;
 pub mod git_util;
 pub mod identity;
 pub mod install;

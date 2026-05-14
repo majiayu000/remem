@@ -1,0 +1,94 @@
+use anyhow::Result;
+use tokio::time::Duration;
+
+use crate::db;
+
+enum ExtractionTaskOutcome {
+    PermanentFailure(String),
+}
+
+pub(crate) async fn run_next(
+    lease_owner: &str,
+    lease_secs: i64,
+    timeout_secs: u64,
+) -> Result<bool> {
+    let mut conn = db::open_db()?;
+    let Some(task) = db::claim_next_extraction_task(&mut conn, lease_owner, lease_secs)? else {
+        return Ok(false);
+    };
+
+    crate::log::info(
+        "worker",
+        &format!(
+            "claimed extraction id={} kind={} project={} attempt={}/{}",
+            task.id,
+            task.task_kind.as_str(),
+            task.project,
+            task.attempts + 1,
+            db::EXTRACTION_TASK_MAX_ATTEMPTS
+        ),
+    );
+
+    let timed = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        process_extraction_task(&task),
+    )
+    .await;
+    let conn = db::open_db()?;
+    match timed {
+        Ok(Ok(ExtractionTaskOutcome::PermanentFailure(msg))) => {
+            db::mark_extraction_task_failed(&conn, task.id, lease_owner, &msg)?;
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "extraction id={} failed permanently: {}",
+                    task.id,
+                    crate::db::truncate_str(&msg, 300)
+                ),
+            );
+        }
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            let backoff = retry_backoff_secs(task.attempts);
+            db::mark_extraction_task_failed_or_retry(&conn, task.id, lease_owner, &msg, backoff)?;
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "extraction id={} failed: {} (retry in {}s)",
+                    task.id,
+                    crate::db::truncate_str(&msg, 300),
+                    backoff
+                ),
+            );
+        }
+        Err(_) => {
+            let msg = format!("extraction task timed out after {}s", timeout_secs);
+            let backoff = retry_backoff_secs(task.attempts);
+            db::mark_extraction_task_failed_or_retry(&conn, task.id, lease_owner, &msg, backoff)?;
+            crate::log::warn(
+                "worker",
+                &format!("extraction id={} timeout (retry in {}s)", task.id, backoff),
+            );
+        }
+    }
+
+    Ok(true)
+}
+
+async fn process_extraction_task(task: &db::ExtractionTask) -> Result<ExtractionTaskOutcome> {
+    Ok(ExtractionTaskOutcome::PermanentFailure(format!(
+        "extraction task kind '{}' is not implemented",
+        task.task_kind.as_str()
+    )))
+}
+
+fn retry_backoff_secs(attempt: i64) -> i64 {
+    match attempt {
+        0 => 5,
+        1 => 15,
+        2 => 45,
+        3 => 120,
+        4 => 300,
+        _ => 900,
+    }
+}

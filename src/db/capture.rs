@@ -23,6 +23,17 @@ impl ExtractionTaskKind {
         }
     }
 
+    pub fn from_db(raw: &str) -> Result<Self> {
+        match raw {
+            "session_rollup" => Ok(Self::SessionRollup),
+            "observation_extract" => Ok(Self::ObservationExtract),
+            "memory_candidate" => Ok(Self::MemoryCandidate),
+            "rule_candidate" => Ok(Self::RuleCandidate),
+            "index_update" => Ok(Self::IndexUpdate),
+            _ => bail!("unknown extraction task kind: {raw}"),
+        }
+    }
+
     fn priority(self) -> i64 {
         match self {
             Self::SessionRollup => 10,
