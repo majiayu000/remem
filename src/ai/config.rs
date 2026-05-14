@@ -26,3 +26,9 @@ pub(super) fn get_codex_model() -> Option<String> {
         .ok()
         .filter(|model| !model.trim().is_empty())
 }
+
+pub(super) fn get_codex_reasoning_effort() -> Option<String> {
+    std::env::var("REMEM_CODEX_REASONING_EFFORT")
+        .ok()
+        .filter(|effort| !effort.trim().is_empty())
+}

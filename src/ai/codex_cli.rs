@@ -4,12 +4,13 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use crate::ai::config::{get_codex_model, get_codex_path};
+use crate::ai::config::{get_codex_model, get_codex_path, get_codex_reasoning_effort};
 use crate::ai::types::{AiCallResult, AI_TIMEOUT_SECS};
 
 pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<AiCallResult> {
     let codex = get_codex_path();
     let model = get_codex_model();
+    let reasoning_effort = get_codex_reasoning_effort();
     let output_path = std::env::temp_dir().join(format!(
         "remem-codex-summary-{}-{}.txt",
         std::process::id(),
@@ -19,7 +20,11 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
     let working_dir = super::stable_working_dir();
 
     let mut command = Command::new(&codex);
-    command.args(build_codex_args(&output_path, model.as_deref()));
+    command.args(build_codex_args(
+        &output_path,
+        model.as_deref(),
+        reasoning_effort.as_deref(),
+    ));
     command
         .current_dir(&working_dir)
         .env("REMEM_DISABLE_HOOKS", "1")
@@ -76,7 +81,11 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
     })
 }
 
-fn build_codex_args(output_path: &Path, model: Option<&str>) -> Vec<OsString> {
+fn build_codex_args(
+    output_path: &Path,
+    model: Option<&str>,
+    reasoning_effort: Option<&str>,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "--ask-for-approval",
         "never",
@@ -97,6 +106,13 @@ fn build_codex_args(output_path: &Path, model: Option<&str>) -> Vec<OsString> {
     if let Some(model) = model {
         args.push(OsString::from("--model"));
         args.push(OsString::from(model));
+    }
+    if let Some(reasoning_effort) = reasoning_effort {
+        args.push(OsString::from("-c"));
+        args.push(OsString::from(format!(
+            "model_reasoning_effort=\"{}\"",
+            reasoning_effort
+        )));
     }
     args.push(OsString::from("-"));
     args
@@ -120,7 +136,11 @@ mod tests {
 
     #[test]
     fn codex_args_put_global_approval_before_exec() {
-        let args = build_codex_args(Path::new("/tmp/remem-out.txt"), Some("gpt-test"));
+        let args = build_codex_args(
+            Path::new("/tmp/remem-out.txt"),
+            Some("gpt-test"),
+            Some("low"),
+        );
         let rendered: Vec<String> = args
             .iter()
             .map(|arg| arg.to_string_lossy().to_string())
@@ -137,6 +157,12 @@ mod tests {
             rendered
                 .windows(2)
                 .any(|pair| pair[0] == "--model" && pair[1] == "gpt-test"),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered
+                .windows(2)
+                .any(|pair| pair[0] == "-c" && pair[1] == "model_reasoning_effort=\"low\""),
             "{rendered:?}"
         );
         assert_eq!(rendered.last().map(String::as_str), Some("-"));
