@@ -158,11 +158,13 @@ fn resolve_hook_host() -> String {
             return host;
         }
     }
-    if let Ok(executor) = std::env::var("REMEM_SUMMARY_EXECUTOR") {
-        match executor.as_str() {
-            "codex-cli" => return "codex-cli".to_string(),
-            "claude-cli" => return "claude-code".to_string(),
-            _ => {}
+    for key in ["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"] {
+        if let Ok(executor) = std::env::var(key) {
+            match executor.as_str() {
+                "codex-cli" | "codex" => return "codex-cli".to_string(),
+                "claude-cli" | "claude" | "cli" => return "claude-code".to_string(),
+                _ => {}
+            }
         }
     }
     "unknown".to_string()
@@ -227,7 +229,7 @@ mod tests {
 
     use super::{
         configure_worker_executor_env, enqueue_summary_jobs, record_summary_capture_event,
-        should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
+        resolve_hook_host, should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -298,6 +300,36 @@ mod tests {
 
                 assert_eq!(command_env(&command, "REMEM_SUMMARY_EXECUTOR"), None);
                 assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
+            },
+        );
+    }
+
+    #[test]
+    fn hook_host_uses_global_executor_when_summary_override_is_missing() {
+        with_env_vars(
+            &[
+                ("REMEM_HOOK_HOST", None),
+                ("REMEM_CONTEXT_HOST", None),
+                ("REMEM_SUMMARY_EXECUTOR", None),
+                ("REMEM_EXECUTOR", Some("codex-cli")),
+            ],
+            || {
+                assert_eq!(resolve_hook_host(), "codex-cli");
+            },
+        );
+    }
+
+    #[test]
+    fn hook_host_prefers_summary_executor_over_global_executor() {
+        with_env_vars(
+            &[
+                ("REMEM_HOOK_HOST", None),
+                ("REMEM_CONTEXT_HOST", None),
+                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
+                ("REMEM_EXECUTOR", Some("codex-cli")),
+            ],
+            || {
+                assert_eq!(resolve_hook_host(), "claude-code");
             },
         );
     }
