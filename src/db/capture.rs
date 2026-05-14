@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 const DIRECT_CONTENT_BYTES: usize = 16 * 1024;
@@ -132,7 +132,7 @@ fn upsert_identity(
     input: &CaptureEventInput<'_>,
     now: i64,
 ) -> Result<IdentityIds> {
-    let host_id = upsert_host(conn, normalize_host(input.host), now)?;
+    let host_id = upsert_host(conn, normalize_host(input.host)?, now)?;
     let root_path = input
         .cwd
         .map(|cwd| crate::db::canonical_project_path(cwd).display().to_string())
@@ -156,10 +156,10 @@ fn upsert_identity(
     })
 }
 
-fn normalize_host(host: &str) -> &str {
+fn normalize_host(host: &str) -> Result<&str> {
     match host {
-        "claude-code" | "codex-cli" => host,
-        _ => "unknown",
+        "claude-code" | "codex-cli" => Ok(host),
+        other => bail!("invalid capture host '{other}'; expected claude-code or codex-cli"),
     }
 }
 
@@ -460,5 +460,27 @@ mod tests {
         assert_eq!(retention, "raw_compact");
         assert!(blob_id.is_some());
         assert_eq!(blob_count, 1);
+    }
+
+    #[test]
+    fn capture_rejects_unknown_host() {
+        let conn = setup_conn();
+        let err = record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "unknown",
+                session_id: "sess-host",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Task"),
+                content: "{}",
+                task_kind: None,
+            },
+        )
+        .expect_err("unknown host should fail closed");
+
+        assert!(err.to_string().contains("invalid capture host"));
     }
 }

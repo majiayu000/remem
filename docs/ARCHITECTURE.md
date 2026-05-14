@@ -42,9 +42,9 @@
 Codex legacy `PostToolUse(Bash)` observe hooks are treated as opt-in only:
 they are skipped unless `REMEM_ENABLE_CODEX_BASH_OBSERVE=1` is set. This keeps
 Bash-heavy sessions from creating an unbounded pending-observation backlog
-before the v2 coalesced capture path is enabled.
+before the coalesced capture path is enabled.
 
-The v2 capture path is now present in the main database as a first production
+The capture path is now present in the main database as a first production
 slice: hooks write append-only `captured_events`, large evidence goes to
 `event_blobs`, and `extraction_tasks` coalesces pending extraction by
 host/project/session/task kind. This ledger is evidence and scheduling state;

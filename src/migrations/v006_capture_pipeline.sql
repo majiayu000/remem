@@ -1,7 +1,7 @@
 -- v006_capture_pipeline: append-only capture ledger + coalesced extraction tasks.
--- This is the first production slice of the v2 memory design. It keeps raw
--- events and task scheduling separate from the legacy pending_observations
--- queue so high-frequency tools cannot create one LLM job per event.
+-- This is the first production slice of the memory pipeline. It keeps raw
+-- events and task scheduling separate from pending_observations so high-frequency
+-- tools cannot create one LLM job per event.
 
 CREATE TABLE IF NOT EXISTS hosts (
     id INTEGER PRIMARY KEY,
@@ -146,5 +146,4 @@ CREATE INDEX IF NOT EXISTS idx_rule_candidates_review
 
 INSERT OR IGNORE INTO hosts(name, enabled, created_at_epoch) VALUES
     ('claude-code', 1, strftime('%s', 'now')),
-    ('codex-cli', 1, strftime('%s', 'now')),
-    ('unknown', 1, strftime('%s', 'now'));
+    ('codex-cli', 1, strftime('%s', 'now'));
