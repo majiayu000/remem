@@ -5,6 +5,7 @@ use crate::db;
 
 enum ExtractionTaskOutcome {
     Deferred(String),
+    Done,
 }
 
 pub(crate) async fn run_next(
@@ -36,6 +37,15 @@ pub(crate) async fn run_next(
     .await;
     let conn = db::open_db()?;
     match timed {
+        Ok(Ok(ExtractionTaskOutcome::Done)) => {
+            db::mark_extraction_task_done(
+                &conn,
+                task.id,
+                lease_owner,
+                task.high_watermark_event_id,
+            )?;
+            crate::log::info("worker", &format!("done extraction id={}", task.id));
+        }
         Ok(Ok(ExtractionTaskOutcome::Deferred(msg))) => {
             let backoff = retry_backoff_secs(task.attempts);
             db::defer_extraction_task(&conn, task.id, lease_owner, &msg, backoff)?;
@@ -78,10 +88,16 @@ pub(crate) async fn run_next(
 }
 
 async fn process_extraction_task(task: &db::ExtractionTask) -> Result<ExtractionTaskOutcome> {
-    Ok(ExtractionTaskOutcome::Deferred(format!(
-        "extraction task kind '{}' is not implemented",
-        task.task_kind.as_str()
-    )))
+    match task.task_kind {
+        db::ExtractionTaskKind::SessionRollup => {
+            crate::session_rollup::process(task).await?;
+            Ok(ExtractionTaskOutcome::Done)
+        }
+        _ => Ok(ExtractionTaskOutcome::Deferred(format!(
+            "extraction task kind '{}' is not implemented",
+            task.task_kind.as_str()
+        ))),
+    }
 }
 
 fn retry_backoff_secs(attempt: i64) -> i64 {

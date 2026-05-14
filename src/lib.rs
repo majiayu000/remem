@@ -24,6 +24,7 @@ pub mod migrate;
 pub mod observe;
 pub mod project_id;
 pub mod retrieval;
+mod session_rollup;
 pub mod summarize;
 pub mod timeline;
 pub mod worker;
