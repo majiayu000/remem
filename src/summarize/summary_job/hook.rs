@@ -23,26 +23,14 @@ pub async fn summarize() -> Result<()> {
     let Some(session_id) = &hook.session_id else {
         return Ok(());
     };
-    let cwd = hook.cwd.as_deref().unwrap_or(".");
-    let project = db::project_from_cwd(cwd);
+    let cwd = effective_cwd(&hook)?;
+    let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host();
     let conn = db::open_db()?;
+    let summary_payload = summary_payload_with_cwd(&input, &cwd)?;
 
-    db::record_captured_event(
-        &conn,
-        &db::CaptureEventInput {
-            host: &host,
-            session_id,
-            project: &project,
-            cwd: Some(cwd),
-            event_type: "session_stop",
-            role: None,
-            tool_name: None,
-            content: &input,
-            task_kind: Some(db::ExtractionTaskKind::SessionRollup),
-        },
-    )?;
-    enqueue_summary_jobs(&conn, &host, session_id, &project, &input)?;
+    record_summary_capture_event(&conn, &host, session_id, &project, &cwd, &summary_payload);
+    enqueue_summary_jobs(&conn, &host, session_id, &project, &summary_payload)?;
     if should_spawn_worker_once(&conn)? {
         spawn_worker_once()?;
     } else {
@@ -52,6 +40,67 @@ pub async fn summarize() -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn effective_cwd(hook: &SummarizeInput) -> Result<String> {
+    if let Some(cwd) = hook.cwd.as_deref().filter(|cwd| !cwd.trim().is_empty()) {
+        return Ok(cwd.to_string());
+    }
+    Ok(std::env::current_dir()?.display().to_string())
+}
+
+fn summary_payload_with_cwd(input: &str, cwd: &str) -> Result<String> {
+    let mut payload: serde_json::Value = serde_json::from_str(input)?;
+    let Some(obj) = payload.as_object_mut() else {
+        return Ok(input.to_string());
+    };
+    let needs_cwd = obj
+        .get("cwd")
+        .and_then(|value| value.as_str())
+        .is_none_or(|value| value.trim().is_empty());
+    if needs_cwd {
+        obj.insert(
+            "cwd".to_string(),
+            serde_json::Value::String(cwd.to_string()),
+        );
+    }
+    Ok(serde_json::to_string(&payload)?)
+}
+
+fn record_summary_capture_event(
+    conn: &rusqlite::Connection,
+    host: &str,
+    session_id: &str,
+    project: &str,
+    cwd: &str,
+    content: &str,
+) -> bool {
+    match db::record_captured_event(
+        conn,
+        &db::CaptureEventInput {
+            host,
+            session_id,
+            project,
+            cwd: Some(cwd),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content,
+            task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+        },
+    ) {
+        Ok(_) => true,
+        Err(err) => {
+            crate::log::warn(
+                "summarize",
+                &format!(
+                    "capture ledger record failed; continuing summary enqueue: {}",
+                    err
+                ),
+            );
+            false
+        }
+    }
 }
 
 fn enqueue_summary_jobs(
@@ -177,8 +226,8 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        configure_worker_executor_env, enqueue_summary_jobs, should_spawn_worker_once,
-        stable_worker_dir,
+        configure_worker_executor_env, enqueue_summary_jobs, record_summary_capture_event,
+        should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -251,6 +300,55 @@ mod tests {
                 assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
             },
         );
+    }
+
+    #[test]
+    fn summary_payload_with_cwd_fills_missing_cwd() {
+        let payload = summary_payload_with_cwd(r#"{"session_id":"sess-cwd"}"#, "/tmp/project")
+            .expect("payload should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&payload).expect("payload should parse");
+
+        assert_eq!(parsed["session_id"].as_str(), Some("sess-cwd"));
+        assert_eq!(parsed["cwd"].as_str(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn summary_payload_with_cwd_preserves_existing_cwd() {
+        let payload =
+            summary_payload_with_cwd(r#"{"session_id":"sess-cwd","cwd":"/repo"}"#, "/tmp/project")
+                .expect("payload should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&payload).expect("payload should parse");
+
+        assert_eq!(parsed["cwd"].as_str(), Some("/repo"));
+    }
+
+    #[test]
+    fn capture_ledger_failure_does_not_block_legacy_summary_hook() {
+        let _test_dir = ScopedTestDataDir::new("summary-legacy-unknown-host");
+        let conn = db::open_db().expect("db should open");
+
+        let captured = record_summary_capture_event(
+            &conn,
+            "unknown",
+            "sess-legacy",
+            "/tmp/remem",
+            "/tmp/remem",
+            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
+        );
+        enqueue_summary_jobs(
+            &conn,
+            "unknown",
+            "sess-legacy",
+            "/tmp/remem",
+            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
+        )
+        .expect("legacy summary jobs should still enqueue");
+
+        assert!(!captured);
+        let jobs = job_types(&conn);
+        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
     }
 
     #[test]
