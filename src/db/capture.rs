@@ -34,11 +34,11 @@ impl ExtractionTaskKind {
         }
     }
 
-    fn priority(self) -> i64 {
+    pub(crate) fn priority(self) -> i64 {
         match self {
             Self::SessionRollup => 10,
-            Self::MemoryCandidate => 20,
-            Self::ObservationExtract => 40,
+            Self::ObservationExtract => 20,
+            Self::MemoryCandidate => 40,
             Self::RuleCandidate => 60,
             Self::IndexUpdate => 80,
         }

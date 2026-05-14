@@ -572,7 +572,7 @@ mod tests {
                 role: None,
                 tool_name: Some("Bash"),
                 content: r#"{"tool_name":"Bash"}"#,
-                task_kind: Some(db::ExtractionTaskKind::MemoryCandidate),
+                task_kind: Some(db::ExtractionTaskKind::RuleCandidate),
             },
         )?;
         let task_id = outcome
@@ -734,6 +734,11 @@ mod tests {
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
+            let unfinished_tasks: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM extraction_tasks WHERE status != 'done'",
+                [],
+                |row| row.get(0),
+            )?;
 
             anyhow::ensure!(status == "done", "expected done task, got {status}");
             anyhow::ensure!(cursor == high_watermark, "expected cursor to advance");
@@ -742,6 +747,10 @@ mod tests {
                 "expected stub observation text"
             );
             anyhow::ensure!(evidence.contains('1'), "expected captured event evidence");
+            anyhow::ensure!(
+                unfinished_tasks == 0,
+                "expected all extraction follow-up tasks done"
+            );
             Ok::<(), anyhow::Error>(())
         }
         .await;
