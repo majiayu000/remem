@@ -166,6 +166,10 @@ remem status
 remem pending list-failed
 remem pending retry-failed
 remem pending purge-failed
+remem review list
+remem review approve <id>
+remem review discard <id>
+remem review edit <id> --text "updated memory"
 remem preferences list
 remem preferences add "text"
 remem preferences remove 42
