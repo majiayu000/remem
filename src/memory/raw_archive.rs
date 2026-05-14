@@ -175,6 +175,7 @@ fn extract_message_text(value: &serde_json::Value) -> String {
 pub struct RawSearchRequest {
     pub query: String,
     pub project: Option<String>,
+    pub branch: Option<String>,
     pub role: Option<String>,
     pub limit: i64,
     pub offset: i64,
@@ -201,6 +202,11 @@ pub fn search_raw_messages(conn: &Connection, req: &RawSearchRequest) -> Result<
         sql.push_str(" AND r.project = ?");
         sql.push_str(&(binds.len() + 1).to_string());
         binds.push(Box::new(project.to_string()));
+    }
+    if let Some(branch) = req.branch.as_deref() {
+        let idx = binds.len() + 1;
+        sql.push_str(&format!(" AND (r.branch = ?{idx} OR r.branch IS NULL)"));
+        binds.push(Box::new(branch.to_string()));
     }
     if let Some(role) = req.role.as_deref() {
         sql.push_str(" AND r.role = ?");
@@ -335,6 +341,7 @@ mod tests {
             &RawSearchRequest {
                 query: "RackNerd".to_string(),
                 project: Some("/proj".to_string()),
+                branch: None,
                 role: None,
                 limit: 10,
                 offset: 0,
@@ -343,5 +350,64 @@ mod tests {
         .unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].content.contains("RackNerd"));
+    }
+
+    #[test]
+    fn search_branch_filter_keeps_matching_and_branchless_raw_messages() {
+        let conn = setup_conn();
+        insert_raw_message(
+            &conn,
+            "s-main",
+            "/proj",
+            ROLE_USER,
+            "shared needle on main",
+            SOURCE_HOOK,
+            Some("main"),
+            None,
+        )
+        .unwrap();
+        insert_raw_message(
+            &conn,
+            "s-feature",
+            "/proj",
+            ROLE_USER,
+            "shared needle on feature",
+            SOURCE_HOOK,
+            Some("feature"),
+            None,
+        )
+        .unwrap();
+        insert_raw_message(
+            &conn,
+            "s-branchless",
+            "/proj",
+            ROLE_USER,
+            "shared needle without branch",
+            SOURCE_HOOK,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let hits = search_raw_messages(
+            &conn,
+            &RawSearchRequest {
+                query: "needle".to_string(),
+                project: Some("/proj".to_string()),
+                branch: Some("main".to_string()),
+                role: None,
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .unwrap();
+        let branches: Vec<Option<String>> = hits.into_iter().map(|hit| hit.branch).collect();
+
+        assert!(branches.contains(&Some("main".to_string())));
+        assert!(branches.contains(&None));
+        assert!(
+            !branches.contains(&Some("feature".to_string())),
+            "{branches:?}"
+        );
     }
 }

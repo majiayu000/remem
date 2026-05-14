@@ -163,7 +163,7 @@ fn enable_codex_hooks(doc: &mut DocumentMut) -> Result<()> {
         .or_insert(Item::Table(Table::new()))
         .as_table_mut()
         .context("features 存在但不是 table，拒绝覆盖")?;
-    features.remove("codex_hooks");
+    features["codex_hooks"] = value(true);
     features["hooks"] = value(true);
     Ok(())
 }
@@ -271,11 +271,11 @@ startup_timeout_sec = 5
         let rendered = doc.to_string();
         assert!(rendered.contains("[features]"), "{rendered}");
         assert!(rendered.contains("hooks = true"), "{rendered}");
-        assert!(!rendered.contains("codex_hooks"), "{rendered}");
+        assert!(rendered.contains("codex_hooks = true"), "{rendered}");
     }
 
     #[test]
-    fn enable_codex_hooks_removes_deprecated_feature_flag() {
+    fn enable_codex_hooks_preserves_legacy_alias_for_old_codex_clients() {
         let mut doc: DocumentMut = r#"[features]
 codex_hooks = true
 "#
@@ -284,7 +284,7 @@ codex_hooks = true
         enable_codex_hooks(&mut doc).unwrap();
         let rendered = doc.to_string();
         assert!(rendered.contains("hooks = true"), "{rendered}");
-        assert!(!rendered.contains("codex_hooks"), "{rendered}");
+        assert!(rendered.contains("codex_hooks = true"), "{rendered}");
     }
 
     #[test]

@@ -96,6 +96,7 @@ fn maybe_fallback_raw(
     let raw_req = crate::memory::raw_archive::RawSearchRequest {
         query: query.to_string(),
         project: req.project.clone(),
+        branch: req.branch.clone(),
         role: None,
         limit: RAW_FALLBACK_LIMIT,
         offset: 0,
@@ -106,5 +107,71 @@ fn maybe_fallback_raw(
             crate::log::warn("search", &format!("raw archive fallback failed: {}", error));
             vec![]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
+
+    #[test]
+    fn raw_fallback_respects_branch_filter() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&conn).unwrap();
+        insert_raw_message(
+            &conn,
+            "s-main",
+            "/repo",
+            ROLE_USER,
+            "fallback needle from main",
+            SOURCE_HOOK,
+            Some("main"),
+            None,
+        )
+        .unwrap();
+        insert_raw_message(
+            &conn,
+            "s-feature",
+            "/repo",
+            ROLE_USER,
+            "fallback needle from feature",
+            SOURCE_HOOK,
+            Some("feature"),
+            None,
+        )
+        .unwrap();
+        insert_raw_message(
+            &conn,
+            "s-branchless",
+            "/repo",
+            ROLE_USER,
+            "fallback needle from branchless history",
+            SOURCE_HOOK,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let result = search_memories(
+            &conn,
+            &SearchRequest {
+                query: Some("needle".to_string()),
+                project: Some("/repo".to_string()),
+                limit: 10,
+                branch: Some("main".to_string()),
+                ..SearchRequest::default()
+            },
+        )
+        .unwrap();
+        let branches: Vec<Option<String>> =
+            result.raw_hits.into_iter().map(|hit| hit.branch).collect();
+
+        assert!(branches.contains(&Some("main".to_string())));
+        assert!(branches.contains(&None));
+        assert!(
+            !branches.contains(&Some("feature".to_string())),
+            "{branches:?}"
+        );
     }
 }

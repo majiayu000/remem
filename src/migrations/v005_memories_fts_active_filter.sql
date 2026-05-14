@@ -28,12 +28,12 @@ END;
 
 CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, title, content)
-    VALUES ('delete', old.id, old.title, old.content);
+    SELECT 'delete', old.id, old.title, old.content WHERE old.status = 'active';
 END;
 
 CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, title, content)
-    VALUES ('delete', old.id, old.title, old.content);
+    SELECT 'delete', old.id, old.title, old.content WHERE old.status = 'active';
     INSERT INTO memories_fts(rowid, title, content)
     SELECT new.id, new.title, new.content WHERE new.status = 'active';
 END;

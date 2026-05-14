@@ -23,9 +23,10 @@ impl MemoryServer {
         crate::log::info(
             "mcp",
             &format!(
-                "search_raw called query={:?} project={:?} role={:?} limit={} offset={}",
+                "search_raw called query={:?} project={:?} branch={:?} role={:?} limit={} offset={}",
                 params.query,
                 params.project,
+                params.branch,
                 params.role,
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
@@ -35,6 +36,7 @@ impl MemoryServer {
             let req = raw_archive::RawSearchRequest {
                 query: params.query.clone(),
                 project: params.project.clone(),
+                branch: params.branch.clone(),
                 role: params.role.clone(),
                 limit: params.limit.unwrap_or(20),
                 offset: params.offset.unwrap_or(0),

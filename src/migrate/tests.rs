@@ -408,6 +408,50 @@ fn memory_cols_all_present_after_migration() -> Result<()> {
 }
 
 #[test]
+fn memories_fts_active_filter_ignores_non_active_delete_and_update() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+
+    conn.execute(
+        "INSERT INTO memories(id, project, title, content, memory_type, created_at_epoch,
+            updated_at_epoch, status)
+         VALUES (1, 'proj', 'stale title', 'stale body needle', 'discovery', 100, 100, 'stale')",
+        [],
+    )?;
+    conn.execute("DELETE FROM memories WHERE id = 1", [])?;
+
+    conn.execute(
+        "INSERT INTO memories(id, project, title, content, memory_type, created_at_epoch,
+            updated_at_epoch, status)
+         VALUES (2, 'proj', 'promoted title', 'promoted body needle', 'discovery', 100, 100, 'stale')",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE memories SET status = 'active', updated_at_epoch = 200 WHERE id = 2",
+        [],
+    )?;
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'promoted'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 1);
+
+    conn.execute(
+        "UPDATE memories SET status = 'stale', updated_at_epoch = 300 WHERE id = 2",
+        [],
+    )?;
+    let stale_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'promoted'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stale_count, 0);
+
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     run_migrations(&conn)?;
