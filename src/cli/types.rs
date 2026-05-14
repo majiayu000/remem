@@ -63,6 +63,10 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: PendingAction,
     },
+    Review {
+        #[command(subcommand)]
+        action: ReviewAction,
+    },
     Status,
     Doctor {
         /// Emit a single JSON object with per-check status. Stable shape;
@@ -186,5 +190,32 @@ pub(in crate::cli) enum PendingAction {
         project: Option<String>,
         #[arg(long, default_value = "7")]
         older_than_days: i64,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ReviewAction {
+    List {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+    },
+    Approve {
+        id: i64,
+    },
+    Discard {
+        id: i64,
+    },
+    Edit {
+        id: i64,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long = "topic-key")]
+        topic_key: Option<String>,
+        #[arg(long = "type")]
+        memory_type: Option<String>,
+        #[arg(long)]
+        scope: Option<String>,
     },
 }

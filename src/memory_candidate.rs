@@ -46,13 +46,13 @@ struct ObservationBatch {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct ParsedMemoryCandidate {
-    scope: String,
-    memory_type: String,
-    topic_key: String,
-    text: String,
-    confidence: f64,
-    risk_class: String,
+pub(super) struct ParsedMemoryCandidate {
+    pub(super) scope: String,
+    pub(super) memory_type: String,
+    pub(super) topic_key: String,
+    pub(super) text: String,
+    pub(super) confidence: f64,
+    pub(super) risk_class: String,
 }
 
 pub(crate) async fn process(task: &db::ExtractionTask) -> Result<MemoryCandidateResult> {
@@ -235,7 +235,7 @@ fn persist_candidates(
         summary.candidates += 1;
 
         if review_status == "auto_promoted" {
-            promote_candidate(&tx, task, candidate_id, candidate, &evidence_json)?;
+            promote_task_candidate(&tx, task, candidate_id, candidate, &evidence_json)?;
             summary.promoted += 1;
         } else {
             summary.pending_review += 1;
@@ -279,18 +279,37 @@ fn candidate_exists(
     Ok(existing.is_some())
 }
 
-fn promote_candidate(
+fn promote_task_candidate(
     conn: &Connection,
     task: &db::ExtractionTask,
     candidate_id: i64,
     candidate: &ParsedMemoryCandidate,
     evidence_json: &str,
 ) -> Result<()> {
-    let title = candidate_title(candidate);
-    let memory_id = crate::memory::insert_memory_full(
+    promote_candidate_to_memory(
         conn,
         task.session_id.as_deref(),
         &task.project,
+        candidate_id,
+        candidate,
+        evidence_json,
+    )?;
+    Ok(())
+}
+
+pub(super) fn promote_candidate_to_memory(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project: &str,
+    candidate_id: i64,
+    candidate: &ParsedMemoryCandidate,
+    evidence_json: &str,
+) -> Result<i64> {
+    let title = candidate_title(candidate);
+    let memory_id = crate::memory::insert_memory_full(
+        conn,
+        session_id,
+        project,
         Some(&candidate.topic_key),
         &title,
         &candidate.text,
@@ -305,10 +324,10 @@ fn promote_candidate(
          SET evidence_event_ids = ?1,
              source_candidate_id = ?2,
              confidence = ?3
-         WHERE id = ?4",
+        WHERE id = ?4",
         params![evidence_json, candidate_id, candidate.confidence, memory_id],
     )?;
-    Ok(())
+    Ok(memory_id)
 }
 
 fn should_auto_promote(candidate: &ParsedMemoryCandidate) -> bool {
@@ -397,14 +416,14 @@ fn required_field(content: &str, field: &str) -> Result<String> {
         .with_context(|| format!("malformed memory_candidate output: missing <{field}>"))
 }
 
-fn normalize_scope(raw: &str) -> Result<String> {
+pub(super) fn normalize_scope(raw: &str) -> Result<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "global" | "workspace" | "project" => Ok(raw.trim().to_ascii_lowercase()),
         other => bail!("malformed memory_candidate output: invalid scope '{other}'"),
     }
 }
 
-fn normalize_memory_type(raw: &str) -> Result<String> {
+pub(super) fn normalize_memory_type(raw: &str) -> Result<String> {
     let value = raw.trim().to_ascii_lowercase();
     if crate::memory::MEMORY_TYPES.contains(&value.as_str()) && value != "session_activity" {
         Ok(value)
@@ -413,7 +432,7 @@ fn normalize_memory_type(raw: &str) -> Result<String> {
     }
 }
 
-fn normalize_topic_key(raw: &str) -> Result<String> {
+pub(super) fn normalize_topic_key(raw: &str) -> Result<String> {
     let value = crate::memory::slugify_for_topic(raw.trim(), 96);
     if value.is_empty() {
         bail!("malformed memory_candidate output: empty topic_key");
@@ -421,14 +440,14 @@ fn normalize_topic_key(raw: &str) -> Result<String> {
     Ok(value)
 }
 
-fn normalize_risk_class(raw: &str) -> Result<String> {
+pub(super) fn normalize_risk_class(raw: &str) -> Result<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "low" | "medium" | "high" => Ok(raw.trim().to_ascii_lowercase()),
         other => bail!("malformed memory_candidate output: invalid risk_class '{other}'"),
     }
 }
 
-fn parse_confidence(raw: &str) -> Result<f64> {
+pub(super) fn parse_confidence(raw: &str) -> Result<f64> {
     let confidence: f64 = raw
         .trim()
         .parse()
@@ -446,6 +465,8 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
         .windows(needle.len())
         .position(|window| window.eq_ignore_ascii_case(needle))
 }
+
+pub(crate) mod review;
 
 #[cfg(test)]
 mod tests {
