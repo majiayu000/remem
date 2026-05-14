@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{Connection, OpenFlags};
+use std::collections::HashSet;
 use std::path::Path;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -38,11 +39,15 @@ pub fn import_memories(source_path: &Path, schema_conn: &Connection) -> Result<I
             .with_context(|| format!("reopen unencrypted source {}", source_path.display()))?;
     }
 
-    let mut stmt = source.prepare(
-        "SELECT id, project, topic_key, title, content, memory_type, scope, status,
+    let columns = table_columns(&source, "memories")?;
+    let scope_expr = optional_column_or_literal(&columns, "scope", "'project'");
+    let status_expr = optional_column_or_literal(&columns, "status", "'active'");
+    let query = format!(
+        "SELECT id, project, topic_key, title, content, memory_type, {scope_expr}, {status_expr},
                 created_at_epoch, updated_at_epoch
-         FROM memories",
-    )?;
+         FROM memories"
+    );
+    let mut stmt = source.prepare(&query)?;
     let mut rows = stmt.query([])?;
 
     let mut stats = ImportStats::default();
@@ -110,6 +115,24 @@ pub fn import_memories(source_path: &Path, schema_conn: &Connection) -> Result<I
         }
     }
     Ok(stats)
+}
+
+fn table_columns(conn: &Connection, table: &str) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut columns = HashSet::new();
+    for row in rows {
+        columns.insert(row?);
+    }
+    Ok(columns)
+}
+
+fn optional_column_or_literal(columns: &HashSet<String>, column: &str, literal: &str) -> String {
+    if columns.contains(column) {
+        column.to_string()
+    } else {
+        format!("{literal} AS {column}")
+    }
 }
 
 /// Returns `(project_id, workspace_inserted, project_inserted)`. Looks up
@@ -202,6 +225,28 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'active',
                 branch TEXT,
                 scope TEXT DEFAULT 'project'
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn create_pre_scope_source_db(path: &Path) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id INTEGER PRIMARY KEY,
+                session_id TEXT,
+                project TEXT NOT NULL,
+                topic_key TEXT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                files TEXT,
+                created_at_epoch INTEGER NOT NULL,
+                updated_at_epoch INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                branch TEXT
             );",
         )
         .unwrap();
@@ -305,6 +350,35 @@ mod tests {
             .query_row("SELECT project_id FROM memories", [], |r| r.get(0))
             .unwrap();
         assert_eq!(project_id, None);
+        cleanup(&source_path);
+        cleanup(&schema_path);
+    }
+
+    #[test]
+    fn pre_scope_source_defaults_imported_memories_to_project_scope() {
+        let source_path = unique_temp_path("source-pre-scope");
+        let schema_path = unique_temp_path("schema-pre-scope");
+        {
+            let source = create_pre_scope_source_db(&source_path);
+            source
+                .execute(
+                    "INSERT INTO memories(project, topic_key, title, content, memory_type,
+                      status, created_at_epoch, updated_at_epoch)
+                     VALUES ('/repo/old', 'legacy-topic', 'legacy title', 'legacy content',
+                      'discovery', 'active', 100, 200)",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let schema_conn = open_at(&schema_path).unwrap();
+        let stats = import_memories(&source_path, &schema_conn).unwrap();
+
+        assert_eq!(stats.memories_imported, 1);
+        let scope: String = schema_conn
+            .query_row("SELECT scope FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(scope, "project");
         cleanup(&source_path);
         cleanup(&schema_path);
     }

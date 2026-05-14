@@ -140,6 +140,10 @@ pub(super) struct SearchRawParams {
     pub query: String,
     #[schemars(description = "Project name filter")]
     pub project: Option<String>,
+    #[schemars(
+        description = "Git branch filter. Returns raw rows for this branch plus older rows without branch metadata."
+    )]
+    pub branch: Option<String>,
     #[schemars(description = "Role filter: 'user' or 'assistant' (default: both)")]
     pub role: Option<String>,
     #[schemars(description = "Max results to return (default 20)")]
