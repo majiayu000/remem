@@ -16,10 +16,12 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
     ));
     let prompt = build_prompt(system, user_message);
+    let working_dir = super::stable_working_dir();
 
     let mut command = Command::new(&codex);
     command.args(build_codex_args(&output_path, model.as_deref()));
     command
+        .current_dir(&working_dir)
         .env("REMEM_DISABLE_HOOKS", "1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())

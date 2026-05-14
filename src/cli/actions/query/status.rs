@@ -31,6 +31,17 @@ pub(in crate::cli) fn run_status() -> Result<()> {
     println!("  Sessions:      {:>6}", stats.session_summaries);
     println!("  Raw messages:  {:>6}", stats.raw_messages);
     println!();
+    println!("Capture pipeline:");
+    println!("  Captured:     {:>6}", stats.captured_events);
+    println!("  Extract todo: {:>6}", stats.pending_extraction_tasks);
+    println!("  Extract run:  {:>6}", stats.processing_extraction_tasks);
+    println!("  Extract fail: {:>6}", stats.failed_extraction_tasks);
+    println!("  Candidates:   {:>6}", stats.pending_memory_candidates);
+    if let Some(epoch) = stats.oldest_pending_extraction_epoch {
+        let age_secs = chrono::Utc::now().timestamp().saturating_sub(epoch);
+        println!("  Oldest task:  {:>6}s", age_secs);
+    }
+    println!();
     println!("Pending observations:");
     println!("  Ready:        {:>6}", stats.ready_pending_observations);
     println!("  Delayed:      {:>6}", stats.delayed_pending_observations);

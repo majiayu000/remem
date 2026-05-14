@@ -97,3 +97,21 @@ fn executor_from_env(key: &str) -> Option<AiExecutor> {
         _ => None,
     }
 }
+
+fn stable_working_dir() -> std::path::PathBuf {
+    let data_dir = crate::db::data_dir();
+    match std::fs::create_dir_all(&data_dir) {
+        Ok(()) => data_dir,
+        Err(err) => {
+            crate::log::warn(
+                "ai",
+                &format!(
+                    "failed to create AI working dir {}: {}; falling back to temp dir",
+                    data_dir.display(),
+                    err
+                ),
+            );
+            std::env::temp_dir()
+        }
+    }
+}

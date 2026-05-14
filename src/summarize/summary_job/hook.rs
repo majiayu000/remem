@@ -23,12 +23,14 @@ pub async fn summarize() -> Result<()> {
     let Some(session_id) = &hook.session_id else {
         return Ok(());
     };
-    let cwd = hook.cwd.as_deref().unwrap_or(".");
-    let project = db::project_from_cwd(cwd);
+    let cwd = effective_cwd(&hook)?;
+    let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host();
     let conn = db::open_db()?;
+    let summary_payload = summary_payload_with_cwd(&input, &cwd)?;
 
-    enqueue_summary_jobs(&conn, &host, session_id, &project, &input)?;
+    record_summary_capture_event(&conn, &host, session_id, &project, &cwd, &summary_payload);
+    enqueue_summary_jobs(&conn, &host, session_id, &project, &summary_payload)?;
     if should_spawn_worker_once(&conn)? {
         spawn_worker_once()?;
     } else {
@@ -40,6 +42,67 @@ pub async fn summarize() -> Result<()> {
     Ok(())
 }
 
+fn effective_cwd(hook: &SummarizeInput) -> Result<String> {
+    if let Some(cwd) = hook.cwd.as_deref().filter(|cwd| !cwd.trim().is_empty()) {
+        return Ok(cwd.to_string());
+    }
+    Ok(std::env::current_dir()?.display().to_string())
+}
+
+fn summary_payload_with_cwd(input: &str, cwd: &str) -> Result<String> {
+    let mut payload: serde_json::Value = serde_json::from_str(input)?;
+    let Some(obj) = payload.as_object_mut() else {
+        return Ok(input.to_string());
+    };
+    let needs_cwd = obj
+        .get("cwd")
+        .and_then(|value| value.as_str())
+        .is_none_or(|value| value.trim().is_empty());
+    if needs_cwd {
+        obj.insert(
+            "cwd".to_string(),
+            serde_json::Value::String(cwd.to_string()),
+        );
+    }
+    Ok(serde_json::to_string(&payload)?)
+}
+
+fn record_summary_capture_event(
+    conn: &rusqlite::Connection,
+    host: &str,
+    session_id: &str,
+    project: &str,
+    cwd: &str,
+    content: &str,
+) -> bool {
+    match db::record_captured_event(
+        conn,
+        &db::CaptureEventInput {
+            host,
+            session_id,
+            project,
+            cwd: Some(cwd),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content,
+            task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+        },
+    ) {
+        Ok(_) => true,
+        Err(err) => {
+            crate::log::warn(
+                "summarize",
+                &format!(
+                    "capture ledger record failed; continuing summary enqueue: {}",
+                    err
+                ),
+            );
+            false
+        }
+    }
+}
+
 fn enqueue_summary_jobs(
     conn: &rusqlite::Connection,
     host: &str,
@@ -47,20 +110,23 @@ fn enqueue_summary_jobs(
     project: &str,
     input: &str,
 ) -> Result<()> {
-    let obs_payload = serde_json::json!({
-        "host": host,
-        "session_id": session_id,
-        "project": project,
-    });
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Observation,
-        project,
-        Some(session_id),
-        &obs_payload.to_string(),
-        50,
-    )?;
+    let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
+    if ready_pending > 0 {
+        let obs_payload = serde_json::json!({
+            "host": host,
+            "session_id": session_id,
+            "project": project,
+        });
+        db::enqueue_job(
+            conn,
+            host,
+            db::JobType::Observation,
+            project,
+            Some(session_id),
+            &obs_payload.to_string(),
+            50,
+        )?;
+    }
     db::enqueue_job(
         conn,
         host,
@@ -74,8 +140,8 @@ fn enqueue_summary_jobs(
     crate::log::info(
         "summarize",
         &format!(
-            "QUEUED observation+summary session={} project={}",
-            session_id, project
+            "QUEUED summary session={} project={} observation_pending={}",
+            session_id, project, ready_pending
         ),
     );
     Ok(())
@@ -92,11 +158,13 @@ fn resolve_hook_host() -> String {
             return host;
         }
     }
-    if let Ok(executor) = std::env::var("REMEM_SUMMARY_EXECUTOR") {
-        match executor.as_str() {
-            "codex-cli" => return "codex-cli".to_string(),
-            "claude-cli" => return "claude-code".to_string(),
-            _ => {}
+    for key in ["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"] {
+        if let Ok(executor) = std::env::var(key) {
+            match executor.as_str() {
+                "codex-cli" | "codex" => return "codex-cli".to_string(),
+                "claude-cli" | "claude" | "cli" => return "claude-code".to_string(),
+                _ => {}
+            }
         }
     }
     "unknown".to_string()
@@ -108,6 +176,7 @@ fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
 
 fn spawn_worker_once() -> Result<()> {
     let exe = std::env::current_exe()?;
+    let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
     let stderr_cfg = match stderr_file {
         Some(file) => std::process::Stdio::from(file),
@@ -117,6 +186,7 @@ fn spawn_worker_once() -> Result<()> {
     command
         .arg("worker")
         .arg("--once")
+        .current_dir(&worker_dir)
         .env("REMEM_STDERR_TO_LOG", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -124,6 +194,22 @@ fn spawn_worker_once() -> Result<()> {
     configure_worker_executor_env(&mut command);
     let _child = command.spawn()?;
     Ok(())
+}
+
+fn stable_worker_dir() -> std::path::PathBuf {
+    let data_dir = crate::db::data_dir();
+    if let Err(err) = std::fs::create_dir_all(&data_dir) {
+        crate::log::warn(
+            "summarize",
+            &format!(
+                "failed to create worker dir {}: {}; falling back to temp dir",
+                data_dir.display(),
+                err
+            ),
+        );
+        return std::env::temp_dir();
+    }
+    data_dir
 }
 
 fn configure_worker_executor_env(command: &mut std::process::Command) {
@@ -141,7 +227,10 @@ mod tests {
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{configure_worker_executor_env, should_spawn_worker_once};
+    use super::{
+        configure_worker_executor_env, enqueue_summary_jobs, record_summary_capture_event,
+        resolve_hook_host, should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
+    };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -216,6 +305,85 @@ mod tests {
     }
 
     #[test]
+    fn hook_host_uses_global_executor_when_summary_override_is_missing() {
+        with_env_vars(
+            &[
+                ("REMEM_HOOK_HOST", None),
+                ("REMEM_CONTEXT_HOST", None),
+                ("REMEM_SUMMARY_EXECUTOR", None),
+                ("REMEM_EXECUTOR", Some("codex-cli")),
+            ],
+            || {
+                assert_eq!(resolve_hook_host(), "codex-cli");
+            },
+        );
+    }
+
+    #[test]
+    fn hook_host_prefers_summary_executor_over_global_executor() {
+        with_env_vars(
+            &[
+                ("REMEM_HOOK_HOST", None),
+                ("REMEM_CONTEXT_HOST", None),
+                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
+                ("REMEM_EXECUTOR", Some("codex-cli")),
+            ],
+            || {
+                assert_eq!(resolve_hook_host(), "claude-code");
+            },
+        );
+    }
+
+    #[test]
+    fn summary_payload_with_cwd_fills_missing_cwd() {
+        let payload = summary_payload_with_cwd(r#"{"session_id":"sess-cwd"}"#, "/tmp/project")
+            .expect("payload should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&payload).expect("payload should parse");
+
+        assert_eq!(parsed["session_id"].as_str(), Some("sess-cwd"));
+        assert_eq!(parsed["cwd"].as_str(), Some("/tmp/project"));
+    }
+
+    #[test]
+    fn summary_payload_with_cwd_preserves_existing_cwd() {
+        let payload =
+            summary_payload_with_cwd(r#"{"session_id":"sess-cwd","cwd":"/repo"}"#, "/tmp/project")
+                .expect("payload should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&payload).expect("payload should parse");
+
+        assert_eq!(parsed["cwd"].as_str(), Some("/repo"));
+    }
+
+    #[test]
+    fn capture_ledger_failure_does_not_block_legacy_summary_hook() {
+        let _test_dir = ScopedTestDataDir::new("summary-legacy-unknown-host");
+        let conn = db::open_db().expect("db should open");
+
+        let captured = record_summary_capture_event(
+            &conn,
+            "unknown",
+            "sess-legacy",
+            "/tmp/remem",
+            "/tmp/remem",
+            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
+        );
+        enqueue_summary_jobs(
+            &conn,
+            "unknown",
+            "sess-legacy",
+            "/tmp/remem",
+            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
+        )
+        .expect("legacy summary jobs should still enqueue");
+
+        assert!(!captured);
+        let jobs = job_types(&conn);
+        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
+    }
+
+    #[test]
     fn missing_daemon_uses_stop_fallback_spawn() {
         let _test_dir = ScopedTestDataDir::new("summary-missing-daemon");
         let conn = db::open_db().expect("db should open");
@@ -231,8 +399,14 @@ mod tests {
         let _test_dir = ScopedTestDataDir::new("summary-healthy-daemon");
         let conn = db::open_db().expect("db should open");
         let now = chrono::Utc::now().timestamp();
-        db::upsert_worker_heartbeat(&conn, "worker-daemon", 123, now - 5, now - 5)
-            .expect("heartbeat should insert");
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )
+        .expect("heartbeat should insert");
 
         assert!(
             !should_spawn_worker_once(&conn).expect("daemon check should run"),
@@ -252,5 +426,79 @@ mod tests {
             should_spawn_worker_once(&conn).expect("daemon check should run"),
             "stale heartbeat should keep worker --once fallback"
         );
+    }
+
+    #[test]
+    fn stable_worker_dir_uses_data_dir() {
+        let data_dir = ScopedTestDataDir::new("summary-worker-dir");
+
+        let got = stable_worker_dir();
+
+        assert_eq!(got, data_dir.path);
+        assert!(got.is_dir());
+    }
+
+    #[test]
+    fn enqueue_summary_jobs_skips_observation_job_when_no_pending_events() {
+        let _test_dir = ScopedTestDataDir::new("summary-no-pending-observation");
+        let conn = db::open_db().expect("db should open");
+
+        enqueue_summary_jobs(
+            &conn,
+            "codex-cli",
+            "sess-no-pending",
+            "/tmp/remem",
+            r#"{"session_id":"sess-no-pending"}"#,
+        )
+        .expect("summary jobs should enqueue");
+
+        let jobs = job_types(&conn);
+        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
+    }
+
+    #[test]
+    fn enqueue_summary_jobs_keeps_observation_job_when_pending_events_exist() {
+        let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
+        let conn = db::open_db().expect("db should open");
+        db::enqueue_pending(
+            &conn,
+            "claude-code",
+            "sess-with-pending",
+            "/tmp/remem",
+            "Edit",
+            Some(r#"{"file_path":"src/lib.rs"}"#),
+            None,
+            Some("/tmp/remem"),
+        )
+        .expect("pending observation should insert");
+
+        enqueue_summary_jobs(
+            &conn,
+            "claude-code",
+            "sess-with-pending",
+            "/tmp/remem",
+            r#"{"session_id":"sess-with-pending"}"#,
+        )
+        .expect("summary jobs should enqueue");
+
+        let jobs = job_types(&conn);
+        assert_eq!(
+            jobs,
+            vec![
+                "observation".to_string(),
+                "summary".to_string(),
+                "compress".to_string()
+            ]
+        );
+    }
+
+    fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT job_type FROM jobs ORDER BY id ASC")
+            .expect("job query should prepare");
+        stmt.query_map([], |row| row.get(0))
+            .expect("job query should run")
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .expect("job rows should collect")
     }
 }

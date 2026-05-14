@@ -7,6 +7,7 @@ use crate::ai::types::{AiCallResult, AI_TIMEOUT_SECS};
 pub(super) async fn call_cli(system: &str, user_message: &str) -> Result<AiCallResult> {
     let model = get_model_raw();
     let claude = get_claude_path();
+    let working_dir = super::stable_working_dir();
 
     let mut child = Command::new(&claude)
         .args([
@@ -19,6 +20,7 @@ pub(super) async fn call_cli(system: &str, user_message: &str) -> Result<AiCallR
             "text",
             "--no-session-persistence",
         ])
+        .current_dir(&working_dir)
         .env_remove("CLAUDECODE")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

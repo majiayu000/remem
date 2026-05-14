@@ -35,12 +35,7 @@ fn build_hooks_contains_expected_codex_commands() {
         "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context"
     );
     assert!(hooks.get("UserPromptSubmit").is_none());
-    assert_eq!(hooks["PostToolUse"][0]["matcher"], "Bash");
-    assert_eq!(
-        hooks["PostToolUse"][0]["hooks"][0]["command"],
-        "REMEM_HOOK_ADAPTER=codex-cli /tmp/remem observe"
-    );
-    assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 3000);
+    assert!(hooks.get("PostToolUse").is_none());
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "REMEM_SUMMARY_EXECUTOR=codex-cli REMEM_FLUSH_EXECUTOR=codex-cli /tmp/remem summarize"

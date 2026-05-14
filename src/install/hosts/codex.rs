@@ -65,7 +65,7 @@ impl InstallHost for CodexHost {
                 SERVER_KEY
             ),
             format!(
-                "  hooks  -> {} (SessionStart/PostToolUse(Bash)/Stop)",
+                "  hooks  -> {} (SessionStart/Stop)",
                 codex_hooks_path().display()
             ),
             format!("  binary -> {}", bin),
@@ -163,7 +163,8 @@ fn enable_codex_hooks(doc: &mut DocumentMut) -> Result<()> {
         .or_insert(Item::Table(Table::new()))
         .as_table_mut()
         .context("features 存在但不是 table，拒绝覆盖")?;
-    features["codex_hooks"] = value(true);
+    features.remove("codex_hooks");
+    features["hooks"] = value(true);
     Ok(())
 }
 
@@ -269,19 +270,28 @@ startup_timeout_sec = 5
         enable_codex_hooks(&mut doc).unwrap();
         let rendered = doc.to_string();
         assert!(rendered.contains("[features]"), "{rendered}");
-        assert!(rendered.contains("codex_hooks = true"), "{rendered}");
+        assert!(rendered.contains("hooks = true"), "{rendered}");
+        assert!(!rendered.contains("codex_hooks"), "{rendered}");
+    }
+
+    #[test]
+    fn enable_codex_hooks_removes_deprecated_feature_flag() {
+        let mut doc: DocumentMut = r#"[features]
+codex_hooks = true
+"#
+        .parse()
+        .unwrap();
+        enable_codex_hooks(&mut doc).unwrap();
+        let rendered = doc.to_string();
+        assert!(rendered.contains("hooks = true"), "{rendered}");
+        assert!(!rendered.contains("codex_hooks"), "{rendered}");
     }
 
     #[test]
     fn build_codex_hooks_uses_second_timeouts() {
         let hooks = build_codex_hooks("/tmp/remem");
         assert_eq!(hooks["SessionStart"][0]["hooks"][0]["timeout"], 15);
-        assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 3);
-        assert_eq!(hooks["PostToolUse"][0]["matcher"], "Bash");
-        assert_eq!(
-            hooks["PostToolUse"][0]["hooks"][0]["command"],
-            "REMEM_HOOK_ADAPTER=codex-cli /tmp/remem observe"
-        );
+        assert!(hooks.get("PostToolUse").is_none());
         assert_eq!(hooks["Stop"][0]["hooks"][0]["timeout"], 120);
         assert!(hooks.get("UserPromptSubmit").is_none());
         assert_eq!(

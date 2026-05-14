@@ -66,11 +66,12 @@ Claude Code 正常工作流
 Codex 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
-        |- PostToolUse(Bash) -> 捕获 shell 操作（入队，短超时）
         '- Stop              -> 使用 Codex CLI 后台总结
 ```
 
-全程自动，不需要手动保存记忆。
+Codex 默认不再安装高频 `PostToolUse(Bash)` observe hook。Shell-heavy 会话必须等 coalesced capture 管线接管后再开启逐命令捕获，否则 Bash 输出会制造无界 backlog。旧 hook 即使残留，也会被默认忽略；只有显式设置 `REMEM_ENABLE_CODEX_BASH_OBSERVE=1` 才会重新开启。
+
+capture 管线从 append-only ledger 开始：`captured_events` 保存原始 hook/session evidence，`event_blobs` 承接大 payload，`extraction_tasks` 按 host/project/session 合并后台提炼任务，避免每个工具调用都生成一个 LLM job。长期记忆仍然是这条管线 promotion 后的结果，不是 raw event 本身。
 
 ## 检索架构
 

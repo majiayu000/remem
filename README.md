@@ -66,11 +66,20 @@ Claude Code workflow
 Codex workflow
         |
         |- SessionStart      -> Inject memories + preferences
-        |- PostToolUse(Bash) -> Capture shell operations (queued, short timeout)
         '- Stop              -> Summarize in background with Codex CLI
 ```
 
-No manual capture is required.
+Codex does not install a high-frequency `PostToolUse(Bash)` observe hook by
+default. Shell-heavy sessions must use the coalesced capture pipeline before
+per-command capture is enabled again; otherwise Bash output can create an
+unbounded backlog. Existing legacy hooks are also ignored unless
+`REMEM_ENABLE_CODEX_BASH_OBSERVE=1` is set explicitly.
+
+The capture pipeline starts with an append-only ledger:
+`captured_events` stores raw hook/session evidence, `event_blobs` keeps large
+payloads out of prompt-sized rows, and `extraction_tasks` coalesces work by
+host/project/session instead of creating one LLM job per tool call. Curated
+memory remains the promoted output of this pipeline, not the raw event itself.
 
 ## Search Architecture
 

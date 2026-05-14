@@ -149,7 +149,7 @@ Expected initial profiles:
 | Profile | Notes |
 | --- | --- |
 | `ClaudeCodeContextProfile` | Claude has broader hooks and UserPromptSubmit. It can mention Claude-facing hook behavior and the same MCP retrieval tools. |
-| `CodexCliContextProfile` | Codex currently observes mainly Bash through hooks. Its hints should emphasize `search` / `get_observations` and avoid implying full tool coverage. |
+| `CodexCliContextProfile` | Codex currently uses SessionStart/Stop hooks by default. Its hints should emphasize `search` / `get_observations` and explicit decision/bugfix saves instead of implying full tool coverage. |
 | `UnknownContextProfile` | Conservative defaults, no host-specific claims. |
 
 ### 6.4 HostCapabilities
