@@ -1,13 +1,15 @@
-# remem
+# Remem Memory
 
-> 不用在每次新会话里重复解释你的项目。
+> Claude Code 和 Codex 的自动记忆系统。
 
 语言： [English](README.md) | **简体中文**
 
-`remem` 是面向 Claude Code 和 Codex 的持久记忆工具。它是一个 Rust 单二进制程序，会在会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。
+`remem` 是 memory for Claude Code and Codex。它是一个 Rust 单二进制程序，会在会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。你不用在每次新会话里重复解释项目。
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+![Remem Memory terminal demo](assets/remem-demo.gif)
 
 ## 核心问题
 

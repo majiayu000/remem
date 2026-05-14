@@ -67,9 +67,9 @@ esac
 
 # Run install to configure hooks + MCP
 echo ""
-echo "Configuring Claude Code hooks and MCP..."
+echo "Configuring Claude Code/Codex hooks and MCP..."
 "${INSTALL_DIR}/remem" install
 
 echo ""
-echo "Done! Restart Claude Code to activate remem."
+echo "Done! Restart Claude Code or Codex to activate remem."
 echo "Run 'remem status' to verify installation."

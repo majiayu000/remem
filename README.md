@@ -1,13 +1,15 @@
-# remem
+# Remem Memory
 
-> Stop re-explaining your project every new session.
+> Automatic memory for Claude Code and Codex.
 
 Language: **English** | [简体中文](README.zh-CN.md)
 
-Persistent memory for Claude Code and Codex. A single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings.
+`remem` is a single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings. Stop re-explaining your project every new session.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+![Remem Memory terminal demo](assets/remem-demo.gif)
 
 ## The Problem
 
