@@ -100,6 +100,18 @@ fn codex_summary_executor_falls_back_for_flush_operations() {
                 executor_for_operation("summarize"),
                 Some(AiExecutor::CodexCli)
             );
+            assert_eq!(
+                executor_for_operation("session_rollup"),
+                Some(AiExecutor::CodexCli)
+            );
+            assert_eq!(
+                executor_for_operation("observation_extract"),
+                Some(AiExecutor::CodexCli)
+            );
+            assert_eq!(
+                executor_for_operation("memory_candidate"),
+                Some(AiExecutor::CodexCli)
+            );
             assert_eq!(executor_for_operation("flush"), Some(AiExecutor::CodexCli));
             assert_eq!(
                 executor_for_operation("flush-task"),
@@ -123,6 +135,10 @@ fn explicit_flush_executor_override_wins_over_codex_fallback() {
         || {
             assert_eq!(
                 executor_for_operation("summarize"),
+                Some(AiExecutor::CodexCli)
+            );
+            assert_eq!(
+                executor_for_operation("session_rollup"),
                 Some(AiExecutor::CodexCli)
             );
             assert_eq!(executor_for_operation("flush"), Some(AiExecutor::Http));
@@ -149,6 +165,10 @@ fn claude_summary_executor_does_not_broaden_flush_resolution() {
                 executor_for_operation("summarize"),
                 Some(AiExecutor::ClaudeCli)
             );
+            assert_eq!(
+                executor_for_operation("session_rollup"),
+                Some(AiExecutor::ClaudeCli)
+            );
             assert_eq!(executor_for_operation("flush"), None);
             assert_eq!(executor_for_operation("flush-task"), None);
         },
@@ -156,7 +176,7 @@ fn claude_summary_executor_does_not_broaden_flush_resolution() {
 }
 
 #[test]
-fn legacy_global_executor_still_only_affects_summary_directly() {
+fn legacy_global_executor_applies_to_extraction_operations() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", Some("codex-cli")),
@@ -168,6 +188,10 @@ fn legacy_global_executor_still_only_affects_summary_directly() {
         || {
             assert_eq!(
                 executor_for_operation("summarize"),
+                Some(AiExecutor::CodexCli)
+            );
+            assert_eq!(
+                executor_for_operation("session_rollup"),
                 Some(AiExecutor::CodexCli)
             );
             assert_eq!(executor_for_operation("flush"), None);

@@ -693,8 +693,8 @@ EOF
             .to_str()
             .expect("stub codex path should be valid utf-8");
         let _env = ScopedEnv::set(&[
-            ("REMEM_EXECUTOR", Some("codex-cli")),
-            ("REMEM_SUMMARY_EXECUTOR", None),
+            ("REMEM_EXECUTOR", None),
+            ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
             ("REMEM_FLUSH_EXECUTOR", None),
             ("REMEM_CODEX_PATH", Some(stub_codex_str)),
             ("REMEM_CLAUDE_PATH", Some("/definitely/missing/claude")),
