@@ -78,19 +78,29 @@ pub fn release_expired_extraction_task_leases(conn: &Connection) -> Result<usize
     Ok(count)
 }
 
-pub fn mark_extraction_task_done(conn: &Connection, task_id: i64, lease_owner: &str) -> Result<()> {
+pub fn mark_extraction_task_done(
+    conn: &Connection,
+    task_id: i64,
+    lease_owner: &str,
+    completed_high_watermark_event_id: Option<i64>,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let updated = conn.execute(
         "UPDATE extraction_tasks
-         SET status = 'done',
-             cursor_event_id = high_watermark_event_id,
+         SET status = CASE
+                 WHEN ?4 IS NOT NULL
+                  AND high_watermark_event_id IS NOT NULL
+                  AND high_watermark_event_id > ?4 THEN 'pending'
+                 ELSE 'done'
+             END,
+             cursor_event_id = ?4,
              lease_owner = NULL,
              lease_expires_epoch = NULL,
              next_retry_epoch = NULL,
              last_error = NULL,
              updated_at_epoch = ?1
          WHERE id = ?2 AND lease_owner = ?3 AND status = 'processing'",
-        params![now, task_id, lease_owner],
+        params![now, task_id, lease_owner, completed_high_watermark_event_id],
     )?;
     ensure_task_updated(updated, task_id)
 }
@@ -354,7 +364,8 @@ mod tests {
             .expect("claim should succeed")
             .expect("task should be claimed");
 
-        mark_extraction_task_done(&conn, task.id, "worker-a").expect("done should succeed");
+        mark_extraction_task_done(&conn, task.id, "worker-a", task.high_watermark_event_id)
+            .expect("done should succeed");
 
         let (status, lease_owner, cursor, high_watermark): (
             String,
@@ -372,6 +383,40 @@ mod tests {
         assert_eq!(status, "done");
         assert!(lease_owner.is_none());
         assert_eq!(cursor, high_watermark);
+    }
+
+    #[test]
+    fn mark_extraction_task_done_requeues_when_watermark_advanced_after_claim() {
+        let mut conn = setup_conn();
+        let task_id = insert_task(&conn, "sess-coalesce", ExtractionTaskKind::SessionRollup)
+            .expect("task should insert");
+        let task = claim_next_extraction_task(&mut conn, "worker-a", 60)
+            .expect("claim should succeed")
+            .expect("task should be claimed");
+        let claimed_high_watermark = task.high_watermark_event_id;
+        insert_task(&conn, "sess-coalesce", ExtractionTaskKind::SessionRollup)
+            .expect("coalesced task should update high watermark");
+
+        mark_extraction_task_done(&conn, task.id, "worker-a", claimed_high_watermark)
+            .expect("done should succeed");
+
+        let (status, lease_owner, cursor, high_watermark): (
+            String,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+        ) = conn
+            .query_row(
+                "SELECT status, lease_owner, cursor_event_id, high_watermark_event_id
+                 FROM extraction_tasks WHERE id = ?1",
+                params![task_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("task should query");
+        assert_eq!(status, "pending");
+        assert!(lease_owner.is_none());
+        assert_eq!(cursor, claimed_high_watermark);
+        assert!(high_watermark > cursor);
     }
 
     #[test]
