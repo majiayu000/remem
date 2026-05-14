@@ -637,7 +637,7 @@ EOF
     }
 
     #[tokio::test]
-    async fn worker_marks_unimplemented_extraction_task_failed() -> anyhow::Result<()> {
+    async fn worker_defers_unimplemented_extraction_task() -> anyhow::Result<()> {
         let _data_dir = ScopedTestDataDir::new("worker-extraction-unimplemented");
         let conn = db::open_db()?;
         let outcome = db::record_captured_event(
@@ -661,13 +661,14 @@ EOF
         run(true, 10).await?;
 
         let conn = db::open_db()?;
-        let (status, attempts, last_error): (String, i64, Option<String>) = conn.query_row(
-            "SELECT status, attempts, last_error FROM extraction_tasks WHERE id = ?1",
+        let (status, attempts, next_retry, last_error): (String, i64, Option<i64>, Option<String>) = conn.query_row(
+            "SELECT status, attempts, next_retry_epoch, last_error FROM extraction_tasks WHERE id = ?1",
             params![task_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        anyhow::ensure!(status == "failed", "expected failed task, got {status}");
-        anyhow::ensure!(attempts == 1, "expected one attempt, got {attempts}");
+        anyhow::ensure!(status == "pending", "expected pending task, got {status}");
+        anyhow::ensure!(attempts == 0, "expected zero attempts, got {attempts}");
+        anyhow::ensure!(next_retry.is_some(), "expected retry delay");
         anyhow::ensure!(
             last_error
                 .as_deref()

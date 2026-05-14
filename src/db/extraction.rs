@@ -132,6 +132,34 @@ pub fn mark_extraction_task_failed(
     ensure_task_updated(updated, task_id)
 }
 
+pub fn defer_extraction_task(
+    conn: &Connection,
+    task_id: i64,
+    lease_owner: &str,
+    reason: &str,
+    backoff_secs: i64,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let updated = conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'pending',
+             lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             next_retry_epoch = ?1,
+             last_error = ?2,
+             updated_at_epoch = ?3
+         WHERE id = ?4 AND lease_owner = ?5 AND status = 'processing'",
+        params![
+            now + backoff_secs.max(1),
+            crate::db::truncate_str(reason, 2000),
+            now,
+            task_id,
+            lease_owner
+        ],
+    )?;
+    ensure_task_updated(updated, task_id)
+}
+
 pub fn mark_extraction_task_failed_or_retry(
     conn: &Connection,
     task_id: i64,
@@ -478,6 +506,25 @@ mod tests {
         assert_eq!(status, "failed");
         assert_eq!(attempts, 1);
         assert!(next_retry.is_none());
+        assert_eq!(last_error.as_deref(), Some("not implemented"));
+    }
+
+    #[test]
+    fn defer_extraction_task_requeues_without_incrementing_attempts() {
+        let mut conn = setup_conn();
+        let task_id = insert_task(&conn, "sess-defer", ExtractionTaskKind::SessionRollup)
+            .expect("task should insert");
+        claim_next_extraction_task(&mut conn, "worker-a", 60)
+            .expect("claim should succeed")
+            .expect("task should be claimed");
+
+        defer_extraction_task(&conn, task_id, "worker-a", "not implemented", 30)
+            .expect("defer should succeed");
+
+        let (status, attempts, next_retry, last_error) = task_status(&conn, task_id);
+        assert_eq!(status, "pending");
+        assert_eq!(attempts, 0);
+        assert!(next_retry.is_some());
         assert_eq!(last_error.as_deref(), Some("not implemented"));
     }
 }

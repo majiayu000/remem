@@ -4,7 +4,7 @@ use tokio::time::Duration;
 use crate::db;
 
 enum ExtractionTaskOutcome {
-    PermanentFailure(String),
+    Deferred(String),
 }
 
 pub(crate) async fn run_next(
@@ -36,14 +36,16 @@ pub(crate) async fn run_next(
     .await;
     let conn = db::open_db()?;
     match timed {
-        Ok(Ok(ExtractionTaskOutcome::PermanentFailure(msg))) => {
-            db::mark_extraction_task_failed(&conn, task.id, lease_owner, &msg)?;
+        Ok(Ok(ExtractionTaskOutcome::Deferred(msg))) => {
+            let backoff = retry_backoff_secs(task.attempts);
+            db::defer_extraction_task(&conn, task.id, lease_owner, &msg, backoff)?;
             crate::log::warn(
                 "worker",
                 &format!(
-                    "extraction id={} failed permanently: {}",
+                    "extraction id={} deferred: {} (retry in {}s)",
                     task.id,
-                    crate::db::truncate_str(&msg, 300)
+                    crate::db::truncate_str(&msg, 300),
+                    backoff
                 ),
             );
         }
@@ -76,7 +78,7 @@ pub(crate) async fn run_next(
 }
 
 async fn process_extraction_task(task: &db::ExtractionTask) -> Result<ExtractionTaskOutcome> {
-    Ok(ExtractionTaskOutcome::PermanentFailure(format!(
+    Ok(ExtractionTaskOutcome::Deferred(format!(
         "extraction task kind '{}' is not implemented",
         task.task_kind.as_str()
     )))
