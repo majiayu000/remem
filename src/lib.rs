@@ -20,6 +20,7 @@ pub mod install;
 pub mod log;
 pub mod mcp;
 pub mod memory;
+mod memory_candidate;
 pub mod migrate;
 mod observation_extract;
 pub mod observe;

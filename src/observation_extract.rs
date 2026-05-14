@@ -83,6 +83,14 @@ where
     }
 
     let inserted = persist_observations(conn, task, &range, &observations)?;
+    if inserted > 0 {
+        db::enqueue_followup_extraction_task(
+            conn,
+            task,
+            db::ExtractionTaskKind::MemoryCandidate,
+            range.to_event_id,
+        )?;
+    }
     Ok(ObservationExtractResult::Written(inserted))
 }
 

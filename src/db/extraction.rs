@@ -10,6 +10,7 @@ pub struct ExtractionTask {
     pub id: i64,
     pub task_kind: ExtractionTaskKind,
     pub host_id: i64,
+    pub workspace_id: i64,
     pub project_id: i64,
     pub session_row_id: Option<i64>,
     pub host: String,
@@ -19,6 +20,59 @@ pub struct ExtractionTask {
     pub cursor_event_id: Option<i64>,
     pub high_watermark_event_id: Option<i64>,
     pub attempts: i64,
+}
+
+pub fn enqueue_followup_extraction_task(
+    conn: &Connection,
+    source: &ExtractionTask,
+    task_kind: ExtractionTaskKind,
+    high_watermark_event_id: i64,
+) -> Result<i64> {
+    let session_row_id = source
+        .session_row_id
+        .ok_or_else(|| anyhow::anyhow!("follow-up extraction task requires session_row_id"))?;
+    let now = chrono::Utc::now().timestamp();
+    let idempotency_key = format!(
+        "{}:{}:{}:{}",
+        source.host_id,
+        source.project_id,
+        session_row_id,
+        task_kind.as_str()
+    );
+    conn.execute(
+        "INSERT INTO extraction_tasks
+         (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
+          idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
+          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, NULL, ?8, 0, NULL, NULL, NULL, NULL, ?9, ?9)
+         ON CONFLICT(idempotency_key) DO UPDATE SET
+             high_watermark_event_id = MAX(COALESCE(extraction_tasks.high_watermark_event_id, 0), excluded.high_watermark_event_id),
+             status = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN 'pending'
+                 ELSE extraction_tasks.status
+             END,
+             next_retry_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.next_retry_epoch
+             END,
+             updated_at_epoch = excluded.updated_at_epoch",
+        params![
+            task_kind.as_str(),
+            source.host_id,
+            source.workspace_id,
+            source.project_id,
+            session_row_id,
+            task_kind.priority(),
+            idempotency_key,
+            high_watermark_event_id,
+            now
+        ],
+    )?;
+    Ok(conn.query_row(
+        "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
+        params![idempotency_key],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn claim_next_extraction_task(
@@ -223,7 +277,7 @@ pub fn mark_extraction_task_failed_or_retry(
 
 fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<ExtractionTask> {
     let row = conn.query_row(
-        "SELECT t.id, t.task_kind, t.host_id, t.project_id, t.session_row_id,
+        "SELECT t.id, t.task_kind, t.host_id, t.workspace_id, t.project_id, t.session_row_id,
                 h.name, p.project_path, s.session_id,
                 t.priority, t.cursor_event_id, t.high_watermark_event_id, t.attempts
          FROM extraction_tasks t
@@ -238,14 +292,15 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
                 row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
-                row.get::<_, Option<i64>>(4)?,
-                row.get::<_, String>(5)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<i64>>(5)?,
                 row.get::<_, String>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, i64>(8)?,
-                row.get::<_, Option<i64>>(9)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, i64>(9)?,
                 row.get::<_, Option<i64>>(10)?,
-                row.get::<_, i64>(11)?,
+                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, i64>(12)?,
             ))
         },
     )?;
@@ -254,15 +309,16 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
         id: row.0,
         task_kind: ExtractionTaskKind::from_db(&row.1)?,
         host_id: row.2,
-        project_id: row.3,
-        session_row_id: row.4,
-        host: row.5,
-        project: row.6,
-        session_id: row.7,
-        priority: row.8,
-        cursor_event_id: row.9,
-        high_watermark_event_id: row.10,
-        attempts: row.11,
+        workspace_id: row.3,
+        project_id: row.4,
+        session_row_id: row.5,
+        host: row.6,
+        project: row.7,
+        session_id: row.8,
+        priority: row.9,
+        cursor_event_id: row.10,
+        high_watermark_event_id: row.11,
+        attempts: row.12,
     })
 }
 

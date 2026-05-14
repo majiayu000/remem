@@ -59,10 +59,25 @@ for arg in "$@"; do
   fi
   prev="$arg"
 done
-cat >/dev/null
 if [ -z "$output_path" ]; then
   echo "missing output path" >&2
   exit 1
+fi
+stdin_path="${TMPDIR:-/tmp}/remem-stub-codex-$$.txt"
+cat > "$stdin_path"
+if grep -q "Task: memory_candidate" "$stdin_path"; then
+cat <<'EOF' > "$output_path"
+<memory_candidate>
+  <scope>project</scope>
+  <type>decision</type>
+  <topic_key>codex-worker-flush</topic_key>
+  <risk_class>low</risk_class>
+  <confidence>0.91</confidence>
+  <text>Queued Codex observation persisted.</text>
+</memory_candidate>
+EOF
+rm -f "$stdin_path"
+exit 0
 fi
 cat <<'EOF' > "$output_path"
 <observation>
@@ -71,6 +86,7 @@ cat <<'EOF' > "$output_path"
   <narrative>Queued Codex observation persisted.</narrative>
 </observation>
 EOF
+rm -f "$stdin_path"
 "#;
     std::fs::write(path, script).expect("stub codex script should be written");
     let mut perms = std::fs::metadata(path)
