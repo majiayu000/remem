@@ -40,6 +40,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "session_rollup_ranges",
         sql: include_str!("../migrations/v007_session_rollup_ranges.sql"),
     },
+    Migration {
+        version: 8,
+        name: "observation_evidence",
+        sql: include_str!("../migrations/v008_observation_evidence.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

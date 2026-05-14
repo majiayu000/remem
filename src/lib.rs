@@ -21,6 +21,7 @@ pub mod log;
 pub mod mcp;
 pub mod memory;
 pub mod migrate;
+mod observation_extract;
 pub mod observe;
 pub mod project_id;
 pub mod retrieval;

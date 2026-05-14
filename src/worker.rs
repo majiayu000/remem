@@ -308,93 +308,14 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::ffi::OsString;
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::{Mutex, MutexGuard};
-
     use rusqlite::params;
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::run;
+    use test_support::{install_stub_codex, ScopedEnv};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: Option<&str>) -> Self {
-            let previous = std::env::var_os(key);
-            match value {
-                Some(value) => unsafe { std::env::set_var(key, value) },
-                None => unsafe { std::env::remove_var(key) },
-            }
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            match self.previous.as_ref() {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
-
-    struct ScopedEnv {
-        _guard: MutexGuard<'static, ()>,
-        _vars: Vec<ScopedEnvVar>,
-    }
-
-    impl ScopedEnv {
-        fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
-            let guard = ENV_LOCK.lock().expect("env lock should acquire");
-            let vars = vars
-                .iter()
-                .map(|(key, value)| ScopedEnvVar::set(key, *value))
-                .collect();
-            Self {
-                _guard: guard,
-                _vars: vars,
-            }
-        }
-    }
-
-    fn install_stub_codex(path: &std::path::Path) {
-        let script = r#"#!/bin/sh
-prev=""
-output_path=""
-for arg in "$@"; do
-  if [ "$prev" = "--output-last-message" ]; then
-    output_path="$arg"
-    break
-  fi
-  prev="$arg"
-done
-cat >/dev/null
-if [ -z "$output_path" ]; then
-  echo "missing output path" >&2
-  exit 1
-fi
-cat <<'EOF' > "$output_path"
-<observation>
-  <type>decision</type>
-  <title>Codex worker flush</title>
-  <narrative>Queued Codex observation persisted.</narrative>
-</observation>
-EOF
-"#;
-        std::fs::write(path, script).expect("stub codex script should be written");
-        let mut perms = std::fs::metadata(path)
-            .expect("stub codex metadata should load")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(path, perms).expect("stub codex permissions should be set");
-    }
+    mod test_support;
 
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
@@ -651,7 +572,7 @@ EOF
                 role: None,
                 tool_name: Some("Bash"),
                 content: r#"{"tool_name":"Bash"}"#,
-                task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
+                task_kind: Some(db::ExtractionTaskKind::MemoryCandidate),
             },
         )?;
         let task_id = outcome
@@ -745,6 +666,82 @@ EOF
                 summary_text.contains("Codex worker flush"),
                 "expected stub summary text"
             );
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let _ = std::fs::remove_file(&stub_codex);
+        test_result
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn worker_processes_observation_extract_task_on_codex_stub() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-observation-extract");
+        let stub_codex = std::env::temp_dir().join(format!(
+            "remem-test-codex-observation-{}-{}.sh",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        install_stub_codex(&stub_codex);
+        let stub_codex_str = stub_codex
+            .as_os_str()
+            .to_str()
+            .expect("stub codex path should be valid utf-8");
+        let _env = ScopedEnv::set(&[
+            ("REMEM_EXECUTOR", Some("codex-cli")),
+            ("REMEM_SUMMARY_EXECUTOR", None),
+            ("REMEM_FLUSH_EXECUTOR", None),
+            ("REMEM_CODEX_PATH", Some(stub_codex_str)),
+            ("REMEM_CLAUDE_PATH", Some("/definitely/missing/claude")),
+            ("ANTHROPIC_API_KEY", None),
+            ("ANTHROPIC_AUTH_TOKEN", None),
+        ]);
+
+        let conn = db::open_db()?;
+        let outcome = db::record_captured_event(
+            &conn,
+            &db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-observe-worker",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: r#"{"tool_name":"Bash","output":"important"}"#,
+                task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+        let task_id = outcome
+            .extraction_task_id
+            .expect("capture should coalesce extraction task");
+
+        let test_result = async {
+            run(true, 10).await?;
+
+            let conn = db::open_db()?;
+            let (status, cursor, high_watermark): (String, Option<i64>, Option<i64>) = conn
+                .query_row(
+                    "SELECT status, cursor_event_id, high_watermark_event_id
+                     FROM extraction_tasks WHERE id = ?1",
+                    params![task_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            let (text, evidence): (String, String) = conn.query_row(
+                "SELECT text, evidence_event_ids FROM observations
+                 WHERE session_row_id IS NOT NULL",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+            anyhow::ensure!(status == "done", "expected done task, got {status}");
+            anyhow::ensure!(cursor == high_watermark, "expected cursor to advance");
+            anyhow::ensure!(
+                text.contains("Queued Codex observation persisted"),
+                "expected stub observation text"
+            );
+            anyhow::ensure!(evidence.contains('1'), "expected captured event evidence");
             Ok::<(), anyhow::Error>(())
         }
         .await;
