@@ -93,6 +93,10 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
             crate::session_rollup::process(task).await?;
             Ok(ExtractionTaskOutcome::Done)
         }
+        db::ExtractionTaskKind::ObservationExtract => {
+            crate::observation_extract::process(task).await?;
+            Ok(ExtractionTaskOutcome::Done)
+        }
         _ => Ok(ExtractionTaskOutcome::Deferred(format!(
             "extraction task kind '{}' is not implemented",
             task.task_kind.as_str()
