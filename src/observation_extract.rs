@@ -83,14 +83,12 @@ where
     }
 
     let inserted = persist_observations(conn, task, &range, &observations)?;
-    if inserted > 0 {
-        db::enqueue_followup_extraction_task(
-            conn,
-            task,
-            db::ExtractionTaskKind::MemoryCandidate,
-            range.to_event_id,
-        )?;
-    }
+    db::enqueue_followup_extraction_task(
+        conn,
+        task,
+        db::ExtractionTaskKind::MemoryCandidate,
+        range.to_event_id,
+    )?;
     Ok(ObservationExtractResult::Written(inserted))
 }
 
@@ -399,6 +397,37 @@ mod tests {
         })
         .await?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observation_extract_replay_enqueues_candidate_for_existing_observation() -> Result<()>
+    {
+        let mut conn = setup_conn();
+        capture(&conn, "sess-replay", "cargo test fixed the failure")?;
+        let task = claim_extract_task(&mut conn)?;
+        let response = || async {
+            Ok("<observation><type>discovery</type><title>Tests fixed</title><narrative>cargo test fixed the failure</narrative></observation>".to_string())
+        };
+
+        let first = process_with_extractor(&mut conn, &task, |_prompt| response()).await?;
+        conn.execute(
+            "DELETE FROM extraction_tasks WHERE task_kind = 'memory_candidate'",
+            [],
+        )?;
+        let replay = process_with_extractor(&mut conn, &task, |_prompt| response()).await?;
+
+        assert_eq!(first, ObservationExtractResult::Written(1));
+        assert_eq!(replay, ObservationExtractResult::Written(0));
+        let pending_candidate_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks
+             WHERE task_kind = 'memory_candidate'
+               AND status = 'pending'
+               AND high_watermark_event_id = ?1",
+            params![task.high_watermark_event_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pending_candidate_count, 1);
         Ok(())
     }
 
