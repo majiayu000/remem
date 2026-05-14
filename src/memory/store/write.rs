@@ -71,8 +71,10 @@ pub fn insert_memory_full(
         if !topic_key.is_empty() {
             let existing_id: Option<i64> = conn
                 .query_row(
-                    "SELECT id FROM memories WHERE project = ?1 AND topic_key = ?2 LIMIT 1",
-                    params![project, topic_key],
+                    "SELECT id FROM memories
+                     WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+                     LIMIT 1",
+                    params![project, topic_key, scope],
                     |row| row.get(0),
                 )
                 .ok();
