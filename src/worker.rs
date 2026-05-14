@@ -647,11 +647,11 @@ EOF
                 session_id: "sess-extract",
                 project: "/tmp/remem",
                 cwd: None,
-                event_type: "session_stop",
+                event_type: "tool_result",
                 role: None,
-                tool_name: None,
-                content: r#"{"session_id":"sess-extract"}"#,
-                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+                tool_name: Some("Bash"),
+                content: r#"{"tool_name":"Bash"}"#,
+                task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
             },
         )?;
         let task_id = outcome
@@ -676,6 +676,81 @@ EOF
             "expected explicit unimplemented error"
         );
         Ok(())
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn worker_processes_session_rollup_task_on_codex_stub() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-session-rollup");
+        let stub_codex = std::env::temp_dir().join(format!(
+            "remem-test-codex-rollup-{}-{}.sh",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        install_stub_codex(&stub_codex);
+        let stub_codex_str = stub_codex
+            .as_os_str()
+            .to_str()
+            .expect("stub codex path should be valid utf-8");
+        let _env = ScopedEnv::set(&[
+            ("REMEM_EXECUTOR", None),
+            ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
+            ("REMEM_FLUSH_EXECUTOR", None),
+            ("REMEM_CODEX_PATH", Some(stub_codex_str)),
+            ("REMEM_CLAUDE_PATH", Some("/definitely/missing/claude")),
+            ("ANTHROPIC_API_KEY", None),
+            ("ANTHROPIC_AUTH_TOKEN", None),
+        ]);
+
+        let conn = db::open_db()?;
+        let outcome = db::record_captured_event(
+            &conn,
+            &db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-rollup-worker",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: r#"{"session_id":"sess-rollup-worker","result":"done"}"#,
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+        let task_id = outcome
+            .extraction_task_id
+            .expect("capture should coalesce extraction task");
+
+        let test_result = async {
+            run(true, 10).await?;
+
+            let conn = db::open_db()?;
+            let (status, cursor, high_watermark): (String, Option<i64>, Option<i64>) = conn
+                .query_row(
+                    "SELECT status, cursor_event_id, high_watermark_event_id
+                     FROM extraction_tasks WHERE id = ?1",
+                    params![task_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            let summary_text: String = conn.query_row(
+                "SELECT summary_text FROM session_summaries
+                 WHERE session_row_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )?;
+
+            anyhow::ensure!(status == "done", "expected done task, got {status}");
+            anyhow::ensure!(cursor == high_watermark, "expected cursor to advance");
+            anyhow::ensure!(
+                summary_text.contains("Codex worker flush"),
+                "expected stub summary text"
+            );
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let _ = std::fs::remove_file(&stub_codex);
+        test_result
     }
 
     #[tokio::test]

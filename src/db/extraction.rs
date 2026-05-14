@@ -9,6 +9,9 @@ pub const EXTRACTION_TASK_MAX_ATTEMPTS: i64 = 5;
 pub struct ExtractionTask {
     pub id: i64,
     pub task_kind: ExtractionTaskKind,
+    pub host_id: i64,
+    pub project_id: i64,
+    pub session_row_id: Option<i64>,
     pub host: String,
     pub project: String,
     pub session_id: Option<String>,
@@ -220,7 +223,8 @@ pub fn mark_extraction_task_failed_or_retry(
 
 fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<ExtractionTask> {
     let row = conn.query_row(
-        "SELECT t.id, t.task_kind, h.name, p.project_path, s.session_id,
+        "SELECT t.id, t.task_kind, t.host_id, t.project_id, t.session_row_id,
+                h.name, p.project_path, s.session_id,
                 t.priority, t.cursor_event_id, t.high_watermark_event_id, t.attempts
          FROM extraction_tasks t
          JOIN hosts h ON h.id = t.host_id
@@ -232,13 +236,16 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, Option<i64>>(6)?,
-                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
                 row.get::<_, i64>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+                row.get::<_, Option<i64>>(10)?,
+                row.get::<_, i64>(11)?,
             ))
         },
     )?;
@@ -246,13 +253,16 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
     Ok(ExtractionTask {
         id: row.0,
         task_kind: ExtractionTaskKind::from_db(&row.1)?,
-        host: row.2,
-        project: row.3,
-        session_id: row.4,
-        priority: row.5,
-        cursor_event_id: row.6,
-        high_watermark_event_id: row.7,
-        attempts: row.8,
+        host_id: row.2,
+        project_id: row.3,
+        session_row_id: row.4,
+        host: row.5,
+        project: row.6,
+        session_id: row.7,
+        priority: row.8,
+        cursor_event_id: row.9,
+        high_watermark_event_id: row.10,
+        attempts: row.11,
     })
 }
 
