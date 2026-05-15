@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 
-use super::config::resolve_model_for_api;
+use super::config::{get_codex_model, resolve_model_for_api};
 use super::pricing::{estimate_cost_usd, pricing_for_model};
+use super::TokenUsage;
 use super::{executor_for_operation, stable_working_dir, AiExecutor};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -53,7 +54,32 @@ fn pricing_for_model_uses_model_defaults() {
             ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", None),
         ],
         || {
-            assert_eq!(pricing_for_model("haiku"), (0.8, 4.0));
+            assert_eq!(pricing_for_model("haiku"), (1.0, 5.0));
+        },
+    );
+}
+
+#[test]
+fn codex_model_defaults_to_gpt_52_and_allows_auto() {
+    with_env_vars(&[("REMEM_CODEX_MODEL", None)], || {
+        assert_eq!(get_codex_model().as_deref(), Some("gpt-5.2"));
+    });
+    with_env_vars(&[("REMEM_CODEX_MODEL", Some("auto"))], || {
+        assert_eq!(get_codex_model(), None);
+    });
+}
+
+#[test]
+fn pricing_for_gpt_52_uses_current_flagship_rate() {
+    with_env_vars(
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_GPT5_CODEX_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_GPT5_CODEX_OUTPUT_PER_MTOK", None),
+        ],
+        || {
+            assert_eq!(pricing_for_model("gpt-5.2"), (1.75, 14.0));
         },
     );
 }
@@ -79,8 +105,35 @@ fn estimate_cost_usd_combines_input_and_output_prices() {
             ("REMEM_PRICE_OUTPUT_PER_MTOK", Some("8.0")),
         ],
         || {
-            let cost = estimate_cost_usd("any-model", 500_000, 250_000);
+            let usage = TokenUsage::estimated(500_000, 250_000);
+            let (cost, pricing_source) = estimate_cost_usd("any-model", &usage);
+            assert_eq!(pricing_source, "env_override");
             assert!((cost - 3.0).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn estimate_cost_usd_charges_cache_and_reasoning_separately() {
+    with_env_vars(
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_REASONING_PER_MTOK", None),
+            ("REMEM_PRICE_CACHE_READ_PER_MTOK", None),
+            ("REMEM_PRICE_CACHE_CREATION_PER_MTOK", None),
+        ],
+        || {
+            let usage = TokenUsage {
+                input_tokens: 1_000_000,
+                output_tokens: 1_000_000,
+                reasoning_tokens: 1_000_000,
+                cache_read_tokens: 1_000_000,
+                ..TokenUsage::default()
+            };
+            let (cost, pricing_source) = estimate_cost_usd("gpt-5.5", &usage);
+            assert_eq!(pricing_source, "remem_static");
+            assert!((cost - 65.5).abs() < f64::EPSILON);
         },
     );
 }

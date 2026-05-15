@@ -94,7 +94,7 @@ pub struct Job {
     pub max_attempts: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AiUsageEvent {
     pub created_at: String,
     pub project: Option<String>,
@@ -103,25 +103,60 @@ pub struct AiUsageEvent {
     pub model: Option<String>,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub raw_input_tokens: i64,
+    pub raw_output_tokens: i64,
     pub total_tokens: i64,
     pub estimated_cost_usd: f64,
+    pub usage_source: String,
+    pub pricing_source: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DailyAiUsage {
     pub day: String,
     pub calls: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
     pub total_tokens: i64,
     pub estimated_cost_usd: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeeklyAiUsage {
+    pub week: String,
+    pub calls: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AiUsageTotals {
     pub calls: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    pub reasoning_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiUsageSourceTotals {
+    pub usage_source: String,
+    pub pricing_source: String,
+    pub calls: i64,
     pub total_tokens: i64,
     pub estimated_cost_usd: f64,
 }

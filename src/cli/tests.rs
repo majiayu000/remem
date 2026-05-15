@@ -54,3 +54,30 @@ fn cli_parses_review_edit_options() {
         _ => panic!("expected review edit command"),
     }
 }
+
+#[test]
+fn cli_parses_usage_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "usage",
+        "--project",
+        "/tmp/remem",
+        "--days",
+        "30",
+        "--weeks",
+        "12",
+    ]);
+
+    match cli.command {
+        Commands::Usage {
+            project,
+            days,
+            weeks,
+        } => {
+            assert_eq!(project.as_deref(), Some("/tmp/remem"));
+            assert_eq!(days, 30);
+            assert_eq!(weeks, 12);
+        }
+        _ => panic!("expected usage command"),
+    }
+}

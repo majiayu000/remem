@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 
 use crate::ai::config::{get_model_raw, resolve_model_for_api};
-use crate::ai::types::{AiCallResult, AI_TIMEOUT_SECS};
+use crate::ai::types::{AiCallResult, TokenUsage, AI_TIMEOUT_SECS};
 
 pub(super) async fn call_http(system: &str, user_message: &str) -> Result<AiCallResult> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
@@ -43,11 +43,14 @@ pub(super) async fn call_http(system: &str, user_message: &str) -> Result<AiCall
 
     let data: serde_json::Value = resp.json().await?;
     let text = extract_text(&data)?;
+    let usage = extract_usage(&data);
 
     Ok(AiCallResult {
         text,
         executor: "http",
         model: model.to_string(),
+        usage,
+        usage_source: Some("anthropic_usage"),
     })
 }
 
@@ -72,9 +75,33 @@ fn extract_text(data: &serde_json::Value) -> Result<String> {
     Ok(text)
 }
 
+fn json_i64(data: &serde_json::Value, key: &str) -> i64 {
+    data.get(key)
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0)
+}
+
+fn extract_usage(data: &serde_json::Value) -> Option<TokenUsage> {
+    let usage = data.get("usage")?;
+    let input_tokens = json_i64(usage, "input_tokens");
+    let output_tokens = json_i64(usage, "output_tokens");
+    let cache_creation_tokens = json_i64(usage, "cache_creation_input_tokens");
+    let cache_read_tokens = json_i64(usage, "cache_read_input_tokens");
+    let token_usage = TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+        raw_input_tokens: input_tokens + cache_creation_tokens + cache_read_tokens,
+        raw_output_tokens: output_tokens,
+        ..TokenUsage::default()
+    };
+    (!token_usage.is_empty()).then_some(token_usage)
+}
+
 #[cfg(test)]
 mod http_tests {
-    use super::extract_text;
+    use super::{extract_text, extract_usage};
     use serde_json::json;
 
     #[test]
@@ -119,5 +146,24 @@ mod http_tests {
         let data = json!({"content": [{"type": "text", "text": ""}]});
         let err = extract_text(&data).unwrap_err().to_string();
         assert!(err.contains("empty text body"), "got: {err}");
+    }
+
+    #[test]
+    fn extracts_anthropic_usage_breakdown() {
+        let data = json!({
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 40,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 300
+            }
+        });
+        let usage = extract_usage(&data).expect("usage should parse");
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 40);
+        assert_eq!(usage.cache_creation_tokens, 20);
+        assert_eq!(usage.cache_read_tokens, 300);
+        assert_eq!(usage.raw_input_tokens, 420);
+        assert_eq!(usage.total_tokens(), 460);
     }
 }

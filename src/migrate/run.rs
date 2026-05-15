@@ -7,6 +7,29 @@ use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
 
 pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
     ensure_migration_table(conn)?;
+
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .context("begin migration transaction")?;
+    let result = run_migrations_locked(conn);
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")
+                .context("commit migration transaction")?;
+            Ok(())
+        }
+        Err(error) => {
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK") {
+                crate::log::warn(
+                    "migrate",
+                    &format!("rollback failed after migration error: {rollback_error}"),
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
+fn run_migrations_locked(conn: &Connection) -> Result<()> {
     transition_from_old_system(conn)?;
 
     let applied = applied_versions(conn)?;

@@ -1,5 +1,6 @@
 mod cli;
 mod codex_cli;
+mod codex_usage;
 mod config;
 mod http;
 mod pricing;
@@ -14,6 +15,7 @@ use http::call_http;
 use pricing::estimate_tokens;
 use usage::record_usage;
 
+pub(crate) use types::TokenUsage;
 pub use types::UsageContext;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

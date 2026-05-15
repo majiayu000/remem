@@ -55,5 +55,7 @@ pub(super) async fn call_cli(system: &str, user_message: &str) -> Result<AiCallR
         text,
         executor: "cli",
         model,
+        usage: None,
+        usage_source: None,
     })
 }

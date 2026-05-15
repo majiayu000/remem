@@ -1,3 +1,5 @@
+const DEFAULT_CODEX_MODEL: &str = "gpt-5.2";
+
 pub(super) fn get_model_raw() -> String {
     std::env::var("REMEM_MODEL").unwrap_or_else(|_| "haiku".to_string())
 }
@@ -22,9 +24,11 @@ pub(super) fn get_codex_path() -> String {
 }
 
 pub(super) fn get_codex_model() -> Option<String> {
-    std::env::var("REMEM_CODEX_MODEL")
-        .ok()
-        .filter(|model| !model.trim().is_empty())
+    match std::env::var("REMEM_CODEX_MODEL") {
+        Ok(model) if model.trim().eq_ignore_ascii_case("auto") => None,
+        Ok(model) if !model.trim().is_empty() => Some(model),
+        _ => Some(DEFAULT_CODEX_MODEL.to_string()),
+    }
 }
 
 pub(super) fn get_codex_reasoning_effort() -> Option<String> {

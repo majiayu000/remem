@@ -1,7 +1,11 @@
 use rusqlite::Connection;
 
 use super::{DailyActivityStats, ProjectCount, SystemStats};
-use crate::db::query::{query_daily_activity_stats, query_system_stats, query_top_projects};
+use crate::db::models::{AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage};
+use crate::db::query::{
+    query_ai_usage_source_totals, query_ai_usage_totals, query_daily_activity_stats,
+    query_daily_ai_usage, query_system_stats, query_top_projects, query_weekly_ai_usage,
+};
 
 fn setup_stats_schema(conn: &Connection) {
     conn.execute_batch(
@@ -53,6 +57,26 @@ fn setup_stats_schema(conn: &Connection) {
             pid INTEGER,
             started_at_epoch INTEGER NOT NULL,
             updated_at_epoch INTEGER NOT NULL
+        );
+        CREATE TABLE ai_usage_events (
+            id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL,
+            project TEXT,
+            operation TEXT NOT NULL,
+            executor TEXT NOT NULL,
+            model TEXT,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            raw_input_tokens INTEGER NOT NULL DEFAULT 0,
+            raw_output_tokens INTEGER NOT NULL DEFAULT 0,
+            total_tokens INTEGER NOT NULL,
+            estimated_cost_usd REAL NOT NULL,
+            usage_source TEXT NOT NULL DEFAULT 'text_estimate',
+            pricing_source TEXT NOT NULL DEFAULT 'remem_static'
         );",
     )
     .expect("schema should be created");
@@ -215,6 +239,141 @@ fn query_system_stats_and_related_views_share_one_definition() {
             ProjectCount {
                 project: "beta".to_string(),
                 count: 1,
+            },
+        ]
+    );
+}
+
+fn insert_usage(
+    conn: &Connection,
+    project: &str,
+    created_at_epoch: i64,
+    input_tokens: i64,
+    output_tokens: i64,
+    reasoning_tokens: i64,
+    cache_read_tokens: i64,
+    estimated_cost_usd: f64,
+) {
+    conn.execute(
+        "INSERT INTO ai_usage_events
+         (created_at, created_at_epoch, project, operation, executor, model,
+          input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, total_tokens,
+          estimated_cost_usd, usage_source, pricing_source)
+         VALUES ('2026-01-01T00:00:00Z', ?1, ?2, 'summary', 'codex-cli', 'codex-default',
+                 ?3, ?4, ?5, ?6, ?7, ?8, 'codex_log', 'remem_static')",
+        rusqlite::params![
+            created_at_epoch,
+            project,
+            input_tokens,
+            output_tokens,
+            reasoning_tokens,
+            cache_read_tokens,
+            input_tokens + output_tokens + reasoning_tokens + cache_read_tokens,
+            estimated_cost_usd
+        ],
+    )
+    .expect("usage insert should succeed");
+}
+
+#[test]
+fn query_ai_usage_groups_daily_and_weekly_token_costs() {
+    let conn = Connection::open_in_memory().expect("in-memory db should open");
+    setup_stats_schema(&conn);
+
+    let jan_05_2026 = 1_767_571_200;
+    let jan_06_2026 = 1_767_657_600;
+    let jan_12_2026 = 1_768_176_000;
+
+    insert_usage(&conn, "alpha", jan_05_2026, 100, 40, 10, 50, 0.001);
+    insert_usage(&conn, "alpha", jan_05_2026 + 60, 200, 60, 20, 80, 0.002);
+    insert_usage(&conn, "alpha", jan_06_2026, 300, 80, 30, 120, 0.003);
+    insert_usage(&conn, "beta", jan_12_2026, 500, 100, 40, 160, 0.005);
+
+    let alpha_totals = query_ai_usage_totals(&conn, Some(jan_05_2026), Some("alpha"))
+        .expect("usage totals should load");
+    assert_eq!(
+        alpha_totals,
+        AiUsageTotals {
+            calls: 3,
+            input_tokens: 600,
+            output_tokens: 180,
+            reasoning_tokens: 60,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 250,
+            total_tokens: 1090,
+            estimated_cost_usd: 0.006,
+        }
+    );
+
+    let alpha_sources = query_ai_usage_source_totals(&conn, Some(jan_05_2026), Some("alpha"))
+        .expect("usage source totals should load");
+    assert_eq!(
+        alpha_sources,
+        vec![AiUsageSourceTotals {
+            usage_source: "codex_log".to_string(),
+            pricing_source: "remem_static".to_string(),
+            calls: 3,
+            total_tokens: 1090,
+            estimated_cost_usd: 0.006,
+        }]
+    );
+
+    let daily = query_daily_ai_usage(&conn, jan_05_2026, Some("alpha"), 14)
+        .expect("daily usage should load");
+    assert_eq!(
+        daily,
+        vec![
+            DailyAiUsage {
+                day: "2026-01-06".to_string(),
+                calls: 1,
+                input_tokens: 300,
+                output_tokens: 80,
+                reasoning_tokens: 30,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 120,
+                total_tokens: 530,
+                estimated_cost_usd: 0.003,
+            },
+            DailyAiUsage {
+                day: "2026-01-05".to_string(),
+                calls: 2,
+                input_tokens: 300,
+                output_tokens: 100,
+                reasoning_tokens: 30,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 130,
+                total_tokens: 560,
+                estimated_cost_usd: 0.003,
+            },
+        ]
+    );
+
+    let weekly =
+        query_weekly_ai_usage(&conn, jan_05_2026, None, 8).expect("weekly usage should load");
+    assert_eq!(
+        weekly,
+        vec![
+            WeeklyAiUsage {
+                week: "2026-W02".to_string(),
+                calls: 1,
+                input_tokens: 500,
+                output_tokens: 100,
+                reasoning_tokens: 40,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 160,
+                total_tokens: 800,
+                estimated_cost_usd: 0.005,
+            },
+            WeeklyAiUsage {
+                week: "2026-W01".to_string(),
+                calls: 3,
+                input_tokens: 600,
+                output_tokens: 180,
+                reasoning_tokens: 60,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 250,
+                total_tokens: 1090,
+                estimated_cost_usd: 0.006,
             },
         ]
     );

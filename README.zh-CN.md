@@ -143,6 +143,27 @@ python3 eval/local/run_local_eval.py --n 20
 
 需要项目根目录 `.env` 中配置 `OPENAI_API_KEY`（可选 `OPENAI_BASE_URL`、`OPENAI_MODEL`）。
 
+## Token 使用量与费用统计
+
+remem 会为自己的后台提炼、总结、压缩、promotion 调用写入 AI usage
+账本。CLI 可以查看每日、每周 token 使用量和估算费用：
+
+```bash
+remem usage --days 14 --weeks 8
+remem usage --project /path/to/project --days 30 --weeks 12
+```
+
+报表包含调用次数、input/cache/output/reasoning token、total token、估算
+美元费用，以及统计精度说明。usage row 会标记来源：
+
+- `anthropic_usage`：Anthropic Messages API 返回的 provider usage
+- `codex_log`：用 remem run id 匹配 Codex session JSONL 后解析出的 token count
+- `text_estimate`：拿不到真实 usage 时，用 prompt/response 文本长度估算
+
+费用是估算，不是账单。历史数据可能是文本估算，也可能从旧的无精确模型记录
+重估过。Codex 后台总结默认使用 `gpt-5.2`；如果要让 Codex 自己选择默认模型，
+设置 `REMEM_CODEX_MODEL=auto`，也可以设置成任意明确的 Codex 模型名。
+
 ## 常用命令
 
 ```bash
@@ -157,6 +178,7 @@ remem backfill-entities
 remem encrypt
 remem api --port 5567
 remem status
+remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending retry-failed
 remem pending purge-failed

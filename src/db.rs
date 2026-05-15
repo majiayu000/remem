@@ -24,5 +24,5 @@ pub use observation::*;
 pub use pending::*;
 pub use query::*;
 pub use summarize::*;
-pub use usage::*;
+pub(crate) use usage::*;
 pub use worker::*;

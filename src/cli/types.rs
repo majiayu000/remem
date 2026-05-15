@@ -67,6 +67,17 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ReviewAction,
     },
+    Usage {
+        /// Restrict usage totals to one project path.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Number of daily buckets to show.
+        #[arg(long, default_value = "14")]
+        days: i64,
+        /// Number of weekly buckets to show.
+        #[arg(long, default_value = "8")]
+        weeks: i64,
+    },
     Status,
     Doctor {
         /// Emit a single JSON object with per-check status. Stable shape;

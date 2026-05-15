@@ -50,6 +50,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_candidate_promotion",
         sql: include_str!("../migrations/v009_memory_candidate_promotion.sql"),
     },
+    Migration {
+        version: 10,
+        name: "ai_usage_token_breakdown",
+        sql: include_str!("../migrations/v010_ai_usage_token_breakdown.sql"),
+    },
+    Migration {
+        version: 11,
+        name: "reprice_ai_usage_events",
+        sql: include_str!("../migrations/v011_reprice_ai_usage_events.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
