@@ -12,15 +12,30 @@ python download_data.py
 remem api --port 7899
 
 # 3. Run benchmark (ingest + retrieve + answer + judge)
-python run_locomo.py --remem-url http://127.0.0.1:7899 --model claude-3-5-haiku-20241022
-
-# 4. Generate scores report
-python score.py --results results/locomo_results.json
+OPENAI_API_KEY=... python run_locomo.py --remem-url http://127.0.0.1:7899 --model gpt-5.4
 ```
 
-## Cost Estimate
+`run_locomo.py` writes both raw QA rows and score summaries under
+`eval/locomo/results/`. Use `--sample-index N` for one conversation and
+`--skip-ingest` when the API database already contains the LoCoMo memories.
 
-- ~1986 QA pairs (excluding category 5 adversarial)
-- Answer generation: ~1986 x ~800 tokens = ~1.6M tokens (~$0.80 with Haiku)
-- LLM judge: ~1986 x ~300 tokens = ~0.6M tokens (~$0.05 with GPT-4o-mini)
-- Total: ~$0.85 per full run
+## Current Snapshot
+
+The checked-in score files cover all 10 LoCoMo conversations after adversarial
+category skipping:
+
+| Metric | Value |
+|---|---:|
+| QA pairs | 1540 |
+| Correct | 965 |
+| Weighted overall | 62.66% |
+| Mean sample accuracy | 63.00% |
+| Model | gpt-5.4 |
+
+This matches the top-level README `v2 (optimized)` LoCoMo benchmark snapshot.
+
+## Cost Note
+
+Cost depends on the selected model, answer/judge token lengths, and whether
+ingest is re-run. Prefer `--sample-index` first when validating code changes,
+then run all 10 conversations once the pipeline is stable.

@@ -1,9 +1,9 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::state::applied_versions;
 use super::{dry_run_pending, run_migrations, MIGRATIONS};
-use crate::db::test_support::ScopedTestDataDir;
+use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path, ScopedTestDataDir};
 
 #[test]
 fn baseline_creates_all_tables() -> Result<()> {
@@ -62,10 +62,10 @@ fn full_migration_on_empty_db() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 21);
+    assert_eq!(user_version, 23);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -115,6 +115,83 @@ fn run_migrations_does_not_downgrade_newer_user_version() -> Result<()> {
 }
 
 #[test]
+fn concurrent_run_migrations_serializes_pending_migrations() -> Result<()> {
+    let path = unique_temp_db_path("migrate-concurrent");
+    {
+        let conn = Connection::open(&path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+    }
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let mut handles = Vec::new();
+
+    for _ in 0..2 {
+        let path = path.clone();
+        let barrier = std::sync::Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || -> Result<()> {
+            let conn = Connection::open(&path)?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))?;
+            conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+            barrier.wait();
+            run_migrations(&conn)?;
+            Ok(())
+        }));
+    }
+
+    for handle in handles {
+        handle.join().expect("migration thread panicked")?;
+    }
+
+    let conn = Connection::open(&path)?;
+    let applied = applied_versions(&conn)?;
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    cleanup_temp_db_files(&path);
+    Ok(())
+}
+
+#[test]
+fn reprice_migration_backfills_zero_cost_usage_rows() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA foreign_keys=ON;
+         CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+
+    for migration in &MIGRATIONS[..10] {
+        conn.execute_batch(migration.sql)?;
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 1700000000)",
+            params![migration.version, migration.name],
+        )?;
+    }
+    conn.execute_batch("PRAGMA user_version = 22;")?;
+    conn.execute(
+        "INSERT INTO ai_usage_events
+         (created_at, created_at_epoch, project, operation, executor, model,
+          input_tokens, output_tokens, total_tokens, estimated_cost_usd)
+         VALUES ('2026-01-01T00:00:00Z', 1767225600, 'proj', 'summary',
+                 'codex-cli', 'codex-default', 1000000, 100000, 1100000, 0.0)",
+        [],
+    )?;
+
+    run_migrations(&conn)?;
+
+    let (cost, pricing_source): (f64, String) = conn.query_row(
+        "SELECT estimated_cost_usd, pricing_source FROM ai_usage_events",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert!((cost - 2.25).abs() < f64::EPSILON);
+    assert_eq!(pricing_source, "remem_static_backfill");
+    Ok(())
+}
+
+#[test]
 fn transition_from_old_system_skips_baseline() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 13;")?;
@@ -123,7 +200,7 @@ fn transition_from_old_system_skips_baseline() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     Ok(())
 }
 
@@ -148,10 +225,10 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
 
     // Should have auto-upgraded and marked all v1 migrations as applied.
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 21);
+    assert_eq!(user_version, 23);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -191,7 +268,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 21);
+    assert_eq!(result.current_version, 23);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())
@@ -204,7 +281,7 @@ fn dry_run_pending_reports_pending_for_new_db() -> Result<()> {
     let result = dry_run_pending(&conn)?;
 
     assert_eq!(result.current_version, 0);
-    assert_eq!(result.pending_count, 9);
+    assert_eq!(result.pending_count, 11);
     assert!(result.error.is_none());
     Ok(())
 }
@@ -263,7 +340,7 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
     let result = dry_run_pending(&conn)?;
     // After broken baseline backfill fails, dry_run reports the still-unapplied
     // migrations (v2+ remain pending in _schema_migrations).
-    assert_eq!(result.pending_count, 8);
+    assert_eq!(result.pending_count, 10);
     let error = result
         .error
         .expect("broken schema should surface in dry-run");

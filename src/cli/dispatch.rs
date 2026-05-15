@@ -5,7 +5,7 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 use super::actions::{
     run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval,
     run_eval_local, run_import, run_pending, run_preferences, run_review, run_search, run_show,
-    run_status,
+    run_status, run_usage,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -55,6 +55,11 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
+        Commands::Usage {
+            project,
+            days,
+            weeks,
+        } => run_usage(project.as_deref(), days, weeks)?,
         Commands::Status => run_status()?,
         Commands::Doctor { json, quiet } => {
             let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;

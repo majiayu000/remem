@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Added `remem usage` for daily and weekly AI token/cost reporting.
+- Added `ai_usage_events` token breakdown fields for input, output, reasoning,
+  cache creation, cache read, raw input/output, usage source, and pricing source.
+- Added Codex session JSONL token accounting keyed by a per-run remem id.
+- Added historical usage repricing migration for older zero-cost rows.
+
+### Changed
+- Defaulted remem's Codex summarization model to `gpt-5.2`; set
+  `REMEM_CODEX_MODEL=auto` to use the Codex CLI default.
+- Updated model pricing to include current cache/reasoning-aware OpenAI and
+  Anthropic price families.
+- Serialized schema migrations with `BEGIN IMMEDIATE` to avoid concurrent
+  migration races.
+
+### Docs
+- Documented usage reporting, precision levels, pricing overrides, and the
+  `gpt-5.2` Codex default in English/Chinese README and architecture docs.
+
 ## [0.3.8] - 2026-04-03
 
 ### Packaging

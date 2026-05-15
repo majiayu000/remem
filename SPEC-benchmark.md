@@ -14,9 +14,19 @@
 ```
 tests/benchmark.rs          — 端到端评估测试（#[test]）
 tests/bench_fixtures.rs     — 测试数据生成器（模拟编程会话）
+eval/local/run_local_eval.py — 本地真实记忆 QA 评估
+eval/locomo/run_locomo.py    — LoCoMo 长对话记忆评估
 ```
 
 所有测试使用 in-memory SQLite，不依赖外部 AI 服务。
+
+## Commands
+
+```bash
+cargo test --test benchmark
+python3 eval/local/run_local_eval.py --n 20
+cd eval/locomo && python3 run_locomo.py --remem-url http://127.0.0.1:7899
+```
 
 ## Evaluation Scenarios
 
@@ -41,6 +51,21 @@ Project A 存入 global preference → Project B 查询 → 验证 global scope 
 ### Scenario 7: Summary Parse & Promotion
 输入 AI 生成的 summary XML → parse_summary → promote_summary_to_memories → 验证 decisions/discoveries/preferences 被正确提取为独立记忆。
 
+### Scenario 8: Search Filter By Type
+插入不同 memory type → 按 type 搜索 → 验证过滤语义和排序稳定。
+
+### Scenario 9: Topic Key Dedup
+重复写入相同 `topic_key` → 验证 upsert/dedup 行为。
+
+### Scenario 10: Multi-hop Entity Graph Retrieval
+跨实体关系检索 → 验证 multi-hop expansion 能召回相关记忆。
+
+### Scenario 11: Entity Graph Expansion
+基于实体索引扩展候选 → 验证 2-hop 相关实体能进入结果集。
+
+### Scenario 12: Aggregate Report
+汇总 benchmark 指标 → 验证报告统计口径稳定。
+
 ## Quantitative Metrics
 
 | Metric | Formula | Target |
@@ -53,7 +78,9 @@ Project A 存入 global preference → Project B 查询 → 验证 global scope 
 | Global Visibility | global_mem_visible_in_other_project ? 1 : 0 | = 1.0 |
 | Decay Correctness | newer_ranked_higher ? 1 : 0 | = 1.0 |
 
-## Files Affected
+## Current Automated Coverage
 
-- `tests/benchmark.rs` (new)
-- `tests/bench_fixtures.rs` (new)
+- `tests/benchmark.rs` contains 16 automated benchmark tests.
+- `tests/rate_limit.rs` adds retrieval edge-case integration coverage.
+- `README.md` / `README.zh-CN.md` publish the current LoCoMo and local QA
+  benchmark snapshots.

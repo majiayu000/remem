@@ -249,17 +249,29 @@ Short-lived process model (each hook = independent process) cannot dedup via in-
 ## AI Calls
 
 ```
-              ┌─ ANTHROPIC_API_KEY exists?
-              │
-         Yes ─┤──→ HTTP API direct (2-5s)
-              │         │ fails
-              │         ▼
-         No ──┴──→ claude -p CLI (30-60s)
+                  ┌─ executor = codex-cli?
+                  │
+             Yes ─┤──→ codex exec --model REMEM_CODEX_MODEL (default gpt-5.2)
+                  │         │
+                  │         └── usage from matching Codex session JSONL token_count
+                  │
+             No ──┴─ ANTHROPIC_API_KEY exists?
+                        │
+                   Yes ─┤──→ HTTP API direct (2-5s)
+                        │         │
+                        │         └── usage from Anthropic response.usage
+                        │
+                   No ──┴──→ claude -p CLI (30-60s)
+                                  │
+                                  └── usage fallback = text estimate
 ```
 
 - **Model mapping**: `REMEM_MODEL=haiku` → `claude-haiku-4-5-20251001` (HTTP uses full ID, CLI uses short name)
+- **Codex model**: `REMEM_CODEX_MODEL` defaults to `gpt-5.2`; set `auto` to omit `--model` and use the Codex CLI default
 - **Timeouts**: Single AI call 90s, entire worker 180s
 - **4 prompts**: observation (capture), summary (session summary), compress (long-term compression), promote (summary→memory)
+- **Usage ledger**: `ai_usage_events` stores model, operation, token breakdown, usage source, pricing source, and estimated USD cost
+- **Precision levels**: provider/log usage (`anthropic_usage`, `codex_log`) is preferred; `text_estimate` is kept only as a fallback and marked in reports
 
 ## MCP Server
 
@@ -341,18 +353,56 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | Preference section character budget |
 | `REMEM_CLAUDE_PATH` | `claude` | Claude CLI path |
 | `REMEM_CODEX_PATH` | `codex` | Codex CLI path |
-| `REMEM_CODEX_MODEL` | - | Optional Codex CLI model override |
+| `REMEM_CODEX_MODEL` | `gpt-5.2` | Codex CLI model. Set `auto` to omit `--model` and use the Codex CLI default |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
 | `REMEM_SAVE_MEMORY_LOCAL_COPY` | `true` | Enable local Markdown backup for save_memory |
 | `REMEM_SAVE_MEMORY_LOCAL_DIR` | `~/.remem/manual-notes` | Local backup directory |
 | `REMEM_PRICE_INPUT_PER_MTOK` | model default | Override all models input price (USD/M tokens) |
 | `REMEM_PRICE_OUTPUT_PER_MTOK` | model default | Override all models output price (USD/M tokens) |
-| `REMEM_PRICE_HAIKU_INPUT_PER_MTOK` | `0.8` | Haiku input price |
-| `REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK` | `4.0` | Haiku output price |
+| `REMEM_PRICE_REASONING_PER_MTOK` | output price | Override all models reasoning token price |
+| `REMEM_PRICE_CACHE_CREATION_PER_MTOK` | input price | Override all models cache creation price |
+| `REMEM_PRICE_CACHE_READ_PER_MTOK` | input price | Override all models cache read price |
+| `REMEM_PRICE_HAIKU_INPUT_PER_MTOK` | `1.0` | Haiku input price |
+| `REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK` | `5.0` | Haiku output price |
+| `REMEM_PRICE_HAIKU_REASONING_PER_MTOK` | output price | Haiku reasoning token price |
+| `REMEM_PRICE_HAIKU_CACHE_CREATION_PER_MTOK` | `1.25` | Haiku cache creation price |
+| `REMEM_PRICE_HAIKU_CACHE_READ_PER_MTOK` | `0.10` | Haiku cache read price |
 | `REMEM_PRICE_SONNET_INPUT_PER_MTOK` | `3.0` | Sonnet input price |
 | `REMEM_PRICE_SONNET_OUTPUT_PER_MTOK` | `15.0` | Sonnet output price |
+| `REMEM_PRICE_SONNET_REASONING_PER_MTOK` | output price | Sonnet reasoning token price |
+| `REMEM_PRICE_SONNET_CACHE_CREATION_PER_MTOK` | `3.75` | Sonnet cache creation price |
+| `REMEM_PRICE_SONNET_CACHE_READ_PER_MTOK` | `0.30` | Sonnet cache read price |
 | `REMEM_PRICE_OPUS_INPUT_PER_MTOK` | `15.0` | Opus input price |
 | `REMEM_PRICE_OPUS_OUTPUT_PER_MTOK` | `75.0` | Opus output price |
+| `REMEM_PRICE_OPUS_REASONING_PER_MTOK` | output price | Opus reasoning token price |
+| `REMEM_PRICE_OPUS_CACHE_CREATION_PER_MTOK` | `18.75` | Opus cache creation price |
+| `REMEM_PRICE_OPUS_CACHE_READ_PER_MTOK` | `1.50` | Opus cache read price |
+| `REMEM_PRICE_GPT5_CODEX_INPUT_PER_MTOK` | `1.75` | GPT-5.2 / GPT-5.3-Codex input price |
+| `REMEM_PRICE_GPT5_CODEX_OUTPUT_PER_MTOK` | `14.0` | GPT-5.2 / GPT-5.3-Codex output price |
+| `REMEM_PRICE_GPT5_CODEX_REASONING_PER_MTOK` | output price | GPT-5.2 / GPT-5.3-Codex reasoning token price |
+| `REMEM_PRICE_GPT5_CODEX_CACHE_CREATION_PER_MTOK` | `0.0` | GPT-5.2 / GPT-5.3-Codex cache creation price |
+| `REMEM_PRICE_GPT5_CODEX_CACHE_READ_PER_MTOK` | `0.175` | GPT-5.2 / GPT-5.3-Codex cached input price |
+
+OpenAI family price overrides also support the same suffixes for `GPT55`,
+`GPT54`, `GPT54_MINI`, `GPT54_NANO`, `GPT5`, and `CODEX_MINI`.
+
+## Usage Reporting
+
+```bash
+remem usage --days 14 --weeks 8
+remem usage --project /path/to/project --days 30 --weeks 12
+```
+
+The usage report reads `ai_usage_events` and renders:
+
+- Total calls, token breakdown, and estimated cost for the selected weekly window
+- Daily buckets for the selected day window
+- Weekly buckets for the selected week window
+- Precision summary separating provider/log usage from `text_estimate` fallback rows
+
+Cost is intentionally labeled as estimated. Historical rows can be text
+estimates or repriced rows from older schema versions; new Codex rows should use
+`codex_log` when the matching session JSONL token count is available.
 
 ## Data Cleanup
 
@@ -397,7 +447,11 @@ summarize_cooldown (project, last_summarize_epoch, last_message_hash)
 
 -- AI call statistics
 ai_usage_events (created_at_epoch, project, operation, executor, model,
-                 input_tokens, output_tokens, total_tokens, estimated_cost_usd)
+                 input_tokens, output_tokens, reasoning_tokens,
+                 cache_creation_tokens, cache_read_tokens,
+                 raw_input_tokens, raw_output_tokens,
+                 total_tokens, estimated_cost_usd,
+                 usage_source, pricing_source)
 
 -- Full-text indexes
 observations_fts (title, subtitle, narrative, facts, concepts)  -- FTS5 trigram
@@ -408,7 +462,7 @@ memories_fts (title, content)                                    -- FTS5 trigram
 
 - **Short-lived process model**: Each hook call = independent process, zero shared state, <6ms response, never blocks Claude Code
 - **SQLite constraint compensation**: No in-memory Map dedup capability, DB tables (`summarize_cooldown`) simulate rate limiting
-- **HTTP-first AI calls**: HTTP API direct 2-5s vs `claude -p` CLI 30+s, 6-12x performance gap
+- **Executor-specific AI calls**: Anthropic HTTP is preferred when API credentials exist; Codex hosts can use `codex exec` with explicit model control
 - **Stop hook async**: Dispatcher returns in 6ms, `std::process::Command` spawns independent worker
 - **SQLite single-file + WAL**: Zero dependencies, FTS5 full-text search, WAL concurrent read/write
 - **Queue batch processing**: Claude Code PostToolUse only queues (<1ms), Stop processes ≤15 events in one AI call

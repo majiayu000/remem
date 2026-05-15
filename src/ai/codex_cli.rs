@@ -11,12 +11,18 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
     let codex = get_codex_path();
     let model = get_codex_model();
     let reasoning_effort = get_codex_reasoning_effort();
+    let started_at = std::time::SystemTime::now();
+    let run_id = format!(
+        "remem-usage-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
     let output_path = std::env::temp_dir().join(format!(
         "remem-codex-summary-{}-{}.txt",
         std::process::id(),
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
     ));
-    let prompt = build_prompt(system, user_message);
+    let prompt = build_prompt(system, user_message, &run_id);
     let working_dir = super::stable_working_dir();
 
     let mut command = Command::new(&codex);
@@ -74,10 +80,29 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
         anyhow::bail!("codex CLI returned empty response");
     }
 
+    let codex_usage = match super::codex_usage::collect_codex_usage_for_run(&run_id, started_at) {
+        Ok(usage) => usage,
+        Err(error) => {
+            crate::log::warn("ai", &format!("codex usage parse failed: {}", error));
+            None
+        }
+    };
+    if codex_usage.is_none() {
+        crate::log::warn("ai", "codex usage parse found no matching token_count log");
+    }
+    let usage = codex_usage
+        .as_ref()
+        .map(|run_usage| run_usage.usage.clone());
+    let usage_model = codex_usage.and_then(|run_usage| run_usage.model);
+
     Ok(AiCallResult {
         text,
         executor: "codex-cli",
-        model: model.unwrap_or_else(|| "codex-default".to_string()),
+        model: usage_model
+            .or(model)
+            .unwrap_or_else(|| "codex-default".to_string()),
+        usage,
+        usage_source: Some("codex_log"),
     })
 }
 
@@ -118,13 +143,14 @@ fn build_codex_args(
     args
 }
 
-fn build_prompt(system: &str, user_message: &str) -> String {
+fn build_prompt(system: &str, user_message: &str, run_id: &str) -> String {
     format!(
         "You are running as remem's Codex CLI summarization backend.\n\
          Follow the system instructions exactly and return only the requested output.\n\n\
+         <remem_usage_run_id>{}</remem_usage_run_id>\n\n\
          <system>\n{}\n</system>\n\n\
          <input>\n{}\n</input>\n",
-        system, user_message
+        run_id, system, user_message
     )
 }
 

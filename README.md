@@ -151,6 +151,31 @@ python3 eval/local/run_local_eval.py --n 20
 
 Requires `.env` with `OPENAI_API_KEY` (optional `OPENAI_BASE_URL`, `OPENAI_MODEL`).
 
+## Token Usage And Cost Reporting
+
+remem records an AI usage ledger for its own background extraction, summary,
+compression, and promotion calls. The CLI can report daily and weekly token
+usage and estimated cost:
+
+```bash
+remem usage --days 14 --weeks 8
+remem usage --project /path/to/project --days 30 --weeks 12
+```
+
+The report includes calls, input tokens, cache tokens, output tokens, reasoning
+tokens, total tokens, estimated USD cost, and a precision note. Usage rows are
+tagged by source:
+
+- `anthropic_usage`: provider-reported usage from the Anthropic Messages API
+- `codex_log`: token counts parsed from Codex session JSONL logs for the
+  matching remem run id
+- `text_estimate`: fallback estimate from prompt/response text length
+
+Cost is an estimate, not an invoice. Historical rows may be text estimates or
+may have been repriced from older rows that did not store the exact model.
+Codex summarization defaults to `gpt-5.2`; set `REMEM_CODEX_MODEL=auto` to let
+Codex choose its own default, or set any explicit Codex model name.
+
 ## Commands
 
 ```bash
@@ -165,6 +190,7 @@ remem backfill-entities
 remem encrypt
 remem api --port 5567
 remem status
+remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending retry-failed
 remem pending purge-failed
