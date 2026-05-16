@@ -984,7 +984,16 @@ fn bench_multi_hop_entity_graph_retrieval() -> Result<()> {
     let standard_ids: Vec<i64> = standard.iter().map(|m| m.id).collect();
 
     // Multi-hop search: should find Melanie + Tom's hobbies + Sarah's activities
-    let multi = search_multihop::search_multi_hop(&conn, "Melanie kids", Some("personal"), 10)?;
+    let multi = search_multihop::search_multi_hop(
+        &conn,
+        "Melanie kids",
+        Some("personal"),
+        10,
+        0,
+        None,
+        None,
+        true,
+    )?;
     let multi_ids: Vec<i64> = multi.memories.iter().map(|m| m.id).collect();
 
     eprintln!("[Multi-hop] Standard search found: {:?}", standard_ids);

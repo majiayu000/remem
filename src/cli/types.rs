@@ -93,10 +93,18 @@ pub(super) enum Commands {
         query: String,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 't')]
+        #[arg(long, alias = "type", short = 't')]
         memory_type: Option<String>,
         #[arg(long, short = 'n', default_value = "10")]
         limit: i64,
+        #[arg(long, default_value = "0")]
+        offset: i64,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        include_stale: bool,
+        #[arg(long)]
+        multi_hop: bool,
     },
     Show {
         id: i64,
@@ -195,12 +203,16 @@ pub(in crate::cli) enum PendingAction {
         project: Option<String>,
         #[arg(long, short = 'n', default_value = "100")]
         limit: i64,
+        #[arg(long)]
+        dry_run: bool,
     },
     PurgeFailed {
         #[arg(long, short)]
         project: Option<String>,
         #[arg(long, default_value = "7")]
         older_than_days: i64,
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 

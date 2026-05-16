@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::{load_context_data, load_context_data_with_policy};
-use super::super::render::enforce_total_char_limit;
+use super::super::render::{enforce_total_char_limit, enforce_total_char_limit_preserving_footer};
 use super::{insert_memory, insert_memory_with_branch};
 
 #[test]
@@ -334,6 +334,18 @@ fn enforce_total_char_limit_truncates_rendered_output() {
 
     assert!(output.chars().count() <= 120);
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_preserves_footer_when_it_fits() {
+    let footer = "22 context memories loaded. 2 core memories. 20 indexed memories. 5 preferences. 5 sessions.\n";
+    let mut output = format!("{}{}{}", "# [/tmp/demo] context\n", "x".repeat(500), footer);
+
+    enforce_total_char_limit_preserving_footer(&mut output, 180, footer);
+
+    assert!(output.chars().count() <= 180);
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+    assert!(output.ends_with(footer));
 }
 
 #[test]

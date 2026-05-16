@@ -107,15 +107,20 @@ pub fn generate_context(
         );
     }
 
-    output.push_str(&format!(
+    let stats_footer = format!(
         "{} context memories loaded. {} core memories. {} indexed memories. {} preferences. {} sessions.\n",
         loaded.memories.len(),
         core_count,
         index_count,
         preference_count,
         loaded.summaries.len()
-    ));
-    enforce_total_char_limit(&mut output, policy.limits.total_char_limit);
+    );
+    output.push_str(&stats_footer);
+    enforce_total_char_limit_preserving_footer(
+        &mut output,
+        policy.limits.total_char_limit,
+        &stats_footer,
+    );
     print!("{}", output);
 
     timer.done(&format!(
@@ -171,13 +176,34 @@ fn render_preferences_to_buffer(
     Ok((output, count))
 }
 
+#[cfg(test)]
 pub(in crate::context) fn enforce_total_char_limit(output: &mut String, char_limit: usize) {
+    enforce_total_char_limit_preserving_footer(output, char_limit, "");
+}
+
+pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
+    output: &mut String,
+    char_limit: usize,
+    footer: &str,
+) {
     if char_limit == 0 || output.chars().count() <= char_limit {
         return;
     }
 
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
     let marker_chars = marker.chars().count();
+    let footer_chars = footer.chars().count();
+
+    if !footer.is_empty() && output.ends_with(footer) && marker_chars + footer_chars <= char_limit {
+        let keep_chars = char_limit - marker_chars - footer_chars;
+        let body = output.strip_suffix(footer).unwrap_or(output.as_str());
+        let mut truncated: String = body.chars().take(keep_chars).collect();
+        truncated.push_str(marker);
+        truncated.push_str(footer);
+        *output = truncated;
+        return;
+    }
+
     if marker_chars >= char_limit {
         *output = output.chars().take(char_limit).collect();
         return;

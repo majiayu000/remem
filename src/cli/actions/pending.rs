@@ -32,20 +32,46 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                 }
             }
         }
-        PendingAction::RetryFailed { project, limit } => {
-            let count = db::pending::admin::retry_failed(&conn, project.as_deref(), limit)?;
-            println!("Moved {} failed rows back to pending.", count);
+        PendingAction::RetryFailed {
+            project,
+            limit,
+            dry_run,
+        } => {
+            if dry_run {
+                let count = db::pending::admin::count_failed_retry_candidates(
+                    &conn,
+                    project.as_deref(),
+                    limit,
+                )?;
+                println!("Would move {} failed rows back to pending.", count);
+            } else {
+                let count = db::pending::admin::retry_failed(&conn, project.as_deref(), limit)?;
+                println!("Moved {} failed rows back to pending.", count);
+            }
         }
         PendingAction::PurgeFailed {
             project,
             older_than_days,
+            dry_run,
         } => {
-            let count =
-                db::pending::admin::purge_failed(&conn, project.as_deref(), older_than_days)?;
-            println!(
-                "Purged {} failed rows older than {} day(s).",
-                count, older_than_days
-            );
+            if dry_run {
+                let count = db::pending::admin::count_failed_purge_candidates(
+                    &conn,
+                    project.as_deref(),
+                    older_than_days,
+                )?;
+                println!(
+                    "Would purge {} failed rows older than {} day(s).",
+                    count, older_than_days
+                );
+            } else {
+                let count =
+                    db::pending::admin::purge_failed(&conn, project.as_deref(), older_than_days)?;
+                println!(
+                    "Purged {} failed rows older than {} day(s).",
+                    count, older_than_days
+                );
+            }
         }
     }
 
