@@ -61,3 +61,12 @@ jobs:
         with:
           generate_release_notes: true
           files: artifacts/**/*.tar.gz
+
+  publish-crate:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish crate
+        run: cargo publish --locked --token "${{ secrets.CRATES_IO_TOKEN }}"
