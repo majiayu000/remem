@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-16
+
+### Packaging
+- Bumped the crate and binary version to `0.4.1` for the post-`0.4.0`
+  maintenance release.
+
 ## [0.4.0] - 2026-05-16
 
 ### Added
