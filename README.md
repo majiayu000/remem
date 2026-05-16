@@ -183,6 +183,7 @@ remem install
 remem uninstall
 remem doctor
 remem search "query"
+remem search "query" --branch main --type decision --multi-hop --offset 10
 remem show <id>
 remem eval
 remem eval-local
@@ -192,8 +193,8 @@ remem api --port 5567
 remem status
 remem usage --days 14 --weeks 8
 remem pending list-failed
-remem pending retry-failed
-remem pending purge-failed
+remem pending retry-failed --dry-run
+remem pending purge-failed --dry-run --older-than-days 7
 remem review list
 remem review approve <id>
 remem review discard <id>

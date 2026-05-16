@@ -2,12 +2,20 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-16
+
 ### Added
 - Added `remem usage` for daily and weekly AI token/cost reporting.
 - Added `ai_usage_events` token breakdown fields for input, output, reasoning,
   cache creation, cache read, raw input/output, usage source, and pricing source.
 - Added Codex session JSONL token accounting keyed by a per-run remem id.
 - Added historical usage repricing migration for older zero-cost rows.
+- Added CLI search parity with the canonical memory service, including
+  `--offset`, `--branch`, `--include-stale`, `--multi-hop`, and `--type` as a
+  `--memory-type` alias.
+- Added raw archive fallback previews and `has_more` guidance to CLI search.
+- Added `--dry-run` previews for `pending retry-failed` and
+  `pending purge-failed`.
 
 ### Changed
 - Defaulted remem's Codex summarization model to `gpt-5.2`; set
@@ -16,10 +24,16 @@
   Anthropic price families.
 - Serialized schema migrations with `BEGIN IMMEDIATE` to avoid concurrent
   migration races.
+- Preserved the context stats footer when context output is truncated and the
+  footer fits within the configured character budget.
+- Propagated branch, memory-type, stale-state, and offset filters through
+  multi-hop search expansion.
 
 ### Docs
 - Documented usage reporting, precision levels, pricing overrides, and the
   `gpt-5.2` Codex default in English/Chinese README and architecture docs.
+- Documented filtered multi-hop CLI search and pending dry-run operations in
+  English and Chinese README files.
 
 ## [0.3.8] - 2026-04-03
 
