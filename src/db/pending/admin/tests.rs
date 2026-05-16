@@ -1,6 +1,9 @@
 use rusqlite::{params, Connection};
 
-use super::{list_failed, purge_failed, retry_failed};
+use super::{
+    count_failed_purge_candidates, count_failed_retry_candidates, list_failed, purge_failed,
+    retry_failed,
+};
 use crate::{db, migrate::MIGRATIONS};
 
 fn setup_conn() -> Connection {
@@ -104,6 +107,28 @@ fn retry_failed_resets_rows_for_selected_project() {
 }
 
 #[test]
+fn retry_failed_dry_run_count_respects_project_and_limit_without_mutation() {
+    let conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let alpha_id = insert_failed_row(&conn, "s-1", "alpha", now - 10, "alpha newest");
+    insert_failed_row(&conn, "s-2", "alpha", now - 20, "alpha older");
+    insert_failed_row(&conn, "s-3", "beta", now - 5, "beta newest");
+
+    let count =
+        count_failed_retry_candidates(&conn, Some("alpha"), 1).expect("dry-run count should query");
+
+    assert_eq!(count, 1);
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM pending_observations WHERE id = ?1",
+            params![alpha_id],
+            |row| row.get(0),
+        )
+        .expect("alpha row should exist");
+    assert_eq!(status, "failed");
+}
+
+#[test]
 fn purge_failed_respects_cutoff_and_project() {
     let conn = setup_conn();
     let now = chrono::Utc::now().timestamp();
@@ -123,4 +148,32 @@ fn purge_failed_respects_cutoff_and_project() {
         .expect("rows should collect");
     assert_eq!(remaining_ids, vec![recent_alpha, old_beta]);
     assert!(!remaining_ids.contains(&old_alpha));
+}
+
+#[test]
+fn purge_failed_dry_run_count_respects_cutoff_without_deleting() {
+    let conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let old_alpha = insert_failed_row(&conn, "s-1", "alpha", now - 5 * 86_400, "old alpha");
+    insert_failed_row(&conn, "s-2", "alpha", now - 86_400, "recent alpha");
+    insert_failed_row(&conn, "s-3", "beta", now - 5 * 86_400, "old beta");
+
+    let count =
+        count_failed_purge_candidates(&conn, Some("alpha"), 2).expect("dry-run count should query");
+
+    assert_eq!(count, 1);
+    let row_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pending_observations", [], |row| {
+            row.get(0)
+        })
+        .expect("row count should query");
+    assert_eq!(row_count, 3);
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM pending_observations WHERE id = ?1",
+            params![old_alpha],
+            |row| row.get(0),
+        )
+        .expect("old alpha should remain");
+    assert_eq!(status, "failed");
 }
