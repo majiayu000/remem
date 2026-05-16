@@ -157,7 +157,8 @@ remem usage --project /path/to/project --days 30 --weeks 12
 美元费用，以及统计精度说明。usage row 会标记来源：
 
 - `anthropic_usage`：Anthropic Messages API 返回的 provider usage
-- `codex_log`：用 remem run id 匹配 Codex session JSONL 后解析出的 token count
+- `codex_log`：从当前 `codex exec --json` 的 `turn.completed.usage`
+  事件解析出的精确 token count
 - `text_estimate`：拿不到真实 usage 时，用 prompt/response 文本长度估算
 
 费用是估算，不是账单。历史数据可能是文本估算，也可能从旧的无精确模型记录

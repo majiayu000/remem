@@ -253,7 +253,7 @@ Short-lived process model (each hook = independent process) cannot dedup via in-
                   │
              Yes ─┤──→ codex exec --model REMEM_CODEX_MODEL (default gpt-5.2)
                   │         │
-                  │         └── usage from matching Codex session JSONL token_count
+                  │         └── usage from codex exec --json turn.completed.usage
                   │
              No ──┴─ ANTHROPIC_API_KEY exists?
                         │
@@ -402,7 +402,7 @@ The usage report reads `ai_usage_events` and renders:
 
 Cost is intentionally labeled as estimated. Historical rows can be text
 estimates or repriced rows from older schema versions; new Codex rows should use
-`codex_log` when the matching session JSONL token count is available.
+`codex_log` from the current `codex exec --json` event stream.
 
 ## Data Cleanup
 

@@ -167,8 +167,8 @@ tokens, total tokens, estimated USD cost, and a precision note. Usage rows are
 tagged by source:
 
 - `anthropic_usage`: provider-reported usage from the Anthropic Messages API
-- `codex_log`: token counts parsed from Codex session JSONL logs for the
-  matching remem run id
+- `codex_log`: exact token counts parsed from the current `codex exec --json`
+  `turn.completed.usage` event
 - `text_estimate`: fallback estimate from prompt/response text length
 
 Cost is an estimate, not an invoice. Historical rows may be text estimates or
