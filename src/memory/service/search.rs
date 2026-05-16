@@ -51,6 +51,10 @@ fn multi_hop_search(
             query_text,
             project,
             limit + 1,
+            req.offset.max(0),
+            req.memory_type.as_deref(),
+            req.branch.as_deref(),
+            req.include_stale,
         )?;
         let has_more = result.memories.len() as i64 > limit;
         result.memories.truncate(limit as usize);

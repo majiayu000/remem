@@ -56,6 +56,48 @@ fn cli_parses_review_edit_options() {
 }
 
 #[test]
+fn cli_parses_search_type_alias_and_multi_hop_filters() {
+    let cli = Cli::parse_from([
+        "remem",
+        "search",
+        "Melanie rollout",
+        "--project",
+        "personal",
+        "--type",
+        "decision",
+        "--branch",
+        "main",
+        "--offset",
+        "1",
+        "--include-stale",
+        "--multi-hop",
+    ]);
+
+    match cli.command {
+        Commands::Search {
+            query,
+            project,
+            memory_type,
+            limit,
+            offset,
+            branch,
+            include_stale,
+            multi_hop,
+        } => {
+            assert_eq!(query, "Melanie rollout");
+            assert_eq!(project.as_deref(), Some("personal"));
+            assert_eq!(memory_type.as_deref(), Some("decision"));
+            assert_eq!(limit, 10);
+            assert_eq!(offset, 1);
+            assert_eq!(branch.as_deref(), Some("main"));
+            assert!(include_stale);
+            assert!(multi_hop);
+        }
+        _ => panic!("expected search command"),
+    }
+}
+
+#[test]
 fn cli_parses_usage_options() {
     let cli = Cli::parse_from([
         "remem",

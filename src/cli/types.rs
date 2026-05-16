@@ -93,7 +93,7 @@ pub(super) enum Commands {
         query: String,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 't')]
+        #[arg(long, alias = "type", short = 't')]
         memory_type: Option<String>,
         #[arg(long, short = 'n', default_value = "10")]
         limit: i64,

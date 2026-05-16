@@ -31,6 +31,8 @@ user-visible hardening slices that remain in the current code:
 - Add CLI flags for `offset`, `branch`, `include-stale`, and `multi-hop`.
 - Surface `has_more`, multi-hop metadata, and raw archive fallback hits in CLI
   search output.
+- Ensure `--multi-hop` follows the same `branch`, `offset`, `include-stale`,
+  and memory-type filters as normal search.
 - Add `--dry-run` to `remem pending retry-failed` and
   `remem pending purge-failed` so data-changing commands can be previewed.
 - Keep the final context statistics footer visible when
@@ -117,6 +119,18 @@ Search {
 `run_search()` should build `crate::memory::service::SearchRequest` and call
 `crate::memory::service::search_memories()`.
 
+Multi-hop must not be a looser bypass path. When `multi_hop` is true, the
+service-level request must propagate the same filters through:
+
+- first-hop text/entity search,
+- second-hop entity expansion and FTS fallback,
+- final ranked-result pagination.
+
+The expected behavior is that `--branch main --memory-type decision --multi-hop`
+returns only matching-branch or branchless decision memories, `--include-stale`
+controls archived rows, and `--offset` skips results after multi-hop ranking.
+`--type` is accepted as an alias for `--memory-type`.
+
 Output rules:
 
 - Keep the existing compact memory lines for curated memories.
@@ -200,6 +214,11 @@ smaller patches, the implementation can be split without changing this spec.
 - `src/db/pending/admin/tests.rs`
 - `src/context/render.rs`
 - `src/context/tests/load.rs`
+- `src/memory/service/search.rs`
+- `src/retrieval/search_multihop/search.rs`
+- `src/retrieval/search_multihop/expand.rs`
+- `tests/rate_limit.rs`
+- `tests/benchmark.rs`
 
 No database files or user data files should be modified.
 
@@ -217,6 +236,8 @@ Targeted tests to add or update:
 
 - CLI search request construction/output covers branch, offset, include-stale,
   multi-hop, `has_more`, and raw fallback formatting.
+- Service multi-hop search proves branch, offset, include-stale, and memory-type
+  filters apply before expansion and pagination.
 - pending dry-run count tests prove no row mutation occurs.
 - context truncation test proves marker and `context memories loaded` footer
   are both retained when they fit.

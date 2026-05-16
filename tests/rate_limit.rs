@@ -265,6 +265,35 @@ fn insert_memory_row(
     Ok(())
 }
 
+fn insert_filtered_memory(
+    conn: &Connection,
+    project: &str,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    branch: Option<&str>,
+    status: &str,
+) -> Result<i64> {
+    let id = memory::insert_memory_with_branch(
+        conn,
+        Some("s-filter"),
+        project,
+        None,
+        title,
+        content,
+        memory_type,
+        None,
+        branch,
+    )?;
+    if status != "active" {
+        conn.execute(
+            "UPDATE memories SET status = ?1 WHERE id = ?2",
+            params![status, id],
+        )?;
+    }
+    Ok(id)
+}
+
 #[test]
 fn search_offset_applies_to_memory_pages() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -540,6 +569,165 @@ fn explicit_multi_hop_returns_related_memories() -> Result<()> {
     assert!(ids.contains(&tom));
     assert!(ids.contains(&sarah));
     assert!(multi.multi_hop.is_some());
+    Ok(())
+}
+
+#[test]
+fn multi_hop_respects_filters_before_expansion_and_offset() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+
+    let seed = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Melanie rollout anchor",
+        "Melanie mentioned Tom and Sarah in the planning note.",
+        "decision",
+        Some("main"),
+        "active",
+    )?;
+    let main_tom = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Tom main decision",
+        "Tom is compatible with the main branch search.",
+        "decision",
+        Some("main"),
+        "active",
+    )?;
+    let branchless_tom = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Tom shared decision",
+        "Tom is compatible when the memory has no branch.",
+        "decision",
+        None,
+        "active",
+    )?;
+    let main_sarah = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Sarah main decision",
+        "Sarah is compatible with the main branch search.",
+        "decision",
+        Some("main"),
+        "active",
+    )?;
+    let branchless_sarah = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Sarah shared decision",
+        "Sarah is compatible when the memory has no branch.",
+        "decision",
+        None,
+        "active",
+    )?;
+    let feature_seed = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Melanie rollout feature leak",
+        "Melanie mentioned Tom on a feature branch.",
+        "decision",
+        Some("feature"),
+        "active",
+    )?;
+    let archived_seed = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Melanie rollout archived leak",
+        "Melanie mentioned Tom in archived context.",
+        "decision",
+        Some("main"),
+        "archived",
+    )?;
+    let wrong_type_seed = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Melanie rollout discovery leak",
+        "Melanie mentioned Tom in a discovery.",
+        "discovery",
+        Some("main"),
+        "active",
+    )?;
+    let feature_tom = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Tom feature decision",
+        "Tom should not leak from a feature branch.",
+        "decision",
+        Some("feature"),
+        "active",
+    )?;
+    let wrong_type_tom = insert_filtered_memory(
+        &conn,
+        "personal",
+        "Tom discovery leak",
+        "Tom should not leak from another memory type.",
+        "discovery",
+        Some("main"),
+        "active",
+    )?;
+
+    for id in [
+        seed,
+        main_tom,
+        branchless_tom,
+        main_sarah,
+        branchless_sarah,
+        feature_seed,
+        archived_seed,
+        wrong_type_seed,
+        feature_tom,
+        wrong_type_tom,
+    ] {
+        entity::link_entities(&conn, id, &["Tom".to_string()])?;
+    }
+
+    let all = service::search_memories(
+        &conn,
+        &service::SearchRequest {
+            query: Some("Melanie rollout".to_string()),
+            project: Some("personal".to_string()),
+            memory_type: Some("decision".to_string()),
+            limit: 10,
+            branch: Some("main".to_string()),
+            multi_hop: true,
+            include_stale: false,
+            ..Default::default()
+        },
+    )?;
+    let all_ids: Vec<i64> = all.memories.iter().map(|memory| memory.id).collect();
+
+    assert!(all_ids.contains(&seed));
+    assert!(all_ids.contains(&main_tom));
+    assert!(all_ids.contains(&branchless_tom));
+    assert!(all_ids.contains(&main_sarah));
+    assert!(all_ids.contains(&branchless_sarah));
+    assert!(!all_ids.contains(&feature_seed));
+    assert!(!all_ids.contains(&archived_seed));
+    assert!(!all_ids.contains(&wrong_type_seed));
+    assert!(!all_ids.contains(&feature_tom));
+    assert!(!all_ids.contains(&wrong_type_tom));
+    assert!(all.multi_hop.is_some());
+
+    let paged = service::search_memories(
+        &conn,
+        &service::SearchRequest {
+            query: Some("Melanie rollout".to_string()),
+            project: Some("personal".to_string()),
+            memory_type: Some("decision".to_string()),
+            limit: 3,
+            offset: 1,
+            branch: Some("main".to_string()),
+            multi_hop: true,
+            include_stale: false,
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(paged.memories.len(), 3);
+    assert_eq!(paged.memories[0].id, all_ids[1]);
+    assert!(paged.has_more);
     Ok(())
 }
 
