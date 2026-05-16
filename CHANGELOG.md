@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-16
+
+### Fixed
+- Fixed Codex usage accounting to parse the current `codex exec --json`
+  `turn.completed.usage` event instead of trying to match a run marker in
+  ephemeral session logs. New Codex-backed rows now record `usage_source =
+  codex_log` with cache and reasoning token breakdowns.
+
+### Docs
+- Updated usage accounting docs to describe the `codex exec --json` source for
+  exact Codex token counts.
+
 ## [0.4.1] - 2026-05-16
 
 ### Packaging
