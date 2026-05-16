@@ -196,9 +196,7 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
 
     if !footer.is_empty() && output.ends_with(footer) && marker_chars + footer_chars <= char_limit {
         let keep_chars = char_limit - marker_chars - footer_chars;
-        let body = output
-            .strip_suffix(footer)
-            .unwrap_or_else(|| output.as_str());
+        let body = output.strip_suffix(footer).unwrap_or(output.as_str());
         let mut truncated: String = body.chars().take(keep_chars).collect();
         truncated.push_str(marker);
         truncated.push_str(footer);
