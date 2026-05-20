@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::{load_context_data, load_context_data_with_policy};
 use super::super::render::{enforce_total_char_limit, enforce_total_char_limit_preserving_footer};
-use super::{insert_memory, insert_memory_with_branch};
+use super::{insert_global_memory, insert_memory, insert_memory_with_branch};
 
 #[test]
 fn load_context_data_dedupes_generated_topic_keys_by_workstream_context() {
@@ -324,6 +324,103 @@ fn load_context_data_excludes_preferences_before_candidate_limit() {
         .memories
         .iter()
         .any(|memory| memory.title == "Keep core memories visible"));
+}
+
+#[test]
+fn load_context_data_excludes_global_non_preferences_from_main_memory_pool() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+
+    insert_global_memory(
+        &conn,
+        1,
+        "manual",
+        Some("mihomo-proxy-group-duplicate-name"),
+        "bugfix",
+        "Mihomo proxy group duplicate name",
+        "This global bugfix should not appear in project SessionStart Core or Index.",
+        now,
+    );
+    insert_memory(
+        &conn,
+        2,
+        project,
+        Some("context-project-only-memory"),
+        "decision",
+        "Keep context memory project scoped",
+        "SessionStart should load project-local non-preference memories.",
+        now - 1,
+    );
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert!(!loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Mihomo proxy group duplicate name"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Keep context memory project scoped"));
+}
+
+#[test]
+fn load_context_data_excludes_global_non_preferences_from_basename_search() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    let limits = ContextLimits {
+        candidate_fetch_limit: 1,
+        memory_index_limit: 10,
+        core_item_limit: 3,
+        ..ContextLimits::default()
+    };
+    let policy = ContextPolicy::from_limits(limits);
+
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("older-local-memory"),
+        "decision",
+        "Older local remem decision",
+        "A project-local decision should still appear through basename search.",
+        now - 10,
+    );
+    insert_memory(
+        &conn,
+        2,
+        project,
+        Some("newer-local-memory"),
+        "decision",
+        "Newer local context decision",
+        "This fills the tiny recent candidate limit.",
+        now,
+    );
+    insert_global_memory(
+        &conn,
+        3,
+        "manual",
+        Some("global-remem-memory"),
+        "bugfix",
+        "Global remem bugfix",
+        "A global result matching the basename query should not enter context.",
+        now + 1,
+    );
+
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy);
+
+    assert!(!loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Global remem bugfix"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Older local remem decision"));
 }
 
 #[test]

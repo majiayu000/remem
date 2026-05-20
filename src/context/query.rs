@@ -70,7 +70,7 @@ fn load_project_memories(
         .section(SectionKind::MemoryIndex)
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
-    let recent = memory::get_recent_memories_excluding_types(
+    let recent = memory::get_recent_project_memories_excluding_types(
         conn,
         project,
         excluded_types,
@@ -94,7 +94,7 @@ fn load_project_memories(
         false,
     ) {
         for memory in searched {
-            if seen_ids.insert(memory.id) {
+            if is_project_scoped_context_memory(&memory, project) && seen_ids.insert(memory.id) {
                 memories.push(memory);
             }
         }
@@ -108,6 +108,10 @@ fn load_project_memories(
     );
     sort_memories_by_branch(&mut selected, current_branch);
     selected
+}
+
+fn is_project_scoped_context_memory(memory: &Memory, project: &str) -> bool {
+    memory.project == project && memory.scope != "global"
 }
 
 fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {

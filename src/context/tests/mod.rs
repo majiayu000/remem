@@ -102,6 +102,34 @@ pub(super) fn insert_memory_with_branch(
     .unwrap();
 }
 
+pub(super) fn insert_global_memory(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    topic_key: Option<&str>,
+    memory_type: &str,
+    title: &str,
+    content: &str,
+    updated_at_epoch: i64,
+) {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, 'active', NULL, 'global')",
+        params![
+            id,
+            project,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            updated_at_epoch
+        ],
+    )
+    .unwrap();
+}
+
 pub(super) fn insert_session_summary(
     conn: &Connection,
     project: &str,
