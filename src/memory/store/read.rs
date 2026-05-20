@@ -48,6 +48,102 @@ pub fn get_recent_memories_excluding_types(
     crate::db::query::collect_rows(rows)
 }
 
+pub fn get_recent_project_memories_excluding_types(
+    conn: &Connection,
+    project: &str,
+    excluded_types: &[&str],
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    conditions.push(format!("project = ?{idx}"));
+    params.push(Box::new(project.to_string()));
+    idx += 1;
+    conditions.push("COALESCE(scope, 'project') != 'global'".to_string());
+    conditions.push("status = 'active'".to_string());
+
+    if !excluded_types.is_empty() {
+        let placeholders: Vec<String> = excluded_types
+            .iter()
+            .map(|memory_type| {
+                let placeholder = format!("?{idx}");
+                params.push(Box::new((*memory_type).to_string()));
+                idx += 1;
+                placeholder
+            })
+            .collect();
+        conditions.push(format!("memory_type NOT IN ({})", placeholders.join(", ")));
+    }
+
+    params.push(Box::new(limit));
+    let sql = format!(
+        "SELECT {} FROM memories \
+         WHERE {} \
+         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+        MEMORY_COLS,
+        conditions.join(" AND "),
+        idx,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&params);
+    let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
+    crate::db::query::collect_rows(rows)
+}
+
+pub fn search_project_memories_excluding_types(
+    conn: &Connection,
+    project: &str,
+    query: &str,
+    excluded_types: &[&str],
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    conditions.push(format!("project = ?{idx}"));
+    params.push(Box::new(project.to_string()));
+    idx += 1;
+    conditions.push("COALESCE(scope, 'project') != 'global'".to_string());
+    conditions.push("status = 'active'".to_string());
+
+    let like_pattern = format!("%{query}%");
+    conditions.push(format!("(title LIKE ?{idx} OR content LIKE ?{idx})"));
+    params.push(Box::new(like_pattern));
+    idx += 1;
+
+    if !excluded_types.is_empty() {
+        let placeholders: Vec<String> = excluded_types
+            .iter()
+            .map(|memory_type| {
+                let placeholder = format!("?{idx}");
+                params.push(Box::new((*memory_type).to_string()));
+                idx += 1;
+                placeholder
+            })
+            .collect();
+        conditions.push(format!("memory_type NOT IN ({})", placeholders.join(", ")));
+    }
+
+    params.push(Box::new(limit));
+    let sql = format!(
+        "SELECT {} FROM memories \
+         WHERE {} \
+         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+        MEMORY_COLS,
+        conditions.join(" AND "),
+        idx,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&params);
+    let rows = stmt.query_map(refs.as_slice(), map_memory_row)?;
+    crate::db::query::collect_rows(rows)
+}
+
 pub fn get_memories_by_type(
     conn: &Connection,
     project: &str,

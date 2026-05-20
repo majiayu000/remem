@@ -70,7 +70,7 @@ fn load_project_memories(
         .section(SectionKind::MemoryIndex)
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
-    let recent = memory::get_recent_memories_excluding_types(
+    let recent = memory::get_recent_project_memories_excluding_types(
         conn,
         project,
         excluded_types,
@@ -84,14 +84,12 @@ fn load_project_memories(
     }
 
     let project_query = project.rsplit('/').next().unwrap_or(project);
-    if let Ok(searched) = crate::retrieval::search::search(
+    if let Ok(searched) = memory::search_project_memories_excluding_types(
         conn,
-        Some(project_query),
-        Some(project),
-        None,
+        project,
+        project_query,
+        excluded_types,
         BASENAME_SEARCH_LIMIT,
-        0,
-        false,
     ) {
         for memory in searched {
             if seen_ids.insert(memory.id) {
