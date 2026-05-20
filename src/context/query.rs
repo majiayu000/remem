@@ -84,17 +84,15 @@ fn load_project_memories(
     }
 
     let project_query = project.rsplit('/').next().unwrap_or(project);
-    if let Ok(searched) = crate::retrieval::search::search(
+    if let Ok(searched) = memory::search_project_memories_excluding_types(
         conn,
-        Some(project_query),
-        Some(project),
-        None,
+        project,
+        project_query,
+        excluded_types,
         BASENAME_SEARCH_LIMIT,
-        0,
-        false,
     ) {
         for memory in searched {
-            if is_project_scoped_context_memory(&memory, project) && seen_ids.insert(memory.id) {
+            if seen_ids.insert(memory.id) {
                 memories.push(memory);
             }
         }
@@ -108,10 +106,6 @@ fn load_project_memories(
     );
     sort_memories_by_branch(&mut selected, current_branch);
     selected
-}
-
-fn is_project_scoped_context_memory(memory: &Memory, project: &str) -> bool {
-    memory.project == project && memory.scope != "global"
 }
 
 fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {

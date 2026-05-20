@@ -400,23 +400,25 @@ fn load_context_data_excludes_global_non_preferences_from_basename_search() {
         "This fills the tiny recent candidate limit.",
         now,
     );
-    insert_global_memory(
-        &conn,
-        3,
-        "manual",
-        Some("global-remem-memory"),
-        "bugfix",
-        "Global remem bugfix",
-        "A global result matching the basename query should not enter context.",
-        now + 1,
-    );
+    for idx in 0..25 {
+        insert_global_memory(
+            &conn,
+            idx + 3,
+            "manual",
+            Some(&format!("global-remem-memory-{idx}")),
+            "bugfix",
+            &format!("Global remem bugfix {idx}"),
+            "A global result matching the basename query should not enter context.",
+            now + 1 + idx,
+        );
+    }
 
     let loaded = load_context_data_with_policy(&conn, project, None, &policy);
 
     assert!(!loaded
         .memories
         .iter()
-        .any(|memory| memory.title == "Global remem bugfix"));
+        .any(|memory| memory.title.starts_with("Global remem bugfix")));
     assert!(loaded
         .memories
         .iter()
