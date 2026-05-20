@@ -1,3 +1,9 @@
+#[derive(Clone, Copy)]
+pub enum ProjectScopeFilter {
+    IncludeGlobal,
+    ProjectOnly,
+}
+
 /// Push memory project visibility filter into SQL conditions.
 /// When a project is provided, memory queries use project + global overlay.
 /// Returns the next parameter index.
@@ -10,6 +16,28 @@ pub fn push_project_filter(
 ) -> usize {
     if let Some(project) = project {
         conditions.push(project_or_global_clause(column, idx));
+        params.push(Box::new(project.to_string()));
+        idx += 1;
+    }
+    idx
+}
+
+pub fn push_project_filter_with_scope(
+    project_column: &str,
+    scope_column: &str,
+    project: Option<&str>,
+    mut idx: usize,
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    scope_filter: ProjectScopeFilter,
+) -> usize {
+    if let Some(project) = project {
+        conditions.push(project_visibility_clause(
+            project_column,
+            scope_column,
+            idx,
+            scope_filter,
+        ));
         params.push(Box::new(project.to_string()));
         idx += 1;
     }
@@ -31,6 +59,22 @@ pub fn push_project_filter_required(
 
 pub fn project_or_global_clause(column: &str, param_idx: usize) -> String {
     format!("({column} = ?{param_idx} OR scope = 'global')")
+}
+
+pub fn project_visibility_clause(
+    project_column: &str,
+    scope_column: &str,
+    param_idx: usize,
+    scope_filter: ProjectScopeFilter,
+) -> String {
+    match scope_filter {
+        ProjectScopeFilter::IncludeGlobal => project_or_global_clause(project_column, param_idx),
+        ProjectScopeFilter::ProjectOnly => {
+            format!(
+                "({project_column} = ?{param_idx} AND COALESCE({scope_column}, 'project') = 'project')"
+            )
+        }
+    }
 }
 
 pub(super) fn push_branch_filter(

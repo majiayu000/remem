@@ -84,10 +84,10 @@ fn load_project_memories(
     }
 
     let project_query = project.rsplit('/').next().unwrap_or(project);
-    if let Ok(searched) = crate::retrieval::search::search(
+    if let Ok(searched) = crate::retrieval::search::search_project_scoped_query(
         conn,
-        Some(project_query),
-        Some(project),
+        project_query,
+        project,
         None,
         BASENAME_SEARCH_LIMIT,
         0,

@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::{types::ToSql, Connection};
 
+use crate::retrieval::memory_search::{project_visibility_clause, ProjectScopeFilter};
+
 use crate::retrieval::temporal::types::TemporalConstraint;
 
 /// Search memories within a time range, sorted by recency.
@@ -22,6 +24,50 @@ pub fn search_by_time_filtered(
     limit: i64,
     include_inactive: bool,
 ) -> Result<Vec<i64>> {
+    search_by_time_filtered_with_scope(
+        conn,
+        constraint,
+        project,
+        memory_type,
+        branch,
+        limit,
+        include_inactive,
+        ProjectScopeFilter::IncludeGlobal,
+    )
+}
+
+pub fn search_by_time_project_scoped(
+    conn: &Connection,
+    constraint: &TemporalConstraint,
+    project: &str,
+    memory_type: Option<&str>,
+    branch: Option<&str>,
+    limit: i64,
+    include_inactive: bool,
+) -> Result<Vec<i64>> {
+    search_by_time_filtered_with_scope(
+        conn,
+        constraint,
+        Some(project),
+        memory_type,
+        branch,
+        limit,
+        include_inactive,
+        ProjectScopeFilter::ProjectOnly,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_by_time_filtered_with_scope(
+    conn: &Connection,
+    constraint: &TemporalConstraint,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    branch: Option<&str>,
+    limit: i64,
+    include_inactive: bool,
+    scope_filter: ProjectScopeFilter,
+) -> Result<Vec<i64>> {
     let mut ids = Vec::new();
     let mut conditions = vec!["updated_at_epoch BETWEEN ?1 AND ?2".to_string()];
     let mut params_vec: Vec<Box<dyn ToSql>> = vec![
@@ -34,8 +80,11 @@ pub fn search_by_time_filtered(
         conditions.push("status = 'active'".to_string());
     }
     if let Some(project) = project {
-        conditions.push(crate::retrieval::memory_search::project_or_global_clause(
-            "project", idx,
+        conditions.push(project_visibility_clause(
+            "project",
+            "scope",
+            idx,
+            scope_filter,
         ));
         params_vec.push(Box::new(project.to_string()));
         idx += 1;

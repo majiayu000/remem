@@ -3,7 +3,9 @@ use rusqlite::Connection;
 
 use crate::db;
 use crate::memory::{map_memory_row_pub, Memory};
-use crate::retrieval::memory_search::filters::{push_branch_filter, push_project_filter};
+use crate::retrieval::memory_search::filters::{
+    push_branch_filter, push_project_filter_with_scope, ProjectScopeFilter,
+};
 
 /// LIKE fallback for short tokens.
 pub fn search_memories_like(
@@ -36,6 +38,54 @@ pub fn search_memories_like_filtered(
     include_inactive: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
+    search_memories_like_filtered_with_scope(
+        conn,
+        tokens,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_inactive,
+        branch,
+        ProjectScopeFilter::IncludeGlobal,
+    )
+}
+
+pub fn search_project_memories_like_filtered(
+    conn: &Connection,
+    tokens: &[&str],
+    project: &str,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+) -> Result<Vec<Memory>> {
+    search_memories_like_filtered_with_scope(
+        conn,
+        tokens,
+        Some(project),
+        memory_type,
+        limit,
+        offset,
+        include_inactive,
+        branch,
+        ProjectScopeFilter::ProjectOnly,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_memories_like_filtered_with_scope(
+    conn: &Connection,
+    tokens: &[&str],
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+    scope_filter: ProjectScopeFilter,
+) -> Result<Vec<Memory>> {
     if tokens.is_empty() {
         return Ok(vec![]);
     }
@@ -60,12 +110,14 @@ pub fn search_memories_like_filtered(
         idx += 1;
     }
 
-    idx = push_project_filter(
+    idx = push_project_filter_with_scope(
         "m.project",
+        "m.scope",
         project,
         idx,
         &mut conditions,
         &mut param_values,
+        scope_filter,
     );
     idx = push_branch_filter("m.branch", branch, idx, &mut conditions, &mut param_values);
     if let Some(memory_type) = memory_type {

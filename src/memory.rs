@@ -10,7 +10,8 @@ pub mod types;
 
 pub use crate::retrieval::memory_search::{
     search_memories_fts, search_memories_fts_filtered, search_memories_like,
-    search_memories_like_filtered,
+    search_memories_like_filtered, search_project_memories_fts_filtered,
+    search_project_memories_like_filtered,
 };
 pub use promote::{promote_summary_to_memories, slugify_for_topic};
 

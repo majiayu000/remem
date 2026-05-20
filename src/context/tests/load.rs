@@ -438,6 +438,65 @@ fn load_context_data_filters_global_non_preferences_from_basename_search() {
 }
 
 #[test]
+fn load_context_data_filters_basename_search_scope_before_result_limit() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    let limits = ContextLimits {
+        candidate_fetch_limit: 1,
+        ..ContextLimits::default()
+    };
+    let policy = ContextPolicy::from_limits(limits);
+
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("recent-project-filler"),
+        "decision",
+        "Recent project filler",
+        "A recent project memory keeps the direct candidate window full",
+        now,
+    );
+    insert_memory(
+        &conn,
+        2,
+        project,
+        Some("old-remem-local-decision"),
+        "decision",
+        "remem local startup decision",
+        "Project-local remem context must survive global basename floods",
+        now - 10_000,
+    );
+
+    for idx in 0..30 {
+        insert_memory_with_scope(
+            &conn,
+            100 + idx,
+            "manual",
+            Some(&format!("global-remem-bugfix-{idx}")),
+            "bugfix",
+            &format!("remem unrelated global bugfix {idx}"),
+            "A global remem memory from another project",
+            now - idx,
+            "global",
+        );
+    }
+
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy);
+
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "remem local startup decision"));
+    assert!(!loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title.contains("unrelated global bugfix")));
+}
+
+#[test]
 fn enforce_total_char_limit_truncates_rendered_output() {
     let mut output = format!("{}{}", "# [/tmp/demo] context\n", "x".repeat(500));
 

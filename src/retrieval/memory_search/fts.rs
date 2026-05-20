@@ -3,7 +3,9 @@ use rusqlite::Connection;
 
 use crate::db;
 use crate::memory::{map_memory_row_pub, Memory};
-use crate::retrieval::memory_search::filters::{push_branch_filter, push_project_filter};
+use crate::retrieval::memory_search::filters::{
+    push_branch_filter, push_project_filter_with_scope, ProjectScopeFilter,
+};
 
 /// FTS5 trigram search on memories.
 pub fn search_memories_fts(
@@ -36,6 +38,54 @@ pub fn search_memories_fts_filtered(
     include_inactive: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
+    search_memories_fts_filtered_with_scope(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_inactive,
+        branch,
+        ProjectScopeFilter::IncludeGlobal,
+    )
+}
+
+pub fn search_project_memories_fts_filtered(
+    conn: &Connection,
+    query: &str,
+    project: &str,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+) -> Result<Vec<Memory>> {
+    search_memories_fts_filtered_with_scope(
+        conn,
+        query,
+        Some(project),
+        memory_type,
+        limit,
+        offset,
+        include_inactive,
+        branch,
+        ProjectScopeFilter::ProjectOnly,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_memories_fts_filtered_with_scope(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+    scope_filter: ProjectScopeFilter,
+) -> Result<Vec<Memory>> {
     let mut conditions = vec!["memories_fts MATCH ?1".to_string()];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(query.to_string())];
 
@@ -44,12 +94,14 @@ pub fn search_memories_fts_filtered(
         conditions.push("m.status = 'active'".to_string());
     }
 
-    idx = push_project_filter(
+    idx = push_project_filter_with_scope(
         "m.project",
+        "m.scope",
         project,
         idx,
         &mut conditions,
         &mut param_values,
+        scope_filter,
     );
     idx = push_branch_filter("m.branch", branch, idx, &mut conditions, &mut param_values);
     if let Some(memory_type) = memory_type {

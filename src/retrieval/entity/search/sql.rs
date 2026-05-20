@@ -1,5 +1,7 @@
-pub(super) fn project_filter_sql(param_idx: usize) -> String {
-    crate::retrieval::memory_search::project_or_global_clause("m.project", param_idx)
+use crate::retrieval::memory_search::{project_visibility_clause, ProjectScopeFilter};
+
+pub(super) fn project_filter_sql(param_idx: usize, scope_filter: ProjectScopeFilter) -> String {
+    project_visibility_clause("m.project", "m.scope", param_idx, scope_filter)
 }
 
 pub(super) fn branch_filter_sql(param_idx: usize) -> String {

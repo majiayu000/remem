@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use crate::retrieval::memory_search::ProjectScopeFilter;
+
 use super::sql::{branch_filter_sql, project_filter_sql, status_filter_sql};
 
 pub(super) fn search_by_query_words(
@@ -11,6 +13,29 @@ pub(super) fn search_by_query_words(
     branch: Option<&str>,
     limit: i64,
     include_inactive: bool,
+) -> Result<Vec<i64>> {
+    search_by_query_words_with_scope(
+        conn,
+        query,
+        project,
+        memory_type,
+        branch,
+        limit,
+        include_inactive,
+        ProjectScopeFilter::IncludeGlobal,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn search_by_query_words_with_scope(
+    conn: &Connection,
+    query: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    branch: Option<&str>,
+    limit: i64,
+    include_inactive: bool,
+    scope_filter: ProjectScopeFilter,
 ) -> Result<Vec<i64>> {
     let mut ids = Vec::new();
     for word in query.split_whitespace() {
@@ -27,6 +52,7 @@ pub(super) fn search_by_query_words(
             branch,
             limit,
             include_inactive,
+            scope_filter,
         )?;
         for id in matches {
             if !ids.contains(&id) {
@@ -46,6 +72,7 @@ pub(super) fn query_memory_ids(
     branch: Option<&str>,
     limit: i64,
     include_inactive: bool,
+    scope_filter: ProjectScopeFilter,
 ) -> Result<Vec<i64>> {
     let mut conditions = vec![
         entity_condition,
@@ -54,7 +81,7 @@ pub(super) fn query_memory_ids(
     let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = vec![first_param];
     let mut idx = 2;
     if let Some(project) = project {
-        conditions.push(project_filter_sql(idx));
+        conditions.push(project_filter_sql(idx, scope_filter));
         params_vec.push(Box::new(project.to_string()));
         idx += 1;
     }
