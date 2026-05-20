@@ -14,10 +14,36 @@ pub fn get_recent_memories_excluding_types(
     excluded_types: &[&str],
     limit: i64,
 ) -> Result<Vec<Memory>> {
+    get_recent_memories_excluding_types_with_scope(conn, project, excluded_types, limit, true)
+}
+
+pub fn get_recent_project_memories_excluding_types(
+    conn: &Connection,
+    project: &str,
+    excluded_types: &[&str],
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    get_recent_memories_excluding_types_with_scope(conn, project, excluded_types, limit, false)
+}
+
+fn get_recent_memories_excluding_types_with_scope(
+    conn: &Connection,
+    project: &str,
+    excluded_types: &[&str],
+    limit: i64,
+    include_global: bool,
+) -> Result<Vec<Memory>> {
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
+    if include_global {
+        idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
+    } else {
+        conditions.push(format!("project = ?{idx}"));
+        params.push(Box::new(project.to_string()));
+        idx += 1;
+        conditions.push("COALESCE(scope, 'project') = 'project'".to_string());
+    }
     conditions.push("status = 'active'".to_string());
 
     if !excluded_types.is_empty() {

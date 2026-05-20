@@ -83,11 +83,63 @@ pub(super) fn insert_memory_with_branch(
     updated_at_epoch: i64,
     branch: Option<&str>,
 ) {
+    insert_memory_with_branch_and_scope(
+        conn,
+        id,
+        project,
+        topic_key,
+        memory_type,
+        title,
+        content,
+        updated_at_epoch,
+        branch,
+        "project",
+    );
+}
+
+pub(super) fn insert_memory_with_scope(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    topic_key: Option<&str>,
+    memory_type: &str,
+    title: &str,
+    content: &str,
+    updated_at_epoch: i64,
+    scope: &str,
+) {
+    insert_memory_with_branch_and_scope(
+        conn,
+        id,
+        project,
+        topic_key,
+        memory_type,
+        title,
+        content,
+        updated_at_epoch,
+        None,
+        scope,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_memory_with_branch_and_scope(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    topic_key: Option<&str>,
+    memory_type: &str,
+    title: &str,
+    content: &str,
+    updated_at_epoch: i64,
+    branch: Option<&str>,
+    scope: &str,
+) {
     conn.execute(
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,
           created_at_epoch, updated_at_epoch, status, branch, scope)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, 'active', ?8, 'project')",
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, 'active', ?8, ?9)",
         params![
             id,
             project,
@@ -96,7 +148,8 @@ pub(super) fn insert_memory_with_branch(
             content,
             memory_type,
             updated_at_epoch,
-            branch
+            branch,
+            scope
         ],
     )
     .unwrap();
