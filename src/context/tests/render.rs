@@ -1,10 +1,12 @@
 use crate::workstream::{WorkStream, WorkStreamStatus};
 
 use super::super::policy::ContextLimits;
+use super::super::render::{build_context_stats_footer, ContextRenderStats, SectionRenderStats};
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_memory_index,
-    render_memory_index_with_limits, render_recent_sessions, render_recent_sessions_with_limit,
-    render_workstreams, render_workstreams_with_limits,
+    render_memory_index_with_limits, render_memory_index_with_limits_excluding,
+    render_recent_sessions, render_recent_sessions_with_limit, render_workstreams,
+    render_workstreams_with_limits,
 };
 use super::super::types::SessionSummaryBrief;
 use super::{sample_memory, sample_memory_with_epoch, sample_workstream};
@@ -24,6 +26,23 @@ fn render_recent_sessions_truncates_completed_line() {
     assert!(output.contains("=> "));
     assert!(output.contains("..."));
     assert!(!output.contains("ignored"));
+}
+
+#[test]
+fn render_recent_sessions_truncates_request_text() {
+    let mut output = String::new();
+    let long_request = format!("Investigate SessionStart budget {}", "x".repeat(300));
+    let summaries = vec![SessionSummaryBrief {
+        request: long_request.clone(),
+        completed: Some("done".to_string()),
+        created_at_epoch: 1_710_000_000,
+    }];
+
+    render_recent_sessions(&mut output, &summaries);
+
+    assert!(output.contains("Investigate SessionStart budget"));
+    assert!(output.contains("..."));
+    assert!(!output.contains(&long_request));
 }
 
 #[test]
@@ -119,6 +138,37 @@ fn render_memory_index_truncates_first_item_to_char_limit() {
     assert!(body.chars().count() <= limits.memory_index_char_limit);
     assert!(output.contains("..."));
     assert!(!output.contains(long_title));
+}
+
+#[test]
+fn render_memory_index_can_skip_core_selected_ids() {
+    let mut core_output = String::new();
+    let now = chrono::Utc::now().timestamp();
+    let memories = vec![
+        sample_memory_with_epoch(1, "bugfix", "Core bugfix", now),
+        sample_memory_with_epoch(2, "decision", "Index decision", now),
+    ];
+    let core_summary = render_core_memory_with_limits(
+        &mut core_output,
+        &memories,
+        &ContextLimits {
+            core_item_limit: 1,
+            ..ContextLimits::default()
+        },
+    );
+    let excluded_ids = core_summary.ids.into_iter().collect();
+
+    let mut index_output = String::new();
+    let rendered = render_memory_index_with_limits_excluding(
+        &mut index_output,
+        &memories,
+        &ContextLimits::default(),
+        &excluded_ids,
+    );
+
+    assert_eq!(rendered, 1);
+    assert!(!index_output.contains("Core bugfix"));
+    assert!(index_output.contains("Index decision"));
 }
 
 #[test]
@@ -261,4 +311,47 @@ fn render_core_memory_keeps_stale_decision_out_when_recent_context_is_available(
     render_core_memory(&mut output, &memories);
 
     assert!(!output.contains("Stale landing page decision"));
+}
+
+#[test]
+fn context_stats_footer_reports_budget_scope_and_truncation() {
+    let footer = build_context_stats_footer(&ContextRenderStats {
+        host: "codex-cli".to_string(),
+        branch: Some("fix/context".to_string()),
+        total_char_limit: 12_000,
+        memories_loaded: 7,
+        core: SectionRenderStats {
+            count: 2,
+            chars: 430,
+        },
+        index: SectionRenderStats {
+            count: 5,
+            chars: 800,
+        },
+        preferences: SectionRenderStats {
+            count: 3,
+            chars: 240,
+        },
+        project_preferences: 2,
+        global_preferences: 1,
+        sessions: SectionRenderStats {
+            count: 4,
+            chars: 620,
+        },
+        workstreams: SectionRenderStats {
+            count: 1,
+            chars: 80,
+        },
+        core_ids: vec![1, 2],
+        output_chars: 3_200,
+        truncated: true,
+    });
+
+    assert!(footer.contains("7 context memories loaded"));
+    assert!(footer.contains("2 core (430 chars)"));
+    assert!(footer.contains("3 preferences (project:2 global:1"));
+    assert!(footer.contains("host=codex-cli"));
+    assert!(footer.contains("branch=fix/context"));
+    assert!(footer.contains("total=3200 chars/~800 tokens"));
+    assert!(footer.contains("truncated=yes"));
 }

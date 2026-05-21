@@ -1,13 +1,19 @@
 use crate::memory::Memory;
 use std::collections::HashMap;
 
-use super::super::format::format_epoch_short;
+use super::super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::super::memory_traits::is_memory_self_diagnostic;
 use super::super::policy::ContextLimits;
 
 const PREVIEW_LEN: usize = 200;
 const MAX_PRIMARY_ITEMS_PER_TYPE: usize = 2;
 const MIN_ADDITIONAL_CORE_SCORE: f64 = 1.3;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(in crate::context) struct CoreRenderSummary {
+    pub count: usize,
+    pub ids: Vec<i64>,
+}
 
 #[cfg(test)]
 pub(in crate::context) fn render_core_memory(output: &mut String, memories: &[Memory]) {
@@ -18,15 +24,15 @@ pub(in crate::context) fn render_core_memory_with_limits(
     output: &mut String,
     memories: &[Memory],
     limits: &ContextLimits,
-) -> usize {
+) -> CoreRenderSummary {
     if limits.core_item_limit == 0 || limits.core_char_limit == 0 {
-        return 0;
+        return CoreRenderSummary::default();
     }
     let header = "## Core\n";
     let trailer_chars = 1;
-    let header_chars = header.chars().count();
+    let header_chars = char_len(header);
     if header_chars + trailer_chars >= limits.core_char_limit {
-        return 0;
+        return CoreRenderSummary::default();
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -91,11 +97,15 @@ pub(in crate::context) fn render_core_memory_with_limits(
     }
 
     if selected.is_empty() {
-        return 0;
+        return CoreRenderSummary::default();
     }
 
     output.push_str(header);
     let selected_count = selected.len();
+    let selected_ids = selected
+        .iter()
+        .map(|(memory, _)| memory.id)
+        .collect::<Vec<_>>();
     for (memory, preview) in selected {
         let date = format_epoch_short(memory.updated_at_epoch);
         output.push_str(&format!(
@@ -106,7 +116,10 @@ pub(in crate::context) fn render_core_memory_with_limits(
         output.push('\n');
     }
     output.push('\n');
-    selected_count
+    CoreRenderSummary {
+        count: selected_count,
+        ids: selected_ids,
+    }
 }
 
 fn push_selected_memory<'a>(
@@ -122,36 +135,21 @@ fn push_selected_memory<'a>(
         memory.memory_type,
         format_epoch_short(memory.updated_at_epoch)
     );
-    let fixed_chars = header.chars().count() + 1;
+    let fixed_chars = char_len(&header) + 1;
     if *total_chars + fixed_chars >= max_chars {
         return false;
     }
 
     let remaining_chars = max_chars - *total_chars - fixed_chars;
     let preview_limit = remaining_chars.min(PREVIEW_LEN);
-    let preview = truncate_to_chars(&memory.text, preview_limit);
+    let preview = truncate_chars_with_ellipsis(&memory.text, preview_limit);
     if preview.is_empty() {
         return false;
     }
-    let item_len = preview.chars().count() + fixed_chars;
+    let item_len = char_len(&preview) + fixed_chars;
     selected.push((memory, preview));
     *total_chars += item_len;
     true
-}
-
-fn truncate_to_chars(value: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    if max_chars <= 3 {
-        return value.chars().take(max_chars).collect();
-    }
-    let mut truncated: String = value.chars().take(max_chars - 3).collect();
-    truncated.push_str("...");
-    truncated
 }
 
 fn is_core_memory_type(memory_type: &str) -> bool {

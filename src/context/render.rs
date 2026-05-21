@@ -3,12 +3,12 @@ use anyhow::Result;
 use crate::db;
 use crate::db::project_from_cwd;
 
-use super::format::format_header_datetime;
+use super::format::{char_len, format_header_datetime, truncate_chars_with_ellipsis};
 use super::host::{resolve_host_kind, resolve_profile};
 use super::policy::{ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
-    render_core_memory_with_limits, render_empty_state, render_memory_index_with_limits,
+    render_core_memory_with_limits, render_empty_state, render_memory_index_with_limits_excluding,
     render_recent_sessions_with_limit, render_workstreams_with_limits,
 };
 use super::types::ContextRequest;
@@ -18,6 +18,7 @@ pub fn generate_context(
     session_id: Option<&str>,
     use_colors: bool,
     host_arg: Option<&str>,
+    debug: bool,
 ) -> Result<()> {
     let timer = crate::log::Timer::start("context", &format!("cwd={}", cwd));
     let project = project_from_cwd(cwd);
@@ -25,6 +26,7 @@ pub fn generate_context(
     let host = resolve_host_kind(host_arg);
     let profile = resolve_profile(host);
     let policy = profile.default_policy();
+    let debug = debug || context_debug_enabled();
     let request = ContextRequest {
         cwd: cwd.to_string(),
         project: project.clone(),
@@ -54,16 +56,19 @@ pub fn generate_context(
         request.current_branch.as_deref(),
         &policy,
     );
-    let (preference_output, preference_count) =
+    let (preference_output, preference_summary) =
         match render_preferences_to_buffer(&conn, &project, cwd, &policy) {
             Ok(rendered) => rendered,
             Err(error) => {
                 crate::log::warn("context", &format!("render_preferences failed: {}", error));
-                (String::new(), 0)
+                (
+                    String::new(),
+                    crate::memory::preference::PreferenceRenderSummary::default(),
+                )
             }
         };
 
-    if preference_count == 0
+    if preference_summary.rendered == 0
         && loaded.memories.is_empty()
         && loaded.summaries.is_empty()
         && loaded.workstreams.is_empty()
@@ -81,40 +86,87 @@ pub fn generate_context(
     output.push_str(profile.retrieval_hints().line);
     output.push_str("\n\n");
 
+    let mut stats = ContextRenderStats {
+        host: request.host.as_env_value().to_string(),
+        branch: request.current_branch.clone(),
+        total_char_limit: policy.limits.total_char_limit,
+        memories_loaded: loaded.memories.len(),
+        project_preferences: preference_summary.project_rendered,
+        global_preferences: preference_summary.global_rendered,
+        ..ContextRenderStats::default()
+    };
+
+    let before = char_len(&output);
     output.push_str(&preference_output);
+    stats.preferences = SectionRenderStats {
+        count: preference_summary.rendered,
+        chars: char_len(&output).saturating_sub(before),
+    };
 
     let mut core_count = 0;
     let mut index_count = 0;
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(&policy);
-        core_count = render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
-        index_count =
-            render_memory_index_with_limits(&mut output, &loaded.memories, &render_limits);
+        let before = char_len(&output);
+        let core_summary =
+            render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
+        core_count = core_summary.count;
+        stats.core_ids = core_summary.ids.clone();
+        stats.core = SectionRenderStats {
+            count: core_count,
+            chars: char_len(&output).saturating_sub(before),
+        };
+        let before = char_len(&output);
+        let core_ids = core_summary.ids.into_iter().collect();
+        index_count = render_memory_index_with_limits_excluding(
+            &mut output,
+            &loaded.memories,
+            &render_limits,
+            &core_ids,
+        );
+        stats.index = SectionRenderStats {
+            count: index_count,
+            chars: char_len(&output).saturating_sub(before),
+        };
     }
     if !loaded.workstreams.is_empty() {
-        render_workstreams_with_limits(
+        let before = char_len(&output);
+        let workstream_count = render_workstreams_with_limits(
             &mut output,
             &loaded.workstreams,
             policy.section_item_limit(SectionKind::Workstreams, 5),
             policy.section_char_limit(SectionKind::Workstreams, 1_200),
         );
+        stats.workstreams = SectionRenderStats {
+            count: workstream_count,
+            chars: char_len(&output).saturating_sub(before),
+        };
     }
     if !loaded.summaries.is_empty() {
-        render_recent_sessions_with_limit(
+        let before = char_len(&output);
+        let session_count = render_recent_sessions_with_limit(
             &mut output,
             &loaded.summaries,
             policy.section_char_limit(SectionKind::Sessions, 2_200),
         );
+        stats.sessions = SectionRenderStats {
+            count: session_count,
+            chars: char_len(&output).saturating_sub(before),
+        };
     }
 
-    let stats_footer = format!(
-        "{} context memories loaded. {} core memories. {} indexed memories. {} preferences. {} sessions.\n",
-        loaded.memories.len(),
-        core_count,
-        index_count,
-        preference_count,
-        loaded.summaries.len()
-    );
+    if debug {
+        output.push_str(&build_context_debug_trace(
+            &request, &policy, &loaded, &stats,
+        ));
+    }
+
+    stats.output_chars = char_len(&output);
+    let mut stats_footer = build_context_stats_footer(&stats);
+    stats.output_chars += char_len(&stats_footer);
+    stats.truncated = stats.total_char_limit > 0 && stats.output_chars > stats.total_char_limit;
+    stats_footer = build_context_stats_footer(&stats);
+    stats.output_chars = char_len(&output) + char_len(&stats_footer);
     output.push_str(&stats_footer);
     enforce_total_char_limit_preserving_footer(
         &mut output,
@@ -138,7 +190,7 @@ pub fn generate_context(
         loaded.memories.len(),
         core_count,
         index_count,
-        preference_count,
+        preference_summary.rendered,
         loaded.summaries.len(),
         loaded.workstreams.len(),
     ));
@@ -161,10 +213,10 @@ fn render_preferences_to_buffer(
     project: &str,
     cwd: &str,
     policy: &ContextPolicy,
-) -> Result<(String, usize)> {
+) -> Result<(String, crate::memory::preference::PreferenceRenderSummary)> {
     let mut output = String::new();
     let limits = &policy.limits;
-    let count = crate::memory::preference::render_preferences_with_limits(
+    let summary = crate::memory::preference::render_preferences_with_limits_detailed(
         &mut output,
         conn,
         project,
@@ -173,7 +225,145 @@ fn render_preferences_to_buffer(
         limits.preference_global_limit,
         limits.preference_char_limit,
     )?;
-    Ok((output, count))
+    Ok((output, summary))
+}
+
+#[derive(Debug, Clone, Default)]
+pub(in crate::context) struct SectionRenderStats {
+    pub count: usize,
+    pub chars: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(in crate::context) struct ContextRenderStats {
+    pub host: String,
+    pub branch: Option<String>,
+    pub total_char_limit: usize,
+    pub memories_loaded: usize,
+    pub core: SectionRenderStats,
+    pub index: SectionRenderStats,
+    pub preferences: SectionRenderStats,
+    pub project_preferences: usize,
+    pub global_preferences: usize,
+    pub sessions: SectionRenderStats,
+    pub workstreams: SectionRenderStats,
+    pub core_ids: Vec<i64>,
+    pub output_chars: usize,
+    pub truncated: bool,
+}
+
+pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats) -> String {
+    let branch = stats.branch.as_deref().unwrap_or("-");
+    let estimated_tokens = estimate_tokens(stats.output_chars);
+    format!(
+        "{} context memories loaded. {} core ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). host={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
+        stats.memories_loaded,
+        stats.core.count,
+        stats.core.chars,
+        stats.index.count,
+        stats.index.chars,
+        stats.preferences.count,
+        stats.project_preferences,
+        stats.global_preferences,
+        stats.preferences.chars,
+        stats.sessions.count,
+        stats.sessions.chars,
+        stats.host,
+        branch,
+        stats.output_chars,
+        estimated_tokens,
+        stats.total_char_limit,
+        if stats.truncated { "yes" } else { "no" },
+    )
+}
+
+fn build_context_debug_trace(
+    request: &ContextRequest,
+    policy: &ContextPolicy,
+    loaded: &super::types::LoadedContext,
+    stats: &ContextRenderStats,
+) -> String {
+    let mut trace = String::from("## Debug Trace\n");
+    trace.push_str(&format!(
+        "- request host={} project={} cwd={} branch={} session={}\n",
+        request.host.as_env_value(),
+        request.project,
+        request.cwd,
+        request.current_branch.as_deref().unwrap_or("-"),
+        request.session_id.as_deref().unwrap_or("-")
+    ));
+    trace.push_str(&format!(
+        "- limits total={} core_items={} core_chars={} index_items={} index_chars={} sessions={} preferences(project={}, global={}, chars={})\n",
+        policy.limits.total_char_limit,
+        policy.limits.core_item_limit,
+        policy.limits.core_char_limit,
+        policy.limits.memory_index_limit,
+        policy.limits.memory_index_char_limit,
+        policy.limits.session_limit,
+        policy.limits.preference_project_limit,
+        policy.limits.preference_global_limit,
+        policy.limits.preference_char_limit
+    ));
+    trace.push_str(&format!(
+        "- rendered core={} index={} preferences={} sessions={} workstreams={}\n",
+        stats.core.count,
+        stats.index.count,
+        stats.preferences.count,
+        stats.sessions.count,
+        stats.workstreams.count
+    ));
+    trace.push_str(&format!(
+        "- preferences project_rendered={} global_rendered={} reason=scope_limits_then_claude_md_dedup\n",
+        stats.project_preferences, stats.global_preferences
+    ));
+    for (rank, memory) in loaded.memories.iter().take(30).enumerate() {
+        let target = if stats.core_ids.contains(&memory.id) {
+            "core"
+        } else {
+            "index_candidate"
+        };
+        trace.push_str(&format!(
+            "- memory rank={} id={} type={} scope={} branch={} topic={} target={} reason=loaded_after_scope_branch_dedupe title={}\n",
+            rank + 1,
+            memory.id,
+            memory.memory_type,
+            memory.scope,
+            memory.branch.as_deref().unwrap_or("-"),
+            memory.topic_key.as_deref().unwrap_or("-"),
+            target,
+            truncate_chars_with_ellipsis(&memory.title, 120)
+        ));
+    }
+    if loaded.memories.len() > 30 {
+        trace.push_str(&format!(
+            "- memory trace truncated: {} additional candidates omitted\n",
+            loaded.memories.len() - 30
+        ));
+    }
+    for (rank, summary) in loaded
+        .summaries
+        .iter()
+        .take(policy.limits.session_limit)
+        .enumerate()
+    {
+        trace.push_str(&format!(
+            "- session rank={} reason=recent_after_cluster_filter request={}\n",
+            rank + 1,
+            truncate_chars_with_ellipsis(&summary.request, 120)
+        ));
+    }
+    trace.push('\n');
+    trace
+}
+
+fn context_debug_enabled() -> bool {
+    std::env::var("REMEM_CONTEXT_DEBUG")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn estimate_tokens(chars: usize) -> usize {
+    (chars + 3) / 4
 }
 
 #[cfg(test)]

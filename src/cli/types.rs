@@ -25,6 +25,8 @@ pub(super) enum Commands {
         host: Option<String>,
         #[arg(long)]
         color: bool,
+        #[arg(long)]
+        debug: bool,
     },
     SessionInit,
     Observe,
