@@ -6,6 +6,7 @@ use crate::memory::{self, Memory};
 use super::{
     add_preference, dedup_with_claude_md, query_global_preferences, query_project_preferences,
     remove_preference, render_preferences, render_preferences_with_limits,
+    render_preferences_with_limits_detailed,
 };
 
 fn setup_test_db() -> Connection {
@@ -182,6 +183,52 @@ fn test_render_preferences_global_limit_explicitly_opted_in() -> Result<()> {
 
     assert_eq!(rendered, 1);
     assert!(output.contains("AtlasCloud"));
+    Ok(())
+}
+
+#[test]
+fn test_render_preferences_reports_project_global_split() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("local-pref"),
+        "Preference: Local workflow",
+        "Use the local project workflow",
+        "preference",
+        None,
+    )?;
+    memory::insert_memory_full(
+        &conn,
+        None,
+        "other/proj",
+        Some("global-pref"),
+        "Preference: Global reviews",
+        "Review global release notes",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let mut output = String::new();
+    let summary = render_preferences_with_limits_detailed(
+        &mut output,
+        &conn,
+        "test/proj",
+        "/nonexistent",
+        20,
+        1,
+        1500,
+    )?;
+
+    assert_eq!(summary.rendered, 2);
+    assert_eq!(summary.project_rendered, 1);
+    assert_eq!(summary.global_rendered, 1);
+    assert!(output.contains("local project workflow"));
+    assert!(output.contains("global release notes"));
     Ok(())
 }
 

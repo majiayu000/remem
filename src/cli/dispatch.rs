@@ -17,12 +17,13 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             session_id,
             host,
             color,
+            debug,
         } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
             let cwd = resolve_cwd_arg(cwd);
-            context::generate_context(&cwd, session_id.as_deref(), color, host.as_deref())?;
+            context::generate_context(&cwd, session_id.as_deref(), color, host.as_deref(), debug)?;
         }
         Commands::SessionInit => {
             if remem_hooks_disabled() {

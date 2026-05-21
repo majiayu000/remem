@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::memory::Memory;
 
-use super::super::format::{format_epoch_short, type_label};
+use super::super::format::{
+    char_len, format_epoch_short, truncate_chars_with_ellipsis, type_label,
+};
 use super::super::policy::ContextLimits;
 
 #[cfg(test)]
@@ -10,10 +12,21 @@ pub(in crate::context) fn render_memory_index(output: &mut String, memories: &[M
     render_memory_index_with_limits(output, memories, &ContextLimits::default())
 }
 
+#[cfg(test)]
 pub(in crate::context) fn render_memory_index_with_limits(
     output: &mut String,
     memories: &[Memory],
     limits: &ContextLimits,
+) -> usize {
+    let excluded_ids = HashSet::new();
+    render_memory_index_with_limits_excluding(output, memories, limits, &excluded_ids)
+}
+
+pub(in crate::context) fn render_memory_index_with_limits_excluding(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
 ) -> usize {
     if limits.memory_index_limit == 0 || limits.memory_index_char_limit == 0 {
         return 0;
@@ -23,6 +36,7 @@ pub(in crate::context) fn render_memory_index_with_limits(
     for memory in memories
         .iter()
         .filter(|memory| memory.memory_type != "preference")
+        .filter(|memory| !excluded_ids.contains(&memory.id))
         .take(limits.memory_index_limit)
     {
         by_type
@@ -119,7 +133,7 @@ fn push_memory_index_line(
             if remaining == 0 {
                 break;
             }
-            let truncated = truncate_to_chars(&item, remaining);
+            let truncated = truncate_chars_with_ellipsis(&item, remaining);
             if truncated.is_empty() {
                 break;
             }
@@ -145,20 +159,4 @@ fn push_memory_index_line(
     output.push_str(&line);
     *total_chars += line_chars;
     rendered
-}
-
-fn char_len(value: &str) -> usize {
-    value.chars().count()
-}
-
-fn truncate_to_chars(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    if max_chars <= 3 {
-        return value.chars().take(max_chars).collect();
-    }
-    let mut truncated: String = value.chars().take(max_chars - 3).collect();
-    truncated.push_str("...");
-    truncated
 }

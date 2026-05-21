@@ -123,3 +123,27 @@ fn cli_parses_usage_options() {
         _ => panic!("expected usage command"),
     }
 }
+
+#[test]
+fn cli_parses_context_debug_option() {
+    let cli = Cli::parse_from([
+        "remem",
+        "context",
+        "--cwd",
+        "/tmp/remem",
+        "--host",
+        "codex-cli",
+        "--debug",
+    ]);
+
+    match cli.command {
+        Commands::Context {
+            cwd, host, debug, ..
+        } => {
+            assert_eq!(cwd.as_deref(), Some("/tmp/remem"));
+            assert_eq!(host.as_deref(), Some("codex-cli"));
+            assert!(debug);
+        }
+        _ => panic!("expected context command"),
+    }
+}

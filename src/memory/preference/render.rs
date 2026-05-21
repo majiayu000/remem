@@ -5,6 +5,19 @@ use crate::memory::Memory;
 
 use super::{query_global_preferences, query_project_preferences};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PreferenceRenderSummary {
+    pub rendered: usize,
+    pub project_rendered: usize,
+    pub global_rendered: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreferenceSource {
+    Project,
+    Global,
+}
+
 pub fn dedup_with_claude_md(prefs: &[Memory], cwd: &str) -> Vec<usize> {
     let claude_md_path = std::path::Path::new(cwd).join("CLAUDE.md");
     let claude_md_content = std::fs::read_to_string(&claude_md_path).unwrap_or_default();
@@ -43,52 +56,85 @@ pub fn render_preferences_with_limits(
     global_limit: usize,
     char_limit: usize,
 ) -> Result<usize> {
+    render_preferences_with_limits_detailed(
+        output,
+        conn,
+        project,
+        cwd,
+        project_limit,
+        global_limit,
+        char_limit,
+    )
+    .map(|summary| summary.rendered)
+}
+
+pub fn render_preferences_with_limits_detailed(
+    output: &mut String,
+    conn: &Connection,
+    project: &str,
+    cwd: &str,
+    project_limit: usize,
+    global_limit: usize,
+    char_limit: usize,
+) -> Result<PreferenceRenderSummary> {
     let project_prefs = query_project_preferences(conn, project, project_limit)?;
     let global_prefs = query_global_preferences(conn, global_limit).unwrap_or_default();
 
-    let mut all_prefs = project_prefs;
+    let mut all_prefs: Vec<(Memory, PreferenceSource)> = project_prefs
+        .into_iter()
+        .map(|memory| (memory, PreferenceSource::Project))
+        .collect();
     let project_topics: std::collections::HashSet<String> = all_prefs
         .iter()
-        .filter_map(|memory| memory.topic_key.clone())
+        .filter_map(|(memory, _)| memory.topic_key.clone())
         .collect();
     for global_pref in global_prefs {
         if let Some(ref topic_key) = global_pref.topic_key {
             if !project_topics.contains(topic_key) {
-                all_prefs.push(global_pref);
+                all_prefs.push((global_pref, PreferenceSource::Global));
             }
         }
     }
 
     if all_prefs.is_empty() {
-        return Ok(0);
+        return Ok(PreferenceRenderSummary::default());
     }
 
-    let keep_indices = dedup_with_claude_md(&all_prefs, cwd);
+    let memories = all_prefs
+        .iter()
+        .map(|(memory, _)| memory.clone())
+        .collect::<Vec<_>>();
+    let keep_indices = dedup_with_claude_md(&memories, cwd);
     if keep_indices.is_empty() {
-        return Ok(0);
+        return Ok(PreferenceRenderSummary::default());
     }
 
     output.push_str("## Your Preferences (always apply these)\n");
-    let mut total_chars = 0;
-    let mut rendered = 0usize;
+    let mut total_chars = 0usize;
+    let mut summary = PreferenceRenderSummary::default();
 
     for &idx in &keep_indices {
-        let pref = &all_prefs[idx];
+        let (pref, source) = &all_prefs[idx];
         let text = pref.text.trim();
         let preview: String = text.chars().take(120).collect();
-        let line = if preview.len() < text.len() {
-            format!("- {}\n", preview)
+        let line = if preview.chars().count() < text.chars().count() {
+            format!("- {}...\n", preview)
         } else {
             format!("- {}\n", text)
         };
-        if total_chars + line.len() > char_limit && total_chars > 0 {
+        let line_chars = line.chars().count();
+        if total_chars + line_chars > char_limit && total_chars > 0 {
             break;
         }
         output.push_str(&line);
-        total_chars += line.len();
-        rendered += 1;
+        total_chars += line_chars;
+        summary.rendered += 1;
+        match source {
+            PreferenceSource::Project => summary.project_rendered += 1,
+            PreferenceSource::Global => summary.global_rendered += 1,
+        }
     }
     output.push('\n');
 
-    Ok(rendered)
+    Ok(summary)
 }
