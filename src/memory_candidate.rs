@@ -17,6 +17,22 @@ If there is no durable memory candidate, return exactly <no_candidates reason=\"
 Use only provided observations and evidence; do not invent files, outcomes, decisions, or facts.";
 
 const AUTO_PROMOTE_MIN_CONFIDENCE: f64 = 0.80;
+const AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE: f64 = 0.80;
+const AUTO_PROMOTE_TYPES: &[&str] = &["architecture", "bugfix", "decision", "discovery"];
+const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
+    "api key",
+    "apikey",
+    "authorization:",
+    "bearer ",
+    "credential",
+    "credit card",
+    "password",
+    "payment",
+    "private key",
+    "secret",
+    "sk-",
+    "token",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCandidateResult {
@@ -207,7 +223,7 @@ fn persist_candidates(
             continue;
         }
 
-        let review_status = if should_auto_promote(candidate) {
+        let review_status = if should_auto_promote(candidate, batch) {
             "auto_promoted"
         } else {
             "pending_review"
@@ -330,10 +346,42 @@ pub(super) fn promote_candidate_to_memory(
     Ok(memory_id)
 }
 
-fn should_auto_promote(candidate: &ParsedMemoryCandidate) -> bool {
+fn should_auto_promote(candidate: &ParsedMemoryCandidate, batch: &ObservationBatch) -> bool {
     candidate.scope == "project"
         && candidate.risk_class == "low"
         && candidate.confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
+        && AUTO_PROMOTE_TYPES.contains(&candidate.memory_type.as_str())
+        && !contains_auto_promote_unsafe_marker(&candidate.text)
+        && is_supported_by_source_observation(candidate, batch)
+}
+
+fn is_supported_by_source_observation(
+    candidate: &ParsedMemoryCandidate,
+    batch: &ObservationBatch,
+) -> bool {
+    let candidate_text = normalize_evidence_text(&candidate.text);
+    if candidate_text.chars().count() < 24 {
+        return false;
+    }
+    batch.observations.iter().any(|observation| {
+        observation.confidence >= AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
+            && observation.observation_type == candidate.memory_type
+            && normalize_evidence_text(&observation.text).contains(&candidate_text)
+    })
+}
+
+fn contains_auto_promote_unsafe_marker(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    AUTO_PROMOTE_UNSAFE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn normalize_evidence_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn candidate_title(candidate: &ParsedMemoryCandidate) -> String {
@@ -616,6 +664,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn memory_candidate_keeps_self_classified_unsupported_candidate_pending() -> Result<()> {
+        let mut conn = setup_conn();
+        let task = setup_task(&mut conn, "sess-candidate-unsupported")?;
+        insert_source_observation(
+            &conn,
+            &task,
+            "Use deterministic review gates for candidates.",
+        )?;
+
+        let result = process_with_generator(&mut conn, &task, |_prompt| async {
+            Ok("<memory_candidate><scope>project</scope><type>decision</type><topic_key>unsupported-auto</topic_key><risk_class>low</risk_class><confidence>0.99</confidence><text>The production deploy succeeded and should be recorded.</text></memory_candidate>".to_string())
+        })
+        .await?;
+
+        assert_eq!(
+            result,
+            MemoryCandidateResult::Written {
+                candidates: 1,
+                promoted: 0,
+                pending_review: 1
+            }
+        );
+        let review_status: String =
+            conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+                row.get(0)
+            })?;
+        let memory_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+        assert_eq!(review_status, "pending_review");
+        assert_eq!(memory_count, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn memory_candidate_leaves_high_risk_candidate_pending_review() -> Result<()> {
         let mut conn = setup_conn();
         let task = setup_task(&mut conn, "sess-candidate-pending")?;
@@ -652,7 +734,7 @@ mod tests {
         insert_source_observation(
             &conn,
             &task,
-            "Use a deterministic topic key for duplicates.",
+            "Use the worker loop to process extraction tasks after observation extraction.",
         )?;
 
         process_with_generator(&mut conn, &task, |_prompt| async {
