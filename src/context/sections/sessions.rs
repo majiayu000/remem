@@ -61,9 +61,5 @@ pub(in crate::context) fn render_recent_sessions_with_limit(
 
 fn format_completed_line(line: &str) -> String {
     let truncated = truncate_chars_with_ellipsis(line, COMPLETED_PREVIEW_CHARS);
-    if char_len(line) > COMPLETED_PREVIEW_CHARS {
-        format!(" => {}", truncated)
-    } else {
-        format!(" => {}", truncated)
-    }
+    format!(" => {}", truncated)
 }
