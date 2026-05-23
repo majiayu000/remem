@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use rusqlite::{params, Connection};
+use anyhow::Result;
+use rusqlite::Connection;
 
 use super::merge::MergeResult;
 
@@ -21,33 +21,12 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
         None,
     )?;
 
-    // Deduplicate before processing: a hallucinated duplicate id from the LLM
-    // would otherwise re-fire the `memories_au` trigger on the second pass,
-    // and the trigger's 'delete' against an already-removed FTS row can
-    // surface as `database disk image is malformed` and abort the
-    // transaction. `filter_superseded_ids` already drops out-of-cluster ids
-    // but does not deduplicate.
-    let mut seen = std::collections::HashSet::with_capacity(result.superseded_ids.len());
-    let unique_ids: Vec<i64> = result
-        .superseded_ids
-        .iter()
-        .copied()
-        .filter(|id| *id != merged_id && seen.insert(*id))
-        .collect();
-
-    for id in &unique_ids {
-        let updated = tx.execute(
-            "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
-            params![id, project],
-        )?;
-        if updated != 1 {
-            return Err(anyhow!(
-                "failed to mark superseded memory stale: id={} project={}",
-                id,
-                project
-            ));
-        }
-    }
+    crate::memory::lifecycle::soft_supersede(
+        &tx,
+        project,
+        &result.superseded_ids,
+        Some(merged_id),
+    )?;
 
     tx.commit()?;
     Ok(())
@@ -58,7 +37,7 @@ mod tests {
     use super::*;
     use crate::memory::insert_memory;
     use crate::memory::tests_helper::setup_memory_schema;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     fn setup() -> (Connection, String) {
         let conn = Connection::open_in_memory().expect("in-memory db");

@@ -1,6 +1,7 @@
 pub mod dedup;
 pub mod events;
 pub mod format;
+pub mod lifecycle;
 pub mod preference;
 pub mod promote;
 pub mod raw_archive;
