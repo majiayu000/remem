@@ -43,12 +43,39 @@ These sources were found after the first document pass. They are not yet fully i
 - SAGE graph-memory paper (May 2026): https://arxiv.org/abs/2605.12061
 - "Memory in the Age of AI Agents: A Survey" (May 2026): https://openreview.net/forum?id=180d26775b5edf368b1aea4bcf724855acc29c14
 - "Memory OS of AI Agent" (2025 EMNLP): https://aclanthology.org/2025.emnlp-main.1318/
+- ICLR 2026 MemAgents workshop: https://iclr.cc/virtual/2026/workshop/10000792
+- MCML recap of MemAgents workshop: https://mcml.ai/news/2026-05-06-mem-agents-workshop-at-iclr-2026/
+- MemAgent ICLR 2026 poster: https://iclr.cc/virtual/2026/poster/10007825
+- Memanto paper (April 2026): https://arxiv.org/abs/2604.22085
+- Memanto research page: https://memanto.ai/research
+- Mastra Observational Memory: https://mastra.ai/research/observational-memory
+- Wire, "Tool-based agent memory" (April 2026): https://usewire.io/blog/memory-as-tools-2026-agent-memory-pattern/
+- MemCP portable agent memory: https://mcp.altinors.com/
+- AgenticMem / ai-memory MCP: https://agentic-mem.com/
+- Memstate blog index: https://memstate.ai/blog
+- HEBBS blog: https://blog.hebbs.ai/
+- Chanl, "Your Agent Remembers Everything Except What Matters": https://www.channel.tel/blog/ai-agent-memory-episodic-semantic-iclr-2026
+- Memori Labs trace-native memory announcement: https://www.prweb.com/releases/memori-labs-releases-new-agent-native-memory-infrastructure-automatically-creating-structured-memory-from-agent-trace-302765715.html
+- LifeBench: https://arxiv.org/abs/2603.03781
+- Chronos temporal-aware memory: https://arxiv.org/abs/2603.16862
+- Synthius-Mem: https://arxiv.org/abs/2604.11563
+- Beyond the Context Window: fact-based memory vs long-context LLMs: https://arxiv.org/abs/2603.04814
+- Recalibrate: metacognitive monitoring for persistent agents: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6411378
+- AgenticMemory binary graph format: https://papers.ssrn.com/sol3/Delivery.cfm/6265798.pdf?abstractid=6265798&mirid=1
+- Persistent Memory for AI Agents 2026 implementation roundup: https://byteiota.com/persistent-memory-for-ai-agents-2026-implementation/
+- AgentMarketCap, "The Agent Memory Protocol Gap": https://agentmarketcap.ai/blog/2026/04/06/agent-memory-protocol-gap-mcp-letta-memgpt-zep-open-memory-layer
+- AgentMemory for coding agents: https://www.agentmemory.tech/
+- MemNexus persistent coding-tool memory comparison: https://memnexus.ai/blog/2026-03-19-ai-coding-tools-persistent-memory-2026
+- Shodh MCP memory guide: https://www.shodh-memory.com/blog/mcp-memory-server-guide
+- Zylos AI memory architecture overview: https://zylos.ai/en/research/2026-04-05-ai-agent-memory-architectures-persistent-knowledge
+- Feedback-Normalized Developer Memory for RL coding agents: https://arxiv.org/abs/2605.01567
 
 Initial interpretation:
 
 - Recent blog coverage is converging on the same failure modes: memory is not just query-time RAG, stale/conflicting facts dominate long-running systems, and scoped memory is more important than a single global store.
 - The new algorithm/paper stream reinforces remem's non-vector priorities: better lifecycle operations, evidence preservation, temporal invalidation, query routing, and evaluation buckets.
 - Many posts are product or marketing oriented. They should be used as idea discovery, not as implementation evidence, unless backed by a paper, benchmark, or reproducible docs.
+- The broader product landscape is moving toward MCP-native memory and coding-agent-specific memory. This validates remem's hook/MCP direction, but the claims around benchmark scores and "universal memory" need careful reproduction before they influence design.
 
 Action: before implementing a larger retrieval/lifecycle redesign, run a focused review of this watchlist and promote only sources that provide concrete algorithms, schemas, metrics, or failure cases.
 
