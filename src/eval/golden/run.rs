@@ -1,0 +1,294 @@
+use std::collections::{BTreeMap, HashSet};
+
+use anyhow::{anyhow, Context, Result};
+use rusqlite::Connection;
+
+use super::types::{
+    CategoryEvaluation, EvidenceRef, GoldenDataset, GoldenEvalReport, GoldenQuery, MetricSums,
+    QueryEvaluation, QueryMetrics, QueryStatus,
+};
+
+const RANK_K: usize = 10;
+
+#[derive(Default)]
+struct CategoryAccumulator {
+    total_queries: usize,
+    abstention_queries: usize,
+    abstention_passed: usize,
+    metrics: MetricSums,
+}
+
+pub fn load_dataset(dataset_path: &str) -> Result<GoldenDataset> {
+    let content = std::fs::read_to_string(dataset_path)
+        .with_context(|| format!("read golden eval dataset {dataset_path}"))?;
+    let dataset: GoldenDataset = serde_json::from_str(&content)
+        .with_context(|| format!("parse golden eval dataset {dataset_path}"))?;
+    validate_dataset(&dataset)?;
+    Ok(dataset)
+}
+
+pub fn run_dataset_path(
+    conn: &Connection,
+    dataset_path: &str,
+    k: usize,
+) -> Result<GoldenEvalReport> {
+    let dataset = load_dataset(dataset_path)?;
+    evaluate_dataset(conn, &dataset, k)
+}
+
+pub fn evaluate_dataset(
+    conn: &Connection,
+    dataset: &GoldenDataset,
+    k: usize,
+) -> Result<GoldenEvalReport> {
+    validate_dataset(dataset)?;
+    let k = k.max(1);
+    let fetch_limit = k.max(RANK_K) as i64;
+    let mut query_reports = Vec::with_capacity(dataset.queries.len());
+    let mut overall_sums = MetricSums::default();
+    let mut categories = BTreeMap::<String, CategoryAccumulator>::new();
+    let mut skipped_queries = 0usize;
+    let mut abstention_queries = 0usize;
+    let mut abstention_passed = 0usize;
+
+    for query in &dataset.queries {
+        let results = crate::retrieval::search::search_with_branch(
+            conn,
+            Some(&query.query),
+            query.project.as_deref(),
+            query.memory_type.as_deref(),
+            fetch_limit,
+            0,
+            false,
+            query.branch.as_deref(),
+        )?;
+        let evaluation = evaluate_query(query, &results, k);
+        let category = categories.entry(query.category.clone()).or_default();
+        category.total_queries += 1;
+
+        if query.expects_abstention() {
+            abstention_queries += 1;
+            category.abstention_queries += 1;
+            if evaluation.status == QueryStatus::Pass {
+                abstention_passed += 1;
+                category.abstention_passed += 1;
+            }
+        } else if let Some(metrics) = evaluation.metrics.as_ref() {
+            overall_sums.add(metrics);
+            category.metrics.add(metrics);
+        } else {
+            skipped_queries += 1;
+        }
+
+        query_reports.push(evaluation);
+    }
+
+    Ok(GoldenEvalReport {
+        version: dataset.version.clone(),
+        description: dataset.description.clone(),
+        k,
+        rank_k: RANK_K,
+        total_queries: dataset.queries.len(),
+        scored_queries: overall_sums.averages().map_or(0, |metrics| metrics.count),
+        skipped_queries,
+        abstention_queries,
+        abstention_passed,
+        overall: overall_sums.averages(),
+        by_category: categories
+            .into_iter()
+            .map(|(name, category)| {
+                (
+                    name,
+                    CategoryEvaluation {
+                        total_queries: category.total_queries,
+                        scored_queries: category.metrics.averages().map_or(0, |m| m.count),
+                        abstention_queries: category.abstention_queries,
+                        abstention_passed: category.abstention_passed,
+                        metrics: category.metrics.averages(),
+                    },
+                )
+            })
+            .collect(),
+        queries: query_reports,
+    })
+}
+
+fn validate_dataset(dataset: &GoldenDataset) -> Result<()> {
+    if dataset.queries.is_empty() {
+        return Err(anyhow!(
+            "golden eval dataset must contain at least one query"
+        ));
+    }
+    let mut seen_ids = HashSet::new();
+    for query in &dataset.queries {
+        if query.id.trim().is_empty() {
+            return Err(anyhow!("golden eval query id must not be empty"));
+        }
+        if !seen_ids.insert(query.id.as_str()) {
+            return Err(anyhow!("duplicate golden eval query id {}", query.id));
+        }
+        if query.query.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval query {} text must not be empty",
+                query.id
+            ));
+        }
+        if query.category.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval query {} category must not be empty",
+                query.id
+            ));
+        }
+        for evidence_ref in &query.evidence_refs {
+            if !evidence_ref.has_match_criteria() {
+                return Err(anyhow!(
+                    "golden eval query {} contains an empty evidence ref",
+                    query.id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn evaluate_query(
+    query: &GoldenQuery,
+    results: &[crate::memory::Memory],
+    k: usize,
+) -> QueryEvaluation {
+    let expected_refs = query.expected_refs();
+    if query.expects_abstention() {
+        return QueryEvaluation {
+            id: query.id.clone(),
+            query: query.query.clone(),
+            category: query.category.clone(),
+            status: if results.is_empty() {
+                QueryStatus::Pass
+            } else {
+                QueryStatus::Fail
+            },
+            result_count: results.len(),
+            matched_refs: 0,
+            expected_refs: expected_refs.len(),
+            metrics: None,
+        };
+    }
+
+    if expected_refs.is_empty() {
+        return QueryEvaluation {
+            id: query.id.clone(),
+            query: query.query.clone(),
+            category: query.category.clone(),
+            status: QueryStatus::Skip,
+            result_count: results.len(),
+            matched_refs: 0,
+            expected_refs: 0,
+            metrics: None,
+        };
+    }
+
+    let metrics = score_results(results, &expected_refs, k);
+    let matched_refs = matched_ref_indexes(results, &expected_refs, k).len();
+    let status = if metrics.hit_at_k > 0.0 {
+        QueryStatus::Hit
+    } else {
+        QueryStatus::Miss
+    };
+    QueryEvaluation {
+        id: query.id.clone(),
+        query: query.query.clone(),
+        category: query.category.clone(),
+        status,
+        result_count: results.len(),
+        matched_refs,
+        expected_refs: expected_refs.len(),
+        metrics: Some(metrics),
+    }
+}
+
+fn score_results(
+    results: &[crate::memory::Memory],
+    expected_refs: &[EvidenceRef],
+    k: usize,
+) -> QueryMetrics {
+    let top_k = k.min(results.len());
+    let top_rank_k = RANK_K.min(results.len());
+    let relevance_at_k: Vec<bool> = results
+        .iter()
+        .take(top_k)
+        .map(|memory| {
+            expected_refs
+                .iter()
+                .any(|evidence_ref| evidence_ref.matches(memory))
+        })
+        .collect();
+    let relevance_at_rank_k: Vec<bool> = results
+        .iter()
+        .take(top_rank_k)
+        .map(|memory| {
+            expected_refs
+                .iter()
+                .any(|evidence_ref| evidence_ref.matches(memory))
+        })
+        .collect();
+    let matched_refs = matched_ref_indexes(results, expected_refs, k).len();
+    let relevant_hits = relevance_at_k
+        .iter()
+        .filter(|is_relevant| **is_relevant)
+        .count();
+    let precision_denominator = top_k.max(1);
+
+    QueryMetrics {
+        hit_at_k: if relevant_hits > 0 { 1.0 } else { 0.0 },
+        mrr_at_10: reciprocal_rank_from_relevance(&relevance_at_rank_k),
+        precision_at_k: relevant_hits as f64 / precision_denominator as f64,
+        recall_at_k: matched_refs as f64 / expected_refs.len() as f64,
+        ndcg_at_10: binary_ndcg_at_k(&relevance_at_rank_k, expected_refs.len(), RANK_K),
+        evidence_recall_at_k: matched_refs as f64 / expected_refs.len() as f64,
+    }
+}
+
+fn matched_ref_indexes(
+    results: &[crate::memory::Memory],
+    expected_refs: &[EvidenceRef],
+    k: usize,
+) -> HashSet<usize> {
+    let mut matched = HashSet::new();
+    for memory in results.iter().take(k) {
+        for (index, evidence_ref) in expected_refs.iter().enumerate() {
+            if evidence_ref.matches(memory) {
+                matched.insert(index);
+            }
+        }
+    }
+    matched
+}
+
+fn reciprocal_rank_from_relevance(relevance: &[bool]) -> f64 {
+    relevance
+        .iter()
+        .position(|is_relevant| *is_relevant)
+        .map_or(0.0, |index| 1.0 / (index as f64 + 1.0))
+}
+
+fn binary_ndcg_at_k(relevance: &[bool], expected_count: usize, k: usize) -> f64 {
+    if k == 0 || expected_count == 0 {
+        return 0.0;
+    }
+    let dcg: f64 = relevance
+        .iter()
+        .take(k)
+        .enumerate()
+        .filter(|(_, is_relevant)| **is_relevant)
+        .map(|(index, _)| 1.0 / (index as f64 + 2.0).log2())
+        .sum();
+    let ideal_hits = expected_count.min(k);
+    let idcg: f64 = (0..ideal_hits)
+        .map(|index| 1.0 / (index as f64 + 2.0).log2())
+        .sum();
+    if idcg == 0.0 {
+        0.0
+    } else {
+        dcg / idcg
+    }
+}
