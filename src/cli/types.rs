@@ -107,6 +107,8 @@ pub(super) enum Commands {
         include_stale: bool,
         #[arg(long)]
         multi_hop: bool,
+        #[arg(long)]
+        explain: bool,
     },
     Show {
         id: i64,

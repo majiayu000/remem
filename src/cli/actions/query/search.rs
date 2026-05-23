@@ -7,6 +7,7 @@ use crate::{
         service::{MultiHopMeta, SearchRequest, SearchResultSet},
         Memory,
     },
+    retrieval::search::SearchExplain,
 };
 
 pub(in crate::cli) fn run_search(
@@ -18,6 +19,7 @@ pub(in crate::cli) fn run_search(
     branch: Option<&str>,
     include_stale: bool,
     multi_hop: bool,
+    explain: bool,
 ) -> Result<()> {
     let conn = db::open_db()?;
     let request = build_search_request(
@@ -29,6 +31,7 @@ pub(in crate::cli) fn run_search(
         branch,
         include_stale,
         multi_hop,
+        explain,
     );
     let results = crate::memory::service::search_memories(&conn, &request)?;
     print!("{}", render_search_results(&results, offset, limit.max(1)));
@@ -44,6 +47,7 @@ pub(super) fn build_search_request(
     branch: Option<&str>,
     include_stale: bool,
     multi_hop: bool,
+    explain: bool,
 ) -> SearchRequest {
     SearchRequest {
         query: Some(query.to_string()),
@@ -54,6 +58,7 @@ pub(super) fn build_search_request(
         include_stale,
         branch: branch.map(str::to_string),
         multi_hop,
+        explain,
     }
 }
 
@@ -92,6 +97,13 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
         for raw in &results.raw_hits {
             output.push_str(&format_raw_hit_line(raw));
         }
+    }
+    if let Some(explain) = results.explain.as_ref() {
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push('\n');
+        output.push_str(&render_search_explain(explain));
     }
 
     output
@@ -143,6 +155,75 @@ fn format_raw_hit_line(raw: &RawMessage) -> String {
         output.push_str(&format!(" | {}", preview));
     }
     output.push('\n');
+    output
+}
+
+fn render_search_explain(explain: &SearchExplain) -> String {
+    let mut output = String::new();
+    output.push_str("Search explain:\n");
+    output.push_str(&format!("  query: {:?}\n", explain.query));
+    output.push_str(&format!(
+        "  filters: project={:?} branch={:?} type={:?} include_stale={}\n",
+        explain.project, explain.branch, explain.memory_type, explain.include_stale
+    ));
+    output.push_str(&format!(
+        "  pagination: limit={} offset={} fetch_limit={} has_more={}\n",
+        explain.limit, explain.offset, explain.fetch_limit, explain.has_more
+    ));
+    output.push_str(&format!(
+        "  expanded_terms: [{}]\n",
+        explain.expanded_terms.join(", ")
+    ));
+    output.push_str(&format!(
+        "  core_terms: [{}]\n",
+        explain.core_terms.join(", ")
+    ));
+    output.push_str(&format!("  fts_query: {:?}\n", explain.fts_query));
+    output.push_str(&format!("  temporal_range: {:?}\n", explain.temporal_range));
+    output.push_str(&format!("  rrf_k: {:.1}\n", explain.rrf_k));
+    output.push_str("  channels:\n");
+    for channel in &explain.channels {
+        output.push_str(&format!(
+            "    {}: {}\n",
+            channel.name,
+            channel
+                .hits
+                .iter()
+                .map(|hit| format!("{}#{}", hit.memory_id, hit.rank))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    output.push_str("  results:\n");
+    for result in &explain.results {
+        output.push_str(&format!(
+            "    [{}] rank={} score={:.6} visibility={} scope={} project={}\n",
+            result.memory_id,
+            result.final_rank,
+            result.final_score,
+            result.visibility,
+            result.scope,
+            result.project
+        ));
+        if !result.contributions.is_empty() {
+            output.push_str(&format!(
+                "      contributions: {}\n",
+                result
+                    .contributions
+                    .iter()
+                    .map(|contribution| format!(
+                        "{}#{}={:.6}",
+                        contribution.channel, contribution.rank, contribution.score
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    output.push_str(&format!(
+        "  raw_fallback_count: {}\n",
+        explain.raw_fallback_count
+    ));
     output
 }
 

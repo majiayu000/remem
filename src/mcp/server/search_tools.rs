@@ -43,6 +43,7 @@ impl MemoryServer {
                     .unwrap_or_else(service::default_include_stale),
                 branch: params.branch.clone(),
                 multi_hop: requested_multi_hop,
+                explain: false,
             };
             let search_set = service::search_memories(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
@@ -54,6 +55,7 @@ impl MemoryServer {
                 memories,
                 multi_hop,
                 has_more,
+                explain: _,
                 raw_hits,
             } = search_set;
 

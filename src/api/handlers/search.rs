@@ -27,6 +27,7 @@ pub(in crate::api) fn search_request_from_params(params: SearchParams) -> servic
             .unwrap_or_else(service::default_include_stale),
         branch: params.branch,
         multi_hop: params.multi_hop.unwrap_or(false),
+        explain: false,
     }
 }
 
