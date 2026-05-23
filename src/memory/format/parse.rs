@@ -2,7 +2,7 @@ use super::{extract_field, ParsedObservation, OBSERVATION_TYPES};
 
 /// Find `needle` in `haystack` using ASCII case-insensitive comparison.
 /// Returns the byte offset of the first match, or `None`.
-fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+pub(crate) fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
     let needle = needle.as_bytes();
     haystack
         .as_bytes()

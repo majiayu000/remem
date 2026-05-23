@@ -2,6 +2,7 @@ use anyhow::Result;
 use tokio::time::Duration;
 
 use crate::db;
+use crate::memory_candidate::MemoryCandidateResult;
 
 enum ExtractionTaskOutcome {
     Deferred(String),
@@ -98,8 +99,12 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
             Ok(ExtractionTaskOutcome::Done)
         }
         db::ExtractionTaskKind::MemoryCandidate => {
-            crate::memory_candidate::process(task).await?;
-            Ok(ExtractionTaskOutcome::Done)
+            match crate::memory_candidate::process(task).await? {
+                MemoryCandidateResult::Deferred { reason } => {
+                    Ok(ExtractionTaskOutcome::Deferred(reason))
+                }
+                _ => Ok(ExtractionTaskOutcome::Done),
+            }
         }
         _ => Ok(ExtractionTaskOutcome::Deferred(format!(
             "extraction task kind '{}' is not implemented",

@@ -5,7 +5,13 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
-use crate::memory::format::{extract_field, xml_escape_attr, xml_escape_text};
+use crate::memory::format::{xml_escape_attr, xml_escape_text};
+
+mod parse;
+pub(crate) mod review;
+
+use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
+use parse::{parse_defer_reason, parse_memory_candidates};
 
 const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
@@ -14,6 +20,7 @@ Each block must include <scope>, <type>, <topic_key>, <risk_class>, <confidence>
 Use scope=project unless the observation is explicitly a stable user preference.
 Use risk_class=low only for factual project-scoped information that can be promoted without review.
 If there is no durable memory candidate, return exactly <no_candidates reason=\"...\"/>.
+If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/> so it can be retried or reviewed.
 Use only provided observations and evidence; do not invent files, outcomes, decisions, or facts.";
 
 const AUTO_PROMOTE_MIN_CONFIDENCE: f64 = 0.80;
@@ -38,6 +45,9 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
 pub(crate) enum MemoryCandidateResult {
     EmptyRange,
     NoCandidates,
+    Deferred {
+        reason: String,
+    },
     Written {
         candidates: usize,
         promoted: usize,
@@ -108,6 +118,9 @@ where
     let response = generate(prompt).await?;
     let candidates = parse_memory_candidates(&response)?;
     if candidates.is_empty() {
+        if let Some(reason) = parse_defer_reason(&response) {
+            return Ok(MemoryCandidateResult::Deferred { reason });
+        }
         if response.contains("<no_candidates") {
             return Ok(MemoryCandidateResult::NoCandidates);
         }
@@ -423,99 +436,6 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
     prompt
 }
 
-fn parse_memory_candidates(text: &str) -> Result<Vec<ParsedMemoryCandidate>> {
-    let mut candidates = Vec::new();
-    let mut pos = 0;
-    while let Some(tag_start_rel) = find_ascii_ci(&text[pos..], "<memory_candidate") {
-        let tag_start = pos + tag_start_rel;
-        let Some(open_end_rel) = text[tag_start..].find('>') else {
-            bail!("malformed memory_candidate output: unterminated opening tag");
-        };
-        let content_start = tag_start + open_end_rel + 1;
-        let Some(close_rel) = find_ascii_ci(&text[content_start..], "</memory_candidate>") else {
-            bail!("malformed memory_candidate output: missing closing tag");
-        };
-        let content_end = content_start + close_rel;
-        candidates.push(parse_candidate_content(&text[content_start..content_end])?);
-        pos = content_end + "</memory_candidate>".len();
-    }
-    Ok(candidates)
-}
-
-fn parse_candidate_content(content: &str) -> Result<ParsedMemoryCandidate> {
-    let scope = normalize_scope(required_field(content, "scope")?.as_str())?;
-    let memory_type = normalize_memory_type(required_field(content, "type")?.as_str())?;
-    let topic_key = normalize_topic_key(required_field(content, "topic_key")?.as_str())?;
-    let risk_class = normalize_risk_class(required_field(content, "risk_class")?.as_str())?;
-    let confidence = parse_confidence(required_field(content, "confidence")?.as_str())?;
-    let text = required_field(content, "text")?;
-    Ok(ParsedMemoryCandidate {
-        scope,
-        memory_type,
-        topic_key,
-        text,
-        confidence,
-        risk_class,
-    })
-}
-
-fn required_field(content: &str, field: &str) -> Result<String> {
-    extract_field(content, field)
-        .with_context(|| format!("malformed memory_candidate output: missing <{field}>"))
-}
-
-pub(super) fn normalize_scope(raw: &str) -> Result<String> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "global" | "workspace" | "project" => Ok(raw.trim().to_ascii_lowercase()),
-        other => bail!("malformed memory_candidate output: invalid scope '{other}'"),
-    }
-}
-
-pub(super) fn normalize_memory_type(raw: &str) -> Result<String> {
-    let value = raw.trim().to_ascii_lowercase();
-    if crate::memory::MEMORY_TYPES.contains(&value.as_str()) && value != "session_activity" {
-        Ok(value)
-    } else {
-        bail!("malformed memory_candidate output: invalid memory type '{value}'")
-    }
-}
-
-pub(super) fn normalize_topic_key(raw: &str) -> Result<String> {
-    let value = crate::memory::slugify_for_topic(raw.trim(), 96);
-    if value.is_empty() {
-        bail!("malformed memory_candidate output: empty topic_key");
-    }
-    Ok(value)
-}
-
-pub(super) fn normalize_risk_class(raw: &str) -> Result<String> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "low" | "medium" | "high" => Ok(raw.trim().to_ascii_lowercase()),
-        other => bail!("malformed memory_candidate output: invalid risk_class '{other}'"),
-    }
-}
-
-pub(super) fn parse_confidence(raw: &str) -> Result<f64> {
-    let confidence: f64 = raw
-        .trim()
-        .parse()
-        .with_context(|| "malformed memory_candidate output: invalid confidence")?;
-    if !(0.0..=1.0).contains(&confidence) {
-        bail!("malformed memory_candidate output: confidence out of range");
-    }
-    Ok(confidence)
-}
-
-fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
-    let needle = needle.as_bytes();
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .position(|window| window.eq_ignore_ascii_case(needle))
-}
-
-pub(crate) mod review;
-
 #[cfg(test)]
 mod tests {
     use rusqlite::params;
@@ -777,6 +697,34 @@ mod tests {
         .await?;
 
         assert_eq!(result, MemoryCandidateResult::NoCandidates);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn memory_candidate_defer_output_is_explicit() -> Result<()> {
+        let mut conn = setup_conn();
+        let task = setup_task(&mut conn, "sess-candidate-defer")?;
+        insert_source_observation(&conn, &task, "Deploy target is staging or production.")?;
+
+        let result = process_with_generator(&mut conn, &task, |_prompt| async {
+            Ok("<defer reason=\"ambiguous conflict\"/>".to_string())
+        })
+        .await?;
+
+        assert_eq!(
+            result,
+            MemoryCandidateResult::Deferred {
+                reason: "ambiguous conflict".to_string()
+            }
+        );
+        let candidate_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+                row.get(0)
+            })?;
+        let memory_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+        assert_eq!(candidate_count, 0);
+        assert_eq!(memory_count, 0);
         Ok(())
     }
 
