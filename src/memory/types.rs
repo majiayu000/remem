@@ -42,6 +42,7 @@ pub const MEMORY_TYPES: &[&str] = &[
     "bugfix",
     "architecture",
     "preference",
+    "procedure",
     "session_activity",
 ];
 
