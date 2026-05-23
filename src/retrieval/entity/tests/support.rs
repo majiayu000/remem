@@ -10,7 +10,8 @@ pub(super) fn setup_entity_schema(conn: &Connection) {
             memory_type TEXT NOT NULL DEFAULT 'discovery',
             branch TEXT,
             status TEXT NOT NULL DEFAULT 'active',
-            scope TEXT NOT NULL DEFAULT 'project'
+            scope TEXT NOT NULL DEFAULT 'project',
+            updated_at_epoch INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE entities (
             id INTEGER PRIMARY KEY,

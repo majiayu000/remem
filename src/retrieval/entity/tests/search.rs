@@ -1,3 +1,4 @@
+use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use super::support::setup_entity_schema;
@@ -112,9 +113,33 @@ fn search_by_entity_project_filter_includes_global_scope_records() {
     link_entities(&conn, 3, &["SQLite".to_string()]).unwrap();
 
     let ids = search_by_entity(&conn, "SQLite", Some("proj"), 10).unwrap();
-    assert!(ids.contains(&1));
-    assert!(ids.contains(&2));
+    assert_eq!(ids, vec![1, 2]);
     assert!(!ids.contains(&3));
+}
+
+#[test]
+fn search_by_entity_ranks_project_scope_before_same_project_global_scope() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_entity_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories
+         (id, project, memory_type, status, scope, updated_at_epoch)
+         VALUES (?1, ?2, 'decision', 'active', 'project', ?3)",
+        params![1_i64, "proj", 1_i64],
+    )?;
+    conn.execute(
+        "INSERT INTO memories
+         (id, project, memory_type, status, scope, updated_at_epoch)
+         VALUES (?1, ?2, 'preference', 'active', 'global', ?3)",
+        params![2_i64, "proj", 100_i64],
+    )?;
+    link_entities(&conn, 1, &["SQLite".to_string()])?;
+    link_entities(&conn, 2, &["SQLite".to_string()])?;
+
+    let ids = search_by_entity(&conn, "SQLite", Some("proj"), 1)?;
+
+    assert_eq!(ids, vec![1]);
+    Ok(())
 }
 
 #[test]
