@@ -73,7 +73,10 @@ pub(super) fn query_memory_ids(
         params_vec.push(Box::new(project.to_string()));
         idx += 1;
         format!(
-            "CASE WHEN m.project = ?{order_project_idx} THEN 0 ELSE 1 END, \
+            "CASE \
+             WHEN COALESCE(m.scope, 'project') = 'global' THEN 1 \
+             WHEN m.project = ?{order_project_idx} THEN 0 \
+             ELSE 2 END, \
              m.updated_at_epoch DESC, me.memory_id DESC"
         )
     } else {
