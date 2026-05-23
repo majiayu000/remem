@@ -25,10 +25,16 @@ impl std::fmt::Display for EvalReport {
 
         writeln!(
             f,
-            "\n[project_filter] tested {} entities, {} leaked ({:.1}%)",
+            "\n[project_filter] tested {} entities, {} true leaks / {} hits ({:.1}%)",
             self.project_leak.total_tested,
             self.project_leak.leaked,
+            self.project_leak.total_hits,
             self.project_leak.leak_rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "  hits: {} project-local, {} global-overlay",
+            self.project_leak.project_hits, self.project_leak.global_overlay_hits
         )?;
         writeln!(
             f,

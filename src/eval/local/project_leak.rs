@@ -8,12 +8,18 @@ pub(super) fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport>
     if projects.len() < 2 {
         return Ok(ProjectLeakReport {
             total_tested: 0,
+            total_hits: 0,
+            project_hits: 0,
+            global_overlay_hits: 0,
             leaked: 0,
             leak_rate: 0.0,
         });
     }
 
     let mut total_tested = 0;
+    let mut total_hits = 0;
+    let mut project_hits = 0;
+    let mut global_overlay_hits = 0;
     let mut leaked = 0;
 
     for project in &projects {
@@ -21,28 +27,38 @@ pub(super) fn check_project_leak(conn: &Connection) -> Result<ProjectLeakReport>
             for memory_id in
                 crate::retrieval::entity::search_by_entity(conn, &entity, Some(project), 20)?
             {
-                let memory_project: String = conn
+                let (memory_project, scope): (String, String) = conn
                     .query_row(
-                        "SELECT project FROM memories WHERE id = ?1",
+                        "SELECT project, scope FROM memories WHERE id = ?1",
                         params![memory_id],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .unwrap_or_default();
+                total_hits += 1;
                 if !crate::project_id::project_matches(Some(&memory_project), project) {
-                    leaked += 1;
+                    if scope == "global" {
+                        global_overlay_hits += 1;
+                    } else {
+                        leaked += 1;
+                    }
+                } else {
+                    project_hits += 1;
                 }
             }
             total_tested += 1;
         }
     }
 
-    let leak_rate = if total_tested > 0 {
-        leaked as f64 / total_tested as f64
+    let leak_rate = if total_hits > 0 {
+        leaked as f64 / total_hits as f64
     } else {
         0.0
     };
     Ok(ProjectLeakReport {
         total_tested,
+        total_hits,
+        project_hits,
+        global_overlay_hits,
         leaked,
         leak_rate,
     })

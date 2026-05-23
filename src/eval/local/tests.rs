@@ -32,8 +32,11 @@ fn eval_report_display_includes_overall_score() {
         },
         project_leak: ProjectLeakReport {
             total_tested: 5,
+            total_hits: 8,
+            project_hits: 6,
+            global_overlay_hits: 1,
             leaked: 1,
-            leak_rate: 0.2,
+            leak_rate: 0.125,
         },
         title_quality: TitleQualityReport {
             total: 10,
@@ -52,7 +55,8 @@ fn eval_report_display_includes_overall_score() {
 
     assert!(rendered.contains("=== remem eval-local (10 memories) ==="));
     assert!(rendered.contains("[dedup] 2 duplicates in 1 groups"));
-    assert!(rendered.contains("[project_filter] tested 5 entities, 1 leaked"));
+    assert!(rendered.contains("[project_filter] tested 5 entities, 1 true leaks / 8 hits"));
+    assert!(rendered.contains("hits: 6 project-local, 1 global-overlay"));
     assert!(rendered.contains("[title_quality]"));
     assert!(rendered.contains("[self_retrieval] 3/4"));
     assert!(rendered.contains("--- overall:"));

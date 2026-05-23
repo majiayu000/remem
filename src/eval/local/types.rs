@@ -15,6 +15,9 @@ pub struct DedupReport {
 
 pub struct ProjectLeakReport {
     pub total_tested: usize,
+    pub total_hits: usize,
+    pub project_hits: usize,
+    pub global_overlay_hits: usize,
     pub leaked: usize,
     pub leak_rate: f64,
 }

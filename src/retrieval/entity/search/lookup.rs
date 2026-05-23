@@ -68,13 +68,26 @@ pub(super) fn query_memory_ids(
         params_vec.push(Box::new(branch.to_string()));
         idx += 1;
     }
+    let order_by = if let Some(project) = project {
+        let order_project_idx = idx;
+        params_vec.push(Box::new(project.to_string()));
+        idx += 1;
+        format!(
+            "CASE WHEN m.project = ?{order_project_idx} THEN 0 ELSE 1 END, \
+             m.updated_at_epoch DESC, me.memory_id DESC"
+        )
+    } else {
+        "m.updated_at_epoch DESC, me.memory_id DESC".to_string()
+    };
     let sql = format!(
         "SELECT DISTINCT me.memory_id FROM memory_entities me
          JOIN entities e ON e.id = me.entity_id
          JOIN memories m ON m.id = me.memory_id
          WHERE {}
+         ORDER BY {}
          LIMIT ?{}",
         conditions.join(" AND "),
+        order_by,
         idx
     );
     params_vec.push(Box::new(limit));

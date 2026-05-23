@@ -112,8 +112,7 @@ fn search_by_entity_project_filter_includes_global_scope_records() {
     link_entities(&conn, 3, &["SQLite".to_string()]).unwrap();
 
     let ids = search_by_entity(&conn, "SQLite", Some("proj"), 10).unwrap();
-    assert!(ids.contains(&1));
-    assert!(ids.contains(&2));
+    assert_eq!(ids, vec![1, 2]);
     assert!(!ids.contains(&3));
 }
 
