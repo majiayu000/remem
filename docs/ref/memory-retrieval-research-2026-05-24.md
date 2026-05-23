@@ -257,6 +257,226 @@ Risks:
 
 ## Recommended Non-Vector Roadmap
 
+## Design Pattern Comparison
+
+This section compares the main memory system designs found in the recent sweep. The goal is to decide what remem can borrow without losing its local-first, hook-driven, auditable design.
+
+### Pattern A: Passive Context Injection
+
+Examples: current remem SessionStart context, classic RAG memory, many MCP memory servers.
+
+Design:
+
+- Search runs before the agent reasons.
+- Top memories are injected into the prompt.
+- The agent consumes whatever retrieval selected.
+
+Strengths:
+
+- Simple, fast, deterministic, and easy to test.
+- Works well for startup context, user preferences, project facts, and recent decisions.
+- Good match for Codex/Claude session-start hooks.
+
+Weaknesses:
+
+- Retrieval runs "blind" before the agent knows what it actually needs.
+- No chance for the agent to navigate adjacent evidence or update stale memory during reasoning.
+- Bad retrieval pollutes the prompt every turn.
+
+Borrow for remem:
+
+- Keep this as the default startup path.
+- Make it smaller and more explainable: project-local first, global preferences separately, and show why each memory was injected.
+- Do not rely on this path alone for complex questions.
+
+### Pattern B: Tool-Based Memory
+
+Examples: Wire's tool-based memory discussion, many MCP-native memory systems, Mem0-style tool operations.
+
+Design:
+
+- Memory operations are tools: retrieve, navigate, store, update, discard.
+- The agent decides when to call memory inside the reasoning loop.
+- Tool results return source metadata and adjacent navigation handles.
+
+Strengths:
+
+- Better for ambiguous questions, multi-hop recall, and stale/conflicting facts.
+- Lets the agent ask follow-up memory queries instead of accepting a fixed top-k.
+- Fits MCP naturally.
+
+Weaknesses:
+
+- Requires agent discipline and good tool descriptions.
+- Can add latency and tool-call cost.
+- If update/delete tools are too permissive, the agent can damage memory.
+
+Borrow for remem:
+
+- Keep automatic capture as the write backbone; do not depend on the agent to save important facts.
+- Add read-side tools such as `search`, `show`, `timeline`, `neighbors`, and later `explain`.
+- Add write/update tools only behind review or soft-invalidation gates.
+
+### Pattern C: Observational Memory
+
+Examples: Mastra Observational Memory, older observer/reflector designs, remem session summaries.
+
+Design:
+
+- Background observers convert raw conversations into dense observations.
+- The agent sees a stable observation log instead of dynamically retrieved context.
+- The main conversation can drop old raw messages once they are represented as observations.
+
+Strengths:
+
+- Stable, cacheable prompt.
+- Good for long conversation continuity.
+- Does not require per-turn retrieval.
+
+Weaknesses:
+
+- Observation quality decides everything.
+- If an observation is wrong or incomplete, later turns inherit that compression error.
+- Less useful for open-ended search outside what was observed.
+
+Borrow for remem:
+
+- This is close to remem's strongest direction: Stop/context-focused automatic capture and background summarization.
+- Improve observation quality with provenance, confidence, lifecycle operations, and better eval.
+- Keep raw archive as source of truth so observations can be rebuilt.
+
+### Pattern D: Typed Semantic Memory
+
+Examples: Memanto, LangMem semantic/episodic/procedural split, Redis taxonomy.
+
+Design:
+
+- Memories are not a flat bag of notes.
+- They are typed: fact, preference, decision, procedure, event, artifact, error, relationship, etc.
+- Retrieval and update behavior depends on type.
+
+Strengths:
+
+- Easier to route and score.
+- Makes conflict handling more specific.
+- Helps evaluation by category.
+
+Weaknesses:
+
+- Bad type classification creates hidden routing errors.
+- Too many types become hard to maintain and test.
+
+Borrow for remem:
+
+- Keep existing decision/bugfix/discovery/preference types, but add clearer semantics for `episode`, `fact`, `procedure`, and `artifact`.
+- Use type-specific indexing and rendering.
+- Add type-specific evaluation buckets.
+
+### Pattern E: Lifecycle and Conflict Management
+
+Examples: Mem0 `ADD/UPDATE/DELETE/NOOP`, Zep invalidated facts, memory forgetting papers.
+
+Design:
+
+- New evidence is compared with existing memory.
+- The system chooses add, update, invalidate, noop, or defer.
+- Old facts are superseded rather than silently overwritten.
+
+Strengths:
+
+- Directly attacks stale and contradictory memory.
+- Prevents append-only memory bloat.
+- Makes memory auditable.
+
+Weaknesses:
+
+- LLM judgments can be wrong.
+- Automatic deletion is dangerous.
+- Requires good provenance and rollback.
+
+Borrow for remem:
+
+- Use `invalidate` and `supersede`, not hard delete.
+- Add `noop` and `defer` to extraction outputs.
+- Build visible metrics: write rate, noop rate, defer age, superseded count, conflict count.
+
+### Pattern F: Temporal Fact Graph
+
+Examples: Zep/Graphiti, GraphRAG, HippoRAG, Chronos.
+
+Design:
+
+- Facts are edges between entities.
+- Facts carry time and provenance.
+- Retrieval can filter by current, historical, or as-of time.
+
+Strengths:
+
+- Strong for "what changed?", "what was true then?", and multi-hop relationships.
+- Fits software work where PRs, issues, branches, commands, and decisions supersede each other.
+
+Weaknesses:
+
+- Entity resolution errors are amplified.
+- Full GraphRAG is expensive and easy to overbuild.
+- Community summaries can become stale.
+
+Borrow for remem:
+
+- Do not start with a full graph DB.
+- Add lightweight SQLite temporal facts first: subject, predicate, object, valid_from, valid_to, source ids, confidence.
+- Start with coding-specific edges: `fixed_by`, `verified_by`, `supersedes`, `blocked_by`, `uses_file`, `uses_command`.
+
+### Pattern G: Trace-Native Developer Memory
+
+Examples: Memori Labs trace-native memory, OpenAI Agents SDK tracing, Claude Code hooks, coding-agent memory systems.
+
+Design:
+
+- Tool calls, tool results, decisions, failures, retries, and outcomes become structured evidence.
+- Memory is derived from execution trace, not only chat text.
+
+Strengths:
+
+- Best fit for coding agents.
+- Captures what actually happened, not only what was said.
+- Enables workflow/procedural memory.
+
+Weaknesses:
+
+- Tool traces can contain secrets or large noisy outputs.
+- Direct trace retrieval is too noisy.
+- Requires redaction and retention controls.
+
+Borrow for remem:
+
+- Treat trace as raw evidence, not as final memory.
+- Normalize events with project, cwd, branch, session, tool, timestamps, result status, files touched, and redaction status.
+- Promote repeated verified workflows into procedural memory only after successful runs.
+
+## What remem Should Borrow First
+
+The highest-leverage ideas are:
+
+1. Golden query evaluation with stable evidence refs.
+2. `search_context` as rebuildable FTS text, not dense vectors.
+3. Search explain output showing channel, rank, and scope.
+4. Typed memory buckets: fact, episode, decision, bugfix, preference, procedure, artifact.
+5. Lifecycle operations: add, update, invalidate, noop, defer.
+6. Soft supersession instead of deletion.
+7. Lightweight temporal facts with provenance.
+8. Read-side memory tools for navigation and evidence expansion.
+9. Trace-derived procedural memory, gated by verification.
+
+What to avoid for now:
+
+- A full graph database.
+- Mandatory embeddings or vector DB.
+- Neural reranking in the hot path.
+- Agent-autonomous hard delete.
+- Auto-writing repo memory files.
+- Treating marketing benchmark claims as design proof without reproduction.
+
 ### P0: Make Evaluation Trustworthy
 
 - Keep PR #180's project/global split.
