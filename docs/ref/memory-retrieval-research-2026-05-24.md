@@ -4,6 +4,8 @@ Date: 2026-05-24
 
 Scope: this note records the broader search requested after PR #180. The immediate design constraint is to avoid making dense vector embeddings, vector databases, or neural rerankers the next implementation step. Those options are documented as later-stage possibilities only when a source discusses them.
 
+Coverage note: this is a curated research note, not an exhaustive index of every recent AI memory blog. The sources below were selected for design relevance to remem. A quick follow-up sweep on 2026-05-24 found additional recent blog posts and papers worth tracking, listed in "Recent Watchlist".
+
 ## Current remem Baseline
 
 remem already has a strong local-first foundation:
@@ -21,6 +23,34 @@ PR #180 addressed the first non-vector quality issue found in this round:
 The remaining question is not "add a vector DB"; it is how to improve retrieval, memory lifecycle, and evaluation while preserving local-first behavior and auditability.
 
 ## Research Threads
+
+### Recent Watchlist Not Fully Reviewed
+
+These sources were found after the first document pass. They are not yet fully incorporated into the roadmap.
+
+- Mem0, "Introducing The Token-Efficient Memory Algorithm" (April 2026): https://mem0.ai/blog/mem0-the-token-efficient-memory-algorithm
+- Mem0, "Long-Term Memory for AI Agents" (February 2026): https://mem0.ai/blog/long-term-memory-ai-agents
+- Redis, "Long-Term Memory Architectures for AI Agents" (April 2026): https://redis.io/blog/long-term-memory-architectures-ai-agents/
+- Letta, "Benchmarking AI Agent Memory: Is a Filesystem All You Need?" (August 2025): https://www.letta.com/blog/benchmarking-ai-agent-memory
+- Taskade, "Memory Reanimation Protocol: AI Agent Memory" (April 2026): https://www.taskade.com/blog/memory-reanimation-protocol
+- AgentMarketCap, "Agent Memory in Production 2026" (April 2026): https://agentmarketcap.ai/blog/2026/04/11/agent-memory-architecture-production-2026
+- Agents' Codex, "Agent Memory: Hybrid Episodic-Semantic Systems for Production" (March 2026): https://agentscodex.com/posts/2026-03-10-agent-memory-architectures-hybrid-episodic-semantic/
+- VentureBeat, "Observational memory cuts AI agent costs 10x..." (February 2026): https://venturebeat.com/data/observational-memory-cuts-ai-agent-costs-10x-and-outscores-rag-on-long/
+- SurePrompts, "Agent Memory Architectures Compared (2026)" (May 2026): https://sureprompts.com/blog/agent-memory-architectures-compared-2026
+- MemMachine paper (April 2026): https://arxiv.org/abs/2604.04853
+- "Beyond RAG for Agent Memory" (February 2026): https://arxiv.org/abs/2602.02007
+- "Memory for Autonomous LLM Agents: Mechanisms, Evaluation, and Emerging Frontiers" (March 2026): https://arxiv.org/abs/2603.07670
+- SAGE graph-memory paper (May 2026): https://arxiv.org/abs/2605.12061
+- "Memory in the Age of AI Agents: A Survey" (May 2026): https://openreview.net/forum?id=180d26775b5edf368b1aea4bcf724855acc29c14
+- "Memory OS of AI Agent" (2025 EMNLP): https://aclanthology.org/2025.emnlp-main.1318/
+
+Initial interpretation:
+
+- Recent blog coverage is converging on the same failure modes: memory is not just query-time RAG, stale/conflicting facts dominate long-running systems, and scoped memory is more important than a single global store.
+- The new algorithm/paper stream reinforces remem's non-vector priorities: better lifecycle operations, evidence preservation, temporal invalidation, query routing, and evaluation buckets.
+- Many posts are product or marketing oriented. They should be used as idea discovery, not as implementation evidence, unless backed by a paper, benchmark, or reproducible docs.
+
+Action: before implementing a larger retrieval/lifecycle redesign, run a focused review of this watchlist and promote only sources that provide concrete algorithms, schemas, metrics, or failure cases.
 
 ### 1. Lexical Search, RRF, and Query Expansion
 
