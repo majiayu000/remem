@@ -166,7 +166,7 @@ fn real_queries_work_on_upgraded_db() -> Result<()> {
         "SELECT m.{} FROM memories m \
          JOIN memories_fts ON memories_fts.rowid = m.id \
          WHERE memories_fts MATCH 'test' \
-         ORDER BY bm25(memories_fts, 10.0, 1.0) LIMIT 10",
+         ORDER BY bm25(memories_fts, 10.0, 1.0, 3.0) LIMIT 10",
         MEMORY_COLS.replace(", ", ", m.")
     );
     assert!(

@@ -4,6 +4,7 @@ pub mod format;
 pub mod preference;
 pub mod promote;
 pub mod raw_archive;
+pub mod search_context;
 pub mod service;
 pub mod store;
 pub mod types;

@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+use crate::memory::search_context::build_search_context;
+
 pub fn insert_memory(
     conn: &Connection,
     session_id: Option<&str>,
@@ -66,6 +68,7 @@ pub fn insert_memory_full(
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let created_at = created_at_override.unwrap_or(now);
+    let search_context = build_search_context(memory_type, topic_key, content, files);
 
     if let Some(topic_key) = topic_key {
         if !topic_key.is_empty() {
@@ -83,7 +86,7 @@ pub fn insert_memory_full(
                 conn.execute(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
-                     scope = ?8 WHERE id = ?9",
+                     scope = ?8, search_context = ?9 WHERE id = ?10",
                     params![
                         session_id,
                         title,
@@ -93,6 +96,7 @@ pub fn insert_memory_full(
                         now,
                         branch,
                         scope,
+                        search_context,
                         id
                     ],
                 )?;
@@ -104,9 +108,9 @@ pub fn insert_memory_full(
 
     conn.execute(
         "INSERT INTO memories \
-         (session_id, project, topic_key, title, content, memory_type, files, \
+         (session_id, project, topic_key, title, content, memory_type, files, search_context, \
           created_at_epoch, updated_at_epoch, status, branch, scope) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'active', ?10, ?11)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12)",
         params![
             session_id,
             project,
@@ -115,6 +119,7 @@ pub fn insert_memory_full(
             content,
             memory_type,
             files,
+            search_context,
             created_at,
             now,
             branch,

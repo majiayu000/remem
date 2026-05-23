@@ -103,12 +103,18 @@ fn import_memories_into_runtime(
             stats.memories_skipped += 1;
             continue;
         }
+        let search_context = crate::memory::search_context::build_search_context(
+            &memory_type,
+            Some(&topic_key),
+            &content,
+            files.as_deref(),
+        );
 
         let result = conn.execute(
             "INSERT INTO memories
-             (session_id, project, topic_key, title, content, memory_type, files,
+             (session_id, project, topic_key, title, content, memory_type, files, search_context,
               created_at_epoch, updated_at_epoch, status, branch, scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
                 session_id,
                 project,
@@ -117,6 +123,7 @@ fn import_memories_into_runtime(
                 content,
                 memory_type,
                 files,
+                search_context,
                 created_at,
                 updated_at,
                 status,

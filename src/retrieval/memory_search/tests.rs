@@ -39,6 +39,41 @@ fn test_memory_fts_search() {
 }
 
 #[test]
+fn fts_search_uses_generated_search_context_without_mutating_content() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("cache-key-timeout"),
+        "Runtime failure",
+        "Issue: requests timed out. Cause: cache key drift. Resolved by cache reset. \
+         Verified with `cargo test retrieval_context_probe`.",
+        "bugfix",
+        Some(r#"["src/retrieval/contextprobe.rs"]"#),
+    )?;
+
+    for query in ["contextprobe", "commands", "symptom", "fix", "verification"] {
+        let results = search_memories_fts(&conn, query, Some("proj"), None, 10, 0)?;
+        assert_eq!(
+            results.first().map(|memory| memory.id),
+            Some(id),
+            "{query:?} should match generated search_context"
+        );
+    }
+
+    let content: String =
+        conn.query_row("SELECT content FROM memories WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
+    assert!(!content.contains("contextprobe.rs"));
+    assert!(!content.contains("commands:"));
+    Ok(())
+}
+
+#[test]
 fn test_memory_like_fallback() {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     setup_memory_schema(&conn);

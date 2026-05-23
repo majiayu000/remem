@@ -67,7 +67,7 @@ pub fn search_memories_fts_filtered(
          FROM memories m \
          JOIN memories_fts ON memories_fts.rowid = m.id \
          WHERE {} \
-         ORDER BY (bm25(memories_fts, 10.0, 1.0) * CASE WHEN m.memory_type IN ('decision','bugfix') THEN 1.5 ELSE 1.0 END) \
+         ORDER BY (bm25(memories_fts, 10.0, 1.0, 3.0) * CASE WHEN m.memory_type IN ('decision','bugfix') THEN 1.5 ELSE 1.0 END) \
          LIMIT ?{} OFFSET ?{}",
         conditions.join(" AND "),
         idx,

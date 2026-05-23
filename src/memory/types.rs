@@ -101,6 +101,7 @@ pub mod tests_helper {
                 content TEXT NOT NULL,
                 memory_type TEXT NOT NULL,
                 files TEXT,
+                search_context TEXT,
                 created_at_epoch INTEGER NOT NULL,
                 updated_at_epoch INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -108,24 +109,28 @@ pub mod tests_helper {
                 scope TEXT DEFAULT 'project'
             );
             CREATE VIRTUAL TABLE memories_fts USING fts5(
-                title, content,
+                title, content, search_context,
                 content='memories',
                 content_rowid='id',
                 tokenize='trigram'
             );
             CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, title, content)
-                SELECT new.id, new.title, new.content WHERE new.status = 'active';
+                INSERT INTO memories_fts(rowid, title, content, search_context)
+                SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
+                WHERE new.status = 'active';
             END;
             CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, content)
-                VALUES ('delete', old.id, old.title, old.content);
-                INSERT INTO memories_fts(rowid, title, content)
-                SELECT new.id, new.title, new.content WHERE new.status = 'active';
+                INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
+                SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
+                WHERE old.status = 'active';
+                INSERT INTO memories_fts(rowid, title, content, search_context)
+                SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
+                WHERE new.status = 'active';
             END;
             CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, content)
-                VALUES ('delete', old.id, old.title, old.content);
+                INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
+                SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
+                WHERE old.status = 'active';
             END;
             CREATE TABLE events (
                 id INTEGER PRIMARY KEY,
