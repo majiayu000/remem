@@ -65,6 +65,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_search_context",
         sql: include_str!("../migrations/v012_memory_search_context.sql"),
     },
+    Migration {
+        version: 13,
+        name: "memory_temporal_facts",
+        sql: include_str!("../migrations/v013_memory_temporal_facts.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
