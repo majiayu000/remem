@@ -4,6 +4,7 @@ pub mod facts;
 pub mod format;
 pub mod lifecycle;
 pub mod preference;
+pub mod procedure;
 pub mod promote;
 pub mod raw_archive;
 pub mod search_context;
