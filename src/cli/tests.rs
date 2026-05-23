@@ -83,6 +83,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             branch,
             include_stale,
             multi_hop,
+            explain,
         } => {
             assert_eq!(query, "Melanie rollout");
             assert_eq!(project.as_deref(), Some("personal"));
@@ -92,6 +93,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             assert_eq!(branch.as_deref(), Some("main"));
             assert!(include_stale);
             assert!(multi_hop);
+            assert!(!explain);
         }
         _ => panic!("expected search command"),
     }

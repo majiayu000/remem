@@ -78,6 +78,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             branch,
             include_stale,
             multi_hop,
+            explain,
         } => run_search(
             &query,
             project.as_deref(),
@@ -87,6 +88,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             branch.as_deref(),
             include_stale,
             multi_hop,
+            explain,
         )?,
         Commands::Show { id } => run_show(id)?,
         Commands::Eval { dataset, k } => run_eval(&dataset, k)?,

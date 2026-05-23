@@ -17,23 +17,45 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
         return multi_hop_search(conn, query, req.project.as_deref(), limit, req);
     }
 
-    let mut memories = crate::retrieval::search::search_with_branch(
-        conn,
-        query,
-        req.project.as_deref(),
-        req.memory_type.as_deref(),
-        limit + 1,
-        req.offset.max(0),
-        req.include_stale,
-        req.branch.as_deref(),
-    )?;
+    let (mut memories, mut explain) = if req.explain {
+        crate::retrieval::search::search_with_branch_explain(
+            conn,
+            query,
+            req.project.as_deref(),
+            req.memory_type.as_deref(),
+            limit + 1,
+            req.offset.max(0),
+            req.include_stale,
+            req.branch.as_deref(),
+        )?
+    } else {
+        (
+            crate::retrieval::search::search_with_branch(
+                conn,
+                query,
+                req.project.as_deref(),
+                req.memory_type.as_deref(),
+                limit + 1,
+                req.offset.max(0),
+                req.include_stale,
+                req.branch.as_deref(),
+            )?,
+            None,
+        )
+    };
     let has_more = memories.len() as i64 > limit;
     memories.truncate(limit as usize);
     let raw_hits = maybe_fallback_raw(conn, req, memories.len());
+    if let Some(explain) = explain.as_mut() {
+        let result_ids: Vec<i64> = memories.iter().map(|memory| memory.id).collect();
+        explain.retain_result_ids(&result_ids, has_more, limit);
+        explain.set_raw_fallback_count(raw_hits.len());
+    }
     Ok(SearchResultSet {
         memories,
         multi_hop: None,
         has_more,
+        explain,
         raw_hits,
     })
 }
@@ -66,6 +88,7 @@ fn multi_hop_search(
                 entities_discovered: result.entities_discovered,
             }),
             has_more,
+            explain: None,
             raw_hits,
         })
     } else {
@@ -76,6 +99,7 @@ fn multi_hop_search(
                 entities_discovered: vec![],
             }),
             has_more: false,
+            explain: None,
             raw_hits: vec![],
         })
     }

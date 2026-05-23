@@ -4,7 +4,8 @@ use rusqlite::Connection;
 use crate::memory::Memory;
 
 use super::listing::search_without_query;
-use super::text::search_with_query;
+use super::text::{search_with_query, search_with_query_explain};
+use super::SearchExplain;
 
 pub fn search(
     conn: &Connection,
@@ -57,5 +58,42 @@ pub fn search_with_branch(
             include_stale,
             branch,
         ),
+    }
+}
+
+pub fn search_with_branch_explain(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+) -> Result<(Vec<Memory>, Option<SearchExplain>)> {
+    match query {
+        Some(query_text) if !query_text.is_empty() => search_with_query_explain(
+            conn,
+            query_text,
+            project,
+            memory_type,
+            limit,
+            offset,
+            include_stale,
+            branch,
+        )
+        .map(|result| (result.memories, Some(result.explain))),
+        _ => Ok((
+            search_without_query(
+                conn,
+                project,
+                memory_type,
+                limit,
+                offset,
+                include_stale,
+                branch,
+            )?,
+            None,
+        )),
     }
 }

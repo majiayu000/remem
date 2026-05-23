@@ -3,6 +3,7 @@ use crate::memory::{
     service::{MultiHopMeta, SearchResultSet},
     Memory,
 };
+use crate::retrieval::search::{ChannelContribution, SearchExplain, SearchExplainResult};
 
 use super::{
     search::{build_search_request, preview_raw_text, preview_text, render_search_results},
@@ -41,6 +42,46 @@ fn sample_raw() -> RawMessage {
     }
 }
 
+fn sample_explain() -> SearchExplain {
+    SearchExplain {
+        query: "needle".to_string(),
+        project: Some("proj".to_string()),
+        memory_type: Some("decision".to_string()),
+        branch: Some("main".to_string()),
+        include_stale: false,
+        limit: 10,
+        offset: 0,
+        fetch_limit: 33,
+        expanded_terms: vec!["needle".to_string()],
+        core_terms: vec!["needle".to_string()],
+        fts_query: Some("\"needle\"".to_string()),
+        temporal_range: None,
+        rrf_k: 60.0,
+        channels: vec![crate::retrieval::search::SearchExplainChannel {
+            name: "fts".to_string(),
+            hits: vec![crate::retrieval::search::ChannelHit {
+                memory_id: 1,
+                rank: 1,
+            }],
+        }],
+        results: vec![SearchExplainResult {
+            memory_id: 1,
+            final_rank: 1,
+            final_score: 0.016393,
+            project: "proj".to_string(),
+            scope: "project".to_string(),
+            visibility: "project-local".to_string(),
+            contributions: vec![ChannelContribution {
+                channel: "fts".to_string(),
+                rank: 1,
+                score: 0.016393,
+            }],
+        }],
+        has_more: false,
+        raw_fallback_count: 0,
+    }
+}
+
 #[test]
 fn cli_query_preview_uses_first_line_and_truncates() {
     let memory = sample_memory();
@@ -66,6 +107,7 @@ fn cli_search_request_carries_service_search_options() {
         Some("feature"),
         true,
         true,
+        true,
     );
 
     assert_eq!(request.query.as_deref(), Some("needle"));
@@ -76,6 +118,7 @@ fn cli_search_request_carries_service_search_options() {
     assert_eq!(request.branch.as_deref(), Some("feature"));
     assert!(request.include_stale);
     assert!(request.multi_hop);
+    assert!(request.explain);
 }
 
 #[test]
@@ -87,6 +130,7 @@ fn cli_search_render_shows_multi_hop_has_more_and_raw_fallback() {
             entities_discovered: vec!["Graphiti".to_string(), "Mem0".to_string()],
         }),
         has_more: true,
+        explain: None,
         raw_hits: vec![sample_raw()],
     };
 
@@ -105,6 +149,7 @@ fn cli_search_render_uses_raw_fallback_when_curated_is_empty() {
         memories: vec![],
         multi_hop: None,
         has_more: false,
+        explain: None,
         raw_hits: vec![sample_raw()],
     };
 
@@ -113,6 +158,26 @@ fn cli_search_render_uses_raw_fallback_when_curated_is_empty() {
     assert!(output.contains("No curated memories found."));
     assert!(output.contains("Raw archive fallback:"));
     assert!(!output.contains("No results found."));
+}
+
+#[test]
+fn cli_search_render_includes_explain_without_memory_content_dump() {
+    let result = SearchResultSet {
+        memories: vec![sample_memory()],
+        multi_hop: None,
+        has_more: false,
+        explain: Some(sample_explain()),
+        raw_hits: vec![],
+    };
+
+    let output = render_search_results(&result, 0, 10);
+
+    assert!(output.contains("Search explain:"));
+    assert!(output.contains("channels:"));
+    assert!(output.contains("fts: 1#1"));
+    assert!(output.contains("visibility=project-local"));
+    assert!(output.contains("contributions: fts#1=0.016393"));
+    assert!(!output.contains("second line"));
 }
 
 #[test]

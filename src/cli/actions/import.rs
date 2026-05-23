@@ -260,6 +260,7 @@ mod tests {
                 include_stale: false,
                 branch: None,
                 multi_hop: false,
+                explain: false,
             },
         )
         .unwrap();

@@ -8,6 +8,7 @@ pub struct SearchRequest {
     pub include_stale: bool,
     pub branch: Option<String>,
     pub multi_hop: bool,
+    pub explain: bool,
 }
 
 /// Canonical default for `include_stale` across every adapter (MCP, REST, CLI).
@@ -29,6 +30,7 @@ pub struct SearchResultSet {
     pub memories: Vec<crate::memory::Memory>,
     pub multi_hop: Option<MultiHopMeta>,
     pub has_more: bool,
+    pub explain: Option<crate::retrieval::search::SearchExplain>,
     /// Raw archive hits attached as fallback when curated memories are sparse.
     pub raw_hits: Vec<crate::memory::raw_archive::RawMessage>,
 }
