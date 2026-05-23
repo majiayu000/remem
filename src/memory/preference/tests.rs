@@ -12,44 +12,7 @@ use super::{
 fn setup_test_db() -> Connection {
     let conn = Connection::open_in_memory()
         .unwrap_or_else(|err| panic!("Failed to open in-memory db: {err}"));
-    conn.execute_batch(
-        "CREATE TABLE memories (
-            id INTEGER PRIMARY KEY,
-            session_id TEXT,
-            project TEXT NOT NULL,
-            topic_key TEXT,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            memory_type TEXT NOT NULL,
-            files TEXT,
-            created_at_epoch INTEGER NOT NULL,
-            updated_at_epoch INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            branch TEXT,
-            scope TEXT DEFAULT 'project'
-        );
-        CREATE VIRTUAL TABLE memories_fts USING fts5(
-            title, content,
-            content='memories',
-            content_rowid='id',
-            tokenize='trigram'
-        );
-        CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-            INSERT INTO memories_fts(rowid, title, content)
-            VALUES (new.id, new.title, new.content);
-        END;
-        CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-            INSERT INTO memories_fts(memories_fts, rowid, title, content)
-            VALUES ('delete', old.id, old.title, old.content);
-            INSERT INTO memories_fts(rowid, title, content)
-            VALUES (new.id, new.title, new.content);
-        END;
-        CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-            INSERT INTO memories_fts(memories_fts, rowid, title, content)
-            VALUES ('delete', old.id, old.title, old.content);
-        END;",
-    )
-    .unwrap_or_else(|err| panic!("Failed to create test schema: {err}"));
+    crate::memory::types::tests_helper::setup_memory_schema(&conn);
     conn
 }
 
