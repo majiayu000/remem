@@ -558,7 +558,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_defers_unimplemented_extraction_task() -> anyhow::Result<()> {
+    async fn worker_retries_unimplemented_extraction_task() -> anyhow::Result<()> {
         let _data_dir = ScopedTestDataDir::new("worker-extraction-unimplemented");
         let conn = db::open_db()?;
         let outcome = db::record_captured_event(
@@ -588,7 +588,7 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         anyhow::ensure!(status == "pending", "expected pending task, got {status}");
-        anyhow::ensure!(attempts == 0, "expected zero attempts, got {attempts}");
+        anyhow::ensure!(attempts == 1, "expected one attempt, got {attempts}");
         anyhow::ensure!(next_retry.is_some(), "expected retry delay");
         anyhow::ensure!(
             last_error

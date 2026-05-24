@@ -82,16 +82,25 @@ pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>
 
     let tx = conn.transaction()?;
     if let Some(old_id) = input.supersedes_fact_id {
-        let old_project: Option<String> = tx
+        let old_fact: Option<(String, Option<i64>)> = tx
             .query_row(
-                "SELECT project FROM memory_facts WHERE id = ?1",
+                "SELECT project, valid_from_epoch FROM memory_facts WHERE id = ?1",
                 [old_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        match old_project {
-            Some(project) if project == input.project => {}
-            Some(project) => bail!(
+        match old_fact {
+            Some((project, old_valid_from)) if project == input.project => {
+                if let Some(old_from) = old_valid_from {
+                    if superseded_at < old_from {
+                        bail!(
+                            "cannot supersede fact {old_id}: cutoff {superseded_at} is before existing valid_from_epoch {}",
+                            old_from
+                        );
+                    }
+                }
+            }
+            Some((project, _)) => bail!(
                 "cannot supersede fact {old_id} from project '{project}' with project '{}'",
                 input.project
             ),

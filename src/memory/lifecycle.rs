@@ -82,8 +82,9 @@ pub fn apply_update(
     scope: &str,
     superseded_ids: &[i64],
 ) -> Result<LifecycleOutcome> {
+    let tx = conn.unchecked_transaction()?;
     let memory_id = crate::memory::insert_memory_full(
-        conn,
+        &tx,
         session_id,
         project,
         Some(topic_key),
@@ -95,7 +96,8 @@ pub fn apply_update(
         scope,
         None,
     )?;
-    let superseded = soft_supersede(conn, project, superseded_ids, Some(memory_id))?;
+    let superseded = soft_supersede(&tx, project, superseded_ids, Some(memory_id))?;
+    tx.commit()?;
     Ok(LifecycleOutcome {
         op: MemoryLifecycleOp::Update,
         memory_id: Some(memory_id),
@@ -112,7 +114,9 @@ pub fn apply_invalidate(
     memory_ids: &[i64],
     reason: Option<&str>,
 ) -> Result<LifecycleOutcome> {
-    let superseded = soft_supersede(conn, project, memory_ids, None)?;
+    let tx = conn.unchecked_transaction()?;
+    let superseded = soft_supersede(&tx, project, memory_ids, None)?;
+    tx.commit()?;
     Ok(LifecycleOutcome {
         op: MemoryLifecycleOp::Invalidate,
         memory_id: None,
@@ -152,12 +156,28 @@ pub fn soft_supersede(
     replacement_id: Option<i64>,
 ) -> Result<usize> {
     let mut seen = std::collections::HashSet::with_capacity(memory_ids.len());
-    let mut changed = 0usize;
-    for id in memory_ids
+    let targets = memory_ids
         .iter()
         .copied()
         .filter(|id| Some(*id) != replacement_id && seen.insert(*id))
-    {
+        .collect::<Vec<_>>();
+    for id in &targets {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1 AND project = ?2)",
+            params![id, project],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(anyhow!(
+                "failed to mark superseded memory stale: id={} project={}",
+                id,
+                project
+            ));
+        }
+    }
+
+    let mut changed = 0usize;
+    for id in targets {
         let updated = conn.execute(
             "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
             params![id, project],
@@ -264,6 +284,95 @@ mod tests {
         )?;
         assert_eq!(status, "stale");
         assert_eq!(content, "This fact is no longer valid.");
+        Ok(())
+    }
+
+    #[test]
+    fn update_rolls_back_insert_when_superseded_id_is_invalid() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-lifecycle";
+        let old_id = insert_memory(
+            &conn,
+            Some("s1"),
+            project,
+            Some("old-fact"),
+            "Old fact",
+            "Old value.",
+            "decision",
+            None,
+        )?;
+
+        let err = apply_update(
+            &conn,
+            Some("s2"),
+            project,
+            "new-fact",
+            "New fact",
+            "New value.",
+            "decision",
+            None,
+            None,
+            "project",
+            &[old_id, 999_999],
+        )
+        .expect_err("invalid superseded id should fail");
+        assert!(err.to_string().contains("999999") || err.to_string().contains("999_999"));
+
+        let active_new_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE project = ?1 AND topic_key = 'new-fact'",
+            [project],
+            |row| row.get(0),
+        )?;
+        let old_status: String = conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            [old_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(active_new_count, 0);
+        assert_eq!(old_status, "active");
+        Ok(())
+    }
+
+    #[test]
+    fn invalidate_rolls_back_when_any_memory_id_is_invalid() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-lifecycle";
+        let first_id = insert_memory(
+            &conn,
+            Some("s1"),
+            project,
+            Some("first"),
+            "First",
+            "First value.",
+            "discovery",
+            None,
+        )?;
+        let second_id = insert_memory(
+            &conn,
+            Some("s1"),
+            project,
+            Some("second"),
+            "Second",
+            "Second value.",
+            "discovery",
+            None,
+        )?;
+
+        apply_invalidate(
+            &conn,
+            project,
+            &[first_id, 999_999, second_id],
+            Some("bad id"),
+        )
+        .expect_err("mixed-validity invalidation should fail");
+
+        let statuses = conn
+            .prepare("SELECT status FROM memories WHERE id IN (?1, ?2) ORDER BY id ASC")?
+            .query_map([first_id, second_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(statuses, vec!["active".to_string(), "active".to_string()]);
         Ok(())
     }
 

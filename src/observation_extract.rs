@@ -77,12 +77,14 @@ where
     let observations = parse_observations(&response);
     if observations.is_empty() {
         if response.contains("<no_observations") {
+            promote_verified_procedures(conn, task)?;
             return Ok(ObservationExtractResult::NoObservations);
         }
         anyhow::bail!("malformed observation_extract output: no observations parsed");
     }
 
     let inserted = persist_observations(conn, task, &range, &observations)?;
+    promote_verified_procedures(conn, task)?;
     db::enqueue_followup_extraction_task(
         conn,
         task,
@@ -90,6 +92,25 @@ where
         range.to_event_id,
     )?;
     Ok(ObservationExtractResult::Written(inserted))
+}
+
+fn promote_verified_procedures(conn: &Connection, task: &db::ExtractionTask) -> Result<()> {
+    let promoted = crate::memory::procedure::promote_verified_procedures_for_task(
+        conn,
+        task,
+        &crate::memory::procedure::ProcedurePromotionPolicy::default(),
+    )?;
+    if promoted > 0 {
+        crate::log::info(
+            "observation-extract",
+            &format!(
+                "session={} promoted_procedures={}",
+                task.session_id.as_deref().unwrap_or("<unknown>"),
+                promoted
+            ),
+        );
+    }
+    Ok(())
 }
 
 fn load_evidence_range(
