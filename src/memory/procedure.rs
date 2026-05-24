@@ -225,10 +225,9 @@ fn load_verified_procedure_traces(
          WHERE e.host_id = ?1
            AND e.project_id = ?2
            AND e.session_row_id = ?3
-           AND e.id > ?4
-           AND e.id <= ?5
+           AND e.id <= ?4
            AND e.tool_name = 'Bash'
-           AND e.created_at_epoch >= ?6
+           AND e.created_at_epoch >= ?5
          ORDER BY e.created_at_epoch ASC, e.id ASC",
     )?;
     let rows = stmt.query_map(
@@ -236,7 +235,6 @@ fn load_verified_procedure_traces(
             task.host_id,
             task.project_id,
             session_row_id,
-            cursor,
             high_watermark,
             earliest
         ],
@@ -618,6 +616,92 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(procedure_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn production_task_accumulates_verified_runs_across_windows() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let command = "cargo test";
+
+        crate::db::record_captured_event(
+            &conn,
+            &crate::db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-procedure-windowed",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &serde_json::json!({
+                    "event_type": "bash",
+                    "exit_code": 0,
+                    "tool_input": { "command": command },
+                    "files": "[\"src/lib.rs\"]",
+                    "git_branch": "main"
+                })
+                .to_string(),
+                task_kind: Some(crate::db::ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+        let first_task = crate::db::claim_next_extraction_task(&mut conn, "worker-a", 60)?
+            .ok_or_else(|| anyhow::anyhow!("first task should be claimed"))?;
+        assert_eq!(
+            promote_verified_procedures_for_task(
+                &conn,
+                &first_task,
+                &ProcedurePromotionPolicy::default(),
+            )?,
+            0
+        );
+        crate::db::mark_extraction_task_done(
+            &conn,
+            first_task.id,
+            "worker-a",
+            first_task.high_watermark_event_id,
+        )?;
+
+        crate::db::record_captured_event(
+            &conn,
+            &crate::db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-procedure-windowed",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &serde_json::json!({
+                    "event_type": "bash",
+                    "exit_code": 0,
+                    "tool_input": { "command": command },
+                    "files": "[\"src/lib.rs\"]",
+                    "git_branch": "main"
+                })
+                .to_string(),
+                task_kind: Some(crate::db::ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+        let second_task = crate::db::claim_next_extraction_task(&mut conn, "worker-b", 60)?
+            .ok_or_else(|| anyhow::anyhow!("second task should be claimed"))?;
+
+        assert_eq!(
+            promote_verified_procedures_for_task(
+                &conn,
+                &second_task,
+                &ProcedurePromotionPolicy::default(),
+            )?,
+            1
+        );
+        let evidence: String = conn.query_row(
+            "SELECT evidence_event_ids FROM memories WHERE memory_type = 'procedure'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(serde_json::from_str::<Vec<i64>>(&evidence)?.len(), 2);
         Ok(())
     }
 }
