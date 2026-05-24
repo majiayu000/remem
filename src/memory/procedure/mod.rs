@@ -2,7 +2,11 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::Value;
+
+mod trace_store;
+
+#[cfg(test)]
+mod incremental_tests;
 
 const DEFAULT_MIN_VERIFIED_RUNS: usize = 2;
 const DEFAULT_MAX_VERIFICATION_AGE_SECS: i64 = 14 * 24 * 60 * 60;
@@ -160,7 +164,7 @@ pub(crate) fn promote_verified_procedures_for_task(
     policy: &ProcedurePromotionPolicy,
 ) -> Result<usize> {
     let now_epoch = chrono::Utc::now().timestamp();
-    let traces = load_verified_procedure_traces(conn, task, policy, now_epoch)?;
+    let traces = trace_store::load_verified_procedure_traces(conn, task, policy, now_epoch)?;
     let mut groups: BTreeMap<(String, Option<String>, String, String), Vec<ProcedureTrace>> =
         BTreeMap::new();
     for trace in traces {
@@ -187,151 +191,6 @@ pub(crate) fn promote_verified_procedures_for_task(
         }
     }
     Ok(promoted)
-}
-
-fn load_verified_procedure_traces(
-    conn: &Connection,
-    task: &crate::db::ExtractionTask,
-    policy: &ProcedurePromotionPolicy,
-    now_epoch: i64,
-) -> Result<Vec<ProcedureTrace>> {
-    let Some(session_row_id) = task.session_row_id else {
-        return Ok(Vec::new());
-    };
-    let Some(high_watermark) = task.high_watermark_event_id else {
-        return Ok(Vec::new());
-    };
-    let cursor = task.cursor_event_id.unwrap_or(0);
-    if high_watermark <= cursor {
-        return Ok(Vec::new());
-    }
-
-    let earliest = now_epoch.saturating_sub(policy.max_verification_age_secs);
-    let mut stmt = conn.prepare(
-        "SELECT e.id,
-                p.project_path,
-                COALESCE(
-                    CASE
-                        WHEN b.content_encoding = 'plain' THEN CAST(b.content_bytes AS TEXT)
-                        ELSE NULL
-                    END,
-                    e.content_text,
-                    ''
-                ) AS content,
-                e.created_at_epoch
-         FROM captured_events e
-         JOIN projects p ON p.id = e.project_id
-         LEFT JOIN event_blobs b ON b.id = e.content_blob_id
-         WHERE e.host_id = ?1
-           AND e.project_id = ?2
-           AND e.session_row_id = ?3
-           AND e.id > ?4
-           AND e.id <= ?5
-           AND e.tool_name = 'Bash'
-           AND e.created_at_epoch >= ?6
-         ORDER BY e.created_at_epoch ASC, e.id ASC",
-    )?;
-    let rows = stmt.query_map(
-        params![
-            task.host_id,
-            task.project_id,
-            session_row_id,
-            cursor,
-            high_watermark,
-            earliest
-        ],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-            ))
-        },
-    )?;
-
-    let mut traces = Vec::new();
-    for row in rows {
-        let (event_id, project, content, created_at_epoch) = row?;
-        if let Some(trace) = parse_procedure_trace(event_id, project, &content, created_at_epoch) {
-            traces.push(trace);
-        }
-    }
-    Ok(traces)
-}
-
-fn parse_procedure_trace(
-    event_id: i64,
-    project: String,
-    content: &str,
-    verified_at_epoch: i64,
-) -> Option<ProcedureTrace> {
-    let value: Value = serde_json::from_str(content).ok()?;
-    if value.get("event_type")?.as_str()? != "bash" {
-        return None;
-    }
-    if value.get("exit_code")?.as_i64()? != 0 {
-        return None;
-    }
-    let command = value
-        .get("tool_input")?
-        .get("command")?
-        .as_str()?
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    if command.is_empty() {
-        return None;
-    }
-    Some(ProcedureTrace {
-        project,
-        branch: parse_event_branch(&value),
-        workflow_key: workflow_key_for_command(&command),
-        command,
-        files_touched: parse_event_files(&value),
-        succeeded: true,
-        verified_at_epoch,
-        source_event_id: Some(event_id),
-    })
-}
-
-fn parse_event_branch(value: &Value) -> Option<String> {
-    value
-        .get("git_branch")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|branch| !branch.is_empty())
-        .map(str::to_string)
-}
-
-fn parse_event_files(value: &Value) -> Vec<String> {
-    let Some(files) = value.get("files") else {
-        return Vec::new();
-    };
-    let mut parsed = match files {
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|item| item.as_str().map(str::to_string))
-            .collect::<Vec<_>>(),
-        Value::String(raw) => match serde_json::from_str::<Vec<String>>(raw) {
-            Ok(files) => files,
-            Err(error) => {
-                crate::log::warn(
-                    "procedure",
-                    &format!("ignored malformed procedure event files JSON: {error}"),
-                );
-                Vec::new()
-            }
-        },
-        _ => Vec::new(),
-    };
-    parsed.sort();
-    parsed.dedup();
-    parsed
-}
-
-fn workflow_key_for_command(command: &str) -> String {
-    crate::memory::slugify_for_topic(command, 64)
 }
 
 fn procedure_topic_key(trace: &ProcedureTrace) -> String {
@@ -618,6 +477,92 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(procedure_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn production_task_accumulates_verified_runs_across_windows() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let command = "cargo test";
+
+        crate::db::record_captured_event(
+            &conn,
+            &crate::db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-procedure-windowed",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &serde_json::json!({
+                    "event_type": "bash",
+                    "exit_code": 0,
+                    "tool_input": { "command": command },
+                    "files": "[\"src/lib.rs\"]",
+                    "git_branch": "main"
+                })
+                .to_string(),
+                task_kind: Some(crate::db::ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+        let first_task = crate::db::claim_next_extraction_task(&mut conn, "worker-a", 60)?
+            .ok_or_else(|| anyhow::anyhow!("first task should be claimed"))?;
+        assert_eq!(
+            promote_verified_procedures_for_task(
+                &conn,
+                &first_task,
+                &ProcedurePromotionPolicy::default(),
+            )?,
+            0
+        );
+        crate::db::mark_extraction_task_done(
+            &conn,
+            first_task.id,
+            "worker-a",
+            first_task.high_watermark_event_id,
+        )?;
+
+        crate::db::record_captured_event(
+            &conn,
+            &crate::db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-procedure-windowed",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &serde_json::json!({
+                    "event_type": "bash",
+                    "exit_code": 0,
+                    "tool_input": { "command": command },
+                    "files": "[\"src/lib.rs\"]",
+                    "git_branch": "main"
+                })
+                .to_string(),
+                task_kind: Some(crate::db::ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+        let second_task = crate::db::claim_next_extraction_task(&mut conn, "worker-b", 60)?
+            .ok_or_else(|| anyhow::anyhow!("second task should be claimed"))?;
+
+        assert_eq!(
+            promote_verified_procedures_for_task(
+                &conn,
+                &second_task,
+                &ProcedurePromotionPolicy::default(),
+            )?,
+            1
+        );
+        let evidence: String = conn.query_row(
+            "SELECT evidence_event_ids FROM memories WHERE memory_type = 'procedure'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(serde_json::from_str::<Vec<i64>>(&evidence)?.len(), 2);
         Ok(())
     }
 }

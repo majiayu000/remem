@@ -65,6 +65,7 @@ mod tests {
             "observations",
             "memory_candidates",
             "memories",
+            "procedure_verifications",
             "rule_candidates",
             "worker_heartbeats",
         ] {
@@ -90,6 +91,7 @@ mod tests {
             "idx_extraction_tasks_claim",
             "idx_extraction_tasks_lease",
             "idx_memories_topic_unique",
+            "idx_procedure_verifications_lookup",
         ] {
             assert!(index_exists(&conn, idx), "index {} missing", idx);
         }
