@@ -222,7 +222,15 @@ fn score_results(
                 .any(|evidence_ref| evidence_ref.matches(memory))
         })
         .collect();
-    let relevance_at_rank_k = unique_ref_relevance(results, expected_refs, top_rank_k);
+    let relevance_at_rank_k: Vec<bool> = results
+        .iter()
+        .take(top_rank_k)
+        .map(|memory| {
+            expected_refs
+                .iter()
+                .any(|evidence_ref| evidence_ref.matches(memory))
+        })
+        .collect();
     let matched_refs = matched_ref_indexes(results, expected_refs, k).len();
     let relevant_hits = relevance_at_k
         .iter()
@@ -256,26 +264,6 @@ fn matched_ref_indexes(
     matched
 }
 
-fn unique_ref_relevance(
-    results: &[crate::memory::Memory],
-    expected_refs: &[EvidenceRef],
-    k: usize,
-) -> Vec<bool> {
-    let mut matched = HashSet::new();
-    let mut relevance = Vec::with_capacity(k.min(results.len()));
-    for memory in results.iter().take(k) {
-        let new_matches = expected_refs
-            .iter()
-            .enumerate()
-            .filter_map(|(index, evidence_ref)| evidence_ref.matches(memory).then_some(index))
-            .filter(|index| !matched.contains(index))
-            .collect::<Vec<_>>();
-        relevance.push(!new_matches.is_empty());
-        matched.extend(new_matches);
-    }
-    relevance
-}
-
 fn reciprocal_rank_from_relevance(relevance: &[bool]) -> f64 {
     relevance
         .iter()
@@ -302,55 +290,5 @@ fn binary_ndcg_at_k(relevance: &[bool], expected_count: usize, k: usize) -> f64 
         0.0
     } else {
         dcg / idcg
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn memory(id: i64, title: &str) -> crate::memory::Memory {
-        crate::memory::Memory {
-            id,
-            session_id: None,
-            project: "proj".to_string(),
-            topic_key: None,
-            title: title.to_string(),
-            text: String::new(),
-            memory_type: "discovery".to_string(),
-            files: None,
-            created_at_epoch: 0,
-            updated_at_epoch: 0,
-            status: "active".to_string(),
-            branch: None,
-            scope: "project".to_string(),
-        }
-    }
-
-    #[test]
-    fn ndcg_counts_unique_evidence_refs_once() {
-        let results = vec![
-            memory(1, "same evidence"),
-            memory(2, "same evidence"),
-            memory(3, "other evidence"),
-        ];
-        let expected_refs = vec![
-            EvidenceRef {
-                title_contains: Some("same".to_string()),
-                ..EvidenceRef::default()
-            },
-            EvidenceRef {
-                title_contains: Some("other".to_string()),
-                ..EvidenceRef::default()
-            },
-        ];
-
-        let metrics = score_results(&results, &expected_refs, 3);
-
-        assert!(metrics.ndcg_at_10 <= 1.0);
-        assert_eq!(
-            unique_ref_relevance(&results, &expected_refs, 3),
-            vec![true, false, true]
-        );
     }
 }

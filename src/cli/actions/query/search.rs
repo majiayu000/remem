@@ -64,14 +64,16 @@ pub(super) fn build_search_request(
 
 pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limit: i64) -> String {
     let mut output = String::new();
+    if results.memories.is_empty() && results.raw_hits.is_empty() {
+        output.push_str("No results found.\n");
+        return output;
+    }
 
     if let Some(meta) = results.multi_hop.as_ref() {
         render_multi_hop_meta(&mut output, meta);
     }
 
-    if results.memories.is_empty() && results.raw_hits.is_empty() {
-        output.push_str("No results found.\n");
-    } else if results.memories.is_empty() {
+    if results.memories.is_empty() {
         output.push_str("No curated memories found.\n");
     } else {
         output.push_str(&format!("Found {} result(s):\n\n", results.memories.len()));
