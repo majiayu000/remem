@@ -195,6 +195,17 @@ fn load_verified_procedure_traces(
     policy: &ProcedurePromotionPolicy,
     now_epoch: i64,
 ) -> Result<Vec<ProcedureTrace>> {
+    let Some(session_row_id) = task.session_row_id else {
+        return Ok(Vec::new());
+    };
+    let Some(high_watermark) = task.high_watermark_event_id else {
+        return Ok(Vec::new());
+    };
+    let cursor = task.cursor_event_id.unwrap_or(0);
+    if high_watermark <= cursor {
+        return Ok(Vec::new());
+    }
+
     let earliest = now_epoch.saturating_sub(policy.max_verification_age_secs);
     let mut stmt = conn.prepare(
         "SELECT e.id,
@@ -211,19 +222,33 @@ fn load_verified_procedure_traces(
          FROM captured_events e
          JOIN projects p ON p.id = e.project_id
          LEFT JOIN event_blobs b ON b.id = e.content_blob_id
-         WHERE e.project_id = ?1
+         WHERE e.host_id = ?1
+           AND e.project_id = ?2
+           AND e.session_row_id = ?3
+           AND e.id > ?4
+           AND e.id <= ?5
            AND e.tool_name = 'Bash'
-           AND e.created_at_epoch >= ?2
+           AND e.created_at_epoch >= ?6
          ORDER BY e.created_at_epoch ASC, e.id ASC",
     )?;
-    let rows = stmt.query_map(params![task.project_id, earliest], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, i64>(3)?,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        params![
+            task.host_id,
+            task.project_id,
+            session_row_id,
+            cursor,
+            high_watermark,
+            earliest
+        ],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        },
+    )?;
 
     let mut traces = Vec::new();
     for row in rows {
@@ -499,6 +524,100 @@ mod tests {
         assert_eq!(branch.as_deref(), Some("main"));
         assert!(topic_key.contains("command-cargo-test"));
         assert_eq!(serde_json::from_str::<Vec<i64>>(&evidence)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn production_task_ignores_procedure_events_outside_evidence_window() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let command = "cargo test";
+        let mut old_high_watermark = 0;
+        for seq in [1, 2] {
+            let outcome = crate::db::record_captured_event(
+                &conn,
+                &crate::db::CaptureEventInput {
+                    host: "codex-cli",
+                    session_id: "sess-procedure-old",
+                    project: "/tmp/remem",
+                    cwd: None,
+                    event_type: "tool_result",
+                    role: None,
+                    tool_name: Some("Bash"),
+                    content: &serde_json::json!({
+                        "seq": seq,
+                        "event_type": "bash",
+                        "exit_code": 0,
+                        "tool_input": { "command": command },
+                        "files": "[\"src/lib.rs\"]",
+                        "git_branch": "main"
+                    })
+                    .to_string(),
+                    task_kind: None,
+                },
+            )?;
+            old_high_watermark = outcome.event_row_id;
+        }
+        let current = crate::db::record_captured_event(
+            &conn,
+            &crate::db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-procedure-current",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &serde_json::json!({
+                    "seq": 3,
+                    "event_type": "bash",
+                    "exit_code": 0,
+                    "tool_input": { "command": command },
+                    "files": "[\"src/lib.rs\"]",
+                    "git_branch": "main"
+                })
+                .to_string(),
+                task_kind: None,
+            },
+        )?;
+        let (host_id, workspace_id, project_id, session_row_id): (i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT host_id, workspace_id, project_id, session_row_id
+                 FROM captured_events
+                 WHERE id = ?1",
+                [current.event_row_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        let task = crate::db::ExtractionTask {
+            id: 1,
+            task_kind: crate::db::ExtractionTaskKind::ObservationExtract,
+            host_id,
+            workspace_id,
+            project_id,
+            session_row_id: Some(session_row_id),
+            host: "codex-cli".to_string(),
+            project: "/tmp/remem".to_string(),
+            session_id: Some("sess-procedure-current".to_string()),
+            priority: crate::db::ExtractionTaskKind::ObservationExtract.priority(),
+            cursor_event_id: Some(old_high_watermark),
+            high_watermark_event_id: Some(current.event_row_id),
+            attempts: 0,
+        };
+
+        let promoted = promote_verified_procedures_for_task(
+            &conn,
+            &task,
+            &ProcedurePromotionPolicy::default(),
+        )?;
+
+        assert_eq!(promoted, 0);
+        let procedure_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE memory_type = 'procedure'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(procedure_count, 0);
         Ok(())
     }
 }
