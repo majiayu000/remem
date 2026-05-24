@@ -57,6 +57,12 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
                 migration.version, migration.name
             )
         })?;
+        run_post_migration_hook(conn, migration.name).with_context(|| {
+            format!(
+                "post-migration v{:03}_{} hook failed",
+                migration.version, migration.name
+            )
+        })?;
         mark_applied(conn, migration.version, migration.name)?;
         crate::log::info(
             "migrate",
@@ -73,5 +79,12 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
         .unwrap_or(0);
     let user_version = current_user_version.max(OLD_BASELINE_VERSION - 1 + latest);
     conn.execute_batch(&format!("PRAGMA user_version = {}", user_version))?;
+    Ok(())
+}
+
+fn run_post_migration_hook(conn: &Connection, name: &str) -> Result<()> {
+    if name == "rebuild_memory_search_context" {
+        crate::memory::search_context::rebuild_all(conn)?;
+    }
     Ok(())
 }

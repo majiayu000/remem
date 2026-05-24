@@ -1,0 +1,5 @@
+-- v014_rebuild_memory_search_context: regenerate full search_context values.
+--
+-- The Rust post-migration hook for this version calls
+-- memory::search_context::rebuild_all so upgraded databases get the same
+-- content-derived hints as fresh memory writes.
