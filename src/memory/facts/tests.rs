@@ -145,3 +145,31 @@ fn rejects_invalid_validity_window() -> Result<()> {
     assert!(err.to_string().contains("valid_to_epoch"));
     Ok(())
 }
+
+#[test]
+fn rejects_supersession_cutoff_before_old_valid_from() -> Result<()> {
+    let mut conn = setup_fact_conn()?;
+    let project = "test-temporal-cutoff";
+    let old_id = insert_temporal_fact(&mut conn, &input(project, "staging", 500))?;
+    let mut replacement = input(project, "production", 400);
+    replacement.supersedes_fact_id = Some(old_id);
+
+    let err = insert_temporal_fact(&mut conn, &replacement)
+        .expect_err("backdated supersession cutoff should fail before mutation");
+    assert!(err.to_string().contains("before existing valid_from_epoch"));
+
+    let (status, valid_to): (String, Option<i64>) = conn.query_row(
+        "SELECT status, valid_to_epoch FROM memory_facts WHERE id = ?1",
+        [old_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_facts WHERE project = ?1",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(status, "active");
+    assert_eq!(valid_to, None);
+    assert_eq!(count, 1);
+    Ok(())
+}

@@ -197,16 +197,46 @@ pub fn defer_extraction_task(
     backoff_secs: i64,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
+    let attempts: i64 = conn.query_row(
+        "SELECT attempts FROM extraction_tasks WHERE id = ?1",
+        params![task_id],
+        |row| row.get(0),
+    )?;
+    let next_attempt = attempts + 1;
+    if next_attempt >= EXTRACTION_TASK_MAX_ATTEMPTS {
+        let updated = conn.execute(
+            "UPDATE extraction_tasks
+             SET status = 'failed',
+                 attempts = ?1,
+                 lease_owner = NULL,
+                 lease_expires_epoch = NULL,
+                 next_retry_epoch = NULL,
+                 last_error = ?2,
+                 updated_at_epoch = ?3
+             WHERE id = ?4 AND lease_owner = ?5 AND status = 'processing'",
+            params![
+                next_attempt,
+                crate::db::truncate_str(reason, 2000),
+                now,
+                task_id,
+                lease_owner
+            ],
+        )?;
+        return ensure_task_updated(updated, task_id);
+    }
+
     let updated = conn.execute(
         "UPDATE extraction_tasks
          SET status = 'pending',
+             attempts = ?1,
              lease_owner = NULL,
              lease_expires_epoch = NULL,
-             next_retry_epoch = ?1,
-             last_error = ?2,
-             updated_at_epoch = ?3
-         WHERE id = ?4 AND lease_owner = ?5 AND status = 'processing'",
+             next_retry_epoch = ?2,
+             last_error = ?3,
+             updated_at_epoch = ?4
+         WHERE id = ?5 AND lease_owner = ?6 AND status = 'processing'",
         params![
+            next_attempt,
             now + backoff_secs.max(1),
             crate::db::truncate_str(reason, 2000),
             now,
@@ -576,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn defer_extraction_task_requeues_without_incrementing_attempts() {
+    fn defer_extraction_task_requeues_and_increments_attempts() {
         let mut conn = setup_conn();
         let task_id = insert_task(&conn, "sess-defer", ExtractionTaskKind::SessionRollup)
             .expect("task should insert");
@@ -589,8 +619,36 @@ mod tests {
 
         let (status, attempts, next_retry, last_error) = task_status(&conn, task_id);
         assert_eq!(status, "pending");
-        assert_eq!(attempts, 0);
+        assert_eq!(attempts, 1);
         assert!(next_retry.is_some());
         assert_eq!(last_error.as_deref(), Some("not implemented"));
+    }
+
+    #[test]
+    fn defer_extraction_task_exhausts_after_max_attempts() {
+        let mut conn = setup_conn();
+        let task_id = insert_task(
+            &conn,
+            "sess-defer-exhaust",
+            ExtractionTaskKind::SessionRollup,
+        )
+        .expect("task should insert");
+        conn.execute(
+            "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+            params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+        )
+        .expect("attempt count should update");
+        claim_next_extraction_task(&mut conn, "worker-a", 60)
+            .expect("claim should succeed")
+            .expect("task should be claimed");
+
+        defer_extraction_task(&conn, task_id, "worker-a", "still ambiguous", 30)
+            .expect("defer should exhaust");
+
+        let (status, attempts, next_retry, last_error) = task_status(&conn, task_id);
+        assert_eq!(status, "failed");
+        assert_eq!(attempts, EXTRACTION_TASK_MAX_ATTEMPTS);
+        assert!(next_retry.is_none());
+        assert_eq!(last_error.as_deref(), Some("still ambiguous"));
     }
 }
