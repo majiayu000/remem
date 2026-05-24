@@ -62,10 +62,13 @@ fn full_migration_on_empty_db() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    assert_eq!(
+        applied,
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 26);
+    assert_eq!(user_version, 27);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -128,7 +131,8 @@ fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()
         "INSERT INTO memories(project, topic_key, title, content, memory_type, files,
             created_at_epoch, updated_at_epoch, status)
          VALUES ('proj', 'cache-key-timeout', 'Runtime failure',
-            'Canonical body stays unchanged', 'bugfix',
+            'Symptom: cache key timeout. Fix: run `cargo test retrieval::memory_search`.',
+            'bugfix',
             '[\"src/retrieval/contextprobe.rs\"]', 100, 100, 'active')",
         [],
     )?;
@@ -150,6 +154,9 @@ fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()
     assert!(search_context.contains("type: bugfix"));
     assert!(search_context.contains("topic: cache key timeout"));
     assert!(search_context.contains("src/retrieval/contextprobe.rs"));
+    assert!(search_context.contains("symptom: cache key timeout"));
+    assert!(search_context.contains("fix: run `cargo test retrieval::memory_search`"));
+    assert!(search_context.contains("commands: cargo test retrieval::memory_search"));
 
     let after: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'contextprobe'",
@@ -162,7 +169,10 @@ fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()
         conn.query_row("SELECT content FROM memories WHERE id = 1", [], |row| {
             row.get(0)
         })?;
-    assert_eq!(content, "Canonical body stays unchanged");
+    assert_eq!(
+        content,
+        "Symptom: cache key timeout. Fix: run `cargo test retrieval::memory_search`."
+    );
     Ok(())
 }
 
@@ -311,7 +321,7 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 26);
+    assert_eq!(user_version, 27);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -351,7 +361,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 26);
+    assert_eq!(result.current_version, 27);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())

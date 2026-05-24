@@ -4,6 +4,7 @@ use tokio::time::Duration;
 use crate::db;
 use crate::memory_candidate::MemoryCandidateResult;
 
+#[derive(Debug, PartialEq, Eq)]
 enum ExtractionTaskOutcome {
     Deferred(String),
     Done,
@@ -99,17 +100,29 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
             Ok(ExtractionTaskOutcome::Done)
         }
         db::ExtractionTaskKind::MemoryCandidate => {
-            match crate::memory_candidate::process(task).await? {
-                MemoryCandidateResult::Deferred { reason } => {
-                    Ok(ExtractionTaskOutcome::Deferred(reason))
-                }
-                _ => Ok(ExtractionTaskOutcome::Done),
-            }
+            let result = crate::memory_candidate::process(task).await?;
+            Ok(memory_candidate_task_outcome(result))
         }
         _ => Ok(ExtractionTaskOutcome::Deferred(format!(
             "extraction task kind '{}' is not implemented",
             task.task_kind.as_str()
         ))),
+    }
+}
+
+fn memory_candidate_task_outcome(result: MemoryCandidateResult) -> ExtractionTaskOutcome {
+    match result {
+        MemoryCandidateResult::Deferred { reason } => {
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "memory candidate extraction deferred by model and will not be retried automatically: {}",
+                    crate::db::truncate_str(&reason, 300)
+                ),
+            );
+            ExtractionTaskOutcome::Done
+        }
+        _ => ExtractionTaskOutcome::Done,
     }
 }
 
@@ -121,5 +134,19 @@ fn retry_backoff_secs(attempt: i64) -> i64 {
         3 => 120,
         4 => 300,
         _ => 900,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_candidate_defer_is_terminal_for_worker_retry_loop() {
+        let outcome = memory_candidate_task_outcome(MemoryCandidateResult::Deferred {
+            reason: "ambiguous conflict".to_string(),
+        });
+
+        assert_eq!(outcome, ExtractionTaskOutcome::Done);
     }
 }

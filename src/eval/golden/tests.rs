@@ -290,3 +290,61 @@ fn golden_eval_rejects_empty_evidence_refs() -> Result<()> {
     assert!(error.to_string().contains("empty evidence ref"));
     Ok(())
 }
+
+#[test]
+fn golden_eval_ndcg_counts_each_expected_ref_once() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    for memory in [
+        TestMemory {
+            id: 1,
+            project: "/repo-a",
+            topic_key: "dup-a",
+            title: "Duplicate eval needle",
+            content: "duplicate ndcg needle from one memory",
+            memory_type: "bugfix",
+            branch: Some("main"),
+            status: "active",
+            updated_at_epoch: now,
+        },
+        TestMemory {
+            id: 2,
+            project: "/repo-a",
+            topic_key: "dup-b",
+            title: "Duplicate eval needle",
+            content: "duplicate ndcg needle from another memory",
+            memory_type: "bugfix",
+            branch: Some("main"),
+            status: "active",
+            updated_at_epoch: now - 1,
+        },
+    ] {
+        insert_memory(&conn, &memory)?;
+    }
+
+    let dataset = GoldenDataset {
+        version: Some("1.2-test".to_string()),
+        description: None,
+        queries: vec![query(
+            "dup",
+            "duplicate ndcg needle",
+            "dedupe",
+            Some("/repo-a"),
+            Some("main"),
+            EvidenceRef {
+                text_contains: Some("duplicate ndcg needle".to_string()),
+                ..EvidenceRef::default()
+            },
+        )],
+    };
+
+    let report = evaluate_dataset(&conn, &dataset, 10)?;
+    let metrics = report.queries[0]
+        .metrics
+        .as_ref()
+        .context("missing query metrics")?;
+    assert_eq!(report.queries[0].matched_refs, 1);
+    assert!(metrics.ndcg_at_10 <= 1.0, "{metrics:?}");
+    assert_eq!(metrics.ndcg_at_10, 1.0);
+    Ok(())
+}

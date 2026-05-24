@@ -243,7 +243,7 @@ fn score_results(
         mrr_at_10: reciprocal_rank_from_relevance(&relevance_at_rank_k),
         precision_at_k: relevant_hits as f64 / precision_denominator as f64,
         recall_at_k: matched_refs as f64 / expected_refs.len() as f64,
-        ndcg_at_10: binary_ndcg_at_k(&relevance_at_rank_k, expected_refs.len(), RANK_K),
+        ndcg_at_10: ndcg_at_k(results, expected_refs, RANK_K),
         evidence_recall_at_k: matched_refs as f64 / expected_refs.len() as f64,
     }
 }
@@ -271,18 +271,30 @@ fn reciprocal_rank_from_relevance(relevance: &[bool]) -> f64 {
         .map_or(0.0, |index| 1.0 / (index as f64 + 1.0))
 }
 
-fn binary_ndcg_at_k(relevance: &[bool], expected_count: usize, k: usize) -> f64 {
-    if k == 0 || expected_count == 0 {
+fn ndcg_at_k(results: &[crate::memory::Memory], expected_refs: &[EvidenceRef], k: usize) -> f64 {
+    if k == 0 || expected_refs.is_empty() {
         return 0.0;
     }
-    let dcg: f64 = relevance
+
+    let mut matched_refs = HashSet::new();
+    let dcg: f64 = results
         .iter()
         .take(k)
         .enumerate()
-        .filter(|(_, is_relevant)| **is_relevant)
-        .map(|(index, _)| 1.0 / (index as f64 + 2.0).log2())
+        .filter_map(|(rank, memory)| {
+            let ref_index =
+                expected_refs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, evidence_ref)| {
+                        (!matched_refs.contains(&index) && evidence_ref.matches(memory))
+                            .then_some(index)
+                    })?;
+            matched_refs.insert(ref_index);
+            Some(1.0 / (rank as f64 + 2.0).log2())
+        })
         .sum();
-    let ideal_hits = expected_count.min(k);
+    let ideal_hits = expected_refs.len().min(k);
     let idcg: f64 = (0..ideal_hits)
         .map(|index| 1.0 / (index as f64 + 2.0).log2())
         .sum();

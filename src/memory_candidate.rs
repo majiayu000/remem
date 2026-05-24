@@ -24,7 +24,7 @@ If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/
 Use only provided observations and evidence; do not invent files, outcomes, decisions, or facts.";
 
 const AUTO_PROMOTE_MIN_CONFIDENCE: f64 = 0.80;
-const AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE: f64 = 0.80;
+const AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE: f64 = 0.75;
 const AUTO_PROMOTE_TYPES: &[&str] = &["architecture", "bugfix", "decision", "discovery"];
 const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
     "api key",
@@ -474,6 +474,15 @@ mod tests {
         task: &db::ExtractionTask,
         text: &str,
     ) -> Result<()> {
+        insert_source_observation_with_confidence(conn, task, text, 0.91)
+    }
+
+    fn insert_source_observation_with_confidence(
+        conn: &Connection,
+        task: &db::ExtractionTask,
+        text: &str,
+        confidence: f64,
+    ) -> Result<()> {
         let obs_id = db::insert_observation_with_branch(
             conn,
             "capture-observation-test",
@@ -500,17 +509,50 @@ mod tests {
                  observation_type = 'decision',
                  text = ?4,
                  evidence_event_ids = ?5,
-                 confidence = 0.91
-             WHERE id = ?6",
+                 confidence = ?6
+             WHERE id = ?7",
             params![
                 task.host_id,
                 task.project_id,
                 task.session_row_id,
                 text,
                 serde_json::to_string(&vec![event_id])?,
+                confidence,
                 obs_id
             ],
         )?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn memory_candidate_auto_promotes_default_confidence_observation() -> Result<()> {
+        let mut conn = setup_conn();
+        let task = setup_task(&mut conn, "sess-candidate-default-confidence")?;
+        insert_source_observation_with_confidence(
+            &conn,
+            &task,
+            "Use the worker loop to process extraction tasks after observation extraction.",
+            0.75,
+        )?;
+
+        let result = process_with_generator(&mut conn, &task, |_prompt| async {
+            Ok(low_risk_candidate_xml())
+        })
+        .await?;
+
+        assert_eq!(
+            result,
+            MemoryCandidateResult::Written {
+                candidates: 1,
+                promoted: 1,
+                pending_review: 0
+            }
+        );
+        let review_status: String =
+            conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(review_status, "auto_promoted");
         Ok(())
     }
 
