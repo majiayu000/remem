@@ -116,11 +116,11 @@ fn memory_candidate_task_outcome(result: MemoryCandidateResult) -> ExtractionTas
             crate::log::warn(
                 "worker",
                 &format!(
-                    "memory candidate extraction deferred by model and will not be retried automatically: {}",
+                    "memory candidate extraction deferred by model: {}",
                     crate::db::truncate_str(&reason, 300)
                 ),
             );
-            ExtractionTaskOutcome::Done
+            ExtractionTaskOutcome::Deferred(reason)
         }
         _ => ExtractionTaskOutcome::Done,
     }
@@ -142,11 +142,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn memory_candidate_defer_is_terminal_for_worker_retry_loop() {
+    fn memory_candidate_defer_preserves_range_for_reprocessing() {
         let outcome = memory_candidate_task_outcome(MemoryCandidateResult::Deferred {
             reason: "ambiguous conflict".to_string(),
         });
 
-        assert_eq!(outcome, ExtractionTaskOutcome::Done);
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Deferred("ambiguous conflict".to_string())
+        );
     }
 }
