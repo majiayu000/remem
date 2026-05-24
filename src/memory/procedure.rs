@@ -199,7 +199,6 @@ fn load_verified_procedure_traces(
     let mut stmt = conn.prepare(
         "SELECT e.id,
                 p.project_path,
-                w.git_branch,
                 COALESCE(
                     CASE
                         WHEN b.content_encoding = 'plain' THEN CAST(b.content_bytes AS TEXT)
@@ -211,7 +210,6 @@ fn load_verified_procedure_traces(
                 e.created_at_epoch
          FROM captured_events e
          JOIN projects p ON p.id = e.project_id
-         JOIN workspaces w ON w.id = e.workspace_id
          LEFT JOIN event_blobs b ON b.id = e.content_blob_id
          WHERE e.project_id = ?1
            AND e.tool_name = 'Bash'
@@ -222,18 +220,15 @@ fn load_verified_procedure_traces(
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, i64>(4)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
 
     let mut traces = Vec::new();
     for row in rows {
-        let (event_id, project, branch, content, created_at_epoch) = row?;
-        if let Some(trace) =
-            parse_procedure_trace(event_id, project, branch, &content, created_at_epoch)
-        {
+        let (event_id, project, content, created_at_epoch) = row?;
+        if let Some(trace) = parse_procedure_trace(event_id, project, &content, created_at_epoch) {
             traces.push(trace);
         }
     }
@@ -243,7 +238,6 @@ fn load_verified_procedure_traces(
 fn parse_procedure_trace(
     event_id: i64,
     project: String,
-    branch: Option<String>,
     content: &str,
     verified_at_epoch: i64,
 ) -> Option<ProcedureTrace> {
@@ -266,7 +260,7 @@ fn parse_procedure_trace(
     }
     Some(ProcedureTrace {
         project,
-        branch,
+        branch: parse_event_branch(&value),
         workflow_key: workflow_key_for_command(&command),
         command,
         files_touched: parse_event_files(&value),
@@ -274,6 +268,15 @@ fn parse_procedure_trace(
         verified_at_epoch,
         source_event_id: Some(event_id),
     })
+}
+
+fn parse_event_branch(value: &Value) -> Option<String> {
+    value
+        .get("git_branch")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string)
 }
 
 fn parse_event_files(value: &Value) -> Vec<String> {
@@ -468,13 +471,15 @@ mod tests {
                         "event_type": "bash",
                         "exit_code": 0,
                         "tool_input": { "command": command },
-                        "files": "[\"src/lib.rs\"]"
+                        "files": "[\"src/lib.rs\"]",
+                        "git_branch": "main"
                     })
                     .to_string(),
                     task_kind: Some(crate::db::ExtractionTaskKind::ObservationExtract),
                 },
             )?;
         }
+        conn.execute("UPDATE workspaces SET git_branch = 'feature'", [])?;
         let task = crate::db::claim_next_extraction_task(&mut conn, "worker-a", 60)?
             .expect("task should be claimed");
 
@@ -485,12 +490,13 @@ mod tests {
         )?;
 
         assert_eq!(promoted, 1);
-        let (memory_type, topic_key, evidence): (String, String, String) = conn.query_row(
-            "SELECT memory_type, topic_key, evidence_event_ids FROM memories WHERE memory_type = 'procedure'",
+        let (memory_type, topic_key, branch, evidence): (String, String, Option<String>, String) = conn.query_row(
+            "SELECT memory_type, topic_key, branch, evidence_event_ids FROM memories WHERE memory_type = 'procedure'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(memory_type, "procedure");
+        assert_eq!(branch.as_deref(), Some("main"));
         assert!(topic_key.contains("command-cargo-test"));
         assert_eq!(serde_json::from_str::<Vec<i64>>(&evidence)?.len(), 2);
         Ok(())

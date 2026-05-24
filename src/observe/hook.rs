@@ -105,6 +105,7 @@ fn record_capture_event(
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> Result<()> {
+    let git_branch = event.cwd.as_deref().and_then(db::detect_git_branch);
     let content = serde_json::json!({
         "summary": &summary.summary,
         "event_type": &summary.event_type,
@@ -114,6 +115,7 @@ fn record_capture_event(
         "tool_name": &event.tool_name,
         "tool_input": event.tool_input.as_ref(),
         "tool_response": event.tool_response.as_ref(),
+        "git_branch": git_branch.as_deref(),
     })
     .to_string();
     db::record_captured_event(
