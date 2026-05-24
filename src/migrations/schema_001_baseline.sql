@@ -160,6 +160,22 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at_epoch INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS procedure_verifications (
+    id INTEGER PRIMARY KEY,
+    host_id INTEGER NOT NULL REFERENCES hosts(id),
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    session_row_id INTEGER NOT NULL REFERENCES sessions(id),
+    branch TEXT,
+    workflow_key TEXT NOT NULL,
+    command TEXT NOT NULL,
+    files_touched TEXT NOT NULL,
+    source_event_id INTEGER NOT NULL REFERENCES captured_events(id),
+    verified_at_epoch INTEGER NOT NULL,
+    created_at_epoch INTEGER NOT NULL,
+    updated_at_epoch INTEGER NOT NULL,
+    UNIQUE(host_id, project_id, session_row_id, source_event_id)
+);
+
 CREATE TABLE IF NOT EXISTS rule_candidates (
     id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
@@ -219,6 +235,11 @@ CREATE INDEX IF NOT EXISTS idx_memories_project_status
 -- index, since SQLite UNIQUE table constraints reject expressions.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_topic_unique
     ON memories(scope, COALESCE(project_id, 0), topic_key);
+
+CREATE INDEX IF NOT EXISTS idx_procedure_verifications_lookup
+    ON procedure_verifications(host_id, project_id, session_row_id, workflow_key, command, branch, verified_at_epoch);
+CREATE INDEX IF NOT EXISTS idx_procedure_verifications_source
+    ON procedure_verifications(source_event_id);
 
 CREATE INDEX IF NOT EXISTS idx_rule_candidates_review
     ON rule_candidates(workspace_id, review_status);
