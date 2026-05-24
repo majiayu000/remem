@@ -348,3 +348,71 @@ fn golden_eval_ndcg_counts_each_expected_ref_once() -> Result<()> {
     assert_eq!(metrics.ndcg_at_10, 1.0);
     Ok(())
 }
+
+#[test]
+fn golden_eval_ndcg_uses_best_assignment_for_overlapping_refs() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    for memory in [
+        TestMemory {
+            id: 1,
+            project: "/repo-a",
+            topic_key: "specific-overlap",
+            title: "Overlapping assignment needle",
+            content: "overlapping assignment shared unique specific memory",
+            memory_type: "bugfix",
+            branch: Some("main"),
+            status: "active",
+            updated_at_epoch: now,
+        },
+        TestMemory {
+            id: 2,
+            project: "/repo-a",
+            topic_key: "broad-only",
+            title: "Overlapping assignment needle",
+            content: "overlapping assignment shared broad memory",
+            memory_type: "bugfix",
+            branch: Some("main"),
+            status: "active",
+            updated_at_epoch: now - 1,
+        },
+    ] {
+        insert_memory(&conn, &memory)?;
+    }
+
+    let dataset = GoldenDataset {
+        version: Some("1.2-test".to_string()),
+        description: None,
+        queries: vec![GoldenQuery {
+            id: "overlap".to_string(),
+            query: "overlapping assignment shared".to_string(),
+            category: "dedupe".to_string(),
+            project: Some("/repo-a".to_string()),
+            branch: Some("main".to_string()),
+            memory_type: None,
+            relevant_ids: vec![],
+            evidence_refs: vec![
+                EvidenceRef {
+                    text_contains: Some("overlapping assignment shared".to_string()),
+                    ..EvidenceRef::default()
+                },
+                EvidenceRef {
+                    topic_key: Some("specific-overlap".to_string()),
+                    ..EvidenceRef::default()
+                },
+            ],
+            expect_abstain: false,
+            false_premise: false,
+            notes: None,
+        }],
+    };
+
+    let report = evaluate_dataset(&conn, &dataset, 10)?;
+    let metrics = report.queries[0]
+        .metrics
+        .as_ref()
+        .context("missing query metrics")?;
+    assert_eq!(report.queries[0].matched_refs, 2);
+    assert_eq!(metrics.ndcg_at_10, 1.0);
+    Ok(())
+}
