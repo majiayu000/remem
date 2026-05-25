@@ -498,6 +498,60 @@ fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
 }
 
 #[test]
+fn dry_run_pending_runs_post_migration_hooks() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(
+        "PRAGMA user_version = 26;
+         CREATE TABLE memories (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT,
+            project TEXT NOT NULL,
+            topic_key TEXT,
+            title TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            files TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            branch TEXT,
+            scope TEXT DEFAULT 'project',
+            search_context TEXT
+         );
+         CREATE TABLE sdk_sessions (id INTEGER PRIMARY KEY, content_session_id TEXT UNIQUE NOT NULL, memory_session_id TEXT NOT NULL, project TEXT, user_prompt TEXT, started_at TEXT, started_at_epoch INTEGER, status TEXT DEFAULT 'active', prompt_counter INTEGER DEFAULT 1);
+         CREATE TABLE observations (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, type TEXT NOT NULL, title TEXT, subtitle TEXT, narrative TEXT, facts TEXT, concepts TEXT, files_read TEXT, files_modified TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER, discovery_tokens INTEGER DEFAULT 0, status TEXT DEFAULT 'active', last_accessed_epoch INTEGER, branch TEXT, commit_sha TEXT);
+         CREATE TABLE session_summaries (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, request TEXT, completed TEXT, decisions TEXT, learned TEXT, next_steps TEXT, preferences TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER, discovery_tokens INTEGER DEFAULT 0);
+         CREATE TABLE pending_observations (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, tool_name TEXT NOT NULL, tool_input TEXT, tool_response TEXT, cwd TEXT, created_at_epoch INTEGER NOT NULL, updated_at_epoch INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, next_retry_epoch INTEGER, last_error TEXT, lease_owner TEXT, lease_expires_epoch INTEGER);
+         CREATE TABLE events (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, event_type TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT, files TEXT, exit_code INTEGER, created_at_epoch INTEGER NOT NULL);
+         CREATE TABLE summarize_cooldown (project TEXT PRIMARY KEY, last_summarize_epoch INTEGER NOT NULL, last_message_hash TEXT);
+         CREATE TABLE summarize_locks (project TEXT PRIMARY KEY, lock_epoch INTEGER NOT NULL);
+         CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+    for migration in &MIGRATIONS[..14] {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 1700000000)",
+            params![migration.version, migration.name],
+        )?;
+    }
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 1);
+    let error = result.error.as_deref().unwrap_or("");
+    assert!(
+        !error.is_empty(),
+        "v015 post-migration hook failure should surface in dry-run"
+    );
+    assert!(error.contains("v015_rebuild_memory_search_context post-migration hook"));
+    assert!(error.contains("failed to rebuild memory search contexts"));
+    Ok(())
+}
+
+#[test]
 fn applied_versions_propagates_row_error() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     // TEXT column so we can insert a non-numeric value that fails i64 deserialization.

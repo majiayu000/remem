@@ -77,7 +77,7 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn run_post_migration_hook(conn: &Connection, version: i64, name: &str) -> Result<()> {
+pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &str) -> Result<()> {
     if version == 15 {
         let rebuilt = crate::memory::search_context::rebuild_all(conn).with_context(|| {
             format!("migration v{version:03}_{name} failed to rebuild memory search contexts")
