@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use rusqlite::{backup::Backup, Connection};
 use std::time::Duration;
 
@@ -108,6 +108,9 @@ fn logical_current_version(raw_current_version: i64, applied: &[i64]) -> i64 {
 }
 
 fn clone_database(src: &Connection, dst: &mut Connection) -> Result<()> {
+    let page_size: i64 = src.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+    ensure!(page_size > 0, "source database page_size must be positive");
+    dst.execute_batch(&format!("PRAGMA page_size = {page_size}"))?;
     let backup = Backup::new(src, dst)?;
     backup.run_to_completion(100, Duration::from_millis(1), None)?;
     Ok(())

@@ -594,6 +594,47 @@ fn dry_run_pending_runs_hooks_against_complete_fts_clone() -> Result<()> {
 }
 
 #[test]
+fn dry_run_pending_clones_non_default_page_size_database() -> Result<()> {
+    let path = unique_temp_db_path("migrate-page-size");
+    {
+        let conn = Connection::open(&path)?;
+        conn.execute_batch("PRAGMA page_size = 8192; PRAGMA foreign_keys=ON;")?;
+        for migration in &MIGRATIONS[..14] {
+            conn.execute_batch(migration.sql)?;
+        }
+        conn.execute_batch(
+            "PRAGMA user_version = 26;
+             CREATE TABLE _schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at_epoch INTEGER NOT NULL
+             );",
+        )?;
+        for migration in &MIGRATIONS[..14] {
+            conn.execute(
+                "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+                 VALUES (?1, ?2, 1700000000)",
+                params![migration.version, migration.name],
+            )?;
+        }
+
+        let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        assert_eq!(page_size, 8192);
+
+        let result = dry_run_pending(&conn)?;
+
+        assert_eq!(result.pending_count, 1);
+        assert!(
+            result.error.is_none(),
+            "dry-run clone should preserve non-default source page size, got {:?}",
+            result.error
+        );
+    }
+    cleanup_temp_db_files(&path);
+    Ok(())
+}
+
+#[test]
 fn applied_versions_propagates_row_error() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     // TEXT column so we can insert a non-numeric value that fails i64 deserialization.
