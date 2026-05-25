@@ -39,11 +39,27 @@ pub(super) struct ContextCliOptions {
 }
 
 pub(super) fn resolve_context_invocation(options: ContextCliOptions) -> Result<ContextInvocation> {
-    let stdin = crate::hook_stdin::read_stdin_with_timeout(CONTEXT_STDIN_TIMEOUT_MS)?;
-    Ok(resolve_context_invocation_from_parts(
+    Ok(resolve_context_invocation_from_stdin_result(
         options,
-        stdin.as_deref(),
+        crate::hook_stdin::read_stdin_with_timeout(CONTEXT_STDIN_TIMEOUT_MS),
     ))
+}
+
+fn resolve_context_invocation_from_stdin_result(
+    options: ContextCliOptions,
+    stdin_result: Result<Option<String>>,
+) -> ContextInvocation {
+    let stdin = match stdin_result {
+        Ok(stdin) => stdin,
+        Err(error) => {
+            crate::log::warn(
+                "context",
+                &format!("failed to read context hook stdin, ignoring: {}", error),
+            );
+            None
+        }
+    };
+    resolve_context_invocation_from_parts(options, stdin.as_deref())
 }
 
 pub(super) fn direct_context_invocation(
@@ -186,5 +202,20 @@ mod tests {
     #[test]
     fn codex_hook_stdin_timeout_allows_normal_startup_latency() {
         assert!(CONTEXT_STDIN_TIMEOUT_MS >= 1000);
+    }
+
+    #[test]
+    fn stdin_read_failure_falls_back_to_cli_values() {
+        let invocation = resolve_context_invocation_from_stdin_result(
+            ContextCliOptions {
+                cwd: Some("/tmp/cli".to_string()),
+                host: Some("codex-cli".to_string()),
+                ..ContextCliOptions::default()
+            },
+            Err(anyhow::anyhow!("stdin read failed")),
+        );
+
+        assert_eq!(invocation.cwd, "/tmp/cli");
+        assert_eq!(invocation.session_id, None);
     }
 }
