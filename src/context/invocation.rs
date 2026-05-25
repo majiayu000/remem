@@ -5,7 +5,7 @@ use crate::db;
 
 use super::host::{resolve_host_kind, HostKind};
 
-const CONTEXT_STDIN_TIMEOUT_MS: u64 = 50;
+const CONTEXT_STDIN_TIMEOUT_MS: u64 = 1000;
 
 #[derive(Debug, Clone)]
 pub(super) struct ContextInvocation {
@@ -181,5 +181,10 @@ mod tests {
 
         assert_eq!(invocation.cwd, "/tmp/cli");
         assert_eq!(invocation.session_id, None);
+    }
+
+    #[test]
+    fn codex_hook_stdin_timeout_allows_normal_startup_latency() {
+        assert!(CONTEXT_STDIN_TIMEOUT_MS >= 1000);
     }
 }

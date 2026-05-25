@@ -34,7 +34,7 @@ pub(super) struct ContextGateDecision {
 #[derive(Debug)]
 struct GateRow {
     context_hash: String,
-    updated_at_epoch: i64,
+    last_emitted_epoch: i64,
 }
 
 pub(super) fn apply_context_gate(
@@ -99,7 +99,7 @@ pub(super) fn apply_context_gate(
         };
     }
     if row.context_hash == hash && fallback_cooldown_allows_suppression(invocation, &row, now) {
-        return match record_suppression(&conn, invocation.host.as_env_value(), &key, now) {
+        return match record_suppression(&conn, invocation.host.as_env_value(), &key) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "same_hash", &hash);
                 decision(String::new(), ContextGateAction::Suppressed, "same_hash")
@@ -109,7 +109,7 @@ pub(super) fn apply_context_gate(
     }
 
     if mode == ContextGateMode::Strict {
-        return match record_suppression(&conn, invocation.host.as_env_value(), &key, now) {
+        return match record_suppression(&conn, invocation.host.as_env_value(), &key) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "strict", &hash);
                 decision(String::new(), ContextGateAction::Suppressed, "strict")
@@ -185,7 +185,7 @@ fn fallback_cooldown_allows_suppression(
         "REMEM_CONTEXT_GATE_FALLBACK_COOLDOWN_SECS",
         DEFAULT_FALLBACK_COOLDOWN_SECS,
     );
-    now.saturating_sub(row.updated_at_epoch) <= cooldown
+    now.saturating_sub(row.last_emitted_epoch) <= cooldown
 }
 
 fn read_i64_env(key: &str, default: i64) -> i64 {
@@ -212,14 +212,14 @@ fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
 
 fn load_gate_row(conn: &rusqlite::Connection, host: &str, key: &str) -> Result<Option<GateRow>> {
     conn.query_row(
-        "SELECT context_hash, updated_at_epoch
+        "SELECT context_hash, last_emitted_epoch
          FROM context_injections
          WHERE host = ?1 AND injection_key = ?2",
         params![host, key],
         |row| {
             Ok(GateRow {
                 context_hash: row.get(0)?,
-                updated_at_epoch: row.get(1)?,
+                last_emitted_epoch: row.get(1)?,
             })
         },
     )
@@ -265,14 +265,13 @@ fn upsert_emit_row(
     Ok(())
 }
 
-fn record_suppression(conn: &rusqlite::Connection, host: &str, key: &str, now: i64) -> Result<()> {
+fn record_suppression(conn: &rusqlite::Connection, host: &str, key: &str) -> Result<()> {
     conn.execute(
         "UPDATE context_injections
          SET output_mode = 'suppressed',
-             updated_at_epoch = ?3,
              suppress_count = suppress_count + 1
          WHERE host = ?1 AND injection_key = ?2",
-        params![host, key, now],
+        params![host, key],
     )?;
     Ok(())
 }
@@ -297,8 +296,9 @@ fn context_fingerprint(output: &str) -> String {
 }
 
 fn normalize_context_for_hash(output: &str) -> String {
+    const GENERATED_DEBUG_TRACE_MARKER: &str = "\n## Debug Trace\n- request host=";
     let without_debug = output
-        .find("\n## Debug Trace\n")
+        .rfind(GENERATED_DEBUG_TRACE_MARKER)
         .map(|idx| &output[..idx])
         .unwrap_or(output);
     let mut normalized = String::new();
@@ -378,29 +378,73 @@ mod tests {
     }
 
     #[test]
-    fn first_same_session_context_emits_and_second_suppresses() {
+    fn first_same_session_context_emits_and_second_suppresses() -> Result<()> {
         let conn = setup_conn();
         let invocation = invocation(Some("sess-1"));
         let key = injection_key(&invocation);
         let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
-        assert!(load_gate_row(&conn, invocation.host.as_env_value(), &key)
-            .unwrap()
-            .is_none());
-        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100).unwrap();
-        let row = load_gate_row(&conn, invocation.host.as_env_value(), &key)
-            .unwrap()
-            .unwrap();
+        assert!(load_gate_row(&conn, invocation.host.as_env_value(), &key)?.is_none());
+        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
+        let row = load_gate_row(&conn, invocation.host.as_env_value(), &key)?
+            .ok_or_else(|| anyhow::anyhow!("missing context injection gate row"))?;
         assert_eq!(row.context_hash, hash);
 
-        record_suppression(&conn, invocation.host.as_env_value(), &key, 101).unwrap();
-        let suppress_count: i64 = conn
-            .query_row(
-                "SELECT suppress_count FROM context_injections WHERE host = ?1 AND injection_key = ?2",
-                params![invocation.host.as_env_value(), key],
-                |row| row.get(0),
-            )
-            .unwrap();
+        record_suppression(&conn, invocation.host.as_env_value(), &key)?;
+        let suppress_count: i64 = conn.query_row(
+            "SELECT suppress_count FROM context_injections WHERE host = ?1 AND injection_key = ?2",
+            params![invocation.host.as_env_value(), key],
+            |row| row.get(0),
+        )?;
         assert_eq!(suppress_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn suppression_does_not_extend_fallback_cooldown() -> Result<()> {
+        let conn = setup_conn();
+        let invocation = invocation(None);
+        let key = injection_key(&invocation);
+        let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
+
+        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
+        record_suppression(&conn, invocation.host.as_env_value(), &key)?;
+
+        let (updated_at_epoch, last_emitted_epoch, suppress_count): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT updated_at_epoch, last_emitted_epoch, suppress_count
+                 FROM context_injections
+                 WHERE host = ?1 AND injection_key = ?2",
+                params![invocation.host.as_env_value(), key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+
+        assert_eq!(updated_at_epoch, 100);
+        assert_eq!(last_emitted_epoch, 100);
+        assert_eq!(suppress_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn fingerprint_keeps_user_debug_trace_heading() {
+        let a = "# [/tmp/remem] context now\nBody\n## Debug Trace\nUser note A\n";
+        let b = "# [/tmp/remem] context now\nBody\n## Debug Trace\nUser note B\n";
+
+        assert_ne!(context_fingerprint(a), context_fingerprint(b));
+    }
+
+    #[test]
+    fn fingerprint_ignores_generated_debug_trace() {
+        let base = "# [/tmp/remem] context now\nBody\n";
+        let a = format!(
+            "{}\n## Debug Trace\n- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=main session=sess-1\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=100 chars/~25 tokens limit=12000 truncated=no\n",
+            base
+        );
+        let b = format!(
+            "{}\n## Debug Trace\n- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=dev session=sess-2\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=dev total=120 chars/~30 tokens limit=12000 truncated=no\n",
+            base
+        );
+
+        assert_eq!(context_fingerprint(&a), context_fingerprint(&b));
     }
 }
