@@ -442,10 +442,10 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
     Ok(())
 }
 
-/// Regression: clone_schema used to skip ALL underscore-prefixed tables but not
-/// their dependent indexes. A non-migration _-prefixed table with an explicit index
-/// caused clone_schema to fail with "no such table" because the table DDL was
-/// omitted while the index DDL was still executed.
+/// Regression: the old hand-written schema clone skipped ALL underscore-prefixed
+/// tables but not their dependent indexes. A non-migration _-prefixed table with
+/// an explicit index caused dry-run cloning to fail with "no such table" because
+/// the table DDL was omitted while the index DDL was still executed.
 #[test]
 fn dry_run_clones_non_migration_underscore_table_with_dependent_index() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -466,18 +466,17 @@ fn dry_run_clones_non_migration_underscore_table_with_dependent_index() -> Resul
     let result = dry_run_pending(&conn)?;
     assert!(
         result.error.is_none(),
-        "clone_schema must not fail for non-migration underscore tables with indexes: {:?}",
+        "dry-run clone must not fail for non-migration underscore tables with indexes: {:?}",
         result.error
     );
     Ok(())
 }
 
-/// Regression: clone_schema used SQL-prefix matching to identify _schema_migrations,
-/// which is sensitive to quoting. Bracket-quoted DDL (`CREATE TABLE [_schema_migrations]`)
-/// was not caught, allowing the internal table to bleed into the dry-run database.
-/// Matching on the unquoted `name` column from sqlite_master is immune to quoting.
+/// Regression: the old hand-written schema clone used SQL-prefix matching to
+/// identify _schema_migrations, which is sensitive to quoting. Bracket-quoted
+/// DDL (`CREATE TABLE [_schema_migrations]`) was not caught.
 #[test]
-fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
+fn dry_run_handles_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 13;")?;
     create_v13_schema_without_scope(&conn)?;
@@ -491,7 +490,7 @@ fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
     let result = dry_run_pending(&conn)?;
     assert!(
         result.error.is_none(),
-        "dry_run must not fail with bracket-quoted _schema_migrations: {:?}",
+        "dry-run clone must not fail with bracket-quoted _schema_migrations: {:?}",
         result.error
     );
     Ok(())
@@ -548,6 +547,49 @@ fn dry_run_pending_runs_post_migration_hooks() -> Result<()> {
     );
     assert!(error.contains("v015_rebuild_memory_search_context post-migration hook"));
     assert!(error.contains("failed to rebuild memory search contexts"));
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_runs_hooks_against_complete_fts_clone() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    for migration in &MIGRATIONS[..14] {
+        conn.execute_batch(migration.sql)?;
+    }
+    conn.execute_batch(
+        "PRAGMA user_version = 26;
+         CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+    for migration in &MIGRATIONS[..14] {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 1700000000)",
+            params![migration.version, migration.name],
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO memories(project, topic_key, title, content, memory_type, files,
+            created_at_epoch, updated_at_epoch, status)
+         VALUES ('proj', 'dry-run-fts', 'Dry run FTS',
+            'Issue: dry-run hook update should not fail on memories_fts.',
+            'bugfix',
+            '[\"src/migrate/dry_run.rs\"]', 100, 100, 'active')",
+        [],
+    )?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 1);
+    assert!(
+        result.error.is_none(),
+        "dry-run hook should run against complete FTS clone, got {:?}",
+        result.error
+    );
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{backup::Backup, Connection};
+use std::time::Duration;
 
 use super::run::run_post_migration_hook;
 use super::state::{applied_versions, has_migration_table};
@@ -13,12 +14,12 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     let applied = infer_applied_versions(real_conn, raw_current_version)?;
     let current_version = logical_current_version(raw_current_version, &applied);
 
-    let test_conn = Connection::open_in_memory()?;
-    if let Err(error) = clone_schema(real_conn, &test_conn) {
+    let mut test_conn = Connection::open_in_memory()?;
+    if let Err(error) = clone_database(real_conn, &mut test_conn) {
         return Ok(DryRunResult {
             current_version,
             pending_count: applied_pending_count(&applied),
-            error: Some(format!("schema clone: {}", error)),
+            error: Some(format!("database clone: {}", error)),
         });
     }
     if raw_current_version >= OLD_BASELINE_VERSION || has_migration_table(real_conn) {
@@ -106,40 +107,8 @@ fn logical_current_version(raw_current_version: i64, applied: &[i64]) -> i64 {
     raw_current_version.max(OLD_BASELINE_VERSION - 1 + latest_applied)
 }
 
-fn clone_schema(src: &Connection, dst: &Connection) -> Result<()> {
-    // Migration-system tables that must not be replicated into the dry-run
-    // database. Matched against the unquoted `name` column so bracket-quoted
-    // and backtick-quoted DDL variants are handled transparently.
-    const INTERNAL_TABLES: &[&str] = &["_schema_migrations"];
-
-    let mut stmt = src.prepare(
-        "SELECT type, name, tbl_name, sql FROM sqlite_master
-         WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger')
-         ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'trigger' THEN 2 ELSE 3 END, name",
-    )?;
-    let rows: Vec<(String, String, String, String)> = stmt
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    for (obj_type, name, tbl_name, sql) in &rows {
-        if sql.contains("fts5") {
-            continue;
-        }
-        // Skip internal tables and any indexes/triggers that belong to them.
-        let is_internal = if obj_type == "table" {
-            INTERNAL_TABLES.contains(&name.as_str())
-        } else {
-            INTERNAL_TABLES.contains(&tbl_name.as_str())
-        };
-        if is_internal {
-            continue;
-        }
-        let safe = sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ");
-        let safe = safe.replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
-        dst.execute_batch(&safe)?;
-    }
+fn clone_database(src: &Connection, dst: &mut Connection) -> Result<()> {
+    let backup = Backup::new(src, dst)?;
+    backup.run_to_completion(100, Duration::from_millis(1), None)?;
     Ok(())
 }
