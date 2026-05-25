@@ -1,4 +1,3 @@
-use anyhow::Result;
 use serde::Deserialize;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -47,37 +46,4 @@ pub(super) fn extract_last_assistant_message(transcript_path: &str) -> Option<St
     }
 
     None
-}
-
-pub(super) fn read_stdin_with_timeout(timeout_ms: u64) -> Result<Option<String>> {
-    use std::sync::mpsc;
-    use std::time::Duration;
-
-    let (tx, rx) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let input = std::io::read_to_string(std::io::stdin());
-        let _ = tx.send(input);
-    });
-
-    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
-        Ok(Ok(input)) => {
-            if input.trim().is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(input))
-            }
-        }
-        Ok(Err(err)) => Err(err.into()),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            crate::log::warn(
-                "summarize",
-                &format!("stdin read timed out after {}ms, skipping", timeout_ms),
-            );
-            Ok(None)
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            crate::log::warn("summarize", "stdin reader disconnected, skipping");
-            Ok(None)
-        }
-    }
 }

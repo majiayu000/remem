@@ -1,17 +1,25 @@
 use anyhow::Result;
 
 use crate::db;
-use crate::db::project_from_cwd;
 
 use super::format::{char_len, format_header_datetime, truncate_chars_with_ellipsis};
-use super::host::{resolve_host_kind, resolve_profile};
+use super::host::resolve_profile;
+use super::injection_gate::{apply_context_gate, ContextGateAction, ContextGateDecision};
+use super::invocation::{
+    direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
+};
 use super::policy::{ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
-    render_core_memory_with_limits, render_empty_state, render_memory_index_with_limits_excluding,
+    empty_state_output, render_core_memory_with_limits, render_memory_index_with_limits_excluding,
     render_recent_sessions_with_limit, render_workstreams_with_limits,
 };
 use super::types::ContextRequest;
+
+struct RenderedContext {
+    output: String,
+    stats: ContextRenderStats,
+}
 
 pub fn generate_context(
     cwd: &str,
@@ -20,33 +28,92 @@ pub fn generate_context(
     host_arg: Option<&str>,
     debug: bool,
 ) -> Result<()> {
-    let timer = crate::log::Timer::start("context", &format!("cwd={}", cwd));
-    let project = project_from_cwd(cwd);
-    let current_branch = db::detect_git_branch(cwd);
-    let host = resolve_host_kind(host_arg);
-    let profile = resolve_profile(host);
-    let policy = profile.default_policy();
-    let debug = debug || context_debug_enabled();
-    let request = ContextRequest {
-        cwd: cwd.to_string(),
-        project: project.clone(),
-        session_id: session_id.map(str::to_string),
-        current_branch: current_branch.clone(),
-        host: profile.host(),
-        use_colors,
-    };
-    let capabilities = profile.capabilities();
+    let invocation = direct_context_invocation(cwd, session_id, use_colors, host_arg, debug);
+    generate_context_for_invocation(invocation, false)
+}
 
+pub fn generate_context_from_cli(
+    cwd: Option<String>,
+    session_id: Option<String>,
+    use_colors: bool,
+    host: Option<String>,
+    debug: bool,
+    force: bool,
+    gate_mode: Option<String>,
+) -> Result<()> {
+    let invocation = resolve_context_invocation(ContextCliOptions {
+        cwd,
+        session_id,
+        host,
+        use_colors,
+        debug,
+        force,
+        gate_mode,
+    })?;
+    generate_context_for_invocation(invocation, true)
+}
+
+fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
+    let timer = crate::log::Timer::start("context", &format!("cwd={}", invocation.cwd));
+    let request = ContextRequest {
+        cwd: invocation.cwd.clone(),
+        project: invocation.project.clone(),
+        session_id: invocation.session_id.clone(),
+        current_branch: db::detect_git_branch(&invocation.cwd),
+        host: invocation.host,
+        use_colors: invocation.use_colors,
+    };
+    let rendered = render_context_output(&request, invocation.debug || context_debug_enabled())?;
+    let decision = if use_gate {
+        apply_context_gate(&invocation, rendered.output)
+    } else {
+        ContextGateDecision {
+            output: rendered.output,
+            action: ContextGateAction::Bypassed,
+            reason: "legacy_direct",
+        }
+    };
+    print!("{}", decision.output);
+
+    let capabilities = resolve_profile(request.host).capabilities();
+    timer.done(&format!(
+        "project={} cwd={} session={} host={} colors={} gate={:?}:{} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} index={} preferences={} sessions={} workstreams={}",
+        request.project,
+        request.cwd,
+        request.session_id.as_deref().unwrap_or("-"),
+        request.host.as_env_value(),
+        request.use_colors,
+        decision.action,
+        decision.reason,
+        capabilities.has_mcp_tools,
+        capabilities.has_session_start_hook,
+        capabilities.has_user_prompt_submit_hook,
+        capabilities.observes_native_file_edits,
+        capabilities.observes_bash,
+        rendered.stats.memories_loaded,
+        rendered.stats.core.count,
+        rendered.stats.index.count,
+        rendered.stats.preferences.count,
+        rendered.stats.sessions.count,
+        rendered.stats.workstreams.count,
+    ));
+    Ok(())
+}
+
+fn render_context_output(request: &ContextRequest, debug: bool) -> Result<RenderedContext> {
+    let profile = resolve_profile(request.host);
+    let policy = profile.default_policy();
     let conn = match db::open_db() {
         Ok(connection) => connection,
         Err(error) => {
             crate::log::warn(
                 "context",
-                &format!("open_db failed for project={}: {}", project, error),
+                &format!("open_db failed for project={}: {}", request.project, error),
             );
-            render_empty_state(&project);
-            timer.done("empty (no DB)");
-            return Ok(());
+            return Ok(RenderedContext {
+                output: empty_state_output(&request.project),
+                stats: empty_stats(request),
+            });
         }
     };
 
@@ -57,7 +124,7 @@ pub fn generate_context(
         &policy,
     );
     let (preference_output, preference_summary) =
-        match render_preferences_to_buffer(&conn, &project, cwd, &policy) {
+        match render_preferences_to_buffer(&conn, &request.project, &request.cwd, &policy) {
             Ok(rendered) => rendered,
             Err(error) => {
                 crate::log::warn("context", &format!("render_preferences failed: {}", error));
@@ -73,9 +140,10 @@ pub fn generate_context(
         && loaded.summaries.is_empty()
         && loaded.workstreams.is_empty()
     {
-        render_empty_state(&project);
-        timer.done("empty (no data)");
-        return Ok(());
+        return Ok(RenderedContext {
+            output: empty_state_output(&request.project),
+            stats: empty_stats(request),
+        });
     }
 
     let mut output = String::new();
@@ -103,14 +171,12 @@ pub fn generate_context(
         chars: char_len(&output).saturating_sub(before),
     };
 
-    let mut core_count = 0;
-    let mut index_count = 0;
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(&policy);
         let before = char_len(&output);
         let core_summary =
             render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
-        core_count = core_summary.count;
+        let core_count = core_summary.count;
         stats.core_ids = core_summary.ids.clone();
         stats.core = SectionRenderStats {
             count: core_count,
@@ -118,7 +184,7 @@ pub fn generate_context(
         };
         let before = char_len(&output);
         let core_ids = core_summary.ids.into_iter().collect();
-        index_count = render_memory_index_with_limits_excluding(
+        let index_count = render_memory_index_with_limits_excluding(
             &mut output,
             &loaded.memories,
             &render_limits,
@@ -157,7 +223,7 @@ pub fn generate_context(
 
     if debug {
         output.push_str(&build_context_debug_trace(
-            &request, &policy, &loaded, &stats,
+            request, &policy, &loaded, &stats,
         ));
     }
 
@@ -173,28 +239,15 @@ pub fn generate_context(
         policy.limits.total_char_limit,
         &stats_footer,
     );
-    print!("{}", output);
+    Ok(RenderedContext { output, stats })
+}
 
-    timer.done(&format!(
-        "project={} cwd={} session={} host={} colors={} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} index={} preferences={} summaries={} workstreams={}",
-        request.project,
-        request.cwd,
-        request.session_id.as_deref().unwrap_or("-"),
-        request.host.as_env_value(),
-        request.use_colors,
-        capabilities.has_mcp_tools,
-        capabilities.has_session_start_hook,
-        capabilities.has_user_prompt_submit_hook,
-        capabilities.observes_native_file_edits,
-        capabilities.observes_bash,
-        loaded.memories.len(),
-        core_count,
-        index_count,
-        preference_summary.rendered,
-        loaded.summaries.len(),
-        loaded.workstreams.len(),
-    ));
-    Ok(())
+fn empty_stats(request: &ContextRequest) -> ContextRenderStats {
+    ContextRenderStats {
+        host: request.host.as_env_value().to_string(),
+        branch: request.current_branch.clone(),
+        ..ContextRenderStats::default()
+    }
 }
 
 fn section_render_limits(policy: &ContextPolicy) -> super::policy::ContextLimits {

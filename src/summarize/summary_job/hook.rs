@@ -1,9 +1,10 @@
 use anyhow::Result;
 
 use crate::db;
+use crate::hook_stdin::read_stdin_with_timeout;
 
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
-use super::super::input::{read_stdin_with_timeout, SummarizeInput};
+use super::super::input::SummarizeInput;
 
 pub async fn summarize() -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {

@@ -39,7 +39,6 @@ pub(super) struct RetrievalHints {
 }
 
 pub(super) trait ContextHostProfile {
-    fn host(&self) -> HostKind;
     fn capabilities(&self) -> HostCapabilities;
     fn default_policy(&self) -> ContextPolicy;
     fn retrieval_hints(&self) -> RetrievalHints;
@@ -50,10 +49,6 @@ pub(super) struct CodexCliContextProfile;
 pub(super) struct UnknownContextProfile;
 
 impl ContextHostProfile for ClaudeCodeContextProfile {
-    fn host(&self) -> HostKind {
-        HostKind::ClaudeCode
-    }
-
     fn capabilities(&self) -> HostCapabilities {
         HostCapabilities {
             has_mcp_tools: true,
@@ -76,10 +71,6 @@ impl ContextHostProfile for ClaudeCodeContextProfile {
 }
 
 impl ContextHostProfile for CodexCliContextProfile {
-    fn host(&self) -> HostKind {
-        HostKind::CodexCli
-    }
-
     fn capabilities(&self) -> HostCapabilities {
         HostCapabilities {
             has_mcp_tools: true,
@@ -102,10 +93,6 @@ impl ContextHostProfile for CodexCliContextProfile {
 }
 
 impl ContextHostProfile for UnknownContextProfile {
-    fn host(&self) -> HostKind {
-        HostKind::Unknown
-    }
-
     fn capabilities(&self) -> HostCapabilities {
         HostCapabilities {
             has_mcp_tools: true,

@@ -7,7 +7,7 @@ mod workstreams;
 #[cfg(test)]
 pub(super) use core::render_core_memory;
 pub(super) use core::render_core_memory_with_limits;
-pub(super) use empty::render_empty_state;
+pub(super) use empty::empty_state_output;
 #[cfg(test)]
 pub(super) use index::render_memory_index;
 #[cfg(test)]

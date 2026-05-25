@@ -62,10 +62,13 @@ fn full_migration_on_empty_db() -> Result<()> {
     run_migrations(&conn)?;
 
     let applied = applied_versions(&conn)?;
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    assert_eq!(
+        applied,
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]
+    );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 26);
+    assert_eq!(user_version, 28);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -89,6 +92,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_candidates",
         "memory_facts",
         "procedure_verifications",
+        "context_injections",
         "rule_candidates",
     ] {
         let exists: bool = conn
@@ -311,7 +315,7 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 26);
+    assert_eq!(user_version, 28);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -351,7 +355,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 26);
+    assert_eq!(result.current_version, 28);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())
