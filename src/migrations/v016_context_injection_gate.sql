@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS context_injections (
     injection_key TEXT NOT NULL,
     session_id TEXT,
     transcript_path TEXT,
+    hook_source TEXT,
     context_hash TEXT NOT NULL,
     output_mode TEXT NOT NULL,
     output_chars INTEGER NOT NULL,

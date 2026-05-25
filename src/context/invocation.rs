@@ -13,6 +13,7 @@ pub(super) struct ContextInvocation {
     pub project: String,
     pub session_id: Option<String>,
     pub transcript_path: Option<String>,
+    pub source: Option<String>,
     pub host: HostKind,
     pub use_colors: bool,
     pub debug: bool,
@@ -25,6 +26,13 @@ struct ContextHookInput {
     session_id: Option<String>,
     cwd: Option<String>,
     transcript_path: Option<String>,
+    source: Option<String>,
+    target: Option<ContextHookTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContextHookTarget {
+    source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,6 +84,7 @@ pub(super) fn direct_context_invocation(
         project,
         session_id: clean_optional(session_id.map(str::to_string)),
         transcript_path: None,
+        source: None,
         host,
         use_colors,
         debug,
@@ -104,18 +113,28 @@ pub(super) fn resolve_context_invocation_from_parts(
     let transcript_path = hook
         .as_ref()
         .and_then(|hook| clean_optional(hook.transcript_path.clone()));
+    let source = hook.as_ref().and_then(hook_source);
     let host = resolve_host_kind(options.host.as_deref());
     ContextInvocation {
         cwd,
         project,
         session_id,
         transcript_path,
+        source,
         host,
         use_colors: options.use_colors,
         debug: options.debug,
         force: options.force,
         gate_mode: clean_optional(options.gate_mode),
     }
+}
+
+fn hook_source(hook: &ContextHookInput) -> Option<String> {
+    clean_optional(hook.source.clone()).or_else(|| {
+        hook.target
+            .as_ref()
+            .and_then(|target| clean_optional(target.source.clone()))
+    })
 }
 
 fn parse_hook_input(stdin: Option<&str>) -> Option<ContextHookInput> {
@@ -158,14 +177,30 @@ mod tests {
                 host: Some("codex-cli".to_string()),
                 ..ContextCliOptions::default()
             },
-            Some(r#"{"session_id":"sess-1","cwd":"/tmp/remem","transcript_path":"/tmp/t.jsonl"}"#),
+            Some(
+                r#"{"session_id":"sess-1","cwd":"/tmp/remem","transcript_path":"/tmp/t.jsonl","target":{"type":"SessionStart","source":"Startup"}}"#,
+            ),
         );
 
         assert_eq!(invocation.session_id.as_deref(), Some("sess-1"));
         assert_eq!(invocation.cwd, "/tmp/remem");
         assert_eq!(invocation.project, db::project_from_cwd("/tmp/remem"));
         assert_eq!(invocation.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
+        assert_eq!(invocation.source.as_deref(), Some("Startup"));
         assert_eq!(invocation.host, HostKind::CodexCli);
+    }
+
+    #[test]
+    fn parses_root_hook_source() {
+        let invocation = resolve_context_invocation_from_parts(
+            ContextCliOptions {
+                host: Some("codex-cli".to_string()),
+                ..ContextCliOptions::default()
+            },
+            Some(r#"{"session_id":"sess-1","cwd":"/tmp/remem","source":"compact"}"#),
+        );
+
+        assert_eq!(invocation.source.as_deref(), Some("compact"));
     }
 
     #[test]

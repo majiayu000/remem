@@ -98,8 +98,17 @@ pub(super) fn apply_context_gate(
             Err(error) => fail_open(output, "gate_write", error),
         };
     }
+    if source_requires_fresh_emission(invocation.source.as_deref()) {
+        return match upsert_emit_row(&conn, invocation, &key, &hash, output.chars().count(), now) {
+            Ok(()) => {
+                log_gate("emit", invocation, &key, "restart_source", &hash);
+                decision(output, ContextGateAction::EmittedFull, "restart_source")
+            }
+            Err(error) => fail_open(output, "gate_write", error),
+        };
+    }
     if row.context_hash == hash && fallback_cooldown_allows_suppression(invocation, &row, now) {
-        return match record_suppression(&conn, invocation.host.as_env_value(), &key) {
+        return match record_suppression(&conn, invocation, &key, now) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "same_hash", &hash);
                 decision(String::new(), ContextGateAction::Suppressed, "same_hash")
@@ -109,7 +118,7 @@ pub(super) fn apply_context_gate(
     }
 
     if mode == ContextGateMode::Strict {
-        return match record_suppression(&conn, invocation.host.as_env_value(), &key) {
+        return match record_suppression(&conn, invocation, &key, now) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "strict", &hash);
                 decision(String::new(), ContextGateAction::Suppressed, "strict")
@@ -171,6 +180,13 @@ fn host_is_gated(host: HostKind) -> bool {
         .split(',')
         .map(|host| host.trim())
         .any(|candidate| candidate == host.as_env_value())
+}
+
+fn source_requires_fresh_emission(source: Option<&str>) -> bool {
+    matches!(
+        source.map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if value == "clear" || value == "compact"
+    )
 }
 
 fn fallback_cooldown_allows_suppression(
@@ -237,14 +253,15 @@ fn upsert_emit_row(
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO context_injections
-         (host, project, injection_key, session_id, transcript_path, context_hash, output_mode,
+         (host, project, injection_key, session_id, transcript_path, hook_source, context_hash, output_mode,
           output_chars, created_at_epoch, updated_at_epoch, last_emitted_epoch, emit_count,
           suppress_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'full', ?7, ?8, ?8, ?8, 1, 0)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'full', ?8, ?9, ?9, ?9, 1, 0)
          ON CONFLICT(host, injection_key) DO UPDATE SET
           project = excluded.project,
           session_id = excluded.session_id,
           transcript_path = excluded.transcript_path,
+          hook_source = excluded.hook_source,
           context_hash = excluded.context_hash,
           output_mode = 'full',
           output_chars = excluded.output_chars,
@@ -257,6 +274,7 @@ fn upsert_emit_row(
             key,
             invocation.session_id,
             invocation.transcript_path,
+            invocation.source,
             hash,
             output_chars as i64,
             now,
@@ -265,13 +283,20 @@ fn upsert_emit_row(
     Ok(())
 }
 
-fn record_suppression(conn: &rusqlite::Connection, host: &str, key: &str) -> Result<()> {
+fn record_suppression(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    key: &str,
+    now: i64,
+) -> Result<()> {
     conn.execute(
         "UPDATE context_injections
          SET output_mode = 'suppressed',
+             hook_source = ?3,
+             updated_at_epoch = ?4,
              suppress_count = suppress_count + 1
          WHERE host = ?1 AND injection_key = ?2",
-        params![host, key],
+        params![invocation.host.as_env_value(), key, invocation.source, now,],
     )?;
     Ok(())
 }
@@ -361,6 +386,7 @@ mod tests {
             project: "/tmp/remem".to_string(),
             session_id: session_id.map(str::to_string),
             transcript_path: Some("/tmp/remem.jsonl".to_string()),
+            source: None,
             host: HostKind::CodexCli,
             use_colors: false,
             debug: false,
@@ -390,7 +416,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("missing context injection gate row"))?;
         assert_eq!(row.context_hash, hash);
 
-        record_suppression(&conn, invocation.host.as_env_value(), &key)?;
+        record_suppression(&conn, &invocation, &key, 101)?;
         let suppress_count: i64 = conn.query_row(
             "SELECT suppress_count FROM context_injections WHERE host = ?1 AND injection_key = ?2",
             params![invocation.host.as_env_value(), key],
@@ -408,7 +434,7 @@ mod tests {
         let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
         upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
-        record_suppression(&conn, invocation.host.as_env_value(), &key)?;
+        record_suppression(&conn, &invocation, &key, 150)?;
 
         let (updated_at_epoch, last_emitted_epoch, suppress_count): (i64, i64, i64) = conn
             .query_row(
@@ -419,9 +445,58 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
 
-        assert_eq!(updated_at_epoch, 100);
+        assert_eq!(updated_at_epoch, 150);
         assert_eq!(last_emitted_epoch, 100);
         assert_eq!(suppress_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn restart_source_requires_fresh_emission() {
+        assert!(source_requires_fresh_emission(Some("clear")));
+        assert!(source_requires_fresh_emission(Some("Compact")));
+        assert!(!source_requires_fresh_emission(Some("startup")));
+        assert!(!source_requires_fresh_emission(None));
+    }
+
+    #[test]
+    fn restart_source_reemits_same_hash_context() {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-restart");
+        let mut invocation = invocation(Some("sess-restart"));
+        let output = "# [/tmp/remem] context now\nBody\n".to_string();
+
+        let first = apply_context_gate(&invocation, output.clone());
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        let second = apply_context_gate(&invocation, output.clone());
+        assert_eq!(second.action, ContextGateAction::Suppressed);
+
+        invocation.source = Some("clear".to_string());
+        let restart = apply_context_gate(&invocation, output.clone());
+        assert_eq!(restart.action, ContextGateAction::EmittedFull);
+        assert_eq!(restart.reason, "restart_source");
+        assert_eq!(restart.output, output);
+    }
+
+    #[test]
+    fn emit_and_suppress_persist_hook_source() -> Result<()> {
+        let conn = setup_conn();
+        let mut invocation = invocation(Some("sess-source"));
+        invocation.source = Some("startup".to_string());
+        let key = injection_key(&invocation);
+        let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
+
+        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
+        invocation.source = Some("resume".to_string());
+        record_suppression(&conn, &invocation, &key, 101)?;
+
+        let hook_source: Option<String> = conn.query_row(
+            "SELECT hook_source FROM context_injections WHERE host = ?1 AND injection_key = ?2",
+            params![invocation.host.as_env_value(), key],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(hook_source.as_deref(), Some("resume"));
         Ok(())
     }
 
