@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-26
+
 ### Added
 - Added release-binary installation docs for pinned versions, custom install
   directories, manual GitHub Release downloads, and binary-only installs.
