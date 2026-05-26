@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-05-26
+
+### Fixed
+- Updated the remaining GitHub Release action to a Node.js 24-compatible
+  version.
+- Updated Codex hook feature flag installation to use `[features].hooks` and
+  remove the deprecated `[features].codex_hooks` alias.
+
 ## [0.4.4] - 2026-05-26
 
 ### Added

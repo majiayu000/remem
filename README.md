@@ -34,7 +34,7 @@ Language: **English** | [简体中文](README.zh-CN.md)
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # Pin a specific release or install into a custom bin directory
-REMEM_VERSION=v0.4.3 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_VERSION=v0.4.5 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
