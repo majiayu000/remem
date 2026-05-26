@@ -66,6 +66,7 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
     let mut output = String::new();
     if results.memories.is_empty() && results.raw_hits.is_empty() {
         output.push_str("No results found.\n");
+        append_search_explain(&mut output, results.explain.as_ref());
         return output;
     }
 
@@ -98,15 +99,19 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
             output.push_str(&format_raw_hit_line(raw));
         }
     }
-    if let Some(explain) = results.explain.as_ref() {
+    append_search_explain(&mut output, results.explain.as_ref());
+
+    output
+}
+
+fn append_search_explain(output: &mut String, explain: Option<&SearchExplain>) {
+    if let Some(explain) = explain {
         if !output.ends_with('\n') {
             output.push('\n');
         }
         output.push('\n');
         output.push_str(&render_search_explain(explain));
     }
-
-    output
 }
 
 fn render_multi_hop_meta(output: &mut String, meta: &MultiHopMeta) {

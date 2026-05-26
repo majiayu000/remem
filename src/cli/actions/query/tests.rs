@@ -181,6 +181,23 @@ fn cli_search_render_includes_explain_without_memory_content_dump() {
 }
 
 #[test]
+fn cli_search_render_includes_explain_for_empty_results() {
+    let result = SearchResultSet {
+        memories: vec![],
+        multi_hop: None,
+        has_more: false,
+        explain: Some(sample_explain()),
+        raw_hits: vec![],
+    };
+
+    let output = render_search_results(&result, 0, 10);
+
+    assert!(output.contains("No results found."));
+    assert!(output.contains("Search explain:"));
+    assert!(output.contains("fts_query: Some(\"\\\"needle\\\"\")"));
+}
+
+#[test]
 fn cli_query_raw_preview_uses_first_line_and_truncates() {
     let raw = sample_raw();
 
