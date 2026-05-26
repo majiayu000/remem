@@ -6,6 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use super::host::HostKind;
 use super::invocation::ContextInvocation;
 
+mod delta;
+
 const DEFAULT_GATE_HOSTS: &str = "codex-cli";
 const DEFAULT_FALLBACK_COOLDOWN_SECS: i64 = 900;
 const DEFAULT_RETENTION_DAYS: i64 = 30;
@@ -13,6 +15,7 @@ const DEFAULT_RETENTION_DAYS: i64 = 30;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextGateMode {
     Auto,
+    Delta,
     Off,
     Strict,
 }
@@ -21,6 +24,7 @@ enum ContextGateMode {
 pub(super) enum ContextGateAction {
     Bypassed,
     EmittedFull,
+    EmittedDelta,
     Suppressed,
     FailOpen,
 }
@@ -97,7 +101,15 @@ pub(super) fn apply_context_gate(
     };
 
     let Some(row) = row else {
-        return match upsert_emit_row(&conn, invocation, &key, &hash, output.chars().count(), now) {
+        return match upsert_emit_row(
+            &conn,
+            invocation,
+            &key,
+            &hash,
+            "full",
+            output.chars().count(),
+            now,
+        ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "full", &hash);
                 decision(output, ContextGateAction::EmittedFull, "first_or_forced")
@@ -107,7 +119,15 @@ pub(super) fn apply_context_gate(
     };
 
     if invocation.force {
-        return match upsert_emit_row(&conn, invocation, &key, &hash, output.chars().count(), now) {
+        return match upsert_emit_row(
+            &conn,
+            invocation,
+            &key,
+            &hash,
+            "full",
+            output.chars().count(),
+            now,
+        ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "full", &hash);
                 decision(output, ContextGateAction::EmittedFull, "first_or_forced")
@@ -116,7 +136,15 @@ pub(super) fn apply_context_gate(
         };
     }
     if source_requires_fresh_emission(invocation.source.as_deref()) {
-        return match upsert_emit_row(&conn, invocation, &key, &hash, output.chars().count(), now) {
+        return match upsert_emit_row(
+            &conn,
+            invocation,
+            &key,
+            &hash,
+            "full",
+            output.chars().count(),
+            now,
+        ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "restart_source", &hash);
                 decision(output, ContextGateAction::EmittedFull, "restart_source")
@@ -144,10 +172,29 @@ pub(super) fn apply_context_gate(
         };
     }
 
-    match upsert_emit_row(&conn, invocation, &key, &hash, output.chars().count(), now) {
+    let (output, action, output_mode) =
+        if matches!(mode, ContextGateMode::Auto | ContextGateMode::Delta) {
+            (
+                delta::build_delta_output(&output),
+                ContextGateAction::EmittedDelta,
+                "delta",
+            )
+        } else {
+            (output, ContextGateAction::EmittedFull, "full")
+        };
+
+    match upsert_emit_row(
+        &conn,
+        invocation,
+        &key,
+        &hash,
+        output_mode,
+        output.chars().count(),
+        now,
+    ) {
         Ok(()) => {
-            log_gate("emit", invocation, &key, "changed_hash", &hash);
-            decision(output, ContextGateAction::EmittedFull, "changed_hash")
+            log_gate("emit", invocation, &key, output_mode, &hash);
+            decision(output, action, "changed_hash")
         }
         Err(error) => fail_open(output, "gate_write", error),
     }
@@ -183,7 +230,8 @@ fn resolve_gate_mode(cli_value: Option<&str>) -> ContextGateMode {
 
 fn parse_gate_mode(value: &str) -> Option<ContextGateMode> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "auto" | "delta" => Some(ContextGateMode::Auto),
+        "auto" => Some(ContextGateMode::Auto),
+        "delta" => Some(ContextGateMode::Delta),
         "off" | "false" | "0" => Some(ContextGateMode::Off),
         "strict" => Some(ContextGateMode::Strict),
         _ => None,
@@ -269,6 +317,7 @@ fn upsert_emit_row(
     invocation: &ContextInvocation,
     key: &str,
     hash: &str,
+    output_mode: &str,
     output_chars: usize,
     now: i64,
 ) -> Result<()> {
@@ -277,14 +326,14 @@ fn upsert_emit_row(
          (host, project, injection_key, session_id, transcript_path, hook_source, context_hash, output_mode,
           output_chars, created_at_epoch, updated_at_epoch, last_emitted_epoch, emit_count,
           suppress_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'full', ?8, ?9, ?9, ?9, 1, 0)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?10, 1, 0)
          ON CONFLICT(host, injection_key) DO UPDATE SET
           project = excluded.project,
           session_id = excluded.session_id,
           transcript_path = excluded.transcript_path,
           hook_source = excluded.hook_source,
           context_hash = excluded.context_hash,
-          output_mode = 'full',
+          output_mode = excluded.output_mode,
           output_chars = excluded.output_chars,
           updated_at_epoch = excluded.updated_at_epoch,
           last_emitted_epoch = excluded.last_emitted_epoch,
@@ -297,6 +346,7 @@ fn upsert_emit_row(
             invocation.transcript_path,
             invocation.source,
             hash,
+            output_mode,
             output_chars as i64,
             now,
         ],
@@ -532,7 +582,7 @@ mod tests {
         let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
         assert!(load_gate_row(&conn, invocation.host.as_env_value(), &key)?.is_none());
-        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
+        upsert_emit_row(&conn, &invocation, &key, &hash, "full", 32, 100)?;
         let row = load_gate_row(&conn, invocation.host.as_env_value(), &key)?
             .ok_or_else(|| anyhow::anyhow!("missing context injection gate row"))?;
         assert_eq!(row.context_hash, hash);
@@ -600,7 +650,7 @@ mod tests {
         let key = injection_key(&invocation);
         let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
-        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
+        upsert_emit_row(&conn, &invocation, &key, &hash, "full", 32, 100)?;
         record_suppression(&conn, &invocation, &key, 150)?;
 
         let (updated_at_epoch, last_emitted_epoch, suppress_count): (i64, i64, i64) = conn
@@ -646,6 +696,54 @@ mod tests {
     }
 
     #[test]
+    fn delta_mode_emits_compact_changed_hash() -> Result<()> {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-delta");
+        let mut invocation = invocation(Some("sess-delta"));
+        invocation.gate_mode = Some("delta".to_string());
+        let first_output = "# [/tmp/remem] context now\nBody A\n".to_string();
+        let first = apply_context_gate(&invocation, first_output);
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        let changed_output = format!(
+            "# [/tmp/remem] context later\n{}\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=3000 chars/~750 tokens limit=12000 truncated=no\n",
+            "Body B ".repeat(400)
+        );
+        let second = apply_context_gate(&invocation, changed_output.clone());
+        assert_eq!(second.action, ContextGateAction::EmittedDelta);
+        assert_eq!(second.reason, "changed_hash");
+        assert_ne!(second.output, changed_output);
+        assert!(second.output.contains("context delta"));
+        assert!(second.output.chars().count() <= 1200);
+
+        let key = injection_key(&invocation);
+        let mode: String = crate::db::open_db()?.query_row(
+            "SELECT output_mode FROM context_injections WHERE host = ?1 AND injection_key = ?2",
+            params![invocation.host.as_env_value(), key],
+            |row| row.get(0),
+        )?;
+        assert_eq!(mode, "delta");
+        Ok(())
+    }
+
+    #[test]
+    fn auto_mode_emits_delta_on_changed_hash() {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-auto-delta");
+        let invocation = invocation(Some("sess-auto-delta"));
+        let first = apply_context_gate(
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        );
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        let second = apply_context_gate(
+            &invocation,
+            "# [/tmp/remem] context now\nBody B\n".to_string(),
+        );
+        assert_eq!(second.action, ContextGateAction::EmittedDelta);
+        assert_eq!(second.reason, "changed_hash");
+    }
+
+    #[test]
     fn emit_and_suppress_persist_hook_source() -> Result<()> {
         let conn = setup_conn();
         let mut invocation = invocation(Some("sess-source"));
@@ -653,7 +751,7 @@ mod tests {
         let key = injection_key(&invocation);
         let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
-        upsert_emit_row(&conn, &invocation, &key, &hash, 32, 100)?;
+        upsert_emit_row(&conn, &invocation, &key, &hash, "full", 32, 100)?;
         invocation.source = Some("resume".to_string());
         record_suppression(&conn, &invocation, &key, 101)?;
 
