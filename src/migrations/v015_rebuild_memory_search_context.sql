@@ -1,0 +1,5 @@
+-- v015_rebuild_memory_search_context: marker migration.
+--
+-- The Rust migration runner rebuilds `memories.search_context` for this version
+-- using memory::search_context::build_search_context so migrated rows get the
+-- same labeled, command, topic, and file hints as newly written rows.

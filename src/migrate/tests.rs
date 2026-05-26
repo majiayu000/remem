@@ -64,7 +64,7 @@ fn full_migration_on_empty_db() -> Result<()> {
     let applied = applied_versions(&conn)?;
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -132,7 +132,8 @@ fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()
         "INSERT INTO memories(project, topic_key, title, content, memory_type, files,
             created_at_epoch, updated_at_epoch, status)
          VALUES ('proj', 'cache-key-timeout', 'Runtime failure',
-            'Canonical body stays unchanged', 'bugfix',
+            'Symptom: cache key timeout. Fix: run `cargo test retrieval::memory_search`.',
+            'bugfix',
             '[\"src/retrieval/contextprobe.rs\"]', 100, 100, 'active')",
         [],
     )?;
@@ -154,6 +155,9 @@ fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()
     assert!(search_context.contains("type: bugfix"));
     assert!(search_context.contains("topic: cache key timeout"));
     assert!(search_context.contains("src/retrieval/contextprobe.rs"));
+    assert!(search_context.contains("symptom: cache key timeout"));
+    assert!(search_context.contains("fix: run `cargo test retrieval::memory_search`"));
+    assert!(search_context.contains("commands: cargo test retrieval::memory_search"));
 
     let after: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories_fts WHERE memories_fts MATCH 'contextprobe'",
@@ -166,7 +170,10 @@ fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()
         conn.query_row("SELECT content FROM memories WHERE id = 1", [], |row| {
             row.get(0)
         })?;
-    assert_eq!(content, "Canonical body stays unchanged");
+    assert_eq!(
+        content,
+        "Symptom: cache key timeout. Fix: run `cargo test retrieval::memory_search`."
+    );
     Ok(())
 }
 
@@ -436,10 +443,10 @@ fn dry_run_pending_reports_backfill_error_for_broken_schema() -> Result<()> {
     Ok(())
 }
 
-/// Regression: clone_schema used to skip ALL underscore-prefixed tables but not
-/// their dependent indexes. A non-migration _-prefixed table with an explicit index
-/// caused clone_schema to fail with "no such table" because the table DDL was
-/// omitted while the index DDL was still executed.
+/// Regression: the old hand-written schema clone skipped ALL underscore-prefixed
+/// tables but not their dependent indexes. A non-migration _-prefixed table with
+/// an explicit index caused dry-run cloning to fail with "no such table" because
+/// the table DDL was omitted while the index DDL was still executed.
 #[test]
 fn dry_run_clones_non_migration_underscore_table_with_dependent_index() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -460,18 +467,17 @@ fn dry_run_clones_non_migration_underscore_table_with_dependent_index() -> Resul
     let result = dry_run_pending(&conn)?;
     assert!(
         result.error.is_none(),
-        "clone_schema must not fail for non-migration underscore tables with indexes: {:?}",
+        "dry-run clone must not fail for non-migration underscore tables with indexes: {:?}",
         result.error
     );
     Ok(())
 }
 
-/// Regression: clone_schema used SQL-prefix matching to identify _schema_migrations,
-/// which is sensitive to quoting. Bracket-quoted DDL (`CREATE TABLE [_schema_migrations]`)
-/// was not caught, allowing the internal table to bleed into the dry-run database.
-/// Matching on the unquoted `name` column from sqlite_master is immune to quoting.
+/// Regression: the old hand-written schema clone used SQL-prefix matching to
+/// identify _schema_migrations, which is sensitive to quoting. Bracket-quoted
+/// DDL (`CREATE TABLE [_schema_migrations]`) was not caught.
 #[test]
-fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
+fn dry_run_handles_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA user_version = 13;")?;
     create_v13_schema_without_scope(&conn)?;
@@ -485,9 +491,147 @@ fn dry_run_skips_schema_migrations_regardless_of_sql_quoting() -> Result<()> {
     let result = dry_run_pending(&conn)?;
     assert!(
         result.error.is_none(),
-        "dry_run must not fail with bracket-quoted _schema_migrations: {:?}",
+        "dry-run clone must not fail with bracket-quoted _schema_migrations: {:?}",
         result.error
     );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_runs_post_migration_hooks() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch(
+        "PRAGMA user_version = 26;
+         CREATE TABLE memories (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT,
+            project TEXT NOT NULL,
+            topic_key TEXT,
+            title TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            files TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            branch TEXT,
+            scope TEXT DEFAULT 'project',
+            search_context TEXT
+         );
+         CREATE TABLE sdk_sessions (id INTEGER PRIMARY KEY, content_session_id TEXT UNIQUE NOT NULL, memory_session_id TEXT NOT NULL, project TEXT, user_prompt TEXT, started_at TEXT, started_at_epoch INTEGER, status TEXT DEFAULT 'active', prompt_counter INTEGER DEFAULT 1);
+         CREATE TABLE observations (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, type TEXT NOT NULL, title TEXT, subtitle TEXT, narrative TEXT, facts TEXT, concepts TEXT, files_read TEXT, files_modified TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER, discovery_tokens INTEGER DEFAULT 0, status TEXT DEFAULT 'active', last_accessed_epoch INTEGER, branch TEXT, commit_sha TEXT);
+         CREATE TABLE session_summaries (id INTEGER PRIMARY KEY, memory_session_id TEXT NOT NULL, project TEXT, request TEXT, completed TEXT, decisions TEXT, learned TEXT, next_steps TEXT, preferences TEXT, prompt_number INTEGER, created_at TEXT, created_at_epoch INTEGER, discovery_tokens INTEGER DEFAULT 0);
+         CREATE TABLE pending_observations (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, tool_name TEXT NOT NULL, tool_input TEXT, tool_response TEXT, cwd TEXT, created_at_epoch INTEGER NOT NULL, updated_at_epoch INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0, next_retry_epoch INTEGER, last_error TEXT, lease_owner TEXT, lease_expires_epoch INTEGER);
+         CREATE TABLE events (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, project TEXT NOT NULL, event_type TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT, files TEXT, exit_code INTEGER, created_at_epoch INTEGER NOT NULL);
+         CREATE TABLE summarize_cooldown (project TEXT PRIMARY KEY, last_summarize_epoch INTEGER NOT NULL, last_message_hash TEXT);
+         CREATE TABLE summarize_locks (project TEXT PRIMARY KEY, lock_epoch INTEGER NOT NULL);
+         CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+    for migration in &MIGRATIONS[..14] {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 1700000000)",
+            params![migration.version, migration.name],
+        )?;
+    }
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 2);
+    let error = result.error.as_deref().unwrap_or("");
+    assert!(
+        !error.is_empty(),
+        "v015 post-migration hook failure should surface in dry-run"
+    );
+    assert!(error.contains("v015_rebuild_memory_search_context post-migration hook"));
+    assert!(error.contains("failed to rebuild memory search contexts"));
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_runs_hooks_against_complete_fts_clone() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    for migration in &MIGRATIONS[..14] {
+        conn.execute_batch(migration.sql)?;
+    }
+    conn.execute_batch(
+        "PRAGMA user_version = 26;
+         CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+    for migration in &MIGRATIONS[..14] {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 1700000000)",
+            params![migration.version, migration.name],
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO memories(project, topic_key, title, content, memory_type, files,
+            created_at_epoch, updated_at_epoch, status)
+         VALUES ('proj', 'dry-run-fts', 'Dry run FTS',
+            'Issue: dry-run hook update should not fail on memories_fts.',
+            'bugfix',
+            '[\"src/migrate/dry_run.rs\"]', 100, 100, 'active')",
+        [],
+    )?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 2);
+    assert!(
+        result.error.is_none(),
+        "dry-run hook should run against complete FTS clone, got {:?}",
+        result.error
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_clones_non_default_page_size_database() -> Result<()> {
+    let path = unique_temp_db_path("migrate-page-size");
+    {
+        let conn = Connection::open(&path)?;
+        conn.execute_batch("PRAGMA page_size = 8192; PRAGMA foreign_keys=ON;")?;
+        for migration in &MIGRATIONS[..14] {
+            conn.execute_batch(migration.sql)?;
+        }
+        conn.execute_batch(
+            "PRAGMA user_version = 26;
+             CREATE TABLE _schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at_epoch INTEGER NOT NULL
+             );",
+        )?;
+        for migration in &MIGRATIONS[..14] {
+            conn.execute(
+                "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+                 VALUES (?1, ?2, 1700000000)",
+                params![migration.version, migration.name],
+            )?;
+        }
+
+        let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        assert_eq!(page_size, 8192);
+
+        let result = dry_run_pending(&conn)?;
+
+        assert_eq!(result.pending_count, 2);
+        assert!(
+            result.error.is_none(),
+            "dry-run clone should preserve non-default source page size, got {:?}",
+            result.error
+        );
+    }
+    cleanup_temp_db_files(&path);
     Ok(())
 }
 

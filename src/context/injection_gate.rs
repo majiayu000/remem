@@ -1,6 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
+use std::path::{Component, Path, PathBuf};
 
 use super::host::HostKind;
 use super::invocation::ContextInvocation;
@@ -305,15 +306,46 @@ fn injection_key(invocation: &ContextInvocation) -> String {
     if let Some(session_id) = invocation.session_id.as_deref() {
         return format!("session:{}:{}", invocation.project, session_id);
     }
+    let cwd = fallback_cwd_key(&invocation.cwd);
     if let Some(transcript_path) = invocation.transcript_path.as_deref() {
         return format!(
             "fallback:{}:{}:{}",
             invocation.project,
-            invocation.cwd,
+            cwd,
             sha256_hex(transcript_path)
         );
     }
-    format!("fallback:{}:{}", invocation.project, invocation.cwd)
+    format!("fallback:{}:{}", invocation.project, cwd)
+}
+
+fn fallback_cwd_key(cwd: &str) -> String {
+    let path = Path::new(cwd);
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| normalize_path_lexically(path))
+        .to_string_lossy()
+        .to_string()
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !path.is_absolute() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
 }
 
 fn context_fingerprint(output: &str) -> String {
@@ -492,6 +524,34 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(suppress_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn fallback_injection_key_canonicalizes_equivalent_cwd() -> Result<()> {
+        let cwd = std::env::current_dir()?;
+        let mut direct = invocation(None);
+        direct.transcript_path = None;
+        direct.cwd = cwd.to_string_lossy().to_string();
+
+        let mut dotted = direct.clone();
+        dotted.cwd = cwd.join(".").to_string_lossy().to_string();
+
+        assert_eq!(injection_key(&direct), injection_key(&dotted));
+        Ok(())
+    }
+
+    #[test]
+    fn transcript_fallback_injection_key_canonicalizes_equivalent_cwd() -> Result<()> {
+        let cwd = std::env::current_dir()?;
+        let mut direct = invocation(None);
+        direct.cwd = cwd.to_string_lossy().to_string();
+        direct.transcript_path = Some("/tmp/remem-transcript.jsonl".to_string());
+
+        let mut dotted = direct.clone();
+        dotted.cwd = cwd.join(".").to_string_lossy().to_string();
+
+        assert_eq!(injection_key(&direct), injection_key(&dotted));
         Ok(())
     }
 

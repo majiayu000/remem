@@ -2,6 +2,7 @@ use rusqlite::Connection;
 
 const MAX_HINT_CHARS: usize = 180;
 const MAX_CONTEXT_CHARS: usize = 4000;
+const REBUILD_BATCH_SIZE: i64 = 500;
 
 pub fn build_search_context(
     memory_type: &str,
@@ -37,37 +38,63 @@ pub fn build_search_context(
 }
 
 pub fn rebuild_all(conn: &Connection) -> anyhow::Result<usize> {
-    let rows = {
-        let mut stmt = conn.prepare(
-            "SELECT id, topic_key, content, memory_type, files
-             FROM memories",
-        )?;
-        let mapped = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-            ))
-        })?;
-        mapped.collect::<Result<Vec<_>, _>>()?
-    };
-
     let mut changed = 0usize;
-    for (id, topic_key, content, memory_type, files) in rows {
-        let search_context = build_search_context(
-            &memory_type,
-            topic_key.as_deref(),
-            &content,
-            files.as_deref(),
-        );
-        changed += conn.execute(
-            "UPDATE memories SET search_context = ?1 WHERE id = ?2",
-            rusqlite::params![search_context, id],
-        )?;
+    let mut last_id = 0i64;
+
+    loop {
+        let rows = load_rebuild_batch(conn, last_id, REBUILD_BATCH_SIZE)?;
+        let Some(next_last_id) = rows.last().map(|row| row.id) else {
+            break;
+        };
+
+        for row in rows {
+            let search_context = build_search_context(
+                &row.memory_type,
+                row.topic_key.as_deref(),
+                &row.content,
+                row.files.as_deref(),
+            );
+            changed += conn.execute(
+                "UPDATE memories SET search_context = ?1 WHERE id = ?2",
+                rusqlite::params![search_context, row.id],
+            )?;
+        }
+        last_id = next_last_id;
     }
+
     Ok(changed)
+}
+
+struct RebuildRow {
+    id: i64,
+    topic_key: Option<String>,
+    content: String,
+    memory_type: String,
+    files: Option<String>,
+}
+
+fn load_rebuild_batch(
+    conn: &Connection,
+    last_id: i64,
+    batch_size: i64,
+) -> anyhow::Result<Vec<RebuildRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, topic_key, content, memory_type, files
+         FROM memories
+         WHERE id > ?1
+         ORDER BY id
+         LIMIT ?2",
+    )?;
+    let mapped = stmt.query_map(rusqlite::params![last_id, batch_size], |row| {
+        Ok(RebuildRow {
+            id: row.get(0)?,
+            topic_key: row.get(1)?,
+            content: row.get(2)?,
+            memory_type: row.get(3)?,
+            files: row.get(4)?,
+        })
+    })?;
+    mapped.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -231,7 +258,7 @@ fn truncate_context(value: &str) -> String {
 mod tests {
     use rusqlite::Connection;
 
-    use super::{build_search_context, rebuild_all};
+    use super::{build_search_context, rebuild_all, REBUILD_BATCH_SIZE};
 
     #[test]
     fn search_context_includes_rebuildable_structured_hints() {
@@ -278,6 +305,36 @@ mod tests {
         assert!(context.contains("search context rebuild"));
         assert!(context.contains("src/memory/search_context.rs"));
         assert!(context.contains("commands: cargo test"));
+        Ok(())
+    }
+
+    #[test]
+    fn rebuild_all_processes_multiple_batches() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::memory::types::tests_helper::setup_memory_schema(&conn);
+
+        let total = REBUILD_BATCH_SIZE + 3;
+        for id in 1..=total {
+            conn.execute(
+                "INSERT INTO memories
+                 (id, session_id, project, topic_key, title, content, memory_type, files,
+                  created_at_epoch, updated_at_epoch, status, branch, scope)
+                 VALUES (?1, NULL, 'proj', ?2, 'Title',
+                         'Issue: miss. Resolved by adding context. Verified with `cargo test`.',
+                         'bugfix', '[\"src/memory/search_context.rs\"]',
+                         100, 100, 'active', NULL, 'project')",
+                rusqlite::params![id, format!("search-context-rebuild-{id}")],
+            )?;
+        }
+
+        let changed = rebuild_all(&conn)?;
+        assert_eq!(changed, total as usize);
+        let populated: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE search_context IS NOT NULL AND search_context != ''",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(populated, total);
         Ok(())
     }
 }

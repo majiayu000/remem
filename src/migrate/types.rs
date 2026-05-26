@@ -76,6 +76,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/v014_procedure_verifications.sql"),
     },
     Migration {
+        version: 15,
+        name: "rebuild_memory_search_context",
+        sql: include_str!("../migrations/v015_rebuild_memory_search_context.sql"),
+    },
+    Migration {
         version: 16,
         name: "context_injection_gate",
         sql: include_str!("../migrations/v016_context_injection_gate.sql"),
