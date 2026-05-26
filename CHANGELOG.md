@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-26
+
+### Added
+- Added Codex context injection gating for SessionStart hooks: first injection
+  emits full context, duplicate same-session context suppresses empty stdout,
+  and changed context emits compact delta output.
+
+### Fixed
+- Fixed context gate fallback behavior so missing trusted session identity fails
+  open, fallback cwd keys are canonicalized, and expired transcript-only fallback
+  cooldowns re-emit full context instead of compact delta.
+- Fixed context hash normalization for generated debug traces and stats footer
+  totals so unchanged context is not repeatedly injected.
+- Fixed migration dry-run validation to run post-migration hooks against a
+  faithful on-disk backup clone while preserving owner-only temp permissions.
+- Fixed backup import handling for malformed `topic_key` values and improved
+  empty CLI search diagnostics.
+
 ## [0.4.2] - 2026-05-16
 
 ### Fixed
