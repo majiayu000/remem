@@ -4,7 +4,7 @@
 
 语言： [English](README.md) | **简体中文**
 
-`remem` 是 memory for Claude Code and Codex。它是一个 Rust 单二进制程序，会在会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。你不用在每次新会话里重复解释项目。
+`remem` 是 Claude Code 和 Codex 的持久记忆系统。它是一个 Rust 单二进制程序，会在 Claude Code 和 Codex 会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。你不用在每次新会话里重复解释项目。
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,7 +13,7 @@
 
 ## 核心问题
 
-- **会话失忆**：每次新开 Claude Code 会话都要从零解释。
+- **会话失忆**：每次新开 Claude Code 或 Codex 会话都要从零解释。
 - **上下文丢失**：Bug 修复原因、设计取舍会在会话结束后消失。
 - **偏好重复**：同样的编码偏好要反复强调。
 - **缺少连续性**：跨会话推进功能时恢复成本高。
@@ -63,6 +63,43 @@ remem install --dry-run         # 预览配置改动
 ```
 
 安装后重启对应的 AI 编程工具。
+
+## 在 Codex 中使用
+
+只配置 Codex：
+
+```bash
+remem install --target codex
+remem doctor
+remem status
+```
+
+`remem install --target codex` 会配置三类 Codex 集成：
+
+- 在 `~/.codex/config.toml` 中启用 `[features].hooks = true`
+- 在 `~/.codex/config.toml` 中注册 `remem` MCP server
+- 在 `~/.codex/hooks.json` 中写入 Codex hook 命令
+
+重启 Codex 后，remem 会在 session start 自动注入相关项目记忆，并在 stop
+时后台总结本次会话。Codex 也可以调用 `remem mcp` 暴露的 MCP 工具，包括
+`search`、`get_observations`、`save_memory`、`workstreams` 和 `timeline`。
+
+默认 Codex 集成刻意保持低噪音：用 `SessionStart` 注入上下文，用 `Stop`
+做后台总结；默认不安装高频 Bash observe hook。
+
+## 发布渠道
+
+当前已发布：
+
+- GitHub Releases：macOS/Linux 的 x64/arm64 预编译二进制
+- crates.io：`cargo install remem-ai --bin remem`
+- 源码构建：`cargo build --release`
+
+适合继续扩展的渠道：
+
+- Homebrew tap：macOS CLI 最顺手的安装体验
+- npm wrapper package：适合习惯用 npm 安装 CLI 的团队
+- apt/yum packages：等 Linux 的安装路径和服务管理方案稳定后再做
 
 ## 工作机制
 

@@ -4,7 +4,7 @@
 
 Language: **English** | [简体中文](README.zh-CN.md)
 
-`remem` is a single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings. Stop re-explaining your project every new session.
+`remem` is a single Rust binary that automatically captures, distills, and injects project context across Claude Code and Codex sessions: decisions, patterns, preferences, and learnings. Stop re-explaining your project every new session.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,7 +13,7 @@ Language: **English** | [简体中文](README.zh-CN.md)
 
 ## The Problem
 
-- **Session amnesia**: every new Claude Code session starts from zero.
+- **Session amnesia**: every new Claude Code or Codex session starts from zero.
 - **Lost context**: bug-fix rationale and design decisions disappear after the session ends.
 - **Preference fatigue**: the same preferences must be repeated every session.
 - **No continuity**: long-running work is hard to resume with confidence.
@@ -63,6 +63,46 @@ remem install --dry-run         # preview config changes
 ```
 
 Restart your AI coding tool after installation.
+
+## Use With Codex
+
+For Codex-only setup:
+
+```bash
+remem install --target codex
+remem doctor
+remem status
+```
+
+`remem install --target codex` configures Codex in three ways:
+
+- Enables Codex hooks with `[features].hooks = true` in `~/.codex/config.toml`
+- Registers `remem` as an MCP server in `~/.codex/config.toml`
+- Writes Codex hook commands to `~/.codex/hooks.json`
+
+After restarting Codex, remem automatically injects relevant project memory at
+session start and summarizes the session at stop. Codex can also call the MCP
+tools exposed by `remem mcp`, including `search`, `get_observations`,
+`save_memory`, `workstreams`, and `timeline`.
+
+The default Codex integration is intentionally low-noise: it uses
+`SessionStart` for context injection and `Stop` for background summarization.
+It does not install high-frequency Bash observation by default.
+
+## Distribution Channels
+
+Currently published:
+
+- GitHub Releases: prebuilt binaries for macOS and Linux on x64/arm64
+- crates.io: `cargo install remem-ai --bin remem`
+- Source build: `cargo build --release`
+
+Good next channels:
+
+- Homebrew tap: best macOS CLI install experience
+- npm wrapper package: convenient for teams that already install CLIs through npm
+- apt/yum packages: useful later, after the binary install path and service
+  story are stable across Linux distributions
 
 ## How It Works
 

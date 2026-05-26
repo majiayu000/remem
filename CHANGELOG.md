@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- Reframed project metadata and README docs around Claude Code and Codex as
+  first-class hosts, including a Codex setup section and distribution channel
+  guidance.
+
 ## [0.4.5] - 2026-05-26
 
 ### Fixed
