@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+- Added release-binary installation docs for pinned versions, custom install
+  directories, manual GitHub Release downloads, and binary-only installs.
+- Added release asset checksums to future GitHub Releases.
+
+### Fixed
+- Updated GitHub release workflow artifact actions to Node.js 24-compatible
+  versions.
+- Fixed `remem install` binary path resolution so hooks and MCP use the current
+  binary path or `REMEM_INSTALL_BINARY`, instead of always writing
+  `~/.local/bin/remem`.
+
 ## [0.4.3] - 2026-05-26
 
 ### Added

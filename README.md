@@ -30,13 +30,24 @@ Language: **English** | [简体中文](README.zh-CN.md)
 ## Install
 
 ```bash
-# Option 1: Quick install (prebuilt binary)
+# Option 1: Quick install (prebuilt GitHub Release binary)
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
-# Option 2: Cargo
+# Pin a specific release or install into a custom bin directory
+REMEM_VERSION=v0.4.3 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+
+# Option 2: Manual GitHub Release download
+curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
+tar xzf remem-darwin-arm64.tar.gz
+mv remem ~/.local/bin/
+codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
+
+# Option 3: Cargo
 cargo install remem-ai --bin remem
 
-# Option 3: Build from source
+# Option 4: Build from source
 git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release

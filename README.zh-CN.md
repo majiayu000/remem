@@ -30,13 +30,24 @@
 ## 安装
 
 ```bash
-# 方式 1：快速安装（预编译二进制）
+# 方式 1：快速安装（GitHub Release 预编译二进制）
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
-# 方式 2：Cargo 安装
+# 固定版本、指定安装目录，或只安装二进制不改 hooks/MCP
+REMEM_VERSION=v0.4.3 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+
+# 方式 2：手动下载 GitHub Release
+curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
+tar xzf remem-darwin-arm64.tar.gz
+mv remem ~/.local/bin/
+codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
+
+# 方式 3：Cargo 安装
 cargo install remem-ai --bin remem
 
-# 方式 3：源码构建
+# 方式 4：源码构建
 git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release

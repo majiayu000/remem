@@ -2,7 +2,8 @@
 set -e
 
 REPO="majiayu000/remem"
-INSTALL_DIR="${HOME}/.local/bin"
+INSTALL_DIR="${REMEM_INSTALL_DIR:-${INSTALL_DIR:-${HOME}/.local/bin}}"
+REMEM_NO_CONFIG="${REMEM_NO_CONFIG:-0}"
 
 # Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -65,10 +66,17 @@ case ":${PATH}:" in
     ;;
 esac
 
+if [ "${REMEM_NO_CONFIG}" = "1" ]; then
+  echo ""
+  echo "Skipped hook/MCP configuration because REMEM_NO_CONFIG=1."
+  echo "Run 'remem install' later to configure Claude Code/Codex."
+  exit 0
+fi
+
 # Run install to configure hooks + MCP
 echo ""
 echo "Configuring Claude Code/Codex hooks and MCP..."
-"${INSTALL_DIR}/remem" install
+REMEM_INSTALL_BINARY="${INSTALL_DIR}/remem" "${INSTALL_DIR}/remem" install
 
 echo ""
 echo "Done! Restart Claude Code or Codex to activate remem."
