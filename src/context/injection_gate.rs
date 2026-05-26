@@ -53,6 +53,22 @@ pub(super) fn apply_context_gate(
     if mode == ContextGateMode::Off {
         return decision(output, ContextGateAction::Bypassed, "gate_off");
     }
+    if !has_trusted_gate_identity(invocation) {
+        crate::log::warn(
+            "context-gate",
+            &format!(
+                "fail_open reason=missing_session_identity host={} project={} cwd={}",
+                invocation.host.as_env_value(),
+                invocation.project,
+                invocation.cwd
+            ),
+        );
+        return decision(
+            output,
+            ContextGateAction::FailOpen,
+            "missing_session_identity",
+        );
+    }
 
     let hash = context_fingerprint(&output);
     let key = injection_key(invocation);
@@ -188,6 +204,10 @@ fn source_requires_fresh_emission(source: Option<&str>) -> bool {
         source.map(|value| value.trim().to_ascii_lowercase()),
         Some(value) if value == "clear" || value == "compact"
     )
+}
+
+fn has_trusted_gate_identity(invocation: &ContextInvocation) -> bool {
+    invocation.session_id.is_some() || invocation.transcript_path.is_some()
 }
 
 fn fallback_cooldown_allows_suppression(
@@ -553,6 +573,24 @@ mod tests {
 
         assert_eq!(injection_key(&direct), injection_key(&dotted));
         Ok(())
+    }
+
+    #[test]
+    fn cwd_only_fallback_identity_fails_open_without_suppressing() {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-cwd-only");
+        let mut invocation = invocation(None);
+        invocation.transcript_path = None;
+        let output = "# [/tmp/remem] context now\nBody\n".to_string();
+
+        let first = apply_context_gate(&invocation, output.clone());
+        assert_eq!(first.action, ContextGateAction::FailOpen);
+        assert_eq!(first.reason, "missing_session_identity");
+        assert_eq!(first.output, output);
+
+        let second = apply_context_gate(&invocation, output.clone());
+        assert_eq!(second.action, ContextGateAction::FailOpen);
+        assert_eq!(second.reason, "missing_session_identity");
+        assert_eq!(second.output, output);
     }
 
     #[test]
