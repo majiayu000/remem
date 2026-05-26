@@ -15,6 +15,7 @@ pub mod dream;
 pub mod eval;
 mod extraction_worker;
 pub mod git_util;
+mod hook_stdin;
 pub mod identity;
 pub mod install;
 pub mod log;

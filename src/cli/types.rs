@@ -27,6 +27,10 @@ pub(super) enum Commands {
         color: bool,
         #[arg(long)]
         debug: bool,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        gate: Option<String>,
     },
     SessionInit,
     Observe,

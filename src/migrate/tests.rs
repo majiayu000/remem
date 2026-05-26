@@ -64,11 +64,11 @@ fn full_migration_on_empty_db() -> Result<()> {
     let applied = applied_versions(&conn)?;
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 27);
+    assert_eq!(user_version, 28);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -92,6 +92,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_candidates",
         "memory_facts",
         "procedure_verifications",
+        "context_injections",
         "rule_candidates",
     ] {
         let exists: bool = conn
@@ -321,7 +322,7 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 27);
+    assert_eq!(user_version, 28);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -361,7 +362,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 27);
+    assert_eq!(result.current_version, 28);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())
@@ -539,7 +540,7 @@ fn dry_run_pending_runs_post_migration_hooks() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.pending_count, 1);
+    assert_eq!(result.pending_count, 2);
     let error = result.error.as_deref().unwrap_or("");
     assert!(
         !error.is_empty(),
@@ -584,7 +585,7 @@ fn dry_run_pending_runs_hooks_against_complete_fts_clone() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.pending_count, 1);
+    assert_eq!(result.pending_count, 2);
     assert!(
         result.error.is_none(),
         "dry-run hook should run against complete FTS clone, got {:?}",
@@ -623,7 +624,7 @@ fn dry_run_pending_clones_non_default_page_size_database() -> Result<()> {
 
         let result = dry_run_pending(&conn)?;
 
-        assert_eq!(result.pending_count, 1);
+        assert_eq!(result.pending_count, 2);
         assert!(
             result.error.is_none(),
             "dry-run clone should preserve non-default source page size, got {:?}",
