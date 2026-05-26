@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{types::ValueRef, Connection, OpenFlags, Row};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -79,7 +79,7 @@ fn import_memories_into_runtime(
         let source_id: i64 = row.get(0)?;
         let session_id: Option<String> = row.get(1)?;
         let project: String = row.get(2)?;
-        let topic_key: Option<String> = row.get(3)?;
+        let topic_key = read_optional_text_column(row, 3, source_id, "topic_key")?;
         let title: String = row.get(4)?;
         let content: String = row.get(5)?;
         let memory_type: String = row.get(6)?;
@@ -168,6 +168,38 @@ fn optional_column_or_literal(columns: &HashSet<String>, column: &str, literal: 
     }
 }
 
+fn read_optional_text_column(
+    row: &Row<'_>,
+    column_index: usize,
+    source_id: i64,
+    column_name: &str,
+) -> Result<Option<String>> {
+    match row.get_ref(column_index)? {
+        ValueRef::Null => Ok(None),
+        ValueRef::Text(bytes) => match std::str::from_utf8(bytes) {
+            Ok(value) => Ok(Some(value.to_string())),
+            Err(error) => {
+                crate::log::warn(
+                    "import",
+                    &format!(
+                        "source memory id={source_id} has invalid UTF-8 {column_name}; synthesizing imported topic key: {error}"
+                    ),
+                );
+                Ok(None)
+            }
+        },
+        ValueRef::Integer(_) | ValueRef::Real(_) | ValueRef::Blob(_) => {
+            crate::log::warn(
+                "import",
+                &format!(
+                    "source memory id={source_id} has non-text {column_name}; synthesizing imported topic key"
+                ),
+            );
+            Ok(None)
+        }
+    }
+}
+
 fn runtime_memory_exists(
     conn: &Connection,
     project: &str,
@@ -230,6 +262,57 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    #[test]
+    fn backup_import_synthesizes_malformed_topic_key_and_continues() -> Result<()> {
+        let _data_dir = ScopedTestDataDir::new("import-malformed-topic-key");
+        let source_path = unique_temp_db_path("runtime-import-malformed-topic-key");
+        let source = create_source_db(&source_path);
+        let project = "/tmp/remem-import-malformed-topic-key";
+        source.execute(
+            "INSERT INTO memories
+             (id, session_id, project, topic_key, title, content, memory_type, files,
+              created_at_epoch, updated_at_epoch, status, branch, scope)
+             VALUES (1, 's1', ?1, x'0102',
+                     'Malformed topic memory',
+                     'Malformed topic key should synthesize a stable import key',
+                     'discovery', NULL, 100, 200, 'active', NULL, 'project')",
+            [project],
+        )?;
+        source.execute(
+            "INSERT INTO memories
+             (id, session_id, project, topic_key, title, content, memory_type, files,
+              created_at_epoch, updated_at_epoch, status, branch, scope)
+             VALUES (2, 's1', ?1, 'normal-topic',
+                     'Later normal memory',
+                     'Import should continue after malformed topic key',
+                     'discovery', NULL, 100, 200, 'active', NULL, 'project')",
+            [project],
+        )?;
+        drop(source);
+
+        let runtime_conn = crate::db::open_db()?;
+        let stats = import_memories_into_runtime(&source_path, &runtime_conn)?;
+        assert_eq!(stats.memories_imported, 2);
+        assert_eq!(stats.memories_skipped, 0);
+
+        let synthesized_topic_key: String = runtime_conn.query_row(
+            "SELECT topic_key FROM memories WHERE title = 'Malformed topic memory'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(synthesized_topic_key, "imported-1");
+
+        let later_topic_key: String = runtime_conn.query_row(
+            "SELECT topic_key FROM memories WHERE title = 'Later normal memory'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(later_topic_key, "normal-topic");
+
+        cleanup_temp_db_files(&source_path);
+        Ok(())
     }
 
     #[test]
