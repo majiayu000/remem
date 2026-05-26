@@ -1,0 +1,42 @@
+{
+  "name": "@majiayu000/remem",
+  "version": "0.4.5",
+  "description": "Persistent memory for Claude Code and Codex",
+  "license": "MIT",
+  "homepage": "https://github.com/majiayu000/remem#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/majiayu000/remem.git",
+    "directory": "npm/remem"
+  },
+  "bin": {
+    "remem": "bin/remem.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "test": "node bin/remem.js --version"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "keywords": [
+    "claude-code",
+    "codex",
+    "memory",
+    "mcp",
+    "ai"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

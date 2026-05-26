@@ -30,7 +30,10 @@
 ## 安装
 
 ```bash
-# 方式 1：快速安装（GitHub Release 预编译二进制）
+# 方式 1：Homebrew
+brew install majiayu000/tap/remem
+
+# 方式 2：快速安装（GitHub Release 预编译二进制）
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # 固定版本、指定安装目录，或只安装二进制不改 hooks/MCP
@@ -38,16 +41,16 @@ REMEM_VERSION=v0.4.5 curl -fsSL https://raw.githubusercontent.com/majiayu000/rem
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
-# 方式 2：手动下载 GitHub Release
+# 方式 3：手动下载 GitHub Release
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
 
-# 方式 3：Cargo 安装
+# 方式 4：Cargo 安装
 cargo install remem-ai --bin remem
 
-# 方式 4：源码构建
+# 方式 5：源码构建
 git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release
@@ -91,14 +94,18 @@ remem status
 
 当前已发布：
 
+- Homebrew：`brew install majiayu000/tap/remem`
 - GitHub Releases：macOS/Linux 的 x64/arm64 预编译二进制
 - crates.io：`cargo install remem-ai --bin remem`
 - 源码构建：`cargo build --release`
 
+已准备但尚未发布：
+
+- npm wrapper package 位于 `npm/remem`；真正 publish 需要 npm 登录或
+  `NPM_TOKEN` secret
+
 适合继续扩展的渠道：
 
-- Homebrew tap：macOS CLI 最顺手的安装体验
-- npm wrapper package：适合习惯用 npm 安装 CLI 的团队
 - apt/yum packages：等 Linux 的安装路径和服务管理方案稳定后再做
 
 ## 工作机制
