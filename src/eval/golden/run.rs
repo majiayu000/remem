@@ -243,7 +243,7 @@ fn score_results(
         mrr_at_10: reciprocal_rank_from_relevance(&relevance_at_rank_k),
         precision_at_k: relevant_hits as f64 / precision_denominator as f64,
         recall_at_k: matched_refs as f64 / expected_refs.len() as f64,
-        ndcg_at_10: binary_ndcg_at_k(&relevance_at_rank_k, expected_refs.len(), RANK_K),
+        ndcg_at_10: ndcg_at_k(results, expected_refs, RANK_K),
         evidence_recall_at_k: matched_refs as f64 / expected_refs.len() as f64,
     }
 }
@@ -271,18 +271,24 @@ fn reciprocal_rank_from_relevance(relevance: &[bool]) -> f64 {
         .map_or(0.0, |index| 1.0 / (index as f64 + 1.0))
 }
 
-fn binary_ndcg_at_k(relevance: &[bool], expected_count: usize, k: usize) -> f64 {
-    if k == 0 || expected_count == 0 {
+fn ndcg_at_k(results: &[crate::memory::Memory], expected_refs: &[EvidenceRef], k: usize) -> f64 {
+    if k == 0 || expected_refs.is_empty() {
         return 0.0;
     }
-    let dcg: f64 = relevance
+
+    let matches_by_rank: Vec<Vec<usize>> = results
         .iter()
         .take(k)
-        .enumerate()
-        .filter(|(_, is_relevant)| **is_relevant)
-        .map(|(index, _)| 1.0 / (index as f64 + 2.0).log2())
-        .sum();
-    let ideal_hits = expected_count.min(k);
+        .map(|memory| {
+            expected_refs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, evidence_ref)| evidence_ref.matches(memory).then_some(index))
+                .collect()
+        })
+        .collect();
+    let dcg = best_dcg_for_matchable_ranks(&matches_by_rank);
+    let ideal_hits = expected_refs.len().min(k);
     let idcg: f64 = (0..ideal_hits)
         .map(|index| 1.0 / (index as f64 + 2.0).log2())
         .sum();
@@ -291,4 +297,60 @@ fn binary_ndcg_at_k(relevance: &[bool], expected_count: usize, k: usize) -> f64 
     } else {
         dcg / idcg
     }
+}
+
+fn best_dcg_for_matchable_ranks(matches_by_rank: &[Vec<usize>]) -> f64 {
+    let mut best = 0.0;
+    for mask in 1usize..(1usize << matches_by_rank.len()) {
+        let dcg: f64 = (0..matches_by_rank.len())
+            .filter(|rank| (mask & (1usize << rank)) != 0)
+            .map(|rank| 1.0 / (rank as f64 + 2.0).log2())
+            .sum();
+        if dcg > best && can_assign_unique_refs(matches_by_rank, mask) {
+            best = dcg;
+        }
+    }
+    best
+}
+
+fn can_assign_unique_refs(matches_by_rank: &[Vec<usize>], mask: usize) -> bool {
+    let mut selected_ranks: Vec<usize> = (0..matches_by_rank.len())
+        .filter(|rank| (mask & (1usize << rank)) != 0)
+        .collect();
+    if selected_ranks
+        .iter()
+        .any(|rank| matches_by_rank[*rank].is_empty())
+    {
+        return false;
+    }
+    selected_ranks.sort_by_key(|rank| matches_by_rank[*rank].len());
+
+    let mut assigned_refs = HashSet::new();
+    assign_rank_ref(0, &selected_ranks, matches_by_rank, &mut assigned_refs)
+}
+
+fn assign_rank_ref(
+    selected_index: usize,
+    selected_ranks: &[usize],
+    matches_by_rank: &[Vec<usize>],
+    assigned_refs: &mut HashSet<usize>,
+) -> bool {
+    let Some(rank) = selected_ranks.get(selected_index).copied() else {
+        return true;
+    };
+
+    for ref_index in &matches_by_rank[rank] {
+        if assigned_refs.insert(*ref_index) {
+            if assign_rank_ref(
+                selected_index + 1,
+                selected_ranks,
+                matches_by_rank,
+                assigned_refs,
+            ) {
+                return true;
+            }
+            assigned_refs.remove(ref_index);
+        }
+    }
+    false
 }

@@ -75,6 +75,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "procedure_verifications",
         sql: include_str!("../migrations/v014_procedure_verifications.sql"),
     },
+    Migration {
+        version: 15,
+        name: "rebuild_memory_search_context",
+        sql: include_str!("../migrations/v015_rebuild_memory_search_context.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
