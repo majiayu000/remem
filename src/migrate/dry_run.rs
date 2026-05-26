@@ -158,7 +158,14 @@ impl DryRunTempPath {
                 .context("system time before unix epoch")?
                 .as_nanos();
             let path = temp_dir.join(format!("remem-dry-run-{}-{nonce}-{counter}", process::id()));
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
                 Ok(_) => return Ok(Self { path }),
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
                 Err(error) => {
@@ -211,6 +218,17 @@ fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
+
+    #[cfg(unix)]
+    #[test]
+    fn dry_run_temp_path_uses_owner_only_permissions() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_path = DryRunTempPath::create()?;
+        let mode = fs::metadata(temp_path.path())?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        Ok(())
+    }
 
     #[test]
     fn dry_run_temp_path_uses_on_disk_database_and_cleans_up() -> Result<()> {
