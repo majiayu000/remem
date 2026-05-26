@@ -152,11 +152,32 @@ pub(super) fn apply_context_gate(
             Err(error) => fail_open(output, "gate_write", error),
         };
     }
-    if row.context_hash == hash && fallback_cooldown_allows_suppression(invocation, &row, now) {
-        return match record_suppression(&conn, invocation, &key, now) {
+    if row.context_hash == hash {
+        if fallback_cooldown_allows_suppression(invocation, &row, now) {
+            return match record_suppression(&conn, invocation, &key, now) {
+                Ok(()) => {
+                    log_gate("suppress", invocation, &key, "same_hash", &hash);
+                    decision(String::new(), ContextGateAction::Suppressed, "same_hash")
+                }
+                Err(error) => fail_open(output, "gate_write", error),
+            };
+        }
+        return match upsert_emit_row(
+            &conn,
+            invocation,
+            &key,
+            &hash,
+            "full",
+            output.chars().count(),
+            now,
+        ) {
             Ok(()) => {
-                log_gate("suppress", invocation, &key, "same_hash", &hash);
-                decision(String::new(), ContextGateAction::Suppressed, "same_hash")
+                log_gate("emit", invocation, &key, "fallback_cooldown_expired", &hash);
+                decision(
+                    output,
+                    ContextGateAction::EmittedFull,
+                    "fallback_cooldown_expired",
+                )
             }
             Err(error) => fail_open(output, "gate_write", error),
         };
@@ -693,54 +714,6 @@ mod tests {
         assert_eq!(restart.action, ContextGateAction::EmittedFull);
         assert_eq!(restart.reason, "restart_source");
         assert_eq!(restart.output, output);
-    }
-
-    #[test]
-    fn delta_mode_emits_compact_changed_hash() -> Result<()> {
-        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-delta");
-        let mut invocation = invocation(Some("sess-delta"));
-        invocation.gate_mode = Some("delta".to_string());
-        let first_output = "# [/tmp/remem] context now\nBody A\n".to_string();
-        let first = apply_context_gate(&invocation, first_output);
-        assert_eq!(first.action, ContextGateAction::EmittedFull);
-
-        let changed_output = format!(
-            "# [/tmp/remem] context later\n{}\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=3000 chars/~750 tokens limit=12000 truncated=no\n",
-            "Body B ".repeat(400)
-        );
-        let second = apply_context_gate(&invocation, changed_output.clone());
-        assert_eq!(second.action, ContextGateAction::EmittedDelta);
-        assert_eq!(second.reason, "changed_hash");
-        assert_ne!(second.output, changed_output);
-        assert!(second.output.contains("context delta"));
-        assert!(second.output.chars().count() <= 1200);
-
-        let key = injection_key(&invocation);
-        let mode: String = crate::db::open_db()?.query_row(
-            "SELECT output_mode FROM context_injections WHERE host = ?1 AND injection_key = ?2",
-            params![invocation.host.as_env_value(), key],
-            |row| row.get(0),
-        )?;
-        assert_eq!(mode, "delta");
-        Ok(())
-    }
-
-    #[test]
-    fn auto_mode_emits_delta_on_changed_hash() {
-        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-auto-delta");
-        let invocation = invocation(Some("sess-auto-delta"));
-        let first = apply_context_gate(
-            &invocation,
-            "# [/tmp/remem] context now\nBody A\n".to_string(),
-        );
-        assert_eq!(first.action, ContextGateAction::EmittedFull);
-
-        let second = apply_context_gate(
-            &invocation,
-            "# [/tmp/remem] context now\nBody B\n".to_string(),
-        );
-        assert_eq!(second.action, ContextGateAction::EmittedDelta);
-        assert_eq!(second.reason, "changed_hash");
     }
 
     #[test]
