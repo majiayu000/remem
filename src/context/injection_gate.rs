@@ -335,10 +335,63 @@ fn normalize_context_for_hash(output: &str) -> String {
                 continue;
             }
         }
-        normalized.push_str(line);
+        normalized.push_str(&normalize_stats_footer_totals(line));
         normalized.push('\n');
     }
     normalized
+}
+
+fn normalize_stats_footer_totals(line: &str) -> String {
+    const TOTAL_PREFIX: &str = " total=";
+    const CHARS_TOKEN: &str = " chars/~";
+    const TOKENS_SUFFIX: &str = " tokens";
+
+    if !is_context_stats_footer(line) {
+        return line.to_string();
+    }
+
+    let Some(total_start) = line.find(TOTAL_PREFIX) else {
+        return line.to_string();
+    };
+    let total_value_start = total_start + TOTAL_PREFIX.len();
+    let Some(chars_offset) = line[total_value_start..].find(CHARS_TOKEN) else {
+        return line.to_string();
+    };
+    let total_value_end = total_value_start + chars_offset;
+    if !line[total_value_start..total_value_end]
+        .chars()
+        .all(|ch| ch.is_ascii_digit())
+    {
+        return line.to_string();
+    }
+
+    let token_value_start = total_value_end + CHARS_TOKEN.len();
+    let Some(tokens_offset) = line[token_value_start..].find(TOKENS_SUFFIX) else {
+        return line.to_string();
+    };
+    let token_value_end = token_value_start + tokens_offset;
+    if !line[token_value_start..token_value_end]
+        .chars()
+        .all(|ch| ch.is_ascii_digit())
+    {
+        return line.to_string();
+    }
+
+    let mut normalized = String::with_capacity(line.len());
+    normalized.push_str(&line[..total_value_start]);
+    normalized.push_str("<total>");
+    normalized.push_str(CHARS_TOKEN);
+    normalized.push_str("<tokens>");
+    normalized.push_str(&line[token_value_end..]);
+    normalized
+}
+
+fn is_context_stats_footer(line: &str) -> bool {
+    line.contains(" context memories loaded. ")
+        && line.contains(" host=")
+        && line.contains(" branch=")
+        && line.contains(" total=")
+        && line.contains(" truncated=")
 }
 
 fn sha256_hex(value: &str) -> String {
@@ -401,6 +454,22 @@ mod tests {
         let b = "# [/tmp/remem] context 2026-05-25 2:00pm\nBody\n";
 
         assert_eq!(context_fingerprint(a), context_fingerprint(b));
+    }
+
+    #[test]
+    fn fingerprint_ignores_footer_totals_derived_from_header_width() {
+        let a = "# [/tmp/remem] context 2026-05-25 9:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=100 chars/~25 tokens limit=12000 truncated=no\n";
+        let b = "# [/tmp/remem] context 2026-05-25 10:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=101 chars/~26 tokens limit=12000 truncated=no\n";
+
+        assert_eq!(context_fingerprint(a), context_fingerprint(b));
+    }
+
+    #[test]
+    fn fingerprint_keeps_non_footer_total_text() {
+        let a = "# [/tmp/remem] context now\nBody total=100 chars/~25 tokens\n";
+        let b = "# [/tmp/remem] context now\nBody total=101 chars/~26 tokens\n";
+
+        assert_ne!(context_fingerprint(a), context_fingerprint(b));
     }
 
     #[test]
