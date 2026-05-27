@@ -50,6 +50,7 @@ impl MemoryServer {
                 .into_iter()
                 .map(|msg| RawSearchHit {
                     id: msg.id,
+                    source_type: "raw_archive".to_string(),
                     session_id: msg.session_id,
                     project: msg.project,
                     role: msg.role,

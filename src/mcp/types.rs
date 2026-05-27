@@ -127,6 +127,7 @@ pub(super) struct SearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
     pub source: String,
+    pub source_type: String,
     pub updated_at: String,
     pub project: String,
     pub status: String,
@@ -155,6 +156,7 @@ pub(super) struct SearchRawParams {
 #[derive(Debug, Serialize)]
 pub(super) struct RawSearchHit {
     pub id: i64,
+    pub source_type: String,
     pub session_id: String,
     pub project: String,
     pub role: String,
