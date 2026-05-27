@@ -2,6 +2,7 @@ pub mod dedup;
 pub mod events;
 pub mod facts;
 pub mod format;
+pub mod governance;
 pub mod lifecycle;
 pub mod preference;
 pub mod procedure;

@@ -4,8 +4,8 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
     run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval,
-    run_eval_local, run_import, run_pending, run_preferences, run_review, run_search, run_show,
-    run_status, run_usage,
+    run_eval_local, run_governance, run_import, run_pending, run_preferences, run_review,
+    run_search, run_show, run_status, run_usage,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -57,6 +57,23 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
+        Commands::Govern {
+            project,
+            action,
+            reason,
+            actor,
+            confirm_destructive,
+            dry_run,
+            ids,
+        } => run_governance(
+            project.as_deref(),
+            action,
+            reason.as_deref(),
+            actor.as_deref(),
+            confirm_destructive,
+            dry_run,
+            &ids,
+        )?,
         Commands::Usage {
             project,
             days,

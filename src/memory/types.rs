@@ -49,6 +49,14 @@ pub const MEMORY_TYPES: &[&str] = &[
 pub const MEMORY_COLS: &str = "id, session_id, project, topic_key, title, content, memory_type, \
                               files, created_at_epoch, updated_at_epoch, status, branch, scope";
 
+pub fn memory_status_filter_sql(column: &str, include_inactive: bool) -> String {
+    if include_inactive {
+        format!("{column} IN ('active', 'stale', 'archived')")
+    } else {
+        format!("{column} = 'active'")
+    }
+}
+
 pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     map_memory_row(row)
 }

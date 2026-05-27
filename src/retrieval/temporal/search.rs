@@ -30,9 +30,10 @@ pub fn search_by_time_filtered(
     ];
     let mut idx = 3;
 
-    if !include_inactive {
-        conditions.push("status = 'active'".to_string());
-    }
+    conditions.push(crate::memory::memory_status_filter_sql(
+        "status",
+        include_inactive,
+    ));
     if let Some(project) = project {
         conditions.push(crate::retrieval::memory_search::project_or_global_clause(
             "project", idx,

@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::cli::types::MemoryGovernanceCliAction;
 use crate::{db, memory};
 
 pub(in crate::cli) async fn run_dream(project: Option<&str>, dry_run: bool) -> Result<()> {
@@ -61,5 +62,53 @@ pub(in crate::cli) fn run_cleanup() -> Result<()> {
         "  Stale memories archived (>180 days): {}",
         memories_archived
     );
+    Ok(())
+}
+
+pub(in crate::cli) fn run_governance(
+    project: Option<&str>,
+    action: MemoryGovernanceCliAction,
+    reason: Option<&str>,
+    actor: Option<&str>,
+    confirm_destructive: bool,
+    dry_run: bool,
+    ids: &[i64],
+) -> Result<()> {
+    let cwd = crate::cli::cwd::resolve_cwd_arg(None);
+    let project = project
+        .map(str::to_owned)
+        .unwrap_or_else(|| db::project_from_cwd(&cwd));
+    let action = match action {
+        MemoryGovernanceCliAction::Delete => memory::governance::MemoryGovernanceAction::Delete,
+        MemoryGovernanceCliAction::Reject => memory::governance::MemoryGovernanceAction::Reject,
+        MemoryGovernanceCliAction::Stale => memory::governance::MemoryGovernanceAction::MarkStale,
+    };
+    let conn = db::open_db()?;
+    let result = memory::governance::govern_memories(
+        &conn,
+        &memory::governance::GovernMemoryRequest {
+            project: &project,
+            ids,
+            action,
+            reason,
+            actor,
+            dry_run,
+            confirm_destructive,
+        },
+    )?;
+    let mode = if result.dry_run { "dry-run" } else { "applied" };
+    println!(
+        "memory governance {} action={} project={} affected={}",
+        mode,
+        result.action,
+        project,
+        result.affected.len()
+    );
+    for memory in result.affected {
+        println!(
+            "  id={} {} -> {} title={}",
+            memory.id, memory.previous_status, memory.new_status, memory.title
+        );
+    }
     Ok(())
 }

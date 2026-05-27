@@ -327,6 +327,47 @@ fn load_context_data_excludes_preferences_before_candidate_limit() {
 }
 
 #[test]
+fn load_context_data_excludes_deleted_and_rejected_memories() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+
+    for (idx, title, status) in [
+        (1, "Deleted memory", "deleted"),
+        (2, "Rejected memory", "rejected"),
+        (3, "Active memory", "active"),
+    ] {
+        insert_memory(
+            &conn,
+            idx,
+            project,
+            Some(&format!("governance-status-{idx}")),
+            "decision",
+            title,
+            "Context should include only active governed memories.",
+            now + idx,
+        );
+        if status != "active" {
+            conn.execute(
+                "UPDATE memories SET status = ?1 WHERE id = ?2",
+                rusqlite::params![status, idx],
+            )
+            .unwrap();
+        }
+    }
+
+    let loaded = load_context_data(&conn, project, None);
+    let titles: Vec<_> = loaded
+        .memories
+        .iter()
+        .map(|memory| memory.title.as_str())
+        .collect();
+
+    assert_eq!(titles, vec!["Active memory"]);
+}
+
+#[test]
 fn load_context_data_excludes_global_non_preferences_from_main_memory_pool() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
