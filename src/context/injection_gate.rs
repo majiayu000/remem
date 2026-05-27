@@ -581,8 +581,8 @@ mod tests {
 
     #[test]
     fn fingerprint_ignores_footer_totals_derived_from_header_width() {
-        let a = "# [/tmp/remem] context 2026-05-25 9:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=100 chars/~25 tokens limit=12000 truncated=no\n";
-        let b = "# [/tmp/remem] context 2026-05-25 10:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=101 chars/~26 tokens limit=12000 truncated=no\n";
+        let a = "# [/tmp/remem] context 2026-05-25 9:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=100 chars/~25 tokens limit=12000 truncated=no\n";
+        let b = "# [/tmp/remem] context 2026-05-25 10:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=101 chars/~26 tokens limit=12000 truncated=no\n";
 
         assert_eq!(context_fingerprint(a), context_fingerprint(b));
     }
@@ -750,11 +750,11 @@ mod tests {
     fn fingerprint_ignores_generated_debug_trace() {
         let base = "# [/tmp/remem] context now\nBody\n";
         let a = format!(
-            "{}\n## Debug Trace\n- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=main session=sess-1\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=100 chars/~25 tokens limit=12000 truncated=no\n",
+            "{}\n## Debug Trace\n- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=main session=sess-1\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=100 chars/~25 tokens limit=12000 truncated=no\n",
             base
         );
         let b = format!(
-            "{}\n## Debug Trace\n- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=dev session=sess-2\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=dev total=120 chars/~30 tokens limit=12000 truncated=no\n",
+            "{}\n## Debug Trace\n- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=dev session=sess-2\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=dev total=120 chars/~30 tokens limit=12000 truncated=no\n",
             base
         );
 

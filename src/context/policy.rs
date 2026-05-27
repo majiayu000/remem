@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SectionKind {
     Preferences,
+    Lessons,
     Core,
     Workstreams,
     MemoryIndex,
@@ -30,6 +31,8 @@ pub(super) struct ContextLimits {
     pub preference_project_limit: usize,
     pub preference_global_limit: usize,
     pub preference_char_limit: usize,
+    pub lesson_limit: usize,
+    pub lesson_char_limit: usize,
 }
 
 impl Default for ContextLimits {
@@ -46,6 +49,8 @@ impl Default for ContextLimits {
             preference_project_limit: 20,
             preference_global_limit: 0,
             preference_char_limit: 1_500,
+            lesson_limit: 4,
+            lesson_char_limit: 1_200,
         }
     }
 }
@@ -117,6 +122,16 @@ impl ContextLimits {
                 "REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT",
                 defaults.preference_char_limit,
             ),
+            lesson_limit: read_usize(
+                &mut read,
+                "REMEM_CONTEXT_LESSON_LIMIT",
+                defaults.lesson_limit,
+            ),
+            lesson_char_limit: read_usize(
+                &mut read,
+                "REMEM_CONTEXT_LESSON_CHAR_LIMIT",
+                defaults.lesson_char_limit,
+            ),
         }
     }
 }
@@ -144,11 +159,18 @@ impl ContextPolicy {
                     exclude_types: vec![],
                 },
                 SectionPolicy {
+                    kind: SectionKind::Lessons,
+                    item_limit: limits.lesson_limit,
+                    char_limit: limits.lesson_char_limit,
+                    include_types: vec!["lesson"],
+                    exclude_types: vec![],
+                },
+                SectionPolicy {
                     kind: SectionKind::Core,
                     item_limit: limits.core_item_limit,
                     char_limit: limits.core_char_limit,
                     include_types: vec!["bugfix", "architecture", "decision", "discovery"],
-                    exclude_types: vec!["preference", "session_activity"],
+                    exclude_types: vec!["preference", "lesson", "session_activity"],
                 },
                 SectionPolicy {
                     kind: SectionKind::Workstreams,
@@ -162,7 +184,7 @@ impl ContextPolicy {
                     item_limit: limits.memory_index_limit,
                     char_limit: limits.memory_index_char_limit,
                     include_types: vec![],
-                    exclude_types: vec!["preference"],
+                    exclude_types: vec!["preference", "lesson"],
                 },
                 SectionPolicy {
                     kind: SectionKind::Sessions,

@@ -41,6 +41,7 @@ pub const MEMORY_TYPES: &[&str] = &[
     "discovery",
     "bugfix",
     "architecture",
+    "lesson",
     "preference",
     "procedure",
     "session_activity",
@@ -156,6 +157,14 @@ pub mod tests_helper {
                 memory_id INTEGER NOT NULL,
                 entity_id INTEGER NOT NULL,
                 PRIMARY KEY(memory_id, entity_id)
+            );
+            CREATE TABLE IF NOT EXISTS memory_lessons (
+                memory_id INTEGER PRIMARY KEY,
+                confidence REAL NOT NULL DEFAULT 0.7,
+                reinforcement_count INTEGER NOT NULL DEFAULT 1,
+                source_evidence TEXT,
+                last_reinforced_at_epoch INTEGER NOT NULL,
+                stale_after_epoch INTEGER
             );",
         )
         .unwrap();

@@ -32,6 +32,18 @@ pub(super) fn load_context_data_with_policy(
 ) -> LoadedContext {
     let mut memories = load_project_memories(conn, project, current_branch, policy);
     sort_memories_by_branch(&mut memories, current_branch);
+    let lessons = memory::lesson::list_lessons_for_context(
+        conn,
+        project,
+        policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit) as i64,
+    )
+    .unwrap_or_else(|e| {
+        crate::log::error(
+            "context",
+            &format!("failed to load lessons for {project}: {e}"),
+        );
+        Vec::new()
+    });
 
     let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
         .unwrap_or_else(|e| {
@@ -52,6 +64,7 @@ pub(super) fn load_context_data_with_policy(
 
     LoadedContext {
         memories,
+        lessons,
         summaries,
         workstreams,
     }

@@ -1,3 +1,4 @@
+use crate::memory::lesson::LessonMemory;
 use crate::memory::Memory;
 use crate::workstream::WorkStream;
 
@@ -23,6 +24,7 @@ pub(super) struct SessionSummaryBrief {
 #[derive(Debug)]
 pub(super) struct LoadedContext {
     pub memories: Vec<Memory>,
+    pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
 }
