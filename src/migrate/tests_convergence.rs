@@ -34,6 +34,8 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "jobs",
     "workstreams",
     "workstream_sessions",
+    "git_commits",
+    "git_commit_sessions",
 ];
 
 fn make_upgraded_v10_db() -> Result<Connection> {

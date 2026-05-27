@@ -88,6 +88,19 @@ pub(super) fn finalize_summary(
         &format!("saved summary project={} session={}", project, session_id),
     );
 
+    let linked_commits =
+        crate::git_trace::link_observed_commits_for_session(conn, project, session_id, memory_sid)
+            .context("failed to link observed commits for summarized session")?;
+    if linked_commits > 0 {
+        crate::log::info(
+            "summary-job",
+            &format!(
+                "linked {} observed commit(s) project={} session={}",
+                linked_commits, project, session_id
+            ),
+        );
+    }
+
     if let Some(workstream) = parsed_workstream_from_summary(&summary) {
         match crate::workstream::upsert_workstream(conn, project, memory_sid, &workstream) {
             Ok(workstream_id) => crate::log::info(

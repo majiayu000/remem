@@ -1,0 +1,702 @@
+use anyhow::{bail, Result};
+use rusqlite::types::Type;
+use rusqlite::{params, Connection, OptionalExtension, Row};
+use serde::{Deserialize, Serialize};
+
+use crate::git_util::{short_sha_for, GitCommitMetadata};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitCommitRecord {
+    pub id: i64,
+    pub project: String,
+    pub repo_path: String,
+    pub sha: String,
+    pub short_sha: String,
+    pub branch: Option<String>,
+    pub message: Option<String>,
+    pub authored_at_epoch: Option<i64>,
+    pub changed_files: Vec<String>,
+    pub created_at_epoch: i64,
+    pub updated_at_epoch: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionSummaryTrace {
+    pub request: Option<String>,
+    pub completed: Option<String>,
+    pub decisions: Option<String>,
+    pub learned: Option<String>,
+    pub next_steps: Option<String>,
+    pub preferences: Option<String>,
+    pub created_at_epoch: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitSessionLink {
+    pub session_id: String,
+    pub memory_session_id: Option<String>,
+    pub source: String,
+    pub linked_at_epoch: i64,
+    pub summary: Option<SessionSummaryTrace>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommitLookup {
+    pub git: GitCommitRecord,
+    pub sessions: Vec<CommitSessionLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionCommit {
+    pub git: GitCommitRecord,
+    pub link: CommitSessionLink,
+}
+
+pub struct CommitMetadataInput<'a> {
+    pub project: &'a str,
+    pub repo_path: Option<&'a str>,
+    pub sha: &'a str,
+    pub short_sha: Option<&'a str>,
+    pub branch: Option<&'a str>,
+    pub message: Option<&'a str>,
+    pub authored_at_epoch: Option<i64>,
+    pub changed_files: &'a [String],
+}
+
+pub struct CommitLinkInput<'a> {
+    pub metadata: CommitMetadataInput<'a>,
+    pub session_id: &'a str,
+    pub memory_session_id: Option<&'a str>,
+    pub source: &'a str,
+}
+
+pub fn upsert_commit_metadata(conn: &Connection, input: &CommitMetadataInput<'_>) -> Result<i64> {
+    let sha = normalize_sha(input.sha)?;
+    let short_sha = input
+        .short_sha
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| short_sha_for(&sha));
+    let repo_path = input
+        .repo_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(input.project);
+    let changed_files = serde_json::to_string(input.changed_files)?;
+    let now = chrono::Utc::now().timestamp();
+
+    if sha != short_sha {
+        if let Some(id) = conn
+            .query_row(
+                "SELECT id FROM git_commits WHERE project = ?1 AND sha = ?2",
+                params![input.project, short_sha],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        {
+            conn.execute(
+                "UPDATE git_commits SET
+                   repo_path = ?1,
+                   sha = ?2,
+                   short_sha = ?3,
+                   branch = COALESCE(?4, branch),
+                   message = COALESCE(?5, message),
+                   authored_at_epoch = COALESCE(?6, authored_at_epoch),
+                   changed_files = CASE WHEN ?7 != '[]' THEN ?7 ELSE changed_files END,
+                   updated_at_epoch = ?8
+                 WHERE id = ?9",
+                params![
+                    repo_path,
+                    sha,
+                    short_sha,
+                    input.branch,
+                    input.message,
+                    input.authored_at_epoch,
+                    changed_files,
+                    now,
+                    id
+                ],
+            )?;
+            return Ok(id);
+        }
+    }
+
+    conn.execute(
+        "INSERT INTO git_commits
+         (project, repo_path, sha, short_sha, branch, message, authored_at_epoch,
+          changed_files, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+         ON CONFLICT(project, sha) DO UPDATE SET
+           repo_path = excluded.repo_path,
+           short_sha = excluded.short_sha,
+           branch = COALESCE(excluded.branch, git_commits.branch),
+           message = COALESCE(excluded.message, git_commits.message),
+           authored_at_epoch = COALESCE(excluded.authored_at_epoch, git_commits.authored_at_epoch),
+           changed_files = CASE
+             WHEN excluded.changed_files != '[]' THEN excluded.changed_files
+             ELSE git_commits.changed_files
+           END,
+           updated_at_epoch = excluded.updated_at_epoch",
+        params![
+            input.project,
+            repo_path,
+            sha,
+            short_sha,
+            input.branch,
+            input.message,
+            input.authored_at_epoch,
+            changed_files,
+            now
+        ],
+    )?;
+
+    let id = conn.query_row(
+        "SELECT id FROM git_commits WHERE project = ?1 AND sha = ?2",
+        params![input.project, sha],
+        |row| row.get(0),
+    )?;
+    Ok(id)
+}
+
+pub fn link_commit_to_session(conn: &Connection, input: &CommitLinkInput<'_>) -> Result<i64> {
+    let session_id = input.session_id.trim();
+    if session_id.is_empty() {
+        bail!("session_id is required to link a commit");
+    }
+    let source = input.source.trim();
+    if source.is_empty() {
+        bail!("source is required to link a commit");
+    }
+
+    let commit_id = upsert_commit_metadata(conn, &input.metadata)?;
+    link_session_to_commit_id(conn, commit_id, session_id, input.memory_session_id, source)?;
+    Ok(commit_id)
+}
+
+pub fn link_git_metadata_to_session(
+    conn: &Connection,
+    project: &str,
+    session_id: &str,
+    memory_session_id: &str,
+    metadata: &GitCommitMetadata,
+    source: &str,
+) -> Result<i64> {
+    link_commit_to_session(
+        conn,
+        &CommitLinkInput {
+            metadata: CommitMetadataInput {
+                project,
+                repo_path: Some(&metadata.repo_path),
+                sha: &metadata.sha,
+                short_sha: Some(&metadata.short_sha),
+                branch: metadata.branch.as_deref(),
+                message: metadata.message.as_deref(),
+                authored_at_epoch: metadata.authored_at_epoch,
+                changed_files: &metadata.changed_files,
+            },
+            session_id,
+            memory_session_id: Some(memory_session_id),
+            source,
+        },
+    )
+}
+
+pub fn link_observed_commit_to_session(
+    conn: &Connection,
+    project: &str,
+    session_id: &str,
+    memory_session_id: &str,
+    commit_sha: &str,
+    branch: Option<&str>,
+    metadata: Option<&GitCommitMetadata>,
+) -> Result<i64> {
+    if let Some(metadata) = metadata.filter(|metadata| metadata.matches_sha(commit_sha)) {
+        return link_git_metadata_to_session(
+            conn,
+            project,
+            session_id,
+            memory_session_id,
+            metadata,
+            "git_metadata",
+        );
+    }
+
+    if let Some(commit_id) = find_existing_commit_id(conn, project, commit_sha)? {
+        link_session_to_commit_id(
+            conn,
+            commit_id,
+            session_id,
+            Some(memory_session_id),
+            "observations",
+        )?;
+        return Ok(commit_id);
+    }
+
+    let changed_files = Vec::new();
+    link_commit_to_session(
+        conn,
+        &CommitLinkInput {
+            metadata: CommitMetadataInput {
+                project,
+                repo_path: Some(project),
+                sha: commit_sha,
+                short_sha: None,
+                branch,
+                message: None,
+                authored_at_epoch: None,
+                changed_files: &changed_files,
+            },
+            session_id,
+            memory_session_id: Some(memory_session_id),
+            source: "observations",
+        },
+    )
+}
+
+pub fn link_observed_commits_for_session(
+    conn: &Connection,
+    project: &str,
+    session_id: &str,
+    memory_session_id: &str,
+) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT commit_sha, branch
+         FROM observations
+         WHERE project = ?1
+           AND memory_session_id = ?2
+           AND commit_sha IS NOT NULL
+           AND length(trim(commit_sha)) > 0
+         GROUP BY commit_sha, branch",
+    )?;
+    let rows = stmt.query_map(params![project, memory_session_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    let observed = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+    for (commit_sha, branch) in &observed {
+        link_observed_commit_to_session(
+            conn,
+            project,
+            session_id,
+            memory_session_id,
+            commit_sha,
+            branch.as_deref(),
+            None,
+        )?;
+    }
+
+    Ok(observed.len())
+}
+
+fn find_existing_commit_id(
+    conn: &Connection,
+    project: &str,
+    sha_or_prefix: &str,
+) -> Result<Option<i64>> {
+    let needle = normalize_sha(sha_or_prefix)?;
+    let prefix = format!("{needle}%");
+    let mut stmt = conn.prepare(
+        "SELECT id
+         FROM git_commits
+         WHERE project = ?1
+           AND (sha = ?2 OR short_sha = ?2 OR sha LIKE ?3 OR short_sha LIKE ?3)
+         ORDER BY CASE WHEN sha = ?2 THEN 0 WHEN short_sha = ?2 THEN 1 ELSE 2 END,
+                  updated_at_epoch DESC
+         LIMIT 2",
+    )?;
+    let ids = stmt
+        .query_map(params![project, needle, prefix], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    match ids.as_slice() {
+        [] => Ok(None),
+        [id] => Ok(Some(*id)),
+        _ => bail!("ambiguous commit SHA prefix: {sha_or_prefix}"),
+    }
+}
+
+fn link_session_to_commit_id(
+    conn: &Connection,
+    commit_id: i64,
+    session_id: &str,
+    memory_session_id: Option<&str>,
+    source: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO git_commit_sessions
+         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(commit_id, session_id) DO UPDATE SET
+           memory_session_id = COALESCE(excluded.memory_session_id, git_commit_sessions.memory_session_id),
+           source = excluded.source",
+        params![commit_id, session_id, memory_session_id, source, now],
+    )?;
+    Ok(())
+}
+
+pub fn lookup_commit(
+    conn: &Connection,
+    project: Option<&str>,
+    sha_or_prefix: &str,
+) -> Result<Vec<CommitLookup>> {
+    let needle = normalize_sha(sha_or_prefix)?;
+    let prefix = format!("{needle}%");
+    let commits = if let Some(project) = project {
+        let mut stmt = conn.prepare(
+            "SELECT id, project, repo_path, sha, short_sha, branch, message,
+                    authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch
+             FROM git_commits
+             WHERE project = ?1
+               AND (sha = ?2 OR short_sha = ?2 OR sha LIKE ?3 OR short_sha LIKE ?3)
+             ORDER BY CASE WHEN sha = ?2 THEN 0 WHEN short_sha = ?2 THEN 1 ELSE 2 END,
+                      updated_at_epoch DESC
+             LIMIT 20",
+        )?;
+        let rows = stmt.query_map(params![project, needle, prefix], commit_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, project, repo_path, sha, short_sha, branch, message,
+                    authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch
+             FROM git_commits
+             WHERE sha = ?1 OR short_sha = ?1 OR sha LIKE ?2 OR short_sha LIKE ?2
+             ORDER BY CASE WHEN sha = ?1 THEN 0 WHEN short_sha = ?1 THEN 1 ELSE 2 END,
+                      updated_at_epoch DESC
+             LIMIT 20",
+        )?;
+        let rows = stmt.query_map(params![needle, prefix], commit_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    commits
+        .into_iter()
+        .map(|git| {
+            let sessions = linked_sessions_for_commit(conn, git.id, &git.project)?;
+            Ok(CommitLookup { git, sessions })
+        })
+        .collect()
+}
+
+pub fn commits_for_session(
+    conn: &Connection,
+    project: Option<&str>,
+    session_id: &str,
+    limit: i64,
+) -> Result<Vec<SessionCommit>> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        bail!("session_id is required");
+    }
+    let limit = limit.clamp(1, 100);
+    if let Some(project) = project {
+        query_session_commits(
+            conn,
+            "WHERE c.project = ?1 AND (l.session_id = ?2 OR l.memory_session_id = ?2)",
+            params![project, session_id, limit],
+        )
+    } else {
+        query_session_commits(
+            conn,
+            "WHERE l.session_id = ?1 OR l.memory_session_id = ?1",
+            params![session_id, limit],
+        )
+    }
+}
+
+fn query_session_commits<P>(
+    conn: &Connection,
+    where_clause: &str,
+    params: P,
+) -> Result<Vec<SessionCommit>>
+where
+    P: rusqlite::Params,
+{
+    let sql = format!(
+        "SELECT c.id, c.project, c.repo_path, c.sha, c.short_sha, c.branch, c.message,
+                c.authored_at_epoch, c.changed_files, c.created_at_epoch, c.updated_at_epoch,
+                l.session_id, l.memory_session_id, l.source, l.linked_at_epoch,
+                ss.request, ss.completed, ss.decisions, ss.learned, ss.next_steps,
+                ss.preferences, ss.created_at_epoch
+         FROM git_commit_sessions l
+         JOIN git_commits c ON c.id = l.commit_id
+         LEFT JOIN session_summaries ss
+           ON ss.memory_session_id = l.memory_session_id
+          AND ss.project = c.project
+         {where_clause}
+         ORDER BY COALESCE(c.authored_at_epoch, c.updated_at_epoch) DESC, c.id DESC
+         LIMIT ?{}",
+        if where_clause.contains("?2") {
+            "3"
+        } else {
+            "2"
+        }
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params, |row| {
+        Ok(SessionCommit {
+            git: commit_from_row(row)?,
+            link: link_from_row(row, 11)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn linked_sessions_for_commit(
+    conn: &Connection,
+    commit_id: i64,
+    project: &str,
+) -> Result<Vec<CommitSessionLink>> {
+    let mut stmt = conn.prepare(
+        "SELECT l.session_id, l.memory_session_id, l.source, l.linked_at_epoch,
+                ss.request, ss.completed, ss.decisions, ss.learned, ss.next_steps,
+                ss.preferences, ss.created_at_epoch
+         FROM git_commit_sessions l
+         LEFT JOIN session_summaries ss
+           ON ss.memory_session_id = l.memory_session_id
+          AND ss.project = ?2
+         WHERE l.commit_id = ?1
+         ORDER BY l.linked_at_epoch DESC",
+    )?;
+    let rows = stmt.query_map(params![commit_id, project], |row| link_from_row(row, 0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn normalize_sha(raw: &str) -> Result<String> {
+    let sha = raw.trim();
+    if sha.is_empty() {
+        bail!("commit SHA is required");
+    }
+    Ok(sha.to_string())
+}
+
+fn commit_from_row(row: &Row<'_>) -> rusqlite::Result<GitCommitRecord> {
+    Ok(GitCommitRecord {
+        id: row.get(0)?,
+        project: row.get(1)?,
+        repo_path: row.get(2)?,
+        sha: row.get(3)?,
+        short_sha: row.get(4)?,
+        branch: row.get(5)?,
+        message: row.get(6)?,
+        authored_at_epoch: row.get(7)?,
+        changed_files: changed_files_from_row(row, 8)?,
+        created_at_epoch: row.get(9)?,
+        updated_at_epoch: row.get(10)?,
+    })
+}
+
+fn link_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<CommitSessionLink> {
+    let summary = summary_from_row(row, offset + 4)?;
+    Ok(CommitSessionLink {
+        session_id: row.get(offset)?,
+        memory_session_id: row.get(offset + 1)?,
+        source: row.get(offset + 2)?,
+        linked_at_epoch: row.get(offset + 3)?,
+        summary,
+    })
+}
+
+fn summary_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Option<SessionSummaryTrace>> {
+    let summary = SessionSummaryTrace {
+        request: row.get(offset)?,
+        completed: row.get(offset + 1)?,
+        decisions: row.get(offset + 2)?,
+        learned: row.get(offset + 3)?,
+        next_steps: row.get(offset + 4)?,
+        preferences: row.get(offset + 5)?,
+        created_at_epoch: row.get(offset + 6)?,
+    };
+    if summary.request.is_none()
+        && summary.completed.is_none()
+        && summary.decisions.is_none()
+        && summary.learned.is_none()
+        && summary.next_steps.is_none()
+        && summary.preferences.is_none()
+        && summary.created_at_epoch.is_none()
+    {
+        Ok(None)
+    } else {
+        Ok(Some(summary))
+    }
+}
+
+fn changed_files_from_row(row: &Row<'_>, idx: usize) -> rusqlite::Result<Vec<String>> {
+    let raw: String = row.get(idx)?;
+    serde_json::from_str(&raw)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(idx, Type::Text, Box::new(err)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn migrated_db() -> Result<Connection> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        Ok(conn)
+    }
+
+    fn metadata_input<'a>(changed_files: &'a [String]) -> CommitMetadataInput<'a> {
+        CommitMetadataInput {
+            project: "proj",
+            repo_path: Some("/repo"),
+            sha: "abcdef1234567890abcdef1234567890abcdef12",
+            short_sha: Some("abcdef1"),
+            branch: Some("main"),
+            message: Some("Add traceability"),
+            authored_at_epoch: Some(1_700_000_000),
+            changed_files,
+        }
+    }
+
+    #[test]
+    fn link_lookup_and_session_reverse_lookup_are_idempotent() -> Result<()> {
+        let conn = migrated_db()?;
+        let changed_files = vec!["src/lib.rs".to_string(), "README.md".to_string()];
+        let input = CommitLinkInput {
+            metadata: metadata_input(&changed_files),
+            session_id: "content-session-1",
+            memory_session_id: Some("mem-session-1"),
+            source: "git_metadata",
+        };
+
+        let first_id = link_commit_to_session(&conn, &input)?;
+        let second_id = link_commit_to_session(&conn, &input)?;
+        assert_eq!(first_id, second_id);
+
+        let link_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM git_commit_sessions WHERE commit_id = ?1",
+            [first_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(link_count, 1);
+
+        let full = lookup_commit(
+            &conn,
+            Some("proj"),
+            "abcdef1234567890abcdef1234567890abcdef12",
+        )?;
+        assert_eq!(full.len(), 1);
+        assert_eq!(full[0].git.short_sha, "abcdef1");
+        assert_eq!(full[0].git.changed_files, changed_files);
+        assert_eq!(full[0].sessions.len(), 1);
+        assert_eq!(full[0].sessions[0].session_id, "content-session-1");
+
+        let short = lookup_commit(&conn, Some("proj"), "abcdef1")?;
+        assert_eq!(short.len(), 1);
+        assert_eq!(short[0].git.sha, full[0].git.sha);
+
+        let session_commits = commits_for_session(&conn, Some("proj"), "content-session-1", 10)?;
+        assert_eq!(session_commits.len(), 1);
+        assert_eq!(session_commits[0].git.short_sha, "abcdef1");
+
+        let memory_session_commits = commits_for_session(&conn, Some("proj"), "mem-session-1", 10)?;
+        assert_eq!(memory_session_commits.len(), 1);
+        assert_eq!(
+            memory_session_commits[0].link.memory_session_id.as_deref(),
+            Some("mem-session-1")
+        );
+
+        link_observed_commit_to_session(
+            &conn,
+            "proj",
+            "content-session-2",
+            "mem-session-2",
+            "abcdef1",
+            Some("main"),
+            None,
+        )?;
+        let commit_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM git_commits", [], |row| row.get(0))?;
+        assert_eq!(commit_count, 1);
+        let relinked = lookup_commit(&conn, Some("proj"), "abcdef1")?;
+        assert_eq!(relinked[0].sessions.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn full_metadata_upgrades_existing_short_sha_record() -> Result<()> {
+        let conn = migrated_db()?;
+        link_observed_commit_to_session(
+            &conn,
+            "proj",
+            "content-session-1",
+            "mem-session-1",
+            "abcdef1",
+            Some("main"),
+            None,
+        )?;
+
+        let changed_files = vec!["src/git_trace.rs".to_string()];
+        link_commit_to_session(
+            &conn,
+            &CommitLinkInput {
+                metadata: metadata_input(&changed_files),
+                session_id: "content-session-2",
+                memory_session_id: Some("mem-session-2"),
+                source: "git_metadata",
+            },
+        )?;
+
+        let commit_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM git_commits", [], |row| row.get(0))?;
+        assert_eq!(commit_count, 1);
+        let results = lookup_commit(
+            &conn,
+            Some("proj"),
+            "abcdef1234567890abcdef1234567890abcdef12",
+        )?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].git.short_sha, "abcdef1");
+        assert_eq!(results[0].git.changed_files, changed_files);
+        assert_eq!(results[0].sessions.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_metadata_without_link_returns_no_sessions() -> Result<()> {
+        let conn = migrated_db()?;
+        let changed_files = Vec::new();
+        let commit_id = upsert_commit_metadata(&conn, &metadata_input(&changed_files))?;
+        assert!(commit_id > 0);
+
+        let results = lookup_commit(&conn, Some("proj"), "abcdef1")?;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].sessions.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn summary_is_memory_derived_and_optional() -> Result<()> {
+        let conn = migrated_db()?;
+        let changed_files = Vec::new();
+        conn.execute(
+            "INSERT INTO session_summaries
+             (memory_session_id, project, request, completed, created_at, created_at_epoch)
+             VALUES ('mem-session-1', 'proj', 'Need traceability', 'Linked commits',
+                     '2026-01-01T00:00:00Z', 1)",
+            [],
+        )?;
+        link_commit_to_session(
+            &conn,
+            &CommitLinkInput {
+                metadata: metadata_input(&changed_files),
+                session_id: "content-session-1",
+                memory_session_id: Some("mem-session-1"),
+                source: "git_metadata",
+            },
+        )?;
+
+        let results = lookup_commit(&conn, Some("proj"), "abcdef1")?;
+        let summary = results[0].sessions[0]
+            .summary
+            .as_ref()
+            .expect("linked summary should be returned");
+        assert_eq!(summary.request.as_deref(), Some("Need traceability"));
+        assert_eq!(summary.completed.as_deref(), Some("Linked commits"));
+        Ok(())
+    }
+}

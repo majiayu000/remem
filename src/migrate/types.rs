@@ -85,6 +85,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "context_injection_gate",
         sql: include_str!("../migrations/v016_context_injection_gate.sql"),
     },
+    Migration {
+        version: 18,
+        name: "commit_session_links",
+        sql: include_str!("../migrations/v018_commit_session_links.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

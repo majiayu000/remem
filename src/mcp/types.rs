@@ -50,6 +50,24 @@ pub(super) struct GetObservationsParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct CommitLookupParams {
+    #[schemars(description = "Full or short git commit SHA to look up")]
+    pub sha: String,
+    #[schemars(description = "Optional project filter")]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct SessionCommitsParams {
+    #[schemars(description = "Content session ID or remem memory session ID")]
+    pub session_id: String,
+    #[schemars(description = "Optional project filter")]
+    pub project: Option<String>,
+    #[schemars(description = "Max linked commits to return (default 20, max 100)")]
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct SaveMemoryParams {
     #[schemars(description = "Memory text content")]
     pub text: String,

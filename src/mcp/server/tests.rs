@@ -1,6 +1,6 @@
 use rmcp::handler::server::wrapper::Parameters;
 
-use super::super::types::SearchParams;
+use super::super::types::{CommitLookupParams, SearchParams, SessionCommitsParams};
 use super::MemoryServer;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::service::{resolve_local_note_path, sanitize_segment};
@@ -65,4 +65,57 @@ fn search_reopens_database_after_file_removal() {
     }));
     assert!(second.is_ok());
     assert!(test_dir.db_path().exists());
+}
+
+#[test]
+fn commit_tools_return_git_metadata_separate_from_session_summary() {
+    let _test_dir = ScopedTestDataDir::new("mcp-commit");
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let conn = crate::db::open_db().expect("test database should open");
+    let changed_files = vec!["src/git_trace.rs".to_string()];
+    crate::git_trace::link_commit_to_session(
+        &conn,
+        &crate::git_trace::CommitLinkInput {
+            metadata: crate::git_trace::CommitMetadataInput {
+                project: "proj",
+                repo_path: Some("/repo"),
+                sha: "abcdef1234567890abcdef1234567890abcdef12",
+                short_sha: Some("abcdef1"),
+                branch: Some("main"),
+                message: Some("Add traceability"),
+                authored_at_epoch: Some(1_700_000_000),
+                changed_files: &changed_files,
+            },
+            session_id: "content-session-1",
+            memory_session_id: Some("mem-session-1"),
+            source: "git_metadata",
+        },
+    )
+    .expect("commit should link");
+
+    let lookup = server
+        .lookup_commit(Parameters(CommitLookupParams {
+            sha: "abcdef1".to_string(),
+            project: Some("proj".to_string()),
+        }))
+        .expect("lookup_commit should succeed");
+    let lookup_json: serde_json::Value =
+        serde_json::from_str(&lookup).expect("lookup response should be JSON");
+    assert_eq!(lookup_json[0]["git"]["short_sha"], "abcdef1");
+    assert_eq!(
+        lookup_json[0]["sessions"][0]["session_id"],
+        "content-session-1"
+    );
+
+    let session = server
+        .commits_for_session(Parameters(SessionCommitsParams {
+            session_id: "mem-session-1".to_string(),
+            project: Some("proj".to_string()),
+            limit: Some(5),
+        }))
+        .expect("commits_for_session should succeed");
+    let session_json: serde_json::Value =
+        serde_json::from_str(&session).expect("session response should be JSON");
+    assert_eq!(session_json[0]["git"]["short_sha"], "abcdef1");
+    assert_eq!(session_json[0]["link"]["source"], "git_metadata");
 }

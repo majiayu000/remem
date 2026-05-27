@@ -14,6 +14,7 @@ pub mod doctor;
 pub mod dream;
 pub mod eval;
 mod extraction_worker;
+pub mod git_trace;
 pub mod git_util;
 mod hook_stdin;
 pub mod identity;
