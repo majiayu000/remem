@@ -121,6 +121,7 @@ fn promote_learned_items(
                     content: &content,
                     confidence: lesson_confidence(item),
                     source_evidence: (!request_text.is_empty()).then_some(request_text),
+                    files: None,
                     branch: None,
                     scope: "project",
                     created_at_epoch: None,

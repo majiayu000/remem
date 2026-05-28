@@ -31,6 +31,7 @@ pub struct SaveLessonRequest<'a> {
     pub content: &'a str,
     pub confidence: f64,
     pub source_evidence: Option<&'a str>,
+    pub files: Option<&'a str>,
     pub branch: Option<&'a str>,
     pub scope: &'a str,
     pub created_at_epoch: Option<i64>,
@@ -56,7 +57,7 @@ pub fn save_lesson(conn: &Connection, req: &SaveLessonRequest<'_>) -> Result<i64
         req.title,
         req.content,
         "lesson",
-        None,
+        req.files,
         req.branch,
         scope,
         req.created_at_epoch,
@@ -105,7 +106,7 @@ fn upsert_lesson_metadata(
            reinforcement_count = memory_lessons.reinforcement_count + ?6,
            source_evidence = COALESCE(excluded.source_evidence, memory_lessons.source_evidence),
            last_reinforced_at_epoch = excluded.last_reinforced_at_epoch,
-           stale_after_epoch = COALESCE(excluded.stale_after_epoch, memory_lessons.stale_after_epoch)",
+           stale_after_epoch = excluded.stale_after_epoch",
         params![
             memory_id,
             confidence,
@@ -133,6 +134,7 @@ pub fn get_lesson_metadata(conn: &Connection, memory_id: i64) -> Result<Option<L
 pub fn list_lessons_for_context(
     conn: &Connection,
     project: &str,
+    current_branch: Option<&str>,
     limit: i64,
 ) -> Result<Vec<LessonMemory>> {
     if limit <= 0 {
@@ -150,16 +152,23 @@ pub fn list_lessons_for_context(
            AND (m.project = ?1 OR m.scope = 'global')
            AND l.confidence >= ?2
            AND (l.stale_after_epoch IS NULL OR l.stale_after_epoch > ?3)
+           AND (?4 IS NULL OR m.branch = ?4 OR m.branch IS NULL)
          ORDER BY
            CASE WHEN m.project = ?1 THEN 0 ELSE 1 END,
            l.confidence DESC,
            l.reinforcement_count DESC,
            l.last_reinforced_at_epoch DESC
-         LIMIT ?4",
+         LIMIT ?5",
         cols = prefixed_memory_cols("m")
     ))?;
     let rows = stmt.query_map(
-        params![project, MIN_CONFIDENCE_FOR_CONTEXT, now, limit],
+        params![
+            project,
+            MIN_CONFIDENCE_FOR_CONTEXT,
+            now,
+            current_branch,
+            limit
+        ],
         |row| {
             let memory = map_memory_row_pub(row)?;
             let metadata = map_lesson_metadata_from_offset(row, 13)?;

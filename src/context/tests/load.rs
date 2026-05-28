@@ -344,6 +344,7 @@ fn load_context_data_loads_lessons_separately_from_main_memory_pool() {
             content: "Lesson: after repeated build failures, stop and challenge the hypothesis.",
             confidence: 0.9,
             source_evidence: Some("build failed repeatedly"),
+            files: None,
             branch: None,
             scope: "project",
             created_at_epoch: Some(now),
@@ -377,6 +378,47 @@ fn load_context_data_loads_lessons_separately_from_main_memory_pool() {
 }
 
 #[test]
+fn load_context_data_filters_lessons_by_current_branch() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+
+    for (title, branch) in [
+        ("Main lesson", Some("main")),
+        ("Feature lesson", Some("feature/context")),
+    ] {
+        save_lesson(
+            &conn,
+            &SaveLessonRequest {
+                session_id: Some("s1"),
+                project,
+                topic_key: Some(&title.replace(' ', "-").to_lowercase()),
+                title,
+                content:
+                    "Lesson: branch-specific lessons should follow the current context branch.",
+                confidence: 0.9,
+                source_evidence: None,
+                files: None,
+                branch,
+                scope: "project",
+                created_at_epoch: None,
+                stale_after_epoch: None,
+            },
+        )
+        .unwrap();
+    }
+
+    let loaded = load_context_data(&conn, project, Some("main"));
+    let titles: Vec<_> = loaded
+        .lessons
+        .iter()
+        .map(|lesson| lesson.memory.title.as_str())
+        .collect();
+
+    assert_eq!(titles, vec!["Main lesson"]);
+}
+
+#[test]
 fn load_context_data_filters_lessons_before_candidate_limit_and_keeps_core_memory() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
@@ -402,6 +444,7 @@ fn load_context_data_filters_lessons_before_candidate_limit_and_keeps_core_memor
                 content: "Lesson: this should not enter context because confidence is too low.",
                 confidence: 0.2,
                 source_evidence: None,
+                files: None,
                 branch: None,
                 scope: "project",
                 created_at_epoch: Some(now + idx),

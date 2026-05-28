@@ -18,6 +18,7 @@ fn save_lesson_creates_metadata() {
             content: "Lesson: after repeated build failures, stop and challenge the hypothesis.",
             confidence: 0.8,
             source_evidence: Some("cargo check failed twice"),
+            files: None,
             branch: Some("main"),
             scope: "project",
             created_at_epoch: None,
@@ -50,6 +51,7 @@ fn save_lesson_reinforces_duplicate_topic() {
         content: "Lesson: after repeated build failures, stop and challenge the hypothesis.",
         confidence: 0.6,
         source_evidence: Some("first run"),
+        files: None,
         branch: None,
         scope: "project",
         created_at_epoch: None,
@@ -75,6 +77,50 @@ fn save_lesson_reinforces_duplicate_topic() {
 }
 
 #[test]
+fn save_lesson_reinforcement_clears_stale_deadline() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let now = chrono::Utc::now().timestamp();
+
+    let req = SaveLessonRequest {
+        session_id: Some("s1"),
+        project: "/repo",
+        topic_key: Some("lesson-stale-refresh"),
+        title: "Refresh stale lesson",
+        content:
+            "Lesson: a reinforced lesson should become usable again when it is no longer stale.",
+        confidence: 0.7,
+        source_evidence: Some("first run"),
+        files: None,
+        branch: None,
+        scope: "project",
+        created_at_epoch: None,
+        stale_after_epoch: Some(now - 1),
+    };
+    let id = save_lesson(&conn, &req).unwrap();
+    assert!(list_lessons_for_context(&conn, "/repo", None, 10)
+        .unwrap()
+        .is_empty());
+
+    let refreshed_id = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            source_evidence: Some("second run"),
+            stale_after_epoch: None,
+            ..req
+        },
+    )
+    .unwrap();
+
+    assert_eq!(id, refreshed_id);
+    let metadata = get_lesson_metadata(&conn, id).unwrap().unwrap();
+    assert_eq!(metadata.stale_after_epoch, None);
+    let lessons = list_lessons_for_context(&conn, "/repo", None, 10).unwrap();
+    assert_eq!(lessons.len(), 1);
+    assert_eq!(lessons[0].memory.title, "Refresh stale lesson");
+}
+
+#[test]
 fn list_lessons_for_context_filters_low_confidence_and_stale() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
@@ -93,6 +139,7 @@ fn list_lessons_for_context_filters_low_confidence_and_stale() {
                 content: "Lesson: use evidence-backed fixes for recurring failures.",
                 confidence,
                 source_evidence: None,
+                files: None,
                 branch: None,
                 scope: "project",
                 created_at_epoch: None,
@@ -102,9 +149,55 @@ fn list_lessons_for_context_filters_low_confidence_and_stale() {
         .unwrap();
     }
 
-    let lessons = list_lessons_for_context(&conn, "/repo", 10).unwrap();
+    let lessons = list_lessons_for_context(&conn, "/repo", None, 10).unwrap();
     assert_eq!(lessons.len(), 1);
     assert_eq!(lessons[0].memory.title, "Lesson 1");
+}
+
+#[test]
+fn list_lessons_for_context_filters_other_branches() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    for (title, branch) in [
+        ("Main branch lesson", Some("main")),
+        ("Feature branch lesson", Some("feature/search")),
+        ("Branchless lesson", None),
+    ] {
+        save_lesson(
+            &conn,
+            &SaveLessonRequest {
+                session_id: Some("s1"),
+                project: "/repo",
+                topic_key: Some(&title.replace(' ', "-").to_lowercase()),
+                title,
+                content: "Lesson: branch-specific context should not leak into unrelated branches.",
+                confidence: 0.8,
+                source_evidence: None,
+                files: None,
+                branch,
+                scope: "project",
+                created_at_epoch: None,
+                stale_after_epoch: None,
+            },
+        )
+        .unwrap();
+    }
+
+    let mut titles: Vec<_> = list_lessons_for_context(&conn, "/repo", Some("main"), 10)
+        .unwrap()
+        .into_iter()
+        .map(|lesson| lesson.memory.title)
+        .collect();
+    titles.sort();
+    assert_eq!(titles, vec!["Branchless lesson", "Main branch lesson"]);
+
+    let all_titles: Vec<_> = list_lessons_for_context(&conn, "/repo", None, 10)
+        .unwrap()
+        .into_iter()
+        .map(|lesson| lesson.memory.title)
+        .collect();
+    assert!(all_titles.contains(&"Feature branch lesson".to_string()));
 }
 
 #[test]
@@ -122,6 +215,7 @@ fn list_lessons_for_context_keeps_project_before_global_scope() {
             content: "Lesson: use the verified workflow when every project hits this failure.",
             confidence: 0.99,
             source_evidence: None,
+            files: None,
             branch: None,
             scope: "global",
             created_at_epoch: None,
@@ -139,6 +233,7 @@ fn list_lessons_for_context_keeps_project_before_global_scope() {
             content: "Lesson: this project-local item should not leak into unrelated projects.",
             confidence: 0.95,
             source_evidence: None,
+            files: None,
             branch: None,
             scope: "project",
             created_at_epoch: None,
@@ -156,6 +251,7 @@ fn list_lessons_for_context_keeps_project_before_global_scope() {
             content: "Lesson: prefer the project-specific workflow before global advice.",
             confidence: 0.6,
             source_evidence: None,
+            files: None,
             branch: None,
             scope: "project",
             created_at_epoch: None,
@@ -164,7 +260,7 @@ fn list_lessons_for_context_keeps_project_before_global_scope() {
     )
     .unwrap();
 
-    let lessons = list_lessons_for_context(&conn, "/repo", 10).unwrap();
+    let lessons = list_lessons_for_context(&conn, "/repo", None, 10).unwrap();
     let titles: Vec<_> = lessons
         .iter()
         .map(|lesson| lesson.memory.title.as_str())
@@ -187,7 +283,7 @@ fn list_lessons_for_context_ranks_confidence_reinforcement_and_recency() {
     set_lesson_rank(&conn, newer_reinforced, 3, 200);
     set_lesson_rank(&conn, lower_reinforced, 2, 300);
 
-    let lessons = list_lessons_for_context(&conn, "/repo", 10).unwrap();
+    let lessons = list_lessons_for_context(&conn, "/repo", None, 10).unwrap();
     let titles: Vec<_> = lessons
         .iter()
         .map(|lesson| lesson.memory.title.as_str())
@@ -225,6 +321,7 @@ fn save_ranked_lesson(conn: &Connection, title: &str, confidence: f64) -> anyhow
             content: "Lesson: keep deterministic ranking when many lessons compete for context.",
             confidence,
             source_evidence: None,
+            files: None,
             branch: None,
             scope: "project",
             created_at_epoch: None,

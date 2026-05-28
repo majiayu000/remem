@@ -35,6 +35,7 @@ pub(super) fn load_context_data_with_policy(
     let lessons = memory::lesson::list_lessons_for_context(
         conn,
         project,
+        current_branch,
         policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit) as i64,
     )
     .unwrap_or_else(|e| {
