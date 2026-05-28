@@ -54,6 +54,46 @@ fn make_fresh_db() -> Result<Connection> {
     Ok(conn)
 }
 
+#[test]
+fn migrations_define_memories_table_once() -> Result<()> {
+    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("migrations");
+    let mut ddl_sources = Vec::new();
+
+    for entry in std::fs::read_dir(&migrations_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sql") {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            !file_name.starts_with("schema_"),
+            "secondary schema migration source must not exist: {file_name}"
+        );
+
+        let sql = std::fs::read_to_string(&path)?;
+        let normalized = sql.to_ascii_lowercase().replace('\n', " ");
+        if normalized.contains("create table if not exists memories")
+            || normalized.contains("create table memories")
+        {
+            ddl_sources.push(file_name);
+        }
+    }
+
+    ddl_sources.sort();
+    assert_eq!(
+        ddl_sources,
+        vec!["v001_baseline.sql".to_string()],
+        "exactly one canonical memories table DDL source is allowed"
+    );
+    Ok(())
+}
+
 /// Return sorted column names for a table via PRAGMA table_info.
 fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
