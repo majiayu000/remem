@@ -4,11 +4,30 @@ use serde_json::Value;
 use super::super::types::{
     CommitLookupParams, GetObservationsParams, SearchParams, SessionCommitsParams,
 };
+use super::errors::{self, McpErrorCode, McpToolError};
 use super::MemoryServer;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::memory;
 use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
 use crate::memory::service::{resolve_local_note_path, sanitize_segment};
+
+fn assert_mcp_error(
+    err: McpToolError,
+    expected_code: McpErrorCode,
+    expected_tool: &str,
+    expected_retryable: bool,
+) -> Value {
+    assert_eq!(err.code(), expected_code);
+    let json: Value = match serde_json::from_str(&err.to_string()) {
+        Ok(json) => json,
+        Err(parse_err) => panic!("error should be JSON: {parse_err}"),
+    };
+    assert_eq!(json["error"]["code"], expected_code.wire_code());
+    assert_eq!(json["error"]["tool"], expected_tool);
+    assert_eq!(json["error"]["retryable"], expected_retryable);
+    assert!(json["error"]["message"].as_str().is_some());
+    json
+}
 
 #[test]
 fn sanitize_segment_collapses_invalid_chars() {
@@ -255,6 +274,178 @@ fn get_observations_rejects_unknown_source() {
         source: Some("raw_archive".to_string()),
     }));
 
-    let err = result.expect_err("unknown source should be rejected");
-    assert!(err.contains("expected 'memory' or 'observation'"));
+    let err = match result {
+        Ok(value) => panic!("unknown source should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(
+        err,
+        McpErrorCode::UnsupportedSource,
+        "get_observations",
+        false,
+    );
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("expected 'memory' or 'observation'")));
+}
+
+#[test]
+fn get_observations_reports_missing_memory_ids_as_not_found() {
+    let _dir = ScopedTestDataDir::new("mcp-get-observations-missing");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let result = server.get_observations(Parameters(GetObservationsParams {
+        ids: vec![999_999],
+        project: None,
+        source: Some("memory".to_string()),
+    }));
+
+    let err = match result {
+        Ok(value) => panic!("missing memory should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::NotFound, "get_observations", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("999999")));
+}
+
+#[test]
+fn timeline_rejects_missing_anchor_and_query_as_invalid_request() {
+    let _dir = ScopedTestDataDir::new("mcp-timeline-invalid-request");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let result = server.timeline(Parameters(super::super::types::TimelineParams {
+        anchor: None,
+        query: None,
+        depth_before: None,
+        depth_after: None,
+        project: None,
+    }));
+
+    let err = match result {
+        Ok(value) => panic!("missing anchor and query should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "timeline", false);
+    assert_eq!(json["error"]["message"], "anchor or query required");
+}
+
+#[test]
+fn timeline_reports_query_miss_as_not_found() {
+    let _dir = ScopedTestDataDir::new("mcp-timeline-not-found");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let result = server.timeline(Parameters(super::super::types::TimelineParams {
+        anchor: None,
+        query: Some("definitely-not-in-empty-db".to_string()),
+        depth_before: None,
+        depth_after: None,
+        project: None,
+    }));
+
+    let err = match result {
+        Ok(value) => panic!("query miss should be not_found, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::NotFound, "timeline", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("No results for query")));
+}
+
+#[test]
+fn mcp_tool_errors_report_db_open_failure_as_retryable() {
+    let test_dir = ScopedTestDataDir::new("mcp-db-open-error");
+    if let Err(err) = std::fs::remove_dir_all(&test_dir.path) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            panic!("remove temp dir: {err}");
+        }
+    }
+    if let Err(err) = std::fs::write(&test_dir.path, "not a directory") {
+        panic!("create blocking file: {err}");
+    }
+
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+    let result = server.search(Parameters(SearchParams {
+        query: None,
+        limit: Some(5),
+        project: None,
+        r#type: None,
+        offset: Some(0),
+        include_stale: Some(true),
+        branch: None,
+        multi_hop: Some(false),
+    }));
+
+    if let Err(err) = std::fs::remove_file(&test_dir.path) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            panic!("remove blocking file: {err}");
+        }
+    }
+    let err = match result {
+        Ok(value) => panic!("blocking data dir file should fail DB open, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::DbOpenFailed, "search", true);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("DB open failed")));
+}
+
+#[test]
+fn mcp_serialization_failures_use_structured_code() {
+    struct FailingSerialize;
+
+    impl serde::Serialize for FailingSerialize {
+        fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            Err(serde::ser::Error::custom("forced serialization failure"))
+        }
+    }
+
+    let err = match errors::to_json_pretty("search", &FailingSerialize) {
+        Ok(value) => panic!("forced serializer should fail, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::SerializationFailed, "search", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("forced serialization failure")));
+}
+
+#[test]
+fn mcp_error_codes_are_stable() {
+    let cases = [
+        (McpErrorCode::InvalidRequest, "invalid_request", false),
+        (McpErrorCode::NotFound, "not_found", false),
+        (McpErrorCode::DbOpenFailed, "db_open_failed", true),
+        (McpErrorCode::DbQueryFailed, "db_query_failed", true),
+        (
+            McpErrorCode::SerializationFailed,
+            "serialization_failed",
+            false,
+        ),
+        (McpErrorCode::UnsupportedSource, "unsupported_source", false),
+    ];
+
+    for (code, expected_wire_code, expected_retryable) in cases {
+        let err = McpToolError::new("unit_test", code, "test message");
+        let json = assert_mcp_error(err, code, "unit_test", expected_retryable);
+        assert_eq!(json["error"]["code"], expected_wire_code);
+    }
 }
