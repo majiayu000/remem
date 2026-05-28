@@ -2,7 +2,8 @@ use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
 use super::super::types::{
-    CommitLookupParams, GetObservationsParams, SearchParams, SessionCommitsParams,
+    CommitLookupParams, GetObservationsParams, GovernMemoryParams, SaveMemoryParams, SearchParams,
+    SessionCommitsParams,
 };
 use super::errors::{self, McpErrorCode, McpToolError};
 use super::MemoryServer;
@@ -142,6 +143,182 @@ fn commit_tools_return_git_metadata_separate_from_session_summary() {
         serde_json::from_str(&session).expect("session response should be JSON");
     assert_eq!(session_json[0]["git"]["short_sha"], "abcdef1");
     assert_eq!(session_json[0]["link"]["source"], "git_metadata");
+}
+
+#[test]
+fn lookup_commit_rejects_empty_sha_as_invalid_request() {
+    let _dir = ScopedTestDataDir::new("mcp-commit-empty-sha");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let result = server.lookup_commit(Parameters(CommitLookupParams {
+        sha: "   ".to_string(),
+        project: None,
+    }));
+
+    let err = match result {
+        Ok(value) => panic!("empty commit SHA should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "lookup_commit", false);
+    assert_eq!(json["error"]["message"], "commit SHA is required");
+}
+
+#[test]
+fn commits_for_session_rejects_empty_session_id_as_invalid_request() {
+    let _dir = ScopedTestDataDir::new("mcp-commits-empty-session");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let result = server.commits_for_session(Parameters(SessionCommitsParams {
+        session_id: "\t ".to_string(),
+        project: None,
+        limit: None,
+    }));
+
+    let err = match result {
+        Ok(value) => panic!("empty session_id should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(
+        err,
+        McpErrorCode::InvalidRequest,
+        "commits_for_session",
+        false,
+    );
+    assert_eq!(json["error"]["message"], "session_id is required");
+}
+
+#[test]
+fn save_memory_local_copy_failures_are_invalid_request() {
+    let test_dir = ScopedTestDataDir::new("mcp-save-local-copy-error");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let outside = server.save_memory(Parameters(SaveMemoryParams {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: None,
+        memory_type: None,
+        files: None,
+        local_path: Some("/etc/passwd".to_string()),
+        scope: None,
+        branch: None,
+        created_at_epoch: None,
+        local_copy_enabled: Some(true),
+    }));
+
+    let err = match outside {
+        Ok(value) => panic!("out-of-bounds local_path should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "save_memory", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("outside the allowed directory")));
+
+    let blocking_file = test_dir.path.join("manual-notes").join("proj");
+    let parent = match blocking_file.parent() {
+        Some(parent) => parent,
+        None => panic!("blocking file should have a parent"),
+    };
+    if let Err(err) = std::fs::create_dir_all(parent) {
+        panic!("create blocking file parent: {err}");
+    }
+    if let Err(err) = std::fs::write(&blocking_file, "not a directory") {
+        panic!("create blocking file: {err}");
+    }
+    let local_path = blocking_file.join("forced-failure.md");
+
+    let write_failure = server.save_memory(Parameters(SaveMemoryParams {
+        text: "body".to_string(),
+        title: Some("Memory".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: None,
+        memory_type: None,
+        files: None,
+        local_path: Some(local_path.display().to_string()),
+        scope: None,
+        branch: None,
+        created_at_epoch: None,
+        local_copy_enabled: Some(true),
+    }));
+
+    let err = match write_failure {
+        Ok(value) => panic!("local write failure should be rejected, got {value}"),
+        Err(err) => err,
+    };
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "save_memory", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("local copy")));
+}
+
+#[test]
+fn govern_memory_validation_failures_are_invalid_request() {
+    let _dir = ScopedTestDataDir::new("mcp-govern-validation");
+    let server = match MemoryServer::new() {
+        Ok(server) => server,
+        Err(err) => panic!("memory server should initialize: {err}"),
+    };
+
+    let cases = [
+        (
+            GovernMemoryParams {
+                ids: vec![],
+                project: Some("proj".to_string()),
+                action: "delete".to_string(),
+                reason: Some("cleanup".to_string()),
+                actor: None,
+                dry_run: Some(false),
+                confirm_destructive: Some(true),
+            },
+            "at least one memory id",
+        ),
+        (
+            GovernMemoryParams {
+                ids: vec![1],
+                project: Some("proj".to_string()),
+                action: "delete".to_string(),
+                reason: Some("cleanup".to_string()),
+                actor: None,
+                dry_run: Some(false),
+                confirm_destructive: Some(false),
+            },
+            "confirm_destructive=true",
+        ),
+        (
+            GovernMemoryParams {
+                ids: vec![1],
+                project: Some("proj".to_string()),
+                action: "delete".to_string(),
+                reason: Some("   ".to_string()),
+                actor: None,
+                dry_run: Some(false),
+                confirm_destructive: Some(true),
+            },
+            "explicit reason",
+        ),
+    ];
+
+    for (params, expected_message) in cases {
+        let result = server.govern_memory(Parameters(params));
+        let err = match result {
+            Ok(value) => panic!("governance validation should be rejected, got {value}"),
+            Err(err) => err,
+        };
+        let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "govern_memory", false);
+        assert!(json["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(expected_message)));
+    }
 }
 
 #[test]

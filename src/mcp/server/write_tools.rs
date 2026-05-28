@@ -13,6 +13,47 @@ fn detect_branch_from_cwd() -> Option<String> {
     db::detect_git_branch(cwd_str)
 }
 
+fn map_save_memory_error(tool: &'static str, err: anyhow::Error) -> McpToolError {
+    if err.is::<service::LocalCopyError>() {
+        McpToolError::invalid_request(tool, err.to_string())
+    } else {
+        McpToolError::db_query(tool, err)
+    }
+}
+
+fn validate_governance_request(
+    tool: &'static str,
+    params: &GovernMemoryParams,
+) -> McpToolResult<()> {
+    if !params.ids.iter().any(|id| *id > 0) {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "memory governance requires at least one memory id",
+        ));
+    }
+    if params.dry_run.unwrap_or(false) {
+        return Ok(());
+    }
+    if !params.confirm_destructive.unwrap_or(false) {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "memory governance mutation requires confirm_destructive=true",
+        ));
+    }
+    let has_reason = params
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|reason| !reason.is_empty());
+    if !has_reason {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "memory governance mutation requires an explicit reason",
+        ));
+    }
+    Ok(())
+}
+
 #[tool_router(router = tool_router_write, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
@@ -61,7 +102,7 @@ impl MemoryServer {
             };
             let saved = service::save_memory(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
-                McpToolError::db_query(TOOL, e)
+                map_save_memory_error(TOOL, e)
             })?;
 
             crate::log::info(
@@ -111,6 +152,7 @@ impl MemoryServer {
         );
         let action = crate::memory::governance::MemoryGovernanceAction::parse(&params.action)
             .map_err(|e| McpToolError::invalid_request(TOOL, e.to_string()))?;
+        validate_governance_request(TOOL, &params)?;
         let project = params
             .project
             .clone()

@@ -22,6 +22,12 @@ impl MemoryServer {
                 params.sha, params.project
             ),
         );
+        if params.sha.trim().is_empty() {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "commit SHA is required",
+            ));
+        }
         self.with_conn(TOOL, |conn| {
             let results =
                 crate::git_trace::lookup_commit(conn, params.project.as_deref(), &params.sha)
@@ -50,6 +56,12 @@ impl MemoryServer {
                 params.limit.unwrap_or(20)
             ),
         );
+        if params.session_id.trim().is_empty() {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "session_id is required",
+            ));
+        }
         self.with_conn(TOOL, |conn| {
             let results = crate::git_trace::commits_for_session(
                 conn,
