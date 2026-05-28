@@ -86,6 +86,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/v016_context_injection_gate.sql"),
     },
     Migration {
+        version: 17,
+        name: "memory_lessons",
+        sql: include_str!("../migrations/v017_memory_lessons.sql"),
+    },
+    Migration {
         version: 18,
         name: "commit_session_links",
         sql: include_str!("../migrations/v018_commit_session_links.sql"),

@@ -336,6 +336,16 @@ mod tests {
         text: &str,
         scope: &str,
     ) -> Result<i64> {
+        insert_pending_candidate_with_scope_and_type(conn, topic_key, text, scope, "decision")
+    }
+
+    fn insert_pending_candidate_with_scope_and_type(
+        conn: &mut Connection,
+        topic_key: &str,
+        text: &str,
+        scope: &str,
+        memory_type: &str,
+    ) -> Result<i64> {
         record_captured_event(
             conn,
             &CaptureEventInput {
@@ -358,9 +368,17 @@ mod tests {
             "INSERT INTO memory_candidates
              (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
               confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
-             VALUES (?1, ?2, 'decision', ?3, ?4, ?5, 0.72, 'medium',
-                     'pending_review', ?6, ?6)",
-            params![task.project_id, scope, topic_key, text, evidence_json, now],
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0.72, 'medium',
+                     'pending_review', ?7, ?7)",
+            params![
+                task.project_id,
+                scope,
+                memory_type,
+                topic_key,
+                text,
+                evidence_json,
+                now
+            ],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -398,6 +416,32 @@ mod tests {
         )?;
         assert_eq!(status, "approved");
         assert_eq!(source_candidate_id, id);
+        Ok(())
+    }
+
+    #[test]
+    fn review_approve_lesson_candidate_creates_metadata() -> Result<()> {
+        let mut conn = setup_conn();
+        let id = insert_pending_candidate_with_scope_and_type(
+            &mut conn,
+            "review-lesson",
+            "Lesson: generic lesson promotions must keep metadata so context can load them.",
+            "project",
+            "lesson",
+        )?;
+
+        let memory_id = approve_candidate(&mut conn, id)?.expect("candidate should approve");
+
+        let (memory_type, metadata_count): (String, i64) = conn.query_row(
+            "SELECT m.memory_type, COUNT(l.memory_id)
+             FROM memories m
+             LEFT JOIN memory_lessons l ON l.memory_id = m.id
+             WHERE m.id = ?1",
+            params![memory_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(memory_type, "lesson");
+        assert_eq!(metadata_count, 1);
         Ok(())
     }
 

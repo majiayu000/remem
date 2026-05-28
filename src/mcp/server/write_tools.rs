@@ -2,7 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde_json::json;
 
-use super::super::types::{SaveMemoryParams, TimelineReportParams};
+use super::super::types::{GovernMemoryParams, SaveMemoryParams, TimelineReportParams};
 use super::MemoryServer;
 use crate::{db, memory::service};
 
@@ -82,6 +82,58 @@ impl MemoryServer {
                 "local_path": saved.local_path,
             }))
             .map_err(|e| e.to_string())
+        })
+    }
+
+    #[tool(
+        description = "Auditably delete, reject, or mark curated memories stale. \
+        Use dry_run=true first to preview affected IDs. Non-dry-run mutations require \
+        confirm_destructive=true and an explicit reason. This never deletes raw archive data."
+    )]
+    pub(super) fn govern_memory(
+        &self,
+        Parameters(params): Parameters<GovernMemoryParams>,
+    ) -> Result<String, String> {
+        crate::log::info(
+            "mcp",
+            &format!(
+                "govern_memory called action={} project={:?} ids={} dry_run={:?}",
+                params.action,
+                params.project,
+                params.ids.len(),
+                params.dry_run
+            ),
+        );
+        let action = crate::memory::governance::MemoryGovernanceAction::parse(&params.action)
+            .map_err(|e| e.to_string())?;
+        let project = params
+            .project
+            .clone()
+            .filter(|project| !project.trim().is_empty())
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|cwd| db::project_from_cwd(&cwd.to_string_lossy()))
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+        self.with_conn(move |conn| {
+            let result = crate::memory::governance::govern_memories(
+                conn,
+                &crate::memory::governance::GovernMemoryRequest {
+                    project: &project,
+                    ids: &params.ids,
+                    action,
+                    reason: params.reason.as_deref(),
+                    actor: params.actor.as_deref().or(Some("mcp")),
+                    dry_run: params.dry_run.unwrap_or(false),
+                    confirm_destructive: params.confirm_destructive.unwrap_or(false),
+                },
+            )
+            .map_err(|e| {
+                crate::log::warn("mcp", &format!("govern_memory failed: {}", e));
+                e.to_string()
+            })?;
+            serde_json::to_string(&result).map_err(|e| e.to_string())
         })
     }
 

@@ -30,6 +30,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "events",
     "entities",
     "memory_entities",
+    "memory_lessons",
     "ai_usage_events",
     "jobs",
     "workstreams",

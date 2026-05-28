@@ -209,6 +209,19 @@ python3 eval/local/run_local_eval.py --n 20
 
 Requires `.env` with `OPENAI_API_KEY` (optional `OPENAI_BASE_URL`, `OPENAI_MODEL`).
 
+### Sandboxed E2E Eval
+
+```bash
+remem eval-e2e
+remem eval-e2e --json
+```
+
+Runs a deterministic coding-agent memory corpus through the real local REST API
+boundary (`POST /api/v1/memories`, then `GET /api/v1/search`) with a temporary
+`REMEM_DATA_DIR`. The default run removes the sandbox directory afterward, so it
+does not touch `~/.remem` or other real memory data. Use `--keep-data-dir` when
+you need to inspect the generated database.
+
 ## Token Usage And Cost Reporting
 
 remem records an AI usage ledger for its own background extraction, summary,
@@ -244,6 +257,7 @@ remem search "query"
 remem search "query" --branch main --type decision --multi-hop --offset 10
 remem show <id>
 remem eval
+remem eval-e2e --json
 remem eval-local
 remem backfill-entities
 remem encrypt

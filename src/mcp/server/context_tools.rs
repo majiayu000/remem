@@ -78,7 +78,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Fetch complete observation details (narrative, facts, concepts, files_read, files_modified) by IDs. Use after search() to get full context. This is the second step in the search → get_observations workflow. Supports both 'memory' and 'observation' sources."
+        description = "Fetch complete details by IDs. Use after search(): pass selected IDs and the exact source from search.next_step.source or each result.source. Supports source='memory' for curated memories and source='observation' for legacy observations."
     )]
     pub(super) fn get_observations(
         &self,
@@ -94,31 +94,42 @@ impl MemoryServer {
             ),
         );
         self.with_conn(|conn| {
-            let results = if source == "observation" {
-                let observations =
-                    db::get_observations_by_ids(conn, &params.ids, params.project.as_deref())
-                        .map_err(|e| {
-                            crate::log::warn("mcp", &format!("get_observations failed: {}", e));
-                            e.to_string()
-                        })?;
-                let accessed_ids: Vec<i64> = observations
-                    .iter()
-                    .map(|observation| observation.id)
-                    .collect();
-                if !accessed_ids.is_empty() {
-                    if let Err(err) = db::update_last_accessed(conn, &accessed_ids) {
-                        crate::log::warn("mcp", &format!("update_last_accessed failed: {}", err));
+            let results = match source {
+                "observation" => {
+                    let observations_result =
+                        db::get_observations_by_ids(conn, &params.ids, params.project.as_deref());
+                    let observations = observations_result.map_err(|e| {
+                        crate::log::warn("mcp", &format!("get_observations failed: {}", e));
+                        e.to_string()
+                    })?;
+                    let accessed_ids: Vec<i64> = observations
+                        .iter()
+                        .map(|observation| observation.id)
+                        .collect();
+                    if !accessed_ids.is_empty() {
+                        if let Err(err) = db::update_last_accessed(conn, &accessed_ids) {
+                            crate::log::warn(
+                                "mcp",
+                                &format!("update_last_accessed failed: {}", err),
+                            );
+                        }
                     }
+                    serde_json::to_value(&observations).map_err(|e| e.to_string())?
                 }
-                serde_json::to_value(&observations).map_err(|e| e.to_string())?
-            } else {
-                let memories =
-                    memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref())
-                        .map_err(|e| {
-                            crate::log::warn("mcp", &format!("get_memories failed: {}", e));
-                            e.to_string()
-                        })?;
-                serde_json::to_value(&memories).map_err(|e| e.to_string())?
+                "memory" => {
+                    let memories_result =
+                        memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref());
+                    let memories = memories_result.map_err(|e| {
+                        crate::log::warn("mcp", &format!("get_memories failed: {}", e));
+                        e.to_string()
+                    })?;
+                    serde_json::to_value(&memories).map_err(|e| e.to_string())?
+                }
+                other => {
+                    return Err(format!(
+                        "unsupported source '{other}'; expected 'memory' or 'observation'"
+                    ));
+                }
             };
             crate::log::info(
                 "mcp",

@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(first.action, ContextGateAction::EmittedFull);
 
         let changed_output = format!(
-            "# [/tmp/remem] context later\n{}\n\n1 context memories loaded. 1 core (10 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=3000 chars/~750 tokens limit=12000 truncated=no\n",
+            "# [/tmp/remem] context later\n{}\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=3000 chars/~750 tokens limit=12000 truncated=no\n",
             "Body B ".repeat(400)
         );
         let second = apply_context_gate(&invocation, changed_output.clone());

@@ -10,6 +10,7 @@ pub(super) fn type_label(memory_type: &str) -> &'static str {
         "bugfix" => "Bug Fixes",
         "architecture" => "Architecture",
         "discovery" => "Discoveries",
+        "lesson" => "Lessons",
         "preference" => "Preferences",
         "session_activity" => "Sessions",
         _ => "Other",

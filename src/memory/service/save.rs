@@ -8,6 +8,7 @@ use super::local_copy::{
     write_local_note,
 };
 use super::types::{SaveMemoryRequest, SaveMemoryResult};
+use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 
 pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMemoryResult> {
     let project = req.project.as_deref().unwrap_or("manual");
@@ -22,19 +23,41 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
     let mut local_copy = prepare_local_copy(project, title, req)?;
     write_local_copy(&mut local_copy)?;
 
-    let id = match crate::memory::insert_memory_full(
-        conn,
-        None,
-        project,
-        req.topic_key.as_deref(),
-        title,
-        &req.text,
-        memory_type,
-        files_json.as_deref(),
-        req.branch.as_deref(),
-        scope,
-        req.created_at_epoch,
-    ) {
+    let save_result = if memory_type == "lesson" {
+        save_lesson(
+            conn,
+            &SaveLessonRequest {
+                session_id: None,
+                project,
+                topic_key: req.topic_key.as_deref(),
+                title,
+                content: &req.text,
+                confidence: 0.7,
+                source_evidence: None,
+                files: files_json.as_deref(),
+                branch: req.branch.as_deref(),
+                scope,
+                created_at_epoch: req.created_at_epoch,
+                stale_after_epoch: None,
+            },
+        )
+    } else {
+        crate::memory::insert_memory_full(
+            conn,
+            None,
+            project,
+            req.topic_key.as_deref(),
+            title,
+            &req.text,
+            memory_type,
+            files_json.as_deref(),
+            req.branch.as_deref(),
+            scope,
+            req.created_at_epoch,
+        )
+    };
+
+    let id = match save_result {
         Ok(id) => id,
         Err(err) => {
             if let Err(cleanup_err) = cleanup_local_copy(&local_copy) {

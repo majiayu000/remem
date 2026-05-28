@@ -57,6 +57,75 @@ fn test_promote_multi_learned() {
     )
     .unwrap();
     assert_eq!(count, 2);
+
+    let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+    assert!(memories
+        .iter()
+        .all(|memory| memory.memory_type == "discovery"));
+}
+
+#[test]
+fn test_promote_actionable_learned_as_lesson() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let learned = "Root cause: warning-only fallback hid missing data; avoid silent degradation.";
+    let count = promote_summary_to_memories(
+        &conn,
+        "session-1",
+        "test/proj",
+        Some("Fix missing memory output"),
+        None,
+        Some(learned),
+        None,
+    )
+    .unwrap();
+    assert_eq!(count, 1);
+
+    let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].memory_type, "lesson");
+    let metadata = crate::memory::lesson::get_lesson_metadata(&conn, memories[0].id)
+        .unwrap()
+        .expect("lesson metadata should exist");
+    assert_eq!(metadata.reinforcement_count, 1);
+    assert!(metadata.confidence >= 0.8);
+}
+
+#[test]
+fn test_promote_duplicate_lesson_reinforces_existing() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let learned = "Lesson: after three failed fixes, stop and challenge the hypothesis.";
+    promote_summary_to_memories(
+        &conn,
+        "session-1",
+        "test/proj",
+        Some("Fix build loop"),
+        None,
+        Some(learned),
+        None,
+    )
+    .unwrap();
+    promote_summary_to_memories(
+        &conn,
+        "session-2",
+        "test/proj",
+        Some("Fix build loop again"),
+        None,
+        Some(learned),
+        None,
+    )
+    .unwrap();
+
+    let memories = crate::memory::get_recent_memories(&conn, "test/proj", 10).unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].memory_type, "lesson");
+    let metadata = crate::memory::lesson::get_lesson_metadata(&conn, memories[0].id)
+        .unwrap()
+        .expect("lesson metadata should exist");
+    assert_eq!(metadata.reinforcement_count, 2);
 }
 
 #[test]

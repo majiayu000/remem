@@ -41,6 +41,7 @@ pub const MEMORY_TYPES: &[&str] = &[
     "discovery",
     "bugfix",
     "architecture",
+    "lesson",
     "preference",
     "procedure",
     "session_activity",
@@ -48,6 +49,14 @@ pub const MEMORY_TYPES: &[&str] = &[
 
 pub const MEMORY_COLS: &str = "id, session_id, project, topic_key, title, content, memory_type, \
                               files, created_at_epoch, updated_at_epoch, status, branch, scope";
+
+pub fn memory_status_filter_sql(column: &str, include_inactive: bool) -> String {
+    if include_inactive {
+        format!("{column} IN ('active', 'stale', 'archived')")
+    } else {
+        format!("{column} = 'active'")
+    }
+}
 
 pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     map_memory_row(row)
@@ -156,6 +165,14 @@ pub mod tests_helper {
                 memory_id INTEGER NOT NULL,
                 entity_id INTEGER NOT NULL,
                 PRIMARY KEY(memory_id, entity_id)
+            );
+            CREATE TABLE IF NOT EXISTS memory_lessons (
+                memory_id INTEGER PRIMARY KEY,
+                confidence REAL NOT NULL DEFAULT 0.7,
+                reinforcement_count INTEGER NOT NULL DEFAULT 1,
+                source_evidence TEXT,
+                last_reinforced_at_epoch INTEGER NOT NULL,
+                stale_after_epoch INTEGER
             );",
         )
         .unwrap();

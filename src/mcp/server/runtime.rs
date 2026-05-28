@@ -9,11 +9,11 @@ const SERVER_INSTRUCTIONS: &str = r#"Persistent memory for Claude Code and Codex
 
 ## Workflow
 1. **Context index** is auto-injected at session start (titles + types, ~50 tokens each)
-2. When you need details: `search(query)` → get matching IDs
-3. Then: `get_observations(ids)` → full narrative, facts, concepts, files
+2. When you need details: `search(query)` → compact envelope with result IDs and `next_step.source`
+3. Then: `get_observations(ids, source)` → full narrative, facts, concepts, files
 4. Use `timeline(anchor/query)` to understand chronological context around a change
 5. Use `save_memory(text)` to persist important decisions or discoveries (and local markdown backup)
-6. If curated `search` is empty/sparse, it auto-attaches `raw_hits` from the raw archive (every user/assistant turn captured at Stop time). Call `search_raw(query)` directly when you need to recall a literal phrase that was never summarized or promoted.
+6. If curated `search` is empty/sparse, it auto-attaches `raw_hits` labeled `source_type="raw_archive"` (every user/assistant turn captured at Stop time). Call `search_raw(query)` directly when you need to recall a literal phrase that was never summarized or promoted.
 
 ## Local document rule
 - If user asks to save/write/update a document, create or edit a local file first

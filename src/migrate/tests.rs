@@ -64,7 +64,7 @@ fn full_migration_on_empty_db() -> Result<()> {
     let applied = applied_versions(&conn)?;
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -93,6 +93,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_facts",
         "procedure_verifications",
         "context_injections",
+        "memory_lessons",
         "rule_candidates",
         "git_commits",
         "git_commit_sessions",
@@ -542,7 +543,7 @@ fn dry_run_pending_runs_post_migration_hooks() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.pending_count, 3);
+    assert_eq!(result.pending_count, MIGRATIONS.len() - 14);
     let error = result.error.as_deref().unwrap_or("");
     assert!(
         !error.is_empty(),
@@ -587,7 +588,7 @@ fn dry_run_pending_runs_hooks_against_complete_fts_clone() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.pending_count, 3);
+    assert_eq!(result.pending_count, MIGRATIONS.len() - 14);
     assert!(
         result.error.is_none(),
         "dry-run hook should run against complete FTS clone, got {:?}",
@@ -626,7 +627,7 @@ fn dry_run_pending_clones_non_default_page_size_database() -> Result<()> {
 
         let result = dry_run_pending(&conn)?;
 
-        assert_eq!(result.pending_count, 3);
+        assert_eq!(result.pending_count, MIGRATIONS.len() - 14);
         assert!(
             result.error.is_none(),
             "dry-run clone should preserve non-default source page size, got {:?}",
