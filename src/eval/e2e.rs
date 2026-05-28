@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 use std::fmt::{self, Display};
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -196,18 +195,16 @@ pub async fn run_sandbox_eval(options: E2eEvalOptions) -> Result<E2eEvalReport> 
     let server_result = server.await.context("join sandbox eval API server")?;
     server_result.context("sandbox eval API server failed")?;
 
-    let mut report = run_result?;
-    report.metadata.commit = current_git_commit();
-    report.metadata.command = format!("remem eval-e2e --k {}", k);
-    report.metadata.data_dir = data_dir.display().to_string();
-    report.metadata.data_dir_kept = options.keep_data_dir;
-    report.metadata.api_base_url = base_url;
+    let result = run_result.map(|mut report| {
+        report.metadata.commit = build_git_commit();
+        report.metadata.command = format!("remem eval-e2e --k {}", k);
+        report.metadata.data_dir = data_dir.display().to_string();
+        report.metadata.data_dir_kept = options.keep_data_dir;
+        report.metadata.api_base_url = base_url;
+        report
+    });
 
-    if !options.keep_data_dir {
-        std::fs::remove_dir_all(&data_dir)
-            .with_context(|| format!("remove eval data dir {}", data_dir.display()))?;
-    }
-    Ok(report)
+    cleanup_data_dir_after_eval(&data_dir, options.keep_data_dir, result)
 }
 
 async fn run_api_boundary_eval(
@@ -358,6 +355,7 @@ fn keyword_baseline_topic_keys(query: &str, k: usize) -> Vec<String> {
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
     scored
         .into_iter()
+        .filter(|(score, _)| *score > 0)
         .take(k)
         .map(|(_, topic_key)| topic_key.to_string())
         .collect()
@@ -445,16 +443,36 @@ fn unique_temp_data_dir() -> PathBuf {
     std::env::temp_dir().join(format!("remem-e2e-eval-{}-{}", std::process::id(), nanos))
 }
 
-fn current_git_commit() -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn build_git_commit() -> Option<String> {
+    option_env!("REMEM_BUILD_GIT_COMMIT")
+        .map(str::trim)
+        .filter(|sha| !sha.is_empty())
+        .map(str::to_string)
+}
+
+fn cleanup_data_dir_after_eval<T>(
+    data_dir: &Path,
+    keep_data_dir: bool,
+    result: Result<T>,
+) -> Result<T> {
+    if keep_data_dir {
+        return result;
     }
-    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!sha.is_empty()).then_some(sha)
+
+    let cleanup = std::fs::remove_dir_all(data_dir)
+        .with_context(|| format!("remove eval data dir {}", data_dir.display()));
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(err)) => Err(err),
+        (Err(err), Ok(())) => Err(err),
+        (Err(err), Err(cleanup_err)) => {
+            crate::log::warn(
+                "eval-e2e",
+                &format!("cleanup failed after eval error: {}", cleanup_err),
+            );
+            Err(err)
+        }
+    }
 }
 
 impl Display for E2eEvalReport {
@@ -519,5 +537,37 @@ mod tests {
             got.first().map(String::as_str),
             Some("eval-raw-archive-fallback")
         );
+    }
+
+    #[test]
+    fn keyword_baseline_excludes_zero_score_memories() {
+        let got = keyword_baseline_topic_keys("xqzv jjjj qqqq", 5);
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn cleanup_removes_data_dir_even_when_eval_fails() -> Result<()> {
+        let data_dir = unique_temp_data_dir();
+        std::fs::create_dir_all(&data_dir)?;
+
+        let result: Result<()> =
+            cleanup_data_dir_after_eval(&data_dir, false, Err(anyhow!("forced failure")));
+
+        let err = result.expect_err("original eval error should be returned");
+        assert!(err.to_string().contains("forced failure"));
+        assert!(!data_dir.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_keeps_data_dir_when_requested() -> Result<()> {
+        let data_dir = unique_temp_data_dir();
+        std::fs::create_dir_all(&data_dir)?;
+
+        cleanup_data_dir_after_eval(&data_dir, true, Ok(()))?;
+
+        assert!(data_dir.exists());
+        std::fs::remove_dir_all(&data_dir)?;
+        Ok(())
     }
 }
