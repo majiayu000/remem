@@ -777,8 +777,11 @@ fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
     let err = run_migrations(&conn).expect_err("re-running on a newer DB must fail");
     let msg = err.to_string();
     assert!(
-        msg.contains("v99") && msg.contains("upgrade"),
-        "error should mention the newer schema version and prompt upgrade: {msg}"
+        msg.contains("v99")
+            && msg.contains(&format!("schema v{}", super::latest_schema_version()))
+            && msg.contains("remem --version")
+            && msg.contains("upgrade"),
+        "error should mention the newer schema, binary schema, and verification command: {msg}"
     );
     Ok(())
 }

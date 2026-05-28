@@ -8,7 +8,6 @@ pub(in crate::cli) fn run_status() -> Result<()> {
     let db_size = std::fs::metadata(&db_path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let version = env!("CARGO_PKG_VERSION");
     let stats = db::query_system_stats(&conn)?;
 
     let today_start = chrono::Local::now()
@@ -19,7 +18,7 @@ pub(in crate::cli) fn run_status() -> Result<()> {
     let daily_stats = db::query_daily_activity_stats(&conn, today_start)?;
     let top_projects = db::query_top_projects(&conn, 5)?;
 
-    println!("remem v{}", version);
+    println!("remem v{}", crate::build_info::version_label());
     println!(
         "Database: {} ({:.1} MB)",
         db_path.display(),

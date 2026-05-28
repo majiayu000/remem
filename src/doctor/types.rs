@@ -89,6 +89,7 @@ pub(crate) struct CheckJson<'a> {
 pub(crate) struct ReportJson<'a> {
     pub schema_version: u32,
     pub version: &'a str,
+    pub binary_schema_version: i64,
     pub status: &'a str,
     pub fails: usize,
     pub warns: usize,
