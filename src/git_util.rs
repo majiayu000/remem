@@ -4,8 +4,20 @@
 //! would require tempdir + git init in the test environment, which adds an
 //! external dependency for a single helper).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const HEAD_AUTHORED_AT_ARGS: &[&str] = &["show", "-s", "--format=%at", "HEAD"];
+const HEAD_CHANGED_FILES_ARGS: &[&str] = &[
+    "diff-tree",
+    "--root",
+    "-m",
+    "--no-commit-id",
+    "--name-only",
+    "-r",
+    "HEAD",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitCommitMetadata {
@@ -56,12 +68,18 @@ pub fn resolve_toplevel(cwd: &Path) -> Option<PathBuf> {
 }
 
 pub fn parse_changed_files_output(stdout: &str) -> Vec<String> {
-    stdout
+    let mut seen = HashSet::new();
+    let mut files = Vec::new();
+    for file in stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .collect()
+    {
+        if seen.insert(file.to_string()) {
+            files.push(file.to_string());
+        }
+    }
+    files
 }
 
 pub fn parse_authored_epoch_output(stdout: &str) -> Option<i64> {
@@ -98,14 +116,11 @@ pub fn detect_commit_metadata(cwd: &str) -> Option<GitCommitMetadata> {
     let message = git_stdout(cwd, &["show", "-s", "--format=%s", "HEAD"])
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let authored_at_epoch = git_stdout(cwd, &["show", "-s", "--format=%ct", "HEAD"])
+    let authored_at_epoch = git_stdout(cwd, HEAD_AUTHORED_AT_ARGS)
         .and_then(|value| parse_authored_epoch_output(&value));
-    let changed_files = git_stdout(
-        cwd,
-        &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
-    )
-    .map(|value| parse_changed_files_output(&value))
-    .unwrap_or_default();
+    let changed_files = git_stdout(cwd, HEAD_CHANGED_FILES_ARGS)
+        .map(|value| parse_changed_files_output(&value))
+        .unwrap_or_default();
 
     Some(GitCommitMetadata {
         repo_path: repo_path.to_string_lossy().to_string(),
@@ -165,6 +180,24 @@ mod tests {
             parse_changed_files_output("src/lib.rs\n\n  README.md  \n"),
             vec!["src/lib.rs".to_string(), "README.md".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_changed_files_deduplicates_merge_diff_output() {
+        assert_eq!(
+            parse_changed_files_output("src/lib.rs\nREADME.md\nsrc/lib.rs\nREADME.md\n"),
+            vec!["src/lib.rs".to_string(), "README.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn metadata_detection_uses_author_time_and_root_merge_diff_args() {
+        assert_eq!(
+            HEAD_AUTHORED_AT_ARGS,
+            ["show", "-s", "--format=%at", "HEAD"]
+        );
+        assert!(HEAD_CHANGED_FILES_ARGS.contains(&"--root"));
+        assert!(HEAD_CHANGED_FILES_ARGS.contains(&"-m"));
     }
 
     #[test]

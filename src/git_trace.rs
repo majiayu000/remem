@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use rusqlite::types::Type;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 
 use crate::git_util::{short_sha_for, GitCommitMetadata};
@@ -87,13 +87,8 @@ pub fn upsert_commit_metadata(conn: &Connection, input: &CommitMetadataInput<'_>
     let now = chrono::Utc::now().timestamp();
 
     if sha != short_sha {
-        if let Some(id) = conn
-            .query_row(
-                "SELECT id FROM git_commits WHERE project = ?1 AND sha = ?2",
-                params![input.project, short_sha],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
+        if let Some(id) =
+            find_upgradeable_placeholder_commit_id(conn, input.project, &sha, &short_sha)?
         {
             conn.execute(
                 "UPDATE git_commits SET
@@ -289,6 +284,46 @@ pub fn link_observed_commits_for_session(
     Ok(observed.len())
 }
 
+fn find_upgradeable_placeholder_commit_id(
+    conn: &Connection,
+    project: &str,
+    full_sha: &str,
+    short_sha: &str,
+) -> Result<Option<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id
+         FROM git_commits
+         WHERE project = ?1
+           AND sha != ?2
+           AND (
+             sha = ?3
+             OR short_sha = ?3
+             OR ?2 LIKE sha || '%'
+             OR ?2 LIKE short_sha || '%'
+           )
+         ORDER BY
+           CASE
+             WHEN sha = ?3 THEN 0
+             WHEN short_sha = ?3 THEN 1
+             WHEN ?2 LIKE sha || '%' THEN 2
+             ELSE 3
+           END,
+           length(sha) DESC,
+           updated_at_epoch DESC
+         LIMIT 2",
+    )?;
+    let ids = stmt
+        .query_map(params![project, full_sha, short_sha], |row| {
+            row.get::<_, i64>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    match ids.as_slice() {
+        [] => Ok(None),
+        [id] => Ok(Some(*id)),
+        _ => bail!("ambiguous commit SHA placeholder: {full_sha}"),
+    }
+}
+
 fn find_existing_commit_id(
     conn: &Connection,
     project: &str,
@@ -300,7 +335,14 @@ fn find_existing_commit_id(
         "SELECT id
          FROM git_commits
          WHERE project = ?1
-           AND (sha = ?2 OR short_sha = ?2 OR sha LIKE ?3 OR short_sha LIKE ?3)
+           AND (
+             sha = ?2
+             OR short_sha = ?2
+             OR sha LIKE ?3
+             OR short_sha LIKE ?3
+             OR ?2 LIKE sha || '%'
+             OR ?2 LIKE short_sha || '%'
+           )
          ORDER BY CASE WHEN sha = ?2 THEN 0 WHEN short_sha = ?2 THEN 1 ELSE 2 END,
                   updated_at_epoch DESC
          LIMIT 2",
@@ -329,7 +371,11 @@ fn link_session_to_commit_id(
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(commit_id, session_id) DO UPDATE SET
            memory_session_id = COALESCE(excluded.memory_session_id, git_commit_sessions.memory_session_id),
-           source = excluded.source",
+           source = CASE
+             WHEN git_commit_sessions.source = 'git_metadata' THEN git_commit_sessions.source
+             WHEN excluded.source = 'git_metadata' THEN excluded.source
+             ELSE excluded.source
+           END",
         params![commit_id, session_id, memory_session_id, source, now],
     )?;
     Ok(())
@@ -653,6 +699,91 @@ mod tests {
         assert_eq!(results[0].git.short_sha, "abcdef1");
         assert_eq!(results[0].git.changed_files, changed_files);
         assert_eq!(results[0].sessions.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn full_metadata_upgrades_existing_long_abbrev_record() -> Result<()> {
+        let conn = migrated_db()?;
+        link_observed_commit_to_session(
+            &conn,
+            "proj",
+            "content-session-1",
+            "mem-session-1",
+            "abcdef123456",
+            Some("main"),
+            None,
+        )?;
+
+        let changed_files = vec!["src/git_trace.rs".to_string()];
+        link_commit_to_session(
+            &conn,
+            &CommitLinkInput {
+                metadata: metadata_input(&changed_files),
+                session_id: "content-session-2",
+                memory_session_id: Some("mem-session-2"),
+                source: "git_metadata",
+            },
+        )?;
+
+        let commit_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM git_commits", [], |row| row.get(0))?;
+        assert_eq!(commit_count, 1);
+        let results = lookup_commit(
+            &conn,
+            Some("proj"),
+            "abcdef1234567890abcdef1234567890abcdef12",
+        )?;
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].git.sha,
+            "abcdef1234567890abcdef1234567890abcdef12"
+        );
+        assert_eq!(results[0].git.short_sha, "abcdef1");
+        assert_eq!(results[0].sessions.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn relink_preserves_git_metadata_source() -> Result<()> {
+        let conn = migrated_db()?;
+        let changed_files = vec!["src/git_trace.rs".to_string()];
+        link_observed_commit_to_session(
+            &conn,
+            "proj",
+            "content-session-1",
+            "mem-session-1",
+            "abcdef1",
+            Some("main"),
+            None,
+        )?;
+        link_commit_to_session(
+            &conn,
+            &CommitLinkInput {
+                metadata: metadata_input(&changed_files),
+                session_id: "content-session-1",
+                memory_session_id: Some("mem-session-1"),
+                source: "git_metadata",
+            },
+        )?;
+        link_observed_commit_to_session(
+            &conn,
+            "proj",
+            "content-session-1",
+            "mem-session-1",
+            "abcdef1",
+            Some("main"),
+            None,
+        )?;
+
+        let source: String = conn.query_row(
+            "SELECT source
+             FROM git_commit_sessions
+             WHERE session_id = 'content-session-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(source, "git_metadata");
         Ok(())
     }
 
