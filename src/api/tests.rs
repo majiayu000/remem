@@ -1,6 +1,12 @@
-use axum::{body::to_bytes, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    body::{to_bytes, Body},
+    extract::State,
+    http::{header, Method, Request, StatusCode},
+    response::IntoResponse,
+};
 use rusqlite::params;
 use serde_json::Value;
+use tower::ServiceExt;
 
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
@@ -8,6 +14,15 @@ use crate::{db, memory};
 use super::handlers::{handle_status, search_request_from_params};
 use super::types::SearchParams;
 use super::DbState;
+
+fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(body)
+        .expect("request should build")
+}
 
 #[test]
 fn db_state_is_stateless() {
@@ -71,6 +86,78 @@ async fn status_handler_reopens_database_after_file_removal() {
     let second = handle_status(State(DbState)).await.into_response();
     assert_eq!(second.status(), StatusCode::OK);
     assert!(test_dir.db_path().exists());
+}
+
+#[tokio::test]
+async fn router_rejects_missing_and_invalid_api_token() {
+    let _test_dir = ScopedTestDataDir::new("api-auth");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/memories")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"text":"x","local_copy_enabled":false}"#))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let invalid = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/status",
+            "wrong-token",
+            Body::empty(),
+        ))
+        .await
+        .expect("request should complete");
+    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+
+    let valid = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/status",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .expect("request should complete");
+    assert_eq!(valid.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn router_does_not_emit_cors_allow_origin_for_localhost_origin() {
+    let _test_dir = ScopedTestDataDir::new("api-no-cors");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/status")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::ORIGIN, "http://localhost:3000")
+                .body(Body::empty())
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .is_none());
 }
 
 #[tokio::test]

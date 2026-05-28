@@ -1227,7 +1227,7 @@ dependencies = [
  "sha2",
  "tokio",
  "toml_edit",
- "tower-http",
+ "tower",
 ]
 
 [[package]]
