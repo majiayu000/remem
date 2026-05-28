@@ -115,13 +115,15 @@ happened" and "what this memory is about."
 
 ### 6.2 New Fields
 
-Add ownership fields to `memories`, `memory_candidates`, and `workstreams`:
+During Slice 1, add nullable ownership fields to `memories`,
+`memory_candidates`, `workstreams`, and `session_summaries`. They stay nullable
+while existing rows are backfilled and while staged candidates are being routed:
 
 ```sql
-source_project TEXT NOT NULL,
+source_project TEXT,
 target_project TEXT,
-owner_scope TEXT NOT NULL DEFAULT 'repo',
-owner_key TEXT NOT NULL,
+owner_scope TEXT,
+owner_key TEXT,
 topic_domain TEXT,
 routing_confidence REAL,
 routing_reason TEXT,
@@ -136,22 +138,50 @@ Field meanings:
 |---|---|
 | `source_project` | The `project_from_cwd(cwd)` value at capture time. |
 | `target_project` | The repository/project this memory is actually about, when applicable. |
-| `owner_scope` | One of `user`, `repo`, `tool`, `domain`, `workstream`, `session`. |
-| `owner_key` | Stable key inside the scope, such as a repo path, `codex-cli`, or `grok-api`. |
+| `owner_scope` | One of `user`, `workspace`, `repo`, `tool`, `domain`, `workstream`, `session`. |
+| `owner_key` | Stable key inside the scope, such as a workspace root, repo path, `codex-cli`, or `grok-api`. |
 | `topic_domain` | Coarse domain label used for routing and cleanup, such as `stash-ui` or `codex-sandbox`. |
 | `routing_confidence` | Classifier confidence in `0.0..=1.0`. |
 | `routing_reason` | Short explanation for audit and review. |
 | `expires_at_epoch` | Optional TTL for ephemeral facts. |
 | `valid_from_epoch` / `valid_to_epoch` | Validity window for temporal/current facts. |
 
+Post-backfill, new writes must populate `source_project`, `owner_scope`, and
+`owner_key` before activation. Enforce that invariant in the write path first;
+a later table rebuild or check constraint can make those fields non-null once
+all supported SQLite migrations have completed.
+
 Backfill rule:
 
 ```text
-source_project = project
-target_project = project
-owner_scope = if scope == 'global' then 'user' else 'repo'
-owner_key = if scope == 'global' then 'user:default' else project
+For memories, memory_candidates, and workstreams:
+  source_project = project
+
+  if scope == 'global':
+    target_project = NULL
+    owner_scope = 'user'
+    owner_key = 'user:default'
+
+  if scope == 'workspace':
+    target_project = NULL
+    owner_scope = 'workspace'
+    owner_key = resolved workspace root, falling back to project
+
+  if scope == 'project':
+    target_project = project
+    owner_scope = 'repo'
+    owner_key = project
+
+For session_summaries:
+  source_project = project
+  owner_scope/owner_key remain NULL until the summary is rerouted, unless a
+  deterministic backfill rule can prove repo/workspace ownership.
 ```
+
+Do not treat `source_project = current project` as enough to inject a legacy
+session summary into SessionStart context. Session history needs explicit
+`owner_scope` / `owner_key` routing or a high-confidence deterministic
+backfill.
 
 Keep `project` during migration for compatibility. New query paths should move
 toward `target_project` / `owner_scope` / `owner_key` filters, then `project`
@@ -162,6 +192,7 @@ can become a compatibility alias.
 | Scope | Use for | Example owner_key |
 |---|---|---|
 | `user` | Stable user preferences and communication preferences. | `user:default` |
+| `workspace` | Workspace-level rules or facts intended to apply across repos under one workspace root. | `/Users/lifcc/Desktop/code/AI` |
 | `repo` | Facts about one code repository or product. | `/Users/lifcc/Desktop/code/AI/tool/stash` |
 | `tool` | Cross-repo facts about a tool/runtime. | `codex-cli`, `claude-code`, `gh-cli` |
 | `domain` | Cross-repo technical domain or external API. | `grok-api`, `macos-tcc`, `npm-publish` |
@@ -225,7 +256,7 @@ return a routing block:
 
 ```xml
 <memory_route>
-  <owner_scope>repo|tool|domain|user|workstream|session</owner_scope>
+  <owner_scope>user|workspace|repo|tool|domain|workstream|session</owner_scope>
   <owner_key>...</owner_key>
   <target_project>...</target_project>
   <topic_domain>...</topic_domain>
@@ -296,17 +327,21 @@ SessionStart should use layered retrieval, not a flat project dump.
 User Core
   owner_scope=user, owner_key=user:default, stable preferences only
 
+Workspace Core
+  owner_scope=workspace, owner_key=current workspace, stable workspace facts only
+
 Repo Core
   owner_scope=repo, owner_key=current project, permanent architecture/bugfix/decision
 
 Active WorkStreams
-  owner_scope=repo/workstream for current project, status active/paused
+  owner_scope=repo/workstream for current project, status active by default
 
 Task-Aware Retrieval
   optional query-aware search when hook input includes the latest user prompt
 
 Session History
-  recent summaries for source_project/current repo, capped and deduped
+  recent summaries filtered by owner_scope/owner_key for current repo or
+  workspace, capped and deduped
 
 Archival Index
   compact pointers, not full details
@@ -317,11 +352,16 @@ Archival Index
 For startup with no user task text:
 
 - include stable user preferences
+- include stable workspace-scoped memories for the current workspace
 - include repo core decisions/bugfixes
 - include active workstreams for current repo
-- include recent sessions only if high-signal and not stale
+- include recent sessions only if high-signal, not stale, and routed to the
+  current repo/workspace owner
 - do not include tool/domain memory unless it is linked to the repo or active
   workstream
+- do not include paused workstreams by default; include them only in
+  task-aware retrieval when the prompt implies resumption and the paused row
+  matches the current owner with a recent `updated_at_epoch`
 
 For prompt-submit or task-aware context:
 
@@ -332,6 +372,7 @@ For prompt-submit or task-aware context:
 ```text
 (owner_scope=repo AND owner_key=current_project)
 OR (owner_scope=user AND owner_key=user:default)
+OR (owner_scope=workspace AND owner_key=current_workspace)
 OR (owner_scope=tool AND owner_key IN inferred_tools)
 OR (owner_scope=domain AND owner_key IN inferred_domains)
 ```
@@ -396,9 +437,11 @@ This should become a regression fixture for the routing classifier.
 
 ### Slice 1: Schema and Backfill
 
-- Add nullable ownership fields to `memories`, `memory_candidates`, and
-  `workstreams`.
-- Backfill from existing `project` and `scope`.
+- Add nullable ownership fields to `memories`, `memory_candidates`,
+  `workstreams`, and `session_summaries`.
+- Backfill `memories`, `memory_candidates`, and `workstreams` from existing
+  `project` and `scope`; backfill legacy `session_summaries` with
+  `source_project` only unless ownership can be proven.
 - Add indexes:
 
 ```sql
@@ -413,6 +456,12 @@ CREATE INDEX idx_memories_target_project_status
 
 CREATE INDEX idx_workstreams_owner_status
   ON workstreams(owner_scope, owner_key, status, updated_at_epoch DESC);
+
+CREATE INDEX idx_session_summaries_owner_created
+  ON session_summaries(owner_scope, owner_key, created_at_epoch DESC);
+
+CREATE INDEX idx_session_summaries_source_project
+  ON session_summaries(source_project, created_at_epoch DESC);
 ```
 
 ### Slice 2: Write Path Routing
