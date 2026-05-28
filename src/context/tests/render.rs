@@ -88,6 +88,25 @@ fn render_memory_index_prioritizes_known_types() {
 }
 
 #[test]
+fn render_memory_index_labels_and_orders_procedure_memories() {
+    let mut output = String::new();
+    let memories = vec![
+        sample_memory(1, "session_activity", "Recent session"),
+        sample_memory(2, "procedure", "Review procedure"),
+        sample_memory(3, "discovery", "Discovery title"),
+    ];
+
+    render_memory_index(&mut output, &memories);
+
+    let discovery_pos = output.find("**Discoveries**").unwrap();
+    let procedure_pos = output.find("**Procedures**").unwrap();
+    let session_pos = output.find("**Sessions**").unwrap();
+    assert!(output.contains("Review procedure"));
+    assert!(discovery_pos < procedure_pos);
+    assert!(procedure_pos < session_pos);
+}
+
+#[test]
 fn render_memory_index_excludes_preferences() {
     let mut output = String::new();
     let memories = vec![

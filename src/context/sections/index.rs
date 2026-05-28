@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryType};
 
 use super::super::format::{
     char_len, format_epoch_short, truncate_chars_with_ellipsis, type_label,
@@ -35,8 +35,9 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
     let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
     for memory in memories
         .iter()
-        .filter(|memory| memory.memory_type != "preference")
-        .filter(|memory| memory.memory_type != "lesson")
+        .filter(|memory| {
+            MemoryType::parse(&memory.memory_type).map_or(true, MemoryType::is_indexed)
+        })
         .filter(|memory| !excluded_ids.contains(&memory.id))
         .take(limits.memory_index_limit)
     {
@@ -49,26 +50,28 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
         return 0;
     }
 
-    let display_order = [
-        "decision",
-        "bugfix",
-        "architecture",
-        "discovery",
-        "session_activity",
-    ];
+    let mut display_order = MemoryType::ALL
+        .iter()
+        .copied()
+        .filter(|memory_type| memory_type.is_indexed())
+        .collect::<Vec<_>>();
+    display_order.sort_by_key(|memory_type| memory_type.index_order().unwrap_or(usize::MAX));
 
     let mut body = String::new();
     let mut total_chars = 0usize;
     let mut rendered_count = 0usize;
-    for memory_type in &display_order {
-        if let Some(memories_for_type) = by_type.get(memory_type) {
+    let mut ordered_types = HashSet::new();
+    for memory_type in display_order {
+        let memory_type_key = memory_type.as_str();
+        ordered_types.insert(memory_type_key);
+        if let Some(memories_for_type) = by_type.get(memory_type_key) {
             if total_chars >= limits.memory_index_char_limit {
                 break;
             }
             rendered_count += push_memory_index_line(
                 &mut body,
-                type_label(memory_type),
-                memory_type,
+                type_label(memory_type_key),
+                memory_type_key,
                 memories_for_type,
                 limits.memory_index_char_limit,
                 &mut total_chars,
@@ -76,16 +79,24 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
         }
     }
 
-    for (memory_type, memories_for_type) in &by_type {
-        if !display_order.contains(memory_type) && total_chars < limits.memory_index_char_limit {
-            rendered_count += push_memory_index_line(
-                &mut body,
-                memory_type,
-                memory_type,
-                memories_for_type,
-                limits.memory_index_char_limit,
-                &mut total_chars,
-            );
+    let mut unordered_types = by_type
+        .keys()
+        .copied()
+        .filter(|memory_type| !ordered_types.contains(memory_type))
+        .collect::<Vec<_>>();
+    unordered_types.sort_unstable();
+    for memory_type in unordered_types {
+        if total_chars < limits.memory_index_char_limit {
+            if let Some(memories_for_type) = by_type.get(memory_type) {
+                rendered_count += push_memory_index_line(
+                    &mut body,
+                    memory_type,
+                    memory_type,
+                    memories_for_type,
+                    limits.memory_index_char_limit,
+                    &mut total_chars,
+                );
+            }
         }
     }
     if rendered_count == 0 {

@@ -1,4 +1,4 @@
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryType};
 use std::collections::HashMap;
 
 use super::super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
@@ -38,8 +38,12 @@ pub(in crate::context) fn render_core_memory_with_limits(
     let now = chrono::Utc::now().timestamp();
     let mut scored: Vec<(&Memory, f64)> = memories
         .iter()
-        .filter(|memory| is_core_memory_type(&memory.memory_type))
-        .map(|memory| (memory, calculate_memory_score(memory, now)))
+        .filter_map(|memory| {
+            let memory_type = MemoryType::parse(&memory.memory_type)?;
+            memory_type
+                .is_core()
+                .then(|| (memory, calculate_memory_score(memory, memory_type, now)))
+        })
         .collect();
     scored.sort_by(|left, right| {
         right
@@ -152,22 +156,7 @@ fn push_selected_memory<'a>(
     true
 }
 
-fn is_core_memory_type(memory_type: &str) -> bool {
-    matches!(
-        memory_type,
-        "bugfix" | "architecture" | "decision" | "discovery"
-    )
-}
-
-fn calculate_memory_score(memory: &Memory, now_epoch: i64) -> f64 {
-    let type_weight = match memory.memory_type.as_str() {
-        "bugfix" => 3.0,
-        "architecture" => 2.6,
-        "decision" => 2.2,
-        "discovery" => 1.8,
-        _ => 0.5,
-    };
-
+fn calculate_memory_score(memory: &Memory, memory_type: MemoryType, now_epoch: i64) -> f64 {
     let age_days = (now_epoch - memory.updated_at_epoch) / 86400;
     let time_decay = if age_days <= 7 {
         1.0
@@ -183,5 +172,5 @@ fn calculate_memory_score(memory: &Memory, now_epoch: i64) -> f64 {
         1.0
     };
 
-    type_weight * time_decay * meta_penalty
+    memory_type.weight() * time_decay * meta_penalty
 }

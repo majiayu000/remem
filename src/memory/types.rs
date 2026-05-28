@@ -1,5 +1,111 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryType {
+    Decision,
+    Discovery,
+    Bugfix,
+    Architecture,
+    Lesson,
+    Preference,
+    Procedure,
+    SessionActivity,
+}
+
+impl MemoryType {
+    pub const ALL: [Self; 8] = [
+        Self::Decision,
+        Self::Discovery,
+        Self::Bugfix,
+        Self::Architecture,
+        Self::Lesson,
+        Self::Preference,
+        Self::Procedure,
+        Self::SessionActivity,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Decision => "decision",
+            Self::Discovery => "discovery",
+            Self::Bugfix => "bugfix",
+            Self::Architecture => "architecture",
+            Self::Lesson => "lesson",
+            Self::Preference => "preference",
+            Self::Procedure => "procedure",
+            Self::SessionActivity => "session_activity",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Decision => "Decisions",
+            Self::Discovery => "Discoveries",
+            Self::Bugfix => "Bug Fixes",
+            Self::Architecture => "Architecture",
+            Self::Lesson => "Lessons",
+            Self::Preference => "Preferences",
+            Self::Procedure => "Procedures",
+            Self::SessionActivity => "Sessions",
+        }
+    }
+
+    pub const fn index_order(self) -> Option<usize> {
+        match self {
+            Self::Decision => Some(0),
+            Self::Bugfix => Some(1),
+            Self::Architecture => Some(2),
+            Self::Discovery => Some(3),
+            Self::Procedure => Some(4),
+            Self::SessionActivity => Some(5),
+            Self::Lesson | Self::Preference => None,
+        }
+    }
+
+    pub const fn is_indexed(self) -> bool {
+        matches!(
+            self,
+            Self::Decision
+                | Self::Bugfix
+                | Self::Architecture
+                | Self::Discovery
+                | Self::Procedure
+                | Self::SessionActivity
+        )
+    }
+
+    pub const fn is_core(self) -> bool {
+        matches!(
+            self,
+            Self::Bugfix | Self::Architecture | Self::Decision | Self::Discovery
+        )
+    }
+
+    pub const fn weight(self) -> f64 {
+        match self {
+            Self::Bugfix => 3.0,
+            Self::Architecture => 2.6,
+            Self::Decision => 2.2,
+            Self::Discovery => 1.8,
+            Self::Lesson | Self::Preference | Self::Procedure | Self::SessionActivity => 0.0,
+        }
+    }
+
+    pub const fn auto_promote(self) -> bool {
+        matches!(
+            self,
+            Self::Architecture | Self::Bugfix | Self::Decision | Self::Discovery
+        )
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|memory_type| memory_type.as_str() == value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
     pub id: i64,
@@ -37,14 +143,14 @@ pub struct Event {
 }
 
 pub const MEMORY_TYPES: &[&str] = &[
-    "decision",
-    "discovery",
-    "bugfix",
-    "architecture",
-    "lesson",
-    "preference",
-    "procedure",
-    "session_activity",
+    MemoryType::Decision.as_str(),
+    MemoryType::Discovery.as_str(),
+    MemoryType::Bugfix.as_str(),
+    MemoryType::Architecture.as_str(),
+    MemoryType::Lesson.as_str(),
+    MemoryType::Preference.as_str(),
+    MemoryType::Procedure.as_str(),
+    MemoryType::SessionActivity.as_str(),
 ];
 
 pub const MEMORY_COLS: &str = "id, session_id, project, topic_key, title, content, memory_type, \
@@ -94,6 +200,35 @@ pub(super) fn map_event_row(row: &rusqlite::Row) -> rusqlite::Result<Event> {
         exit_code: row.get(7)?,
         created_at_epoch: row.get(8)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MemoryType, MEMORY_TYPES};
+
+    #[test]
+    fn memory_types_are_derived_from_canonical_enum_order() {
+        let canonical = MemoryType::ALL
+            .iter()
+            .copied()
+            .map(MemoryType::as_str)
+            .collect::<Vec<_>>();
+
+        assert_eq!(MEMORY_TYPES, canonical.as_slice());
+    }
+
+    #[test]
+    fn procedure_has_context_metadata() {
+        let memory_type = MemoryType::Procedure;
+
+        assert_eq!(memory_type.as_str(), "procedure");
+        assert_eq!(memory_type.label(), "Procedures");
+        assert_eq!(memory_type.index_order(), Some(4));
+        assert!(memory_type.is_indexed());
+        assert!(!memory_type.is_core());
+        assert_eq!(memory_type.weight(), 0.0);
+        assert!(!memory_type.auto_promote());
+    }
 }
 
 #[cfg(test)]
