@@ -44,9 +44,10 @@ pub fn search_memories_like_filtered(
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
 
-    if !include_inactive {
-        conditions.push("m.status = 'active'".to_string());
-    }
+    conditions.push(crate::memory::memory_status_filter_sql(
+        "m.status",
+        include_inactive,
+    ));
 
     for token in tokens {
         let like_pattern = format!("%{token}%");

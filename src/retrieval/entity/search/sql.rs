@@ -6,10 +6,6 @@ pub(super) fn branch_filter_sql(param_idx: usize) -> String {
     format!("(m.branch = ?{param_idx} OR m.branch IS NULL)")
 }
 
-pub(super) fn status_filter_sql(include_inactive: bool) -> &'static str {
-    if include_inactive {
-        "1=1"
-    } else {
-        "m.status = 'active'"
-    }
+pub(super) fn status_filter_sql(include_inactive: bool) -> String {
+    crate::memory::memory_status_filter_sql("m.status", include_inactive)
 }

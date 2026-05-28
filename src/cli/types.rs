@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 pub(super) use crate::install::InstallTarget;
@@ -72,6 +72,22 @@ pub(super) enum Commands {
     Review {
         #[command(subcommand)]
         action: ReviewAction,
+    },
+    Govern {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, value_enum)]
+        action: MemoryGovernanceCliAction,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        confirm_destructive: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(required = true)]
+        ids: Vec<i64>,
     },
     Usage {
         /// Restrict usage totals to one project path.
@@ -257,4 +273,11 @@ pub(in crate::cli) enum ReviewAction {
         #[arg(long)]
         scope: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(in crate::cli) enum MemoryGovernanceCliAction {
+    Delete,
+    Reject,
+    Stale,
 }

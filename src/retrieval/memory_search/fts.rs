@@ -40,9 +40,10 @@ pub fn search_memories_fts_filtered(
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(query.to_string())];
 
     let mut idx = 2;
-    if !include_inactive {
-        conditions.push("m.status = 'active'".to_string());
-    }
+    conditions.push(crate::memory::memory_status_filter_sql(
+        "m.status",
+        include_inactive,
+    ));
 
     idx = push_project_filter(
         "m.project",

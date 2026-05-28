@@ -90,6 +90,26 @@ pub(super) struct SaveMemoryParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct GovernMemoryParams {
+    #[schemars(description = "Curated memory IDs to mutate. Use dry_run=true first to preview.")]
+    pub ids: Vec<i64>,
+    #[schemars(description = "Project name filter. Defaults to the MCP process current project.")]
+    pub project: Option<String>,
+    #[schemars(description = "Governance action: delete, reject, or stale.")]
+    pub action: String,
+    #[schemars(description = "Explicit user-visible reason for the mutation.")]
+    pub reason: Option<String>,
+    #[schemars(description = "Actor initiating the mutation, e.g. user, codex, claude.")]
+    pub actor: Option<String>,
+    #[schemars(
+        description = "Preview affected memories without writing status changes or audit events."
+    )]
+    pub dry_run: Option<bool>,
+    #[schemars(description = "Required true for non-dry-run destructive governance mutations.")]
+    pub confirm_destructive: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct TimelineReportParams {
     #[schemars(description = "Project name (required)")]
     pub project: String,

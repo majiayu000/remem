@@ -1,5 +1,5 @@
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, ReviewAction};
+use super::types::{Cli, Commands, MemoryGovernanceCliAction, ReviewAction};
 use clap::Parser;
 
 #[test]
@@ -96,6 +96,46 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             assert!(!explain);
         }
         _ => panic!("expected search command"),
+    }
+}
+
+#[test]
+fn cli_parses_governance_delete_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "govern",
+        "--project",
+        "/tmp/remem",
+        "--action",
+        "delete",
+        "--reason",
+        "bad memory",
+        "--actor",
+        "codex",
+        "--confirm-destructive",
+        "42",
+        "43",
+    ]);
+
+    match cli.command {
+        Commands::Govern {
+            project,
+            action,
+            reason,
+            actor,
+            confirm_destructive,
+            dry_run,
+            ids,
+        } => {
+            assert_eq!(project.as_deref(), Some("/tmp/remem"));
+            assert!(matches!(action, MemoryGovernanceCliAction::Delete));
+            assert_eq!(reason.as_deref(), Some("bad memory"));
+            assert_eq!(actor.as_deref(), Some("codex"));
+            assert!(confirm_destructive);
+            assert!(!dry_run);
+            assert_eq!(ids, vec![42, 43]);
+        }
+        _ => panic!("expected govern command"),
     }
 }
 
