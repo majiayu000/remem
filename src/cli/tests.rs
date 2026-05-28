@@ -1,6 +1,8 @@
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, CommitAction, MemoryGovernanceCliAction, ReviewAction};
-use clap::Parser;
+use super::types::{
+    Cli, Commands, CommitAction, MemoryGovernanceCliAction, PendingAction, ReviewAction,
+};
+use clap::{CommandFactory, Parser};
 
 #[test]
 fn cli_resolve_cwd_arg_prefers_explicit_value() {
@@ -231,6 +233,55 @@ fn cli_parses_eval_e2e_options() {
         }
         _ => panic!("expected eval-e2e command"),
     }
+}
+
+#[test]
+fn cli_parses_pending_short_aliases() {
+    let list = Cli::parse_from(["remem", "pending", "list", "--limit", "3"]);
+    match list.command {
+        Commands::Pending {
+            action: PendingAction::ListFailed { limit, .. },
+        } => assert_eq!(limit, 3),
+        _ => panic!("expected pending list alias"),
+    }
+
+    let retry = Cli::parse_from(["remem", "pending", "retry", "--dry-run"]);
+    match retry.command {
+        Commands::Pending {
+            action: PendingAction::RetryFailed { dry_run, limit, .. },
+        } => {
+            assert!(dry_run);
+            assert_eq!(limit, 100);
+        }
+        _ => panic!("expected pending retry alias"),
+    }
+
+    let purge = Cli::parse_from(["remem", "pending", "purge", "--older-than-days", "14"]);
+    match purge.command {
+        Commands::Pending {
+            action: PendingAction::PurgeFailed {
+                older_than_days, ..
+            },
+        } => assert_eq!(older_than_days, 14),
+        _ => panic!("expected pending purge alias"),
+    }
+}
+
+#[test]
+fn cli_help_mentions_context_gate_modes_and_command_descriptions() {
+    let mut command = Cli::command();
+    let help = command.render_long_help().to_string();
+    assert!(help.contains("Show memory store health"));
+    assert!(help.contains("Inspect or repair failed pending observation rows"));
+
+    let context = match Cli::command().find_subcommand("context") {
+        Some(command) => command.clone(),
+        None => panic!("context subcommand exists"),
+    };
+    let mut context = context;
+    let context_help = context.render_long_help().to_string();
+    assert!(context_help.contains("off|auto|strict|delta"));
+    assert!(context_help.contains("Host profile"));
 }
 
 #[test]
