@@ -155,7 +155,15 @@ Backfill rule:
 
 ```text
 For memories, memory_candidates, and workstreams:
-  source_project = project
+  project_text =
+    normalized schema: projects.project_path via <table>.project_id
+    legacy tables: project
+
+  workspace_text =
+    normalized schema: workspaces.root_path via projects.workspace_id
+    legacy tables: NULL
+
+  source_project = project_text
 
   if scope == 'global':
     target_project = NULL
@@ -165,15 +173,17 @@ For memories, memory_candidates, and workstreams:
   if scope == 'workspace':
     target_project = NULL
     owner_scope = 'workspace'
-    owner_key = resolved workspace root, falling back to project
+    owner_key = workspace_text, falling back to project_text
 
   if scope == 'project':
-    target_project = project
+    target_project = project_text
     owner_scope = 'repo'
-    owner_key = project
+    owner_key = project_text
 
 For session_summaries:
-  source_project = project
+  source_project =
+    normalized schema: projects.project_path via session_summaries.project_id
+    legacy tables: project
   owner_scope/owner_key remain NULL until the summary is rerouted, unless a
   deterministic backfill rule can prove repo/workspace ownership.
 ```
@@ -403,22 +413,30 @@ remem audit-scope --project <project> [--limit N] [--json]
 
 Output categories:
 
-- likely correct repo memory
-- likely cross-tool/domain pollution
-- duplicate preferences
-- duplicate workstreams
-- stale temporal facts
-- low-confidence routing
+- likely correct repo memory, with `object_ref` such as `memory:76724`
+- likely cross-tool/domain pollution, with `object_ref`
+- duplicate preferences, with `object_ref`
+- duplicate workstreams, with `object_ref` such as `workstream:18`
+- stale temporal facts, with `object_ref`
+- low-confidence routing, with `object_ref`
+
+Audit and write commands must use object-qualified references, not raw integer
+IDs. Valid prefixes are `memory`, `candidate`, `workstream`, and
+`session-summary`.
 
 ### 10.2 Migration Command
 
 Add:
 
 ```text
-remem reroute --ids 76724,76728 --owner-scope tool --owner-key codex-cli --target-project ''
-remem archive --ids ...
+remem reroute --refs memory:76724,memory:76728 --owner-scope tool --owner-key codex-cli --clear-target-project
+remem archive --refs memory:76731,workstream:18
 remem merge-preferences --project <project> --dry-run
 ```
+
+`--clear-target-project` stores SQL `NULL`. Empty-string target projects should
+be rejected or normalized to `NULL`; they must not become a second "no target"
+representation.
 
 All commands should be dry-run by default and require `--confirm` for writes.
 
