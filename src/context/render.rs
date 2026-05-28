@@ -108,7 +108,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
     let conn = match db::open_db() {
         Ok(connection) => connection,
         Err(error) => {
-            crate::log::warn(
+            crate::log::error(
                 "context",
                 &format!("open_db failed for project={}: {}", request.project, error),
             );
