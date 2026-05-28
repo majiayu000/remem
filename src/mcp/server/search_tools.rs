@@ -10,7 +10,7 @@ const RAW_PREVIEW_CHARS: usize = 300;
 #[tool_router(router = tool_router_search, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Search past memories by keyword/project/type. Returns compact results (id, type, title, topic_key, 300-char preview). WORKFLOW: search → find relevant IDs → get_observations(ids) for full details.\n\n**Multi-step retrieval strategy** (follow this for complex questions):\n1. **Decompose**: Break complex questions into 2-3 focused sub-queries and search each separately. E.g. 'What do Melanie's kids like?' → search('Melanie children names') + search('Melanie kids hobbies').\n2. **Iterate**: If first search returns <5 results, extract key entities/names from results and search again with those entities.\n3. **Multi-hop**: Set multi_hop=true when the question spans multiple people/topics — this triggers entity graph expansion automatically.\n\nUse when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
+        description = "Search past memories by keyword/project/type. Always returns a compact envelope: { mode, results, next_step, pagination }. Use result IDs with next_step.source in get_observations(ids, source) to fetch full details. raw_hits are raw_archive rows, not curated memories; use search_raw for literal chat recall.\n\n**Multi-step retrieval strategy** (follow this for complex questions):\n1. **Decompose**: Break complex questions into 2-3 focused sub-queries and search each separately. E.g. 'What do Melanie's kids like?' → search('Melanie children names') + search('Melanie kids hobbies').\n2. **Iterate**: If first search returns <5 results, extract key entities/names from results and search again with those entities.\n3. **Multi-hop**: Set multi_hop=true when the question spans multiple people/topics — this triggers entity graph expansion automatically.\n\nUse when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
     )]
     pub(super) fn search(
         &self,
@@ -73,6 +73,7 @@ impl MemoryServer {
                         topic_key: memory.topic_key,
                         preview: Some(preview),
                         source: "memory".to_string(),
+                        source_type: "memory".to_string(),
                         updated_at: updated,
                         project: memory.project,
                         status: memory.status,
@@ -84,6 +85,7 @@ impl MemoryServer {
                 .into_iter()
                 .map(|msg| RawSearchHit {
                     id: msg.id,
+                    source_type: "raw_archive".to_string(),
                     session_id: msg.session_id,
                     project: msg.project,
                     role: msg.role,
@@ -116,26 +118,43 @@ impl MemoryServer {
                 ),
             );
 
-            if multi_hop.is_some() || !raw_hits_json.is_empty() || has_more {
-                let mut response = serde_json::json!({ "results": search_results });
-                if let Some(meta) = multi_hop {
-                    response["multi_hop"] = serde_json::json!({
-                        "hops": meta.hops,
-                        "entities_discovered": meta.entities_discovered,
-                    });
+            let result_ids: Vec<i64> = search_results.iter().map(|result| result.id).collect();
+            let next_offset = has_more.then_some(req_offset + req_limit);
+            let mut response = serde_json::json!({
+                "mode": "compact",
+                "results": search_results,
+                "next_step": {
+                    "tool": "get_observations",
+                    "source": "memory",
+                    "ids": result_ids,
+                    "reason": "Pass selected compact result IDs with source='memory' to fetch full details."
+                },
+                "pagination": {
+                    "limit": req_limit,
+                    "offset": req_offset,
+                    "has_more": has_more,
+                    "next_offset": next_offset,
                 }
-                if !raw_hits_json.is_empty() {
-                    response["raw_hits"] =
-                        serde_json::to_value(&raw_hits_json).map_err(|e| e.to_string())?;
-                }
-                if has_more {
-                    response["has_more"] = serde_json::Value::Bool(true);
-                    response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
-                }
-                serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
-            } else {
-                serde_json::to_string_pretty(&search_results).map_err(|e| e.to_string())
+            });
+            if let Some(meta) = multi_hop {
+                response["multi_hop"] = serde_json::json!({
+                    "hops": meta.hops,
+                    "entities_discovered": meta.entities_discovered,
+                });
             }
+            if !raw_hits_json.is_empty() {
+                response["raw_hits"] =
+                    serde_json::to_value(&raw_hits_json).map_err(|e| e.to_string())?;
+                response["raw_hits_note"] = serde_json::Value::String(
+                    "raw_hits are source_type='raw_archive' chat rows, not curated memories; use search_raw for literal recall."
+                        .to_string(),
+                );
+            }
+            if has_more {
+                response["has_more"] = serde_json::Value::Bool(true);
+                response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
+            }
+            serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
         })
     }
 }
