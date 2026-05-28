@@ -3,9 +3,9 @@ use anyhow::Result;
 use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
-    run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval, run_eval_e2e,
-    run_eval_local, run_governance, run_import, run_pending, run_preferences, run_review,
-    run_search, run_show, run_status, run_usage,
+    run_admin, run_backfill_entities, run_cleanup, run_commit, run_dream, run_encrypt, run_eval,
+    run_eval_e2e, run_eval_local, run_governance, run_import, run_pending, run_preferences,
+    run_review, run_search, run_show, run_status, run_usage,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -108,6 +108,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             multi_hop,
             explain,
         )?,
+        Commands::Commit { action } => run_commit(action)?,
         Commands::Show { id } => run_show(id)?,
         Commands::Eval { dataset, k } => run_eval(&dataset, k)?,
         Commands::EvalE2e {

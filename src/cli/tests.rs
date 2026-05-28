@@ -1,5 +1,5 @@
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, MemoryGovernanceCliAction, ReviewAction};
+use super::types::{Cli, Commands, CommitAction, MemoryGovernanceCliAction, ReviewAction};
 use clap::Parser;
 
 #[test]
@@ -163,6 +163,55 @@ fn cli_parses_usage_options() {
             assert_eq!(weeks, 12);
         }
         _ => panic!("expected usage command"),
+    }
+}
+
+#[test]
+fn cli_parses_commit_show_and_session_lookup() {
+    let show = Cli::parse_from([
+        "remem",
+        "commit",
+        "show",
+        "abcdef1",
+        "--project",
+        "proj",
+        "--json",
+    ]);
+    match show.command {
+        Commands::Commit {
+            action: CommitAction::Show { sha, project, json },
+        } => {
+            assert_eq!(sha, "abcdef1");
+            assert_eq!(project.as_deref(), Some("proj"));
+            assert!(json);
+        }
+        _ => panic!("expected commit show command"),
+    }
+
+    let session = Cli::parse_from([
+        "remem",
+        "commit",
+        "session",
+        "content-session-1",
+        "--limit",
+        "7",
+    ]);
+    match session.command {
+        Commands::Commit {
+            action:
+                CommitAction::Session {
+                    session_id,
+                    project,
+                    limit,
+                    json,
+                },
+        } => {
+            assert_eq!(session_id, "content-session-1");
+            assert!(project.is_none());
+            assert_eq!(limit, 7);
+            assert!(!json);
+        }
+        _ => panic!("expected commit session command"),
     }
 }
 

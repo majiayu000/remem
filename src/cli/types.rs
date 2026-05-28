@@ -130,6 +130,10 @@ pub(super) enum Commands {
         #[arg(long)]
         explain: bool,
     },
+    Commit {
+        #[command(subcommand)]
+        action: CommitAction,
+    },
     Show {
         id: i64,
     },
@@ -218,6 +222,28 @@ pub(in crate::cli) enum ImportAction {
         /// violations rather than failing.
         #[arg(long)]
         best_effort: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum CommitAction {
+    /// Look up git metadata and linked memory sessions for a full or short SHA.
+    Show {
+        sha: String,
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List commits linked to a content session ID or memory session ID.
+    Session {
+        session_id: String,
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+        #[arg(long)]
+        json: bool,
     },
 }
 

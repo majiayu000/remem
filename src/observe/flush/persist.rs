@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::db;
+use crate::git_util::GitCommitMetadata;
 use crate::memory::format::ParsedObservation;
 
 pub(crate) fn persist_flush_batch(
@@ -13,12 +14,25 @@ pub(crate) fn persist_flush_batch(
     usage: i64,
     branch: Option<&str>,
     commit_sha: Option<&str>,
+    commit_metadata: Option<&GitCommitMetadata>,
 ) -> Result<()> {
     let ids: Vec<i64> = batch.iter().map(|pending| pending.id).collect();
     let per_obs_usage = usage / observations.len().max(1) as i64;
 
     let tx = conn.transaction()?;
     let memory_session_id = db::upsert_session(&tx, session_id, project, None)?;
+
+    if let Some(commit_sha) = commit_sha {
+        crate::git_trace::link_observed_commit_to_session(
+            &tx,
+            project,
+            session_id,
+            &memory_session_id,
+            commit_sha,
+            branch,
+            commit_metadata,
+        )?;
+    }
 
     for obs in observations {
         let duplicate_id = if let Some(narrative) = &obs.narrative {

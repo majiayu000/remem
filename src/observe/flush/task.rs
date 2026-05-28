@@ -97,8 +97,18 @@ where
     }
 
     let usage = response.len() as i64 / 4;
-    let branch = pending.cwd.as_deref().and_then(db::detect_git_branch);
-    let commit_sha = pending.cwd.as_deref().and_then(db::detect_git_commit);
+    let commit_metadata = pending
+        .cwd
+        .as_deref()
+        .and_then(crate::git_util::detect_commit_metadata);
+    let branch = commit_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.branch.clone())
+        .or_else(|| pending.cwd.as_deref().and_then(db::detect_git_branch));
+    let commit_sha = commit_metadata
+        .as_ref()
+        .map(|metadata| metadata.short_sha.clone())
+        .or_else(|| pending.cwd.as_deref().and_then(db::detect_git_commit));
     persist_flush_batch(
         conn,
         session_id,
@@ -109,6 +119,7 @@ where
         usage,
         branch.as_deref(),
         commit_sha.as_deref(),
+        commit_metadata.as_ref(),
     )?;
 
     Ok(observations.len())

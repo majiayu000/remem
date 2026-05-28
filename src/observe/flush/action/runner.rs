@@ -134,8 +134,15 @@ pub(crate) async fn flush_action_batches(
 
         let usage = response.len() as i64 / 4;
         let batch_cwd = batch.first().and_then(|pending| pending.cwd.as_deref());
-        let batch_branch = batch_cwd.and_then(db::detect_git_branch);
-        let batch_commit = batch_cwd.and_then(db::detect_git_commit);
+        let batch_commit_metadata = batch_cwd.and_then(crate::git_util::detect_commit_metadata);
+        let batch_branch = batch_commit_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.branch.clone())
+            .or_else(|| batch_cwd.and_then(db::detect_git_branch));
+        let batch_commit = batch_commit_metadata
+            .as_ref()
+            .map(|metadata| metadata.short_sha.clone())
+            .or_else(|| batch_cwd.and_then(db::detect_git_commit));
         persist_flush_batch(
             conn,
             session_id,
@@ -146,6 +153,7 @@ pub(crate) async fn flush_action_batches(
             usage,
             batch_branch.as_deref(),
             batch_commit.as_deref(),
+            batch_commit_metadata.as_ref(),
         )?;
 
         _total_usage += usage;
