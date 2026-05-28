@@ -54,6 +54,26 @@ fn make_fresh_db() -> Result<Connection> {
     Ok(conn)
 }
 
+fn normalize_sql_whitespace(sql: &str) -> String {
+    sql.to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn defines_memories_table(sql: &str) -> bool {
+    let normalized = normalize_sql_whitespace(sql);
+    normalized.contains("create table if not exists memories")
+        || normalized.contains("create table memories")
+}
+
+#[test]
+fn memories_table_ddl_detection_collapses_whitespace() {
+    assert!(defines_memories_table(
+        "CREATE TABLE IF NOT EXISTS\n    memories (id INTEGER PRIMARY KEY)"
+    ));
+}
+
 #[test]
 fn migrations_define_memories_table_once() -> Result<()> {
     let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -77,10 +97,7 @@ fn migrations_define_memories_table_once() -> Result<()> {
         );
 
         let sql = std::fs::read_to_string(&path)?;
-        let normalized = sql.to_ascii_lowercase().replace('\n', " ");
-        if normalized.contains("create table if not exists memories")
-            || normalized.contains("create table memories")
-        {
+        if defines_memories_table(&sql) {
             ddl_sources.push(file_name);
         }
     }
