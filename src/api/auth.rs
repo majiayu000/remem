@@ -16,7 +16,11 @@ pub(crate) fn api_token_path() -> PathBuf {
     crate::db::data_dir().join(API_TOKEN_FILE)
 }
 
-pub(crate) fn ensure_api_token() -> Result<PathBuf> {
+/// Ensure the REST API bearer token exists and return its path.
+///
+/// Call this before using [`crate::api::build_router`] directly. The
+/// `remem api` command calls it automatically.
+pub fn ensure_api_token() -> Result<PathBuf> {
     let path = api_token_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -41,7 +45,8 @@ pub(crate) fn ensure_api_token() -> Result<PathBuf> {
     Ok(path)
 }
 
-pub(crate) fn load_api_token() -> Result<String> {
+/// Load the REST API bearer token from the remem data directory.
+pub fn load_api_token() -> Result<String> {
     let path = api_token_path();
     let token = std::fs::read_to_string(&path)
         .with_context(|| format!("read API token from {}", path.display()))?;

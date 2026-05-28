@@ -290,6 +290,9 @@ TOKEN=$(cat ~/.remem/.api-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 ```
 
+Library users who build the router directly should call
+`remem::api::ensure_api_token()` before `remem::api::build_router(...)`.
+
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=` | GET | Search memories |
