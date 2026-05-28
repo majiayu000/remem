@@ -1,6 +1,7 @@
 use rusqlite::Row;
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FailedPendingRow {
     pub id: i64,
     pub session_id: String,

@@ -72,6 +72,7 @@ pub(in crate::cli) fn run_governance(
     actor: Option<&str>,
     confirm_destructive: bool,
     dry_run: bool,
+    json: bool,
     ids: &[i64],
 ) -> Result<()> {
     let cwd = crate::cli::cwd::resolve_cwd_arg(None);
@@ -96,6 +97,10 @@ pub(in crate::cli) fn run_governance(
             confirm_destructive,
         },
     )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
     let mode = if result.dry_run { "dry-run" } else { "applied" };
     println!(
         "memory governance {} action={} project={} affected={}",
@@ -111,4 +116,35 @@ pub(in crate::cli) fn run_governance(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use crate::memory::governance::{GovernMemoryResult, GovernedMemory};
+
+    #[test]
+    fn cli_governance_json_result_is_machine_parseable(
+    ) -> std::result::Result<(), serde_json::Error> {
+        let result = GovernMemoryResult {
+            dry_run: true,
+            action: "stale".to_string(),
+            reason: Some("stale fact".to_string()),
+            affected: vec![GovernedMemory {
+                id: 7,
+                title: "Old memory".to_string(),
+                previous_status: "active".to_string(),
+                new_status: "stale".to_string(),
+            }],
+        };
+
+        let text = serde_json::to_string(&result)?;
+        let parsed: Value = serde_json::from_str(&text)?;
+
+        assert_eq!(parsed["dry_run"], true);
+        assert_eq!(parsed["action"], "stale");
+        assert_eq!(parsed["affected"][0]["new_status"], "stale");
+        Ok(())
+    }
 }

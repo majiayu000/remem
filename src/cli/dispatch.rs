@@ -64,6 +64,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             actor,
             confirm_destructive,
             dry_run,
+            json,
             ids,
         } => run_governance(
             project.as_deref(),
@@ -72,6 +73,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             actor.as_deref(),
             confirm_destructive,
             dry_run,
+            json,
             &ids,
         )?,
         Commands::Usage {
@@ -79,7 +81,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             days,
             weeks,
         } => run_usage(project.as_deref(), days, weeks)?,
-        Commands::Status => run_status()?,
+        Commands::Status { json } => run_status(json)?,
         Commands::Doctor { json, quiet } => {
             let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;
             let code = outcome.exit_code();
@@ -97,6 +99,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             include_stale,
             multi_hop,
             explain,
+            json,
         } => run_search(
             &query,
             project.as_deref(),
@@ -107,9 +110,10 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             include_stale,
             multi_hop,
             explain,
+            json,
         )?,
         Commands::Commit { action } => run_commit(action)?,
-        Commands::Show { id } => run_show(id)?,
+        Commands::Show { id, json } => run_show(id, json)?,
         Commands::Eval { dataset, k } => run_eval(&dataset, k)?,
         Commands::EvalE2e {
             k,
