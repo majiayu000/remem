@@ -86,7 +86,7 @@ fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
                 subcommand
             ),
         }
-    } else if subcommand == "observe" {
+    } else if subcommand == "observe" || subcommand == "session-init" {
         format!(
             "REMEM_HOOK_ADAPTER={} {} {}",
             strategy.observe_adapter(),

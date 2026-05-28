@@ -12,20 +12,30 @@ pub async fn session_init() -> Result<()> {
         &format!("raw input: {}", crate::db::truncate_str(&input, 500)),
     );
 
-    let Some((_adapter, event)) = crate::adapter::detect_adapter(&input) else {
-        anyhow::bail!("no adapter matched session_init input");
+    let Some(event) = session_init_event(&input) else {
+        timer.done("skipped");
+        return Ok(());
+    };
+
+    let project = event.project.clone();
+    let conn = db::open_db()?;
+    db::upsert_session(&conn, &event.session_id, &event.project, None)?;
+
+    timer.done(&format!("project={}", project));
+    Ok(())
+}
+
+fn session_init_event(input: &str) -> Option<crate::adapter::ParsedHookEvent> {
+    let Some((_adapter, event)) = crate::adapter::detect_adapter(input) else {
+        crate::log::warn("session-init", "SKIP no adapter matched hook input");
+        return None;
     };
 
     crate::log::info(
         "session-init",
         &format!("project={} session={}", event.project, event.session_id),
     );
-
-    let conn = db::open_db()?;
-    db::upsert_session(&conn, &event.session_id, &event.project, None)?;
-
-    timer.done(&format!("project={}", event.project));
-    Ok(())
+    Some(event)
 }
 
 pub async fn observe() -> Result<()> {
@@ -167,7 +177,7 @@ mod tests {
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{record_capture_event, should_skip_bash_event};
+    use super::{record_capture_event, session_init_event, should_skip_bash_event};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -199,6 +209,32 @@ mod tests {
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
         assert!(!skipped);
+    }
+
+    #[test]
+    fn session_init_skips_empty_hook_input() {
+        let _test_dir = ScopedTestDataDir::new("session-init-empty");
+
+        assert!(session_init_event("").is_none());
+    }
+
+    #[test]
+    fn session_init_accepts_claude_user_prompt_submit_shape() {
+        let _test_dir = ScopedTestDataDir::new("session-init-user-prompt");
+        let input = serde_json::json!({
+            "session_id": "sess-user-prompt",
+            "cwd": "/tmp/remem",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "hello"
+        })
+        .to_string();
+
+        let Some(event) = session_init_event(&input) else {
+            panic!("event should parse");
+        };
+
+        assert_eq!(event.session_id, "sess-user-prompt");
+        assert_eq!(event.project, "/tmp/remem");
     }
 
     #[test]
