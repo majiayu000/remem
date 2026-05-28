@@ -1,6 +1,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use crate::memory::lesson::{is_lesson_candidate, save_lesson, SaveLessonRequest};
 use crate::memory::{insert_memory, insert_memory_full};
 
 use super::format::{
@@ -39,18 +40,7 @@ pub fn promote_summary_to_memories(
     }
 
     if let Some(text) = learned {
-        count += promote_standard_items(
-            conn,
-            session_id,
-            project,
-            request_text,
-            text,
-            MIN_LEARNED_LEN,
-            "learned",
-            "learned",
-            "discovery",
-            "discovery",
-        )?;
+        count += promote_learned_items(conn, session_id, project, request_text, text)?;
     }
 
     if let Some(text) = preferences {
@@ -86,6 +76,90 @@ pub fn promote_summary_to_memories(
     }
 
     Ok(count)
+}
+
+fn promote_learned_items(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    request_text: &str,
+    text: &str,
+) -> Result<usize> {
+    let text = text.trim();
+    if text.len() < MIN_LEARNED_LEN {
+        return Ok(0);
+    }
+
+    let split_items = split_into_items(text);
+    let items: Vec<&str> = if split_items.len() > 1 {
+        split_items
+            .iter()
+            .map(String::as_str)
+            .filter(|item| item.len() >= MIN_LEARNED_LEN)
+            .collect()
+    } else {
+        vec![text]
+    };
+
+    let mut count = 0;
+    for (index, item) in items.iter().enumerate() {
+        let content = build_content(item, request_text);
+        if is_lesson_candidate(item) {
+            let title = if items.len() > 1 {
+                build_item_title(item, "lesson", index)
+            } else {
+                build_title(item, request_text, "lesson")
+            };
+            let topic_key = format!("lesson-{}", content_hash(item));
+            save_lesson(
+                conn,
+                &SaveLessonRequest {
+                    session_id: Some(session_id),
+                    project,
+                    topic_key: Some(&topic_key),
+                    title: &title,
+                    content: &content,
+                    confidence: lesson_confidence(item),
+                    source_evidence: (!request_text.is_empty()).then_some(request_text),
+                    files: None,
+                    branch: None,
+                    scope: "project",
+                    created_at_epoch: None,
+                    stale_after_epoch: None,
+                },
+            )?;
+        } else {
+            let title = if items.len() > 1 {
+                build_item_title(item, "learned", index)
+            } else {
+                build_title(item, request_text, "learned")
+            };
+            let topic_key = format!("discovery-{}", content_hash(item));
+            insert_memory(
+                conn,
+                Some(session_id),
+                project,
+                Some(&topic_key),
+                &title,
+                &content,
+                "discovery",
+                None,
+            )?;
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+fn lesson_confidence(item: &str) -> f64 {
+    let normalized = item.to_lowercase();
+    if normalized.contains("root cause") || normalized.contains("lesson:") {
+        0.85
+    } else if normalized.contains("never ") || normalized.contains("do not ") {
+        0.8
+    } else {
+        0.7
+    }
 }
 
 fn promote_standard_items(

@@ -1,3 +1,4 @@
+use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 use crate::memory::types::tests_helper::setup_memory_schema;
 use rusqlite::Connection;
 
@@ -324,6 +325,156 @@ fn load_context_data_excludes_preferences_before_candidate_limit() {
         .memories
         .iter()
         .any(|memory| memory.title == "Keep core memories visible"));
+}
+
+#[test]
+fn load_context_data_loads_lessons_separately_from_main_memory_pool() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+
+    save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s1"),
+            project,
+            topic_key: Some("lesson-build-loop"),
+            title: "Stop build-fix loops",
+            content: "Lesson: after repeated build failures, stop and challenge the hypothesis.",
+            confidence: 0.9,
+            source_evidence: Some("build failed repeatedly"),
+            files: None,
+            branch: None,
+            scope: "project",
+            created_at_epoch: Some(now),
+            stale_after_epoch: None,
+        },
+    )
+    .unwrap();
+    insert_memory(
+        &conn,
+        200,
+        project,
+        Some("context-budget-decision"),
+        "decision",
+        "Keep context bounded",
+        "Separate lessons from the normal memory index",
+        now - 1,
+    );
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert_eq!(loaded.lessons.len(), 1);
+    assert_eq!(loaded.lessons[0].memory.title, "Stop build-fix loops");
+    assert!(loaded
+        .memories
+        .iter()
+        .all(|memory| memory.memory_type != "lesson"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Keep context bounded"));
+}
+
+#[test]
+fn load_context_data_filters_lessons_by_current_branch() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+
+    for (title, branch) in [
+        ("Main lesson", Some("main")),
+        ("Feature lesson", Some("feature/context")),
+    ] {
+        save_lesson(
+            &conn,
+            &SaveLessonRequest {
+                session_id: Some("s1"),
+                project,
+                topic_key: Some(&title.replace(' ', "-").to_lowercase()),
+                title,
+                content:
+                    "Lesson: branch-specific lessons should follow the current context branch.",
+                confidence: 0.9,
+                source_evidence: None,
+                files: None,
+                branch,
+                scope: "project",
+                created_at_epoch: None,
+                stale_after_epoch: None,
+            },
+        )
+        .unwrap();
+    }
+
+    let loaded = load_context_data(&conn, project, Some("main"));
+    let titles: Vec<_> = loaded
+        .lessons
+        .iter()
+        .map(|lesson| lesson.memory.title.as_str())
+        .collect();
+
+    assert_eq!(titles, vec!["Main lesson"]);
+}
+
+#[test]
+fn load_context_data_filters_lessons_before_candidate_limit_and_keeps_core_memory() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    let limits = ContextLimits {
+        candidate_fetch_limit: 1,
+        lesson_limit: 10,
+        memory_index_limit: 10,
+        core_item_limit: 3,
+        ..ContextLimits::default()
+    };
+    let policy = ContextPolicy::from_limits(limits);
+
+    for idx in 0..20 {
+        save_lesson(
+            &conn,
+            &SaveLessonRequest {
+                session_id: Some("s1"),
+                project,
+                topic_key: Some(&format!("low-confidence-lesson-{idx}")),
+                title: &format!("Low confidence lesson {idx}"),
+                content: "Lesson: this should not enter context because confidence is too low.",
+                confidence: 0.2,
+                source_evidence: None,
+                files: None,
+                branch: None,
+                scope: "project",
+                created_at_epoch: Some(now + idx),
+                stale_after_epoch: None,
+            },
+        )
+        .unwrap();
+    }
+    insert_memory(
+        &conn,
+        200,
+        project,
+        Some("keep-core-decision"),
+        "decision",
+        "Keep core decision visible",
+        "Low-confidence lessons must not crowd out core decisions.",
+        now - 1_000,
+    );
+
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy);
+
+    assert!(loaded.lessons.is_empty());
+    assert!(loaded
+        .memories
+        .iter()
+        .all(|memory| memory.memory_type != "lesson"));
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Keep core decision visible"));
 }
 
 #[test]

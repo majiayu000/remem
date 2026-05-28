@@ -1,12 +1,13 @@
+use crate::memory::lesson::{LessonMemory, LessonMetadata};
 use crate::workstream::{WorkStream, WorkStreamStatus};
 
 use super::super::policy::ContextLimits;
 use super::super::render::{build_context_stats_footer, ContextRenderStats, SectionRenderStats};
 use super::super::sections::{
-    render_core_memory, render_core_memory_with_limits, render_memory_index,
-    render_memory_index_with_limits, render_memory_index_with_limits_excluding,
-    render_recent_sessions, render_recent_sessions_with_limit, render_workstreams,
-    render_workstreams_with_limits,
+    render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
+    render_memory_index, render_memory_index_with_limits,
+    render_memory_index_with_limits_excluding, render_recent_sessions,
+    render_recent_sessions_with_limit, render_workstreams, render_workstreams_with_limits,
 };
 use super::super::types::SessionSummaryBrief;
 use super::{sample_memory, sample_memory_with_epoch, sample_workstream};
@@ -99,6 +100,39 @@ fn render_memory_index_excludes_preferences() {
     assert!(output.contains("Decision title"));
     assert!(!output.contains("Preference title"));
     assert!(!output.contains("**Preferences**"));
+}
+
+#[test]
+fn render_memory_index_excludes_lessons() {
+    let mut output = String::new();
+    let memories = vec![
+        sample_memory(1, "lesson", "Lesson title"),
+        sample_memory(2, "decision", "Decision title"),
+    ];
+
+    render_memory_index(&mut output, &memories);
+
+    assert!(output.contains("Decision title"));
+    assert!(!output.contains("Lesson title"));
+    assert!(!output.contains("**Lessons**"));
+}
+
+#[test]
+fn render_lessons_respects_item_and_char_limits() {
+    let mut output = String::new();
+    let lessons = vec![
+        sample_lesson(1, "First lesson", 0.9, 3),
+        sample_lesson(2, "Second lesson", 0.8, 1),
+    ];
+
+    let rendered = render_lessons_with_limit(&mut output, &lessons, 1, 240);
+
+    assert_eq!(rendered, 1);
+    assert!(output.contains("## Lessons"));
+    assert!(output.contains("First lesson"));
+    assert!(output.contains("reinforced 3"));
+    assert!(!output.contains("Second lesson"));
+    assert!(output.chars().count() <= 240);
 }
 
 #[test]
@@ -324,6 +358,10 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
             count: 2,
             chars: 430,
         },
+        lessons: SectionRenderStats {
+            count: 1,
+            chars: 180,
+        },
         index: SectionRenderStats {
             count: 5,
             chars: 800,
@@ -349,9 +387,24 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
 
     assert!(footer.contains("7 context memories loaded"));
     assert!(footer.contains("2 core (430 chars)"));
+    assert!(footer.contains("1 lessons (180 chars)"));
     assert!(footer.contains("3 preferences (project:2 global:1"));
     assert!(footer.contains("host=codex-cli"));
     assert!(footer.contains("branch=fix/context"));
     assert!(footer.contains("total=3200 chars/~800 tokens"));
     assert!(footer.contains("truncated=yes"));
+}
+
+fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {
+    LessonMemory {
+        memory: sample_memory(id, "lesson", title),
+        metadata: LessonMetadata {
+            memory_id: id,
+            confidence,
+            reinforcement_count,
+            source_evidence: None,
+            last_reinforced_at_epoch: 1_710_000_000,
+            stale_after_epoch: None,
+        },
+    }
 }

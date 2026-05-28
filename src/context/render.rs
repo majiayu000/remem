@@ -11,8 +11,9 @@ use super::invocation::{
 use super::policy::{ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
-    empty_state_output, render_core_memory_with_limits, render_memory_index_with_limits_excluding,
-    render_recent_sessions_with_limit, render_workstreams_with_limits,
+    empty_state_output, render_core_memory_with_limits, render_lessons_with_limit,
+    render_memory_index_with_limits_excluding, render_recent_sessions_with_limit,
+    render_workstreams_with_limits,
 };
 use super::types::ContextRequest;
 
@@ -77,7 +78,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
 
     let capabilities = resolve_profile(request.host).capabilities();
     timer.done(&format!(
-        "project={} cwd={} session={} host={} colors={} gate={:?}:{} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} index={} preferences={} sessions={} workstreams={}",
+        "project={} cwd={} session={} host={} colors={} gate={:?}:{} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} lessons={} index={} preferences={} sessions={} workstreams={}",
         request.project,
         request.cwd,
         request.session_id.as_deref().unwrap_or("-"),
@@ -92,6 +93,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         capabilities.observes_bash,
         rendered.stats.memories_loaded,
         rendered.stats.core.count,
+        rendered.stats.lessons.count,
         rendered.stats.index.count,
         rendered.stats.preferences.count,
         rendered.stats.sessions.count,
@@ -137,6 +139,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
 
     if preference_summary.rendered == 0
         && loaded.memories.is_empty()
+        && loaded.lessons.is_empty()
         && loaded.summaries.is_empty()
         && loaded.workstreams.is_empty()
     {
@@ -158,7 +161,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         host: request.host.as_env_value().to_string(),
         branch: request.current_branch.clone(),
         total_char_limit: policy.limits.total_char_limit,
-        memories_loaded: loaded.memories.len(),
+        memories_loaded: loaded.memories.len() + loaded.lessons.len(),
         project_preferences: preference_summary.project_rendered,
         global_preferences: preference_summary.global_rendered,
         ..ContextRenderStats::default()
@@ -171,6 +174,19 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         chars: char_len(&output).saturating_sub(before),
     };
 
+    if !loaded.lessons.is_empty() {
+        let before = char_len(&output);
+        let lesson_count = render_lessons_with_limit(
+            &mut output,
+            &loaded.lessons,
+            policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
+            policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+        );
+        stats.lessons = SectionRenderStats {
+            count: lesson_count,
+            chars: char_len(&output).saturating_sub(before),
+        };
+    }
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(&policy);
         let before = char_len(&output);
@@ -294,6 +310,7 @@ pub(in crate::context) struct ContextRenderStats {
     pub total_char_limit: usize,
     pub memories_loaded: usize,
     pub core: SectionRenderStats,
+    pub lessons: SectionRenderStats,
     pub index: SectionRenderStats,
     pub preferences: SectionRenderStats,
     pub project_preferences: usize,
@@ -309,10 +326,12 @@ pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats)
     let branch = stats.branch.as_deref().unwrap_or("-");
     let estimated_tokens = estimate_tokens(stats.output_chars);
     format!(
-        "{} context memories loaded. {} core ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). host={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
+        "{} context memories loaded. {} core ({} chars). {} lessons ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). host={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
         stats.memories_loaded,
         stats.core.count,
         stats.core.chars,
+        stats.lessons.count,
+        stats.lessons.chars,
         stats.index.count,
         stats.index.chars,
         stats.preferences.count,
@@ -346,10 +365,12 @@ fn build_context_debug_trace(
         request.session_id.as_deref().unwrap_or("-")
     ));
     trace.push_str(&format!(
-        "- limits total={} core_items={} core_chars={} index_items={} index_chars={} sessions={} preferences(project={}, global={}, chars={})\n",
+        "- limits total={} core_items={} core_chars={} lessons={} lesson_chars={} index_items={} index_chars={} sessions={} preferences(project={}, global={}, chars={})\n",
         policy.limits.total_char_limit,
         policy.limits.core_item_limit,
         policy.limits.core_char_limit,
+        policy.limits.lesson_limit,
+        policy.limits.lesson_char_limit,
         policy.limits.memory_index_limit,
         policy.limits.memory_index_char_limit,
         policy.limits.session_limit,
@@ -358,8 +379,9 @@ fn build_context_debug_trace(
         policy.limits.preference_char_limit
     ));
     trace.push_str(&format!(
-        "- rendered core={} index={} preferences={} sessions={} workstreams={}\n",
+        "- rendered core={} lessons={} index={} preferences={} sessions={} workstreams={}\n",
         stats.core.count,
+        stats.lessons.count,
         stats.index.count,
         stats.preferences.count,
         stats.sessions.count,
@@ -369,6 +391,18 @@ fn build_context_debug_trace(
         "- preferences project_rendered={} global_rendered={} reason=scope_limits_then_claude_md_dedup\n",
         stats.project_preferences, stats.global_preferences
     ));
+    for (rank, lesson) in loaded.lessons.iter().enumerate() {
+        trace.push_str(&format!(
+            "- lesson rank={} id={} confidence={:.2} reinforced={} scope={} topic={} title={}\n",
+            rank + 1,
+            lesson.memory.id,
+            lesson.metadata.confidence,
+            lesson.metadata.reinforcement_count,
+            lesson.memory.scope,
+            lesson.memory.topic_key.as_deref().unwrap_or("-"),
+            truncate_chars_with_ellipsis(&lesson.memory.title, 120)
+        ));
+    }
     for (rank, memory) in loaded.memories.iter().take(30).enumerate() {
         let target = if stats.core_ids.contains(&memory.id) {
             "core"

@@ -335,19 +335,39 @@ pub(super) fn promote_candidate_to_memory(
     evidence_json: &str,
 ) -> Result<i64> {
     let title = candidate_title(candidate);
-    let memory_id = crate::memory::insert_memory_full(
-        conn,
-        session_id,
-        project,
-        Some(&candidate.topic_key),
-        &title,
-        &candidate.text,
-        &candidate.memory_type,
-        None,
-        None,
-        &candidate.scope,
-        None,
-    )?;
+    let memory_id = if candidate.memory_type == "lesson" {
+        crate::memory::lesson::save_lesson(
+            conn,
+            &crate::memory::lesson::SaveLessonRequest {
+                session_id,
+                project,
+                topic_key: Some(&candidate.topic_key),
+                title: &title,
+                content: &candidate.text,
+                confidence: candidate.confidence,
+                source_evidence: Some(evidence_json),
+                files: None,
+                branch: None,
+                scope: &candidate.scope,
+                created_at_epoch: None,
+                stale_after_epoch: None,
+            },
+        )?
+    } else {
+        crate::memory::insert_memory_full(
+            conn,
+            session_id,
+            project,
+            Some(&candidate.topic_key),
+            &title,
+            &candidate.text,
+            &candidate.memory_type,
+            None,
+            None,
+            &candidate.scope,
+            None,
+        )?
+    };
     conn.execute(
         "UPDATE memories
          SET evidence_event_ids = ?1,

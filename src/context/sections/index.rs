@@ -36,6 +36,7 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
     for memory in memories
         .iter()
         .filter(|memory| memory.memory_type != "preference")
+        .filter(|memory| memory.memory_type != "lesson")
         .filter(|memory| !excluded_ids.contains(&memory.id))
         .take(limits.memory_index_limit)
     {
