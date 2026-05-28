@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
-    run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval,
+    run_admin, run_backfill_entities, run_cleanup, run_dream, run_encrypt, run_eval, run_eval_e2e,
     run_eval_local, run_import, run_pending, run_preferences, run_review, run_search, run_show,
     run_status, run_usage,
 };
@@ -93,6 +93,11 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         )?,
         Commands::Show { id } => run_show(id)?,
         Commands::Eval { dataset, k } => run_eval(&dataset, k)?,
+        Commands::EvalE2e {
+            k,
+            json,
+            keep_data_dir,
+        } => run_eval_e2e(k, json, keep_data_dir).await?,
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
         Commands::Encrypt => run_encrypt()?,

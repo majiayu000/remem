@@ -127,6 +127,24 @@ fn cli_parses_usage_options() {
 }
 
 #[test]
+fn cli_parses_eval_e2e_options() {
+    let cli = Cli::parse_from(["remem", "eval-e2e", "--json", "--keep-data-dir", "-k", "3"]);
+
+    match cli.command {
+        Commands::EvalE2e {
+            k,
+            json,
+            keep_data_dir,
+        } => {
+            assert_eq!(k, 3);
+            assert!(json);
+            assert!(keep_data_dir);
+        }
+        _ => panic!("expected eval-e2e command"),
+    }
+}
+
+#[test]
 fn cli_parses_context_debug_option() {
     let cli = Cli::parse_from([
         "remem",
