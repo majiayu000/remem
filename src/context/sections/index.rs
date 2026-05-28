@@ -35,9 +35,7 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
     let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
     for memory in memories
         .iter()
-        .filter(|memory| {
-            MemoryType::parse(&memory.memory_type).map_or(true, MemoryType::is_indexed)
-        })
+        .filter(|memory| MemoryType::parse(&memory.memory_type).is_none_or(MemoryType::is_indexed))
         .filter(|memory| !excluded_ids.contains(&memory.id))
         .take(limits.memory_index_limit)
     {
