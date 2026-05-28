@@ -43,7 +43,7 @@ fn apply_standard_setup(conn: &Connection) -> Result<()> {
     if !encrypted && std::env::var_os("REMEM_ALLOW_PLAINTEXT_DB").is_none() {
         anyhow::bail!(
             "no cipher key (REMEM_CIPHER_KEY unset, {} missing); refusing to open an unencrypted \
-             memory DB. Run `remem encrypt` or set REMEM_ALLOW_PLAINTEXT_DB=1.",
+             memory DB. Run `remem encrypt` to create/key the DB, or set REMEM_ALLOW_PLAINTEXT_DB=1.",
             data_dir().join(".key").display());
     }
     if !encrypted { crate::log::warn("db", "opening UNENCRYPTED database (REMEM_ALLOW_PLAINTEXT_DB set)"); }
@@ -52,6 +52,7 @@ fn apply_standard_setup(conn: &Connection) -> Result<()> {
 }
 ```
 - `open_db()` calls `apply_standard_setup` before migrations.
+- Update `remem encrypt` so it succeeds on a fresh install: generate `.key`, initialize an empty keyed `remem.db` through the canonical migration path when the DB is absent, and only SQLCipher-export an existing plaintext DB when one already exists. The fail-closed error must point only at a command that works on an empty data dir.
 - `src/doctor/schema.rs:14` and `src/db/schema.rs:27` (if kept per §5.4) call `apply_cipher_key_if_available` after `Connection::open` — fixes the false `doctor` FAIL (CFG-2) and the plaintext import (CFG-3).
 - This also closes CFG-7 (FK PRAGMA) by centralizing PRAGMA setup.
 
@@ -63,7 +64,7 @@ Add migration `v019_memory_fts_all_status.sql`:
 - Re-evaluate `archive_stale_memories` (DI-9): keep archived rows searchable; if age-archiving stays, it no longer removes them from recall.
 
 ### 5.3 Fix C4 — per-session raw archive, collision-free hash (Phase 0)
-Add migration `v020_raw_messages_session_dedup.sql`: rebuild `raw_messages` with `UNIQUE(project, session_id, role, content_hash)`. Switch `raw_archive.rs` content hashing to SHA-256 (`sha2`, existing dep). Backfill is acceptable as additive (old rows keep their hashes; new unique key is a superset).
+Add migration `v020_raw_messages_session_dedup.sql`: rebuild `raw_messages` with `UNIQUE(project, session_id, role, content_hash)`. Switch `raw_archive.rs` content hashing to SHA-256 (`sha2`, existing dep). The migration must backfill existing `content_hash` values to SHA-256 before the new writer runs, or version the hash and have the insert/idempotence lookup check both old FNV and new SHA-256 during the transition. Old rows cannot simply keep FNV values, because re-draining the same transcript under the SHA-256 writer would miss the old unique key and duplicate raw turns.
 
 ### 5.4 Fix C1 — one schema, one migrator (Phase 1; decision required)
 **Decision gate:** is the `schema.sqlite` normalization meant to ship?
@@ -72,7 +73,7 @@ Add migration `v020_raw_messages_session_dedup.sql`: rebuild `raw_messages` with
 - Add a guard test: exactly one `memories` DDL source; every `MEMORY_COLS` name exists in it.
 
 ### 5.5 Fix C5 — align candidate/observation vocabularies (Phase 0)
-One shared mapping `observation_type → memory_type` (e.g. `feature/refactor/change → discovery`, identity otherwise). Relax `is_supported_by_source_observation` to compare the *mapped* type, not raw equality. Any candidate diverted to `pending_review` instead of auto-promoting logs an explicit `error`/`info` reason (no silent divert). Add `architecture` to the observation vocabulary, or drop it from `AUTO_PROMOTE_TYPES` — but make the two sets provably consistent with a test.
+One shared support table from candidate `memory_type` to acceptable source-observation evidence types. For `architecture`, add `architecture` to the observation vocabulary so future `<type>architecture</type>` observations are preserved, and explicitly allow already-coerced `discovery` observations to support an `architecture` candidate when the observation/candidate content relationship otherwise matches. Relax `is_supported_by_source_observation` to consult that table instead of raw equality. Any candidate diverted to `pending_review` instead of auto-promoting logs an explicit `error`/`info` reason (no silent divert). Add a test proving the auto-promote and observation vocabularies stay consistent.
 
 ### 5.6 Fix H1/H2 — U-29 logging on the context path (Phase 0)
 - `context/query.rs:93` → `unwrap_or_else(|e| { crate::log::error("context", &format!("failed to load recent memories for {project}: {e}")); Vec::new() })`.
@@ -125,8 +126,8 @@ A `MemoryType` enum with `as_str`/`label`/`index_order`/`weight`/`auto_promote` 
 
 - C2: `REMEM_DATA_DIR=$(mktemp -d) cargo run -- status` fails without a key; with `REMEM_ALLOW_PLAINTEXT_DB=1` succeeds + warns. Doctor test: encrypt a temp DB, assert `Status::Ok`.
 - C3: insert → `govern_memory` to `stale` → `search(q, include_stale=true)` via FTS returns the row. Regression: short + long query tokens return the same stale row.
-- C4: insert identical content under two `session_id`s; assert two rows and `search_raw` returns both with correct attribution.
-- C5: `discovery` observation + supported `architecture` candidate auto-promotes (or logs explicit reason).
+- C4: insert identical content under two `session_id`s; assert two rows and `search_raw` returns both with correct attribution; seed a pre-migration FNV-hash row, run the v020 path, re-drain the same content, and assert no duplicate.
+- C5: already-coerced `discovery` observation + supported `architecture` candidate auto-promotes (or logs explicit reason); future `<type>architecture</type>` observations retain/support `architecture` directly.
 - C1: guard test — one `memories` DDL source; all `MEMORY_COLS` names present.
 - H1/H2: inject a query/open error; assert an ERROR log is emitted.
 - H4: insert → archive → re-upsert same topic_key; assert `status='active'` and FTS-searchable.
