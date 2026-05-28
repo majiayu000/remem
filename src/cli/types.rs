@@ -139,6 +139,14 @@ pub(super) enum Commands {
         #[arg(long, short = 'k', default_value = "5")]
         k: usize,
     },
+    EvalE2e {
+        #[arg(long, short = 'k', default_value = "5")]
+        k: usize,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        keep_data_dir: bool,
+    },
     EvalLocal,
     BackfillEntities,
     Encrypt,

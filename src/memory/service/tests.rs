@@ -79,6 +79,41 @@ fn save_memory_preference_defaults_to_project_scope() {
 }
 
 #[test]
+fn save_memory_lesson_creates_lesson_metadata() {
+    let _dir = ScopedTestDataDir::new("lesson-save-metadata");
+    let conn = db::open_db().expect("db should open");
+    let req = SaveMemoryRequest {
+        text:
+            "Lesson: route generic lesson saves through the lesson writer so context can load them."
+                .to_string(),
+        title: Some("Lesson metadata".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: Some("lesson-save-metadata".to_string()),
+        memory_type: Some("lesson".to_string()),
+        files: Some(vec!["src/memory/service/save.rs".to_string()]),
+        branch: Some("main".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("lesson save should succeed");
+
+    let (metadata_count, files, branch): (i64, String, String) = conn
+        .query_row(
+            "SELECT COUNT(l.memory_id), m.files, m.branch
+             FROM memories m
+             LEFT JOIN memory_lessons l ON l.memory_id = m.id
+             WHERE m.id = ?1",
+            [saved.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("lesson metadata query should succeed");
+    assert_eq!(metadata_count, 1);
+    assert_eq!(branch, "main");
+    assert!(files.contains("src/memory/service/save.rs"));
+}
+
+#[test]
 fn save_memory_outside_local_path_does_not_persist_memory() {
     let _dir = ScopedTestDataDir::new("save-outside-path-no-db-write");
     let conn = db::open_db().expect("db should open");

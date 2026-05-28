@@ -11,7 +11,7 @@ fn build_hooks_contains_expected_claude_commands() {
     );
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "/tmp/remem session-init"
+        "REMEM_HOOK_ADAPTER=claude-code /tmp/remem session-init"
     );
     assert_eq!(
         hooks["PostToolUse"][0]["hooks"][0]["command"],
