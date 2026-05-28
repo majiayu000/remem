@@ -10,7 +10,7 @@ const RAW_PREVIEW_CHARS: usize = 300;
 #[tool_router(router = tool_router_search, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Search past memories by keyword/project/type. Always returns a compact envelope: { mode, results, next_step, pagination }. Use result IDs with next_step.source in get_observations(ids, source) to fetch full details. raw_hits are raw_archive rows, not curated memories; use search_raw for literal chat recall.\n\n**Multi-step retrieval strategy** (follow this for complex questions):\n1. **Decompose**: Break complex questions into 2-3 focused sub-queries and search each separately. E.g. 'What do Melanie's kids like?' → search('Melanie children names') + search('Melanie kids hobbies').\n2. **Iterate**: If first search returns <5 results, extract key entities/names from results and search again with those entities.\n3. **Multi-hop**: Set multi_hop=true when the question spans multiple people/topics — this triggers entity graph expansion automatically.\n\nUse when: user asks about past work, you need implementation context, or debugging a previously-fixed issue."
+        description = "Search curated memories by query/project/type. Returns compact results with IDs, source='memory', pagination, and next_step for get_observations(ids, source). Use search_raw for literal chat recall."
     )]
     pub(super) fn search(
         &self,
