@@ -10,6 +10,27 @@ use super::local_copy::{
 use super::types::{SaveMemoryRequest, SaveMemoryResult};
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 
+#[derive(Debug)]
+pub struct LocalCopyError {
+    message: String,
+}
+
+impl From<anyhow::Error> for LocalCopyError {
+    fn from(err: anyhow::Error) -> Self {
+        Self {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for LocalCopyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for LocalCopyError {}
+
 pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMemoryResult> {
     let project = req.project.as_deref().unwrap_or("manual");
     let title = req.title.as_deref().unwrap_or("Memory");
@@ -20,8 +41,8 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         .and_then(|files| serde_json::to_string(files).ok());
 
     let scope = req.scope.as_deref().unwrap_or("project");
-    let mut local_copy = prepare_local_copy(project, title, req)?;
-    write_local_copy(&mut local_copy)?;
+    let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
+    write_local_copy(&mut local_copy).map_err(LocalCopyError::from)?;
 
     let save_result = if memory_type == "lesson" {
         save_lesson(

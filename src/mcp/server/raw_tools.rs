@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
 use super::super::types::{RawSearchHit, SearchRawParams};
+use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::memory::raw_archive;
 
@@ -18,7 +19,8 @@ impl MemoryServer {
     pub(super) fn search_raw(
         &self,
         Parameters(params): Parameters<SearchRawParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "search_raw";
         let start = std::time::Instant::now();
         crate::log::info(
             "mcp",
@@ -32,7 +34,7 @@ impl MemoryServer {
                 params.offset.unwrap_or(0),
             ),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             let req = raw_archive::RawSearchRequest {
                 query: params.query.clone(),
                 project: params.project.clone(),
@@ -43,7 +45,7 @@ impl MemoryServer {
             };
             let hits = raw_archive::search_raw_messages(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search_raw failed: {}", e));
-                e.to_string()
+                McpToolError::db_query(TOOL, e)
             })?;
 
             let results: Vec<RawSearchHit> = hits
@@ -71,7 +73,7 @@ impl MemoryServer {
                     start.elapsed().as_millis()
                 ),
             );
-            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            errors::to_json_pretty(TOOL, &results)
         })
     }
 }

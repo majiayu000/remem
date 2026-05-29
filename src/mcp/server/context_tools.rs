@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
 use super::super::types::{GetObservationsParams, TimelineParams};
+use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::retrieval::search;
 use crate::{db, memory};
@@ -14,7 +15,8 @@ impl MemoryServer {
     pub(super) fn timeline(
         &self,
         Parameters(params): Parameters<TimelineParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "timeline";
         let start = std::time::Instant::now();
         crate::log::info(
             "mcp",
@@ -27,8 +29,19 @@ impl MemoryServer {
                 params.depth_after.unwrap_or(5),
             ),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             let anchor_id = if let Some(id) = params.anchor {
+                let anchor = db::get_observations_by_ids(conn, &[id], params.project.as_deref())
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("timeline anchor lookup failed: {}", e));
+                        McpToolError::db_query(TOOL, e)
+                    })?;
+                if anchor.is_empty() {
+                    return Err(McpToolError::not_found(
+                        TOOL,
+                        format!("No observation found for anchor id {id}"),
+                    ));
+                }
                 id
             } else if let Some(query) = &params.query {
                 let results = search::search(
@@ -42,14 +55,19 @@ impl MemoryServer {
                 )
                 .map_err(|e| {
                     crate::log::warn("mcp", &format!("timeline search failed: {}", e));
-                    e.to_string()
+                    McpToolError::db_query(TOOL, e)
                 })?;
                 results
                     .first()
                     .map(|observation| observation.id)
-                    .ok_or_else(|| "No results for query".to_string())?
+                    .ok_or_else(|| {
+                        McpToolError::not_found(TOOL, format!("No results for query '{query}'"))
+                    })?
             } else {
-                return Err("anchor or query required".to_string());
+                return Err(McpToolError::invalid_request(
+                    TOOL,
+                    "anchor or query required",
+                ));
             };
 
             let results = db::get_timeline_around(
@@ -61,7 +79,7 @@ impl MemoryServer {
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("timeline failed: {}", e));
-                e.to_string()
+                McpToolError::db_query(TOOL, e)
             })?;
 
             crate::log::info(
@@ -73,7 +91,7 @@ impl MemoryServer {
                     start.elapsed().as_millis()
                 ),
             );
-            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            errors::to_json_pretty(TOOL, &results)
         })
     }
 
@@ -83,7 +101,8 @@ impl MemoryServer {
     pub(super) fn get_observations(
         &self,
         Parameters(params): Parameters<GetObservationsParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "get_observations";
         let start = std::time::Instant::now();
         let source = params.source.as_deref().unwrap_or("memory");
         crate::log::info(
@@ -93,15 +112,21 @@ impl MemoryServer {
                 params.ids, params.project, source
             ),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             let results = match source {
                 "observation" => {
                     let observations_result =
                         db::get_observations_by_ids(conn, &params.ids, params.project.as_deref());
                     let observations = observations_result.map_err(|e| {
                         crate::log::warn("mcp", &format!("get_observations failed: {}", e));
-                        e.to_string()
+                        McpToolError::db_query(TOOL, e)
                     })?;
+                    ensure_requested_ids_found(
+                        TOOL,
+                        source,
+                        &params.ids,
+                        observations.iter().map(|observation| observation.id),
+                    )?;
                     let accessed_ids: Vec<i64> = observations
                         .iter()
                         .map(|observation| observation.id)
@@ -114,20 +139,27 @@ impl MemoryServer {
                             );
                         }
                     }
-                    serde_json::to_value(&observations).map_err(|e| e.to_string())?
+                    errors::to_json_value(TOOL, &observations)?
                 }
                 "memory" => {
                     let memories_result =
                         memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref());
                     let memories = memories_result.map_err(|e| {
                         crate::log::warn("mcp", &format!("get_memories failed: {}", e));
-                        e.to_string()
+                        McpToolError::db_query(TOOL, e)
                     })?;
-                    serde_json::to_value(&memories).map_err(|e| e.to_string())?
+                    ensure_requested_ids_found(
+                        TOOL,
+                        source,
+                        &params.ids,
+                        memories.iter().map(|memory| memory.id),
+                    )?;
+                    errors::to_json_value(TOOL, &memories)?
                 }
                 other => {
-                    return Err(format!(
-                        "unsupported source '{other}'; expected 'memory' or 'observation'"
+                    return Err(McpToolError::unsupported_source(
+                        TOOL,
+                        format!("unsupported source '{other}'; expected 'memory' or 'observation'"),
                     ));
                 }
             };
@@ -140,7 +172,35 @@ impl MemoryServer {
                     start.elapsed().as_millis()
                 ),
             );
-            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            errors::to_json_pretty(TOOL, &results)
         })
     }
+}
+
+fn ensure_requested_ids_found(
+    tool: &'static str,
+    source: &str,
+    requested_ids: &[i64],
+    found_ids: impl Iterator<Item = i64>,
+) -> McpToolResult<()> {
+    if requested_ids.is_empty() {
+        return Ok(());
+    }
+
+    let found: std::collections::HashSet<i64> = found_ids.collect();
+    let missing: Vec<i64> = requested_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|id| !found.contains(id))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(McpToolError::not_found(
+        tool,
+        format!("{source} id(s) not found: {missing:?}"),
+    ))
 }

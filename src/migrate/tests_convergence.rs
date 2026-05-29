@@ -54,6 +54,92 @@ fn make_fresh_db() -> Result<Connection> {
     Ok(conn)
 }
 
+fn normalize_sql_whitespace(sql: &str) -> String {
+    sql.to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalize_identifier(token: &str) -> &str {
+    token.trim_matches(|c| matches!(c, '"' | '\'' | '`' | '[' | ']' | '('))
+}
+
+fn defines_memories_table(sql: &str) -> bool {
+    let normalized = normalize_sql_whitespace(sql);
+    let tokens: Vec<&str> = normalized.split_whitespace().collect();
+
+    tokens.iter().enumerate().any(|(index, token)| {
+        if *token != "create" || tokens.get(index + 1) != Some(&"table") {
+            return false;
+        }
+
+        let table_index = if tokens.get(index + 2..index + 5) == Some(&["if", "not", "exists"]) {
+            index + 5
+        } else {
+            index + 2
+        };
+
+        tokens
+            .get(table_index)
+            .is_some_and(|name| normalize_identifier(name) == "memories")
+    })
+}
+
+#[test]
+fn memories_table_ddl_detection_collapses_whitespace() {
+    assert!(defines_memories_table(
+        "CREATE TABLE IF NOT EXISTS\n    memories (id INTEGER PRIMARY KEY)"
+    ));
+}
+
+#[test]
+fn memories_table_ddl_detection_requires_exact_table_name() {
+    assert!(!defines_memories_table(
+        "CREATE TABLE IF NOT EXISTS memories_backup (id INTEGER PRIMARY KEY)"
+    ));
+    assert!(!defines_memories_table(
+        "CREATE TABLE IF NOT EXISTS memories_fts (title, content)"
+    ));
+}
+
+#[test]
+fn migrations_define_memories_table_once() -> Result<()> {
+    let migrations_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("migrations");
+    let mut ddl_sources = Vec::new();
+
+    for entry in std::fs::read_dir(&migrations_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sql") {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            !file_name.starts_with("schema_"),
+            "secondary schema migration source must not exist: {file_name}"
+        );
+
+        let sql = std::fs::read_to_string(&path)?;
+        if defines_memories_table(&sql) {
+            ddl_sources.push(file_name);
+        }
+    }
+
+    ddl_sources.sort();
+    assert_eq!(
+        ddl_sources,
+        vec!["v001_baseline.sql".to_string()],
+        "exactly one canonical memories table DDL source is allowed"
+    );
+    Ok(())
+}
+
 /// Return sorted column names for a table via PRAGMA table_info.
 fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use super::index::ensure_memory_index;
 use super::paths::encode_project_path;
+use super::runtime::{enforce_native_memory_limit, env_value_enabled};
 
 fn unique_temp_dir(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -54,4 +55,29 @@ fn ensure_memory_index_creates_new_file_when_missing() {
     assert!(content.contains("remem_sessions.md"));
 
     std::fs::remove_dir_all(&dir).expect("temp dir should clean up");
+}
+
+#[test]
+fn native_memory_limit_caps_output_without_breaking_utf8() {
+    let content = format!(
+        "---\nname: remem_sessions\n---\n\n{}\n",
+        "关键决策和最近会话摘要".repeat(80)
+    );
+
+    let (capped, truncated) = enforce_native_memory_limit(&content, 512);
+
+    assert!(truncated);
+    assert!(capped.len() <= 512, "capped length was {}", capped.len());
+    assert!(capped.is_char_boundary(capped.len()));
+    assert!(capped.contains("Truncated by remem native memory guard"));
+}
+
+#[test]
+fn native_memory_disable_env_accepts_explicit_truthy_values() {
+    for value in ["1", "true", "TRUE", "yes", "on"] {
+        assert!(env_value_enabled(value), "{value}");
+    }
+    for value in ["", "0", "false", "off", "disabled"] {
+        assert!(!env_value_enabled(value), "{value}");
+    }
 }

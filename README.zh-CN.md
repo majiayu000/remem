@@ -258,7 +258,12 @@ remem sync-memory --cwd .
 
 ```bash
 remem api --port 5567
+TOKEN=$(cat ~/.remem/.api-token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 ```
+
+直接使用库 API 构建 router 的调用方，应在 `remem::api::build_router(...)`
+之前调用 `remem::api::ensure_api_token()`。
 
 | Endpoint | Method | 说明 |
 |---|---|---|
@@ -272,7 +277,9 @@ remem api --port 5567
 - SQLCipher 静态加密（`remem encrypt`）
 - 数据目录权限（`0700`）
 - 密钥文件权限（`0600`）
-- API 仅绑定本机（`127.0.0.1`）
+- REST API 仅绑定本机（`127.0.0.1`），并要求
+  `Authorization: Bearer $(cat ~/.remem/.api-token)`
+- API token 文件权限（`0600`）
 
 ## 架构文档
 

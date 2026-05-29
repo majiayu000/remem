@@ -1,3 +1,4 @@
+use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 use crate::memory::types::tests_helper::setup_memory_schema;
 use rusqlite::Connection;
@@ -6,6 +7,27 @@ use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::{load_context_data, load_context_data_with_policy};
 use super::super::render::{enforce_total_char_limit, enforce_total_char_limit_preserving_footer};
 use super::{insert_global_memory, insert_memory, insert_memory_with_branch};
+
+#[test]
+fn load_context_data_logs_primary_memory_query_failures() {
+    let data_dir = ScopedTestDataDir::new("context-primary-memory-error-log");
+    let conn = match Connection::open_in_memory() {
+        Ok(conn) => conn,
+        Err(error) => panic!("in-memory connection should open: {error}"),
+    };
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy);
+
+    assert!(loaded.memories.is_empty());
+    let log_path = data_dir.path.join("remem.log");
+    let log = match std::fs::read_to_string(&log_path) {
+        Ok(log) => log,
+        Err(error) => panic!("log should be readable at {}: {error}", log_path.display()),
+    };
+    assert!(log.contains("[ERROR] [context] failed to load recent context memories"));
+    assert!(log.contains("[ERROR] [context] failed to search context memories"));
+}
 
 #[test]
 fn load_context_data_dedupes_generated_topic_keys_by_workstream_context() {
