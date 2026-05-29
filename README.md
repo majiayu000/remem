@@ -294,7 +294,7 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `today`, `top_projects`, `schema` |
+| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `today`, `top_projects` |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
@@ -304,7 +304,12 @@ is set:
 
 ```bash
 remem api --port 5567
+TOKEN=$(cat ~/.remem/.api-token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 ```
+
+Library users who build the router directly should call
+`remem::api::ensure_api_token()` before `remem::api::build_router(...)`.
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -318,7 +323,9 @@ remem api --port 5567
 - SQLCipher encryption at rest (`remem encrypt`)
 - Data directory permissions (`0700`)
 - Key file permissions (`0600`)
-- API binds localhost only (`127.0.0.1`)
+- REST API binds localhost only (`127.0.0.1`) and requires
+  `Authorization: Bearer $(cat ~/.remem/.api-token)`
+- API token file permissions (`0600`)
 
 ## Architecture Docs
 

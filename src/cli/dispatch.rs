@@ -5,7 +5,7 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 use super::actions::{
     run_admin, run_backfill_entities, run_cleanup, run_commit, run_dream, run_encrypt, run_eval,
     run_eval_e2e, run_eval_local, run_governance, run_import, run_pending, run_preferences,
-    run_review, run_search, run_show, run_status, run_usage,
+    run_review, run_search, run_show, run_status, run_usage, run_why, GovernanceCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -62,20 +62,34 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             action,
             reason,
             actor,
+            query,
+            memory_type,
+            status,
+            limit,
+            offset,
+            from_file,
+            read_stdin,
             confirm_destructive,
             dry_run,
             json,
             ids,
-        } => run_governance(
-            project.as_deref(),
+        } => run_governance(GovernanceCliRequest {
+            project: project.as_deref(),
             action,
-            reason.as_deref(),
-            actor.as_deref(),
+            reason: reason.as_deref(),
+            actor: actor.as_deref(),
+            query: query.as_deref(),
+            memory_type: memory_type.as_deref(),
+            status: status.as_deref(),
+            limit,
+            offset,
+            from_file: from_file.as_deref(),
+            read_stdin,
             confirm_destructive,
             dry_run,
             json,
-            &ids,
-        )?,
+            ids: &ids,
+        })?,
         Commands::Usage {
             project,
             days,
@@ -114,6 +128,11 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         )?,
         Commands::Commit { action } => run_commit(action)?,
         Commands::Show { id, json } => run_show(id, json)?,
+        Commands::Why {
+            id,
+            project,
+            branch,
+        } => run_why(id, project.as_deref(), branch.as_deref())?,
         Commands::Eval { dataset, k } => run_eval(&dataset, k)?,
         Commands::EvalE2e {
             k,

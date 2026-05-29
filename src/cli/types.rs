@@ -82,6 +82,27 @@ pub(super) enum Commands {
         reason: Option<String>,
         #[arg(long)]
         actor: Option<String>,
+        /// Select memories whose title, content, or search context contains this text.
+        #[arg(long)]
+        query: Option<String>,
+        /// Select memories by type. Defaults to the existing positional IDs only.
+        #[arg(long, alias = "type")]
+        memory_type: Option<String>,
+        /// Select memories by status. Omit for active-only selector batches; use "all" for any status.
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum selector matches to include before governance is applied.
+        #[arg(long, default_value = "50")]
+        limit: i64,
+        /// Number of selector matches to skip.
+        #[arg(long, default_value = "0")]
+        offset: i64,
+        /// Read additional memory IDs from a text file. Whitespace and commas are accepted.
+        #[arg(long)]
+        from_file: Option<PathBuf>,
+        /// Read additional memory IDs from stdin. Whitespace and commas are accepted.
+        #[arg(long = "stdin")]
+        read_stdin: bool,
         #[arg(long)]
         confirm_destructive: bool,
         #[arg(long)]
@@ -89,7 +110,7 @@ pub(super) enum Commands {
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
-        #[arg(required = true)]
+        #[arg()]
         ids: Vec<i64>,
     },
     Usage {
@@ -149,6 +170,13 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    Why {
+        id: i64,
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+    },
     Eval {
         #[arg(long, default_value = "eval/golden.json")]
         dataset: String,
@@ -177,12 +205,12 @@ pub(super) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Admin commands for database backup and schema reset.
+    /// Admin commands for database backup.
     Admin {
         #[command(subcommand)]
         action: AdminAction,
     },
-    /// Import commands for moving older backup rows into the schema database.
+    /// Import commands for moving older backup rows into the runtime database.
     Import {
         #[command(subcommand)]
         action: ImportAction,
@@ -211,13 +239,6 @@ pub(in crate::cli) enum AdminAction {
         /// Output path. Defaults to <data_dir>/backups/remem-backup-<ts>.sqlite.
         #[arg(long)]
         output: Option<PathBuf>,
-    },
-    /// Drop and re-initialize the schema database (~/.remem/schema.sqlite).
-    /// Requires --confirm-destructive to actually run.
-    #[command(name = "reset-schema")]
-    ResetSchema {
-        #[arg(long)]
-        confirm_destructive: bool,
     },
 }
 

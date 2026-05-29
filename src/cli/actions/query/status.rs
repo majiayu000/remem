@@ -90,7 +90,6 @@ fn load_status_report() -> Result<StatusReport> {
                 count: project.count,
             })
             .collect(),
-        schema: crate::db::schema::status::format_summary(),
     })
 }
 
@@ -167,11 +166,6 @@ fn print_status_report(report: &StatusReport) {
             println!("  {:>4}  {}", project.count, project.project);
         }
     }
-
-    println!();
-    for line in &report.schema {
-        println!("{}", line);
-    }
 }
 
 fn worker_health_tag(healthy: bool, heartbeat_age_secs: Option<i64>) -> &'static str {
@@ -195,7 +189,6 @@ pub(super) struct StatusReport {
     pub worker_daemon: WorkerDaemonStatus,
     pub today: DailyStatus,
     pub top_projects: Vec<TopProjectStatus>,
-    pub schema: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -320,7 +313,6 @@ mod tests {
                 project: "proj".to_string(),
                 count: 26,
             }],
-            schema: vec!["schema ok".to_string()],
         };
 
         let text = serde_json::to_string(&report)?;

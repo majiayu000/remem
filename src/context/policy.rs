@@ -1,3 +1,5 @@
+use crate::memory::MemoryType;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SectionKind {
     Preferences,
@@ -155,22 +157,22 @@ impl ContextPolicy {
                     kind: SectionKind::Preferences,
                     item_limit: limits.preference_project_limit + limits.preference_global_limit,
                     char_limit: limits.preference_char_limit,
-                    include_types: vec!["preference"],
+                    include_types: vec![MemoryType::Preference.as_str()],
                     exclude_types: vec![],
                 },
                 SectionPolicy {
                     kind: SectionKind::Lessons,
                     item_limit: limits.lesson_limit,
                     char_limit: limits.lesson_char_limit,
-                    include_types: vec!["lesson"],
+                    include_types: vec![MemoryType::Lesson.as_str()],
                     exclude_types: vec![],
                 },
                 SectionPolicy {
                     kind: SectionKind::Core,
                     item_limit: limits.core_item_limit,
                     char_limit: limits.core_char_limit,
-                    include_types: vec!["bugfix", "architecture", "decision", "discovery"],
-                    exclude_types: vec!["preference", "lesson", "session_activity"],
+                    include_types: memory_types_matching(MemoryType::is_core),
+                    exclude_types: memory_types_matching(|memory_type| !memory_type.is_core()),
                 },
                 SectionPolicy {
                     kind: SectionKind::Workstreams,
@@ -184,7 +186,7 @@ impl ContextPolicy {
                     item_limit: limits.memory_index_limit,
                     char_limit: limits.memory_index_char_limit,
                     include_types: vec![],
-                    exclude_types: vec!["preference", "lesson"],
+                    exclude_types: memory_types_matching(|memory_type| !memory_type.is_indexed()),
                 },
                 SectionPolicy {
                     kind: SectionKind::Sessions,
@@ -229,6 +231,18 @@ impl ContextPolicy {
             .map(|section| section.char_limit)
             .unwrap_or(fallback)
     }
+}
+
+fn memory_types_matching<F>(predicate: F) -> Vec<&'static str>
+where
+    F: Fn(MemoryType) -> bool,
+{
+    MemoryType::ALL
+        .iter()
+        .copied()
+        .filter(|memory_type| predicate(*memory_type))
+        .map(MemoryType::as_str)
+        .collect()
 }
 
 fn read_usize<F>(read: &mut F, key: &str, default: usize) -> usize
