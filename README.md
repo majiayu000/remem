@@ -286,7 +286,12 @@ remem sync-memory --cwd .
 
 ```bash
 remem api --port 5567
+TOKEN=$(cat ~/.remem/.api-token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 ```
+
+Library users who build the router directly should call
+`remem::api::ensure_api_token()` before `remem::api::build_router(...)`.
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -300,7 +305,9 @@ remem api --port 5567
 - SQLCipher encryption at rest (`remem encrypt`)
 - Data directory permissions (`0700`)
 - Key file permissions (`0600`)
-- API binds localhost only (`127.0.0.1`)
+- REST API binds localhost only (`127.0.0.1`) and requires
+  `Authorization: Bearer $(cat ~/.remem/.api-token)`
+- API token file permissions (`0600`)
 
 ## Architecture Docs
 
