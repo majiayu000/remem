@@ -2,7 +2,7 @@ const MAX_SESSIONS: usize = 10;
 const MAX_DECISIONS: usize = 8;
 const REQUEST_CHAR_LIMIT: usize = 120;
 const COMPLETED_CHAR_LIMIT: usize = 200;
-pub(super) const REMEM_FILE: &str = "remem_sessions.md";
+pub(crate) const REMEM_FILE: &str = "remem_sessions.md";
 
 pub(super) struct SessionRow {
     pub request: String,
