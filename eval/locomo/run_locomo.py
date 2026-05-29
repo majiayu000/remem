@@ -10,6 +10,7 @@ Optimizations:
 
 Usage:
     remem api --port 5567  # Start API first
+    # Reads REMEM_API_TOKEN or ~/.remem/.api-token for REST API auth.
     python run_locomo.py --sample-index 0  # Single conversation
     python run_locomo.py                    # All 10
 """
@@ -40,6 +41,50 @@ CATEGORY_NAMES = {
     4: "single-hop",
     5: "adversarial",
 }
+
+
+def load_remem_api_token(token_file=None):
+    env_token = os.environ.get("REMEM_API_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
+    token_path = Path(
+        token_file
+        or os.environ.get("REMEM_API_TOKEN_FILE", "~/.remem/.api-token")
+    ).expanduser()
+    try:
+        token = token_path.read_text().strip()
+    except OSError as exc:
+        raise RuntimeError(
+            "remem API token unavailable. Start `remem api` once, set "
+            "REMEM_API_TOKEN, or pass --api-token-file."
+        ) from exc
+    if not token:
+        raise RuntimeError(f"remem API token file is empty: {token_path}")
+    return token
+
+
+def create_remem_client(token_file=None):
+    token = load_remem_api_token(token_file)
+    return httpx.Client(headers={"Authorization": f"Bearer {token}"})
+
+
+def response_excerpt(resp):
+    text = resp.text.strip()
+    return f": {text[:500]}" if text else ""
+
+
+def require_status(resp, expected, action):
+    if resp.status_code != expected:
+        raise RuntimeError(
+            f"remem API {action} failed: expected {expected}, "
+            f"got {resp.status_code}{response_excerpt(resp)}"
+        )
+
+
+def create_memory(http, base_url, payload, action):
+    resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
+    require_status(resp, 201, action)
 
 
 def create_openai_client():
@@ -272,9 +317,8 @@ def ingest_conversation(http, base_url, sample, openai_client=None, model="gpt-5
                 }
                 if session_epoch is not None:
                     payload["created_at_epoch"] = session_epoch + i  # slight offset to preserve order
-                resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
-                if resp.status_code == 201:
-                    count += 1
+                create_memory(http, base_url, payload, "save LoCoMo extracted fact")
+                count += 1
 
         # Layer 1b: Persona/preference extraction (for Open-domain QA)
         if openai_client is not None:
@@ -290,9 +334,8 @@ def ingest_conversation(http, base_url, sample, openai_client=None, model="gpt-5
                 }
                 if session_epoch is not None:
                     payload["created_at_epoch"] = session_epoch
-                resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
-                if resp.status_code == 201:
-                    count += 1
+                create_memory(http, base_url, payload, "save LoCoMo persona fact")
+                count += 1
 
         # Layer 2: Per-session timeline with timestamps (for temporal queries)
         lines = [f"[{date_time}] Session {sess_num} conversation:"]
@@ -314,9 +357,8 @@ def ingest_conversation(http, base_url, sample, openai_client=None, model="gpt-5
         }
         if session_epoch is not None:
             payload["created_at_epoch"] = session_epoch
-        resp = http.post(f"{base_url}/api/v1/memories", json=payload, timeout=30)
-        if resp.status_code == 201:
-            count += 1
+        create_memory(http, base_url, payload, "save LoCoMo session timeline")
+        count += 1
 
     return count
 
@@ -342,8 +384,7 @@ def retrieve_context(http, base_url, sample_id, question, top_k):
         params={"query": question, "project": f"locomo/{sample_id}", "limit": top_k},
         timeout=30,
     )
-    if resp.status_code != 200:
-        return []
+    require_status(resp, 200, "search LoCoMo context")
     return resp.json().get("data", [])
 
 
@@ -640,6 +681,11 @@ def main():
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--max-samples", type=int, default=0, help="0=all")
     parser.add_argument("--sample-index", type=int, default=-1)
+    parser.add_argument(
+        "--api-token-file",
+        default=None,
+        help="Path to remem .api-token (default: REMEM_API_TOKEN_FILE or ~/.remem/.api-token)",
+    )
     args = parser.parse_args()
 
     print(f"Loading dataset from {args.data_file}")
@@ -653,7 +699,7 @@ def main():
     print(f"  {len(samples)} conversations, {total_qa} QA pairs\n")
 
     openai_client = create_openai_client()
-    http = httpx.Client()
+    http = create_remem_client(args.api_token_file)
 
     t0 = time.time()
     results, category_scores = run_pipeline(

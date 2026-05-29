@@ -1,4 +1,7 @@
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result};
 
 use super::config::{get_codex_model, resolve_model_for_api};
 use super::pricing::{estimate_cost_usd, pricing_for_model};
@@ -263,4 +266,83 @@ fn stable_working_dir_uses_data_dir_even_if_caller_cwd_disappears() {
 
     assert_eq!(got, data_dir.path);
     assert!(got.is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_cli_child_disables_remem_hooks() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system time should be after unix epoch")?
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "remem-fake-claude-{}-{}",
+        std::process::id(),
+        unique
+    ));
+    std::fs::create_dir_all(&temp_dir).context("fake claude temp dir should be created")?;
+
+    let script_path = temp_dir.join("claude");
+    let env_path = temp_dir.join("env.txt");
+    std::fs::write(
+        &script_path,
+        r#"#!/bin/sh
+{
+  printf 'REMEM_DISABLE_HOOKS=%s\n' "${REMEM_DISABLE_HOOKS-}"
+  printf 'CLAUDECODE=%s\n' "${CLAUDECODE-__unset__}"
+} > "$REMEM_FAKE_CLAUDE_ENV_OUT"
+cat >/dev/null
+printf 'ok\n'
+"#,
+    )
+    .context("fake claude script should be written")?;
+    let mut permissions = std::fs::metadata(&script_path)
+        .context("fake claude metadata should be readable")?
+        .permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&script_path, permissions)
+        .context("fake claude script should be executable")?;
+
+    let script = script_path
+        .to_str()
+        .context("fake claude path should be valid utf-8")?
+        .to_string();
+    let env_out = env_path
+        .to_str()
+        .context("fake claude env path should be valid utf-8")?
+        .to_string();
+
+    with_env_vars(
+        &[
+            ("REMEM_CLAUDE_PATH", Some(script.as_str())),
+            ("REMEM_MODEL", Some("haiku")),
+            ("REMEM_FAKE_CLAUDE_ENV_OUT", Some(env_out.as_str())),
+            ("REMEM_DISABLE_HOOKS", None),
+            ("CLAUDECODE", Some("parent-session")),
+        ],
+        || -> Result<()> {
+            let _data_dir = crate::db::test_support::ScopedTestDataDir::new("ai-claude-child");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime should build")?;
+            let result = runtime
+                .block_on(super::cli::call_cli("system", "user"))
+                .context("fake claude call should succeed")?;
+
+            assert_eq!(result.text, "ok");
+            Ok(())
+        },
+    )?;
+
+    let captured =
+        std::fs::read_to_string(&env_path).context("fake claude should capture child env")?;
+    assert!(captured.contains("REMEM_DISABLE_HOOKS=1"), "{captured:?}");
+    assert!(captured.contains("CLAUDECODE=__unset__"), "{captured:?}");
+
+    std::fs::remove_dir_all(&temp_dir)
+        .with_context(|| format!("failed to remove {}", temp_dir.display()))?;
+    Ok(())
 }

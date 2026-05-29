@@ -3,6 +3,7 @@ use rmcp::{tool, tool_router};
 use serde_json::json;
 
 use super::super::types::{UpdateWorkStreamParams, WorkStreamsParams};
+use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 
 #[tool_router(router = tool_router_workstream, vis = "pub(super)")]
@@ -13,7 +14,8 @@ impl MemoryServer {
     pub(super) fn workstreams(
         &self,
         Parameters(params): Parameters<WorkStreamsParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "workstreams";
         crate::log::info(
             "mcp",
             &format!(
@@ -21,19 +23,22 @@ impl MemoryServer {
                 params.project, params.status
             ),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             let project = params.project.as_deref().unwrap_or("");
             let results = if project.is_empty() {
-                return Ok(r#"{"error": "project parameter required"}"#.to_string());
+                return Err(McpToolError::invalid_request(
+                    TOOL,
+                    "project parameter required",
+                ));
             } else {
                 crate::workstream::query_workstreams(conn, project, params.status.as_deref())
                     .map_err(|e| {
                         crate::log::warn("mcp", &format!("workstreams query failed: {}", e));
-                        e.to_string()
+                        McpToolError::db_query(TOOL, e)
                     })?
             };
             crate::log::info("mcp", &format!("workstreams done count={}", results.len()));
-            serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            errors::to_json_pretty(TOOL, &results)
         })
     }
 
@@ -43,7 +48,8 @@ impl MemoryServer {
     pub(super) fn update_workstream(
         &self,
         Parameters(params): Parameters<UpdateWorkStreamParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "update_workstream";
         crate::log::info(
             "mcp",
             &format!(
@@ -51,7 +57,7 @@ impl MemoryServer {
                 params.id, params.status
             ),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             let updated = crate::workstream::update_workstream_manual(
                 conn,
                 params.id,
@@ -61,7 +67,7 @@ impl MemoryServer {
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("update_workstream failed: {}", e));
-                e.to_string()
+                McpToolError::db_query(TOOL, e)
             })?;
             crate::log::info(
                 "mcp",
@@ -70,11 +76,13 @@ impl MemoryServer {
                     params.id, updated
                 ),
             );
-            serde_json::to_string(&json!({
-                "id": params.id,
-                "updated": updated,
-            }))
-            .map_err(|e| e.to_string())
+            errors::to_json_string(
+                TOOL,
+                &json!({
+                    "id": params.id,
+                    "updated": updated,
+                }),
+            )
         })
     }
 }

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use std::path::{Component, Path, PathBuf};
 
@@ -186,9 +186,11 @@ pub(super) fn build_local_note_content(project: &str, title: &str, text: &str) -
 
 pub(super) fn write_local_note(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create local copy directory {}", parent.display()))?;
     }
-    std::fs::write(path, content)?;
+    std::fs::write(path, content)
+        .with_context(|| format!("write local copy at {}", path.display()))?;
     Ok(())
 }
 

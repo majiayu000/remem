@@ -40,6 +40,8 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
     let data_dir = remem_data_dir();
     std::fs::create_dir_all(&data_dir)?;
     eprintln!("  data   -> {}", data_dir.display());
+    let api_token_path = crate::api::ensure_api_token()?;
+    eprintln!("  API    -> token {}", api_token_path.display());
     eprintln!("  binary -> {}", bin);
 
     let old_path = old_hooks_path();

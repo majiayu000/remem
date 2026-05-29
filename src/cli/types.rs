@@ -158,6 +158,13 @@ pub(super) enum Commands {
     Show {
         id: i64,
     },
+    Why {
+        id: i64,
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+    },
     Eval {
         #[arg(long, default_value = "eval/golden.json")]
         dataset: String,
@@ -186,12 +193,12 @@ pub(super) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Admin commands for database backup and schema reset.
+    /// Admin commands for database backup.
     Admin {
         #[command(subcommand)]
         action: AdminAction,
     },
-    /// Import commands for moving older backup rows into the schema database.
+    /// Import commands for moving older backup rows into the runtime database.
     Import {
         #[command(subcommand)]
         action: ImportAction,
@@ -220,13 +227,6 @@ pub(in crate::cli) enum AdminAction {
         /// Output path. Defaults to <data_dir>/backups/remem-backup-<ts>.sqlite.
         #[arg(long)]
         output: Option<PathBuf>,
-    },
-    /// Drop and re-initialize the schema database (~/.remem/schema.sqlite).
-    /// Requires --confirm-destructive to actually run.
-    #[command(name = "reset-schema")]
-    ResetSchema {
-        #[arg(long)]
-        confirm_destructive: bool,
     },
 }
 
