@@ -60,6 +60,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         cwd: invocation.cwd.clone(),
         project: invocation.project.clone(),
         session_id: invocation.session_id.clone(),
+        hook_source: invocation.source.clone(),
         current_branch: db::detect_git_branch(&invocation.cwd),
         host: invocation.host,
         use_colors: invocation.use_colors,
@@ -153,13 +154,20 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
     output.push_str(&build_context_header(
         &request.project,
         request.current_branch.as_deref(),
+        request.hook_source.as_deref(),
     ));
     output.push_str(profile.retrieval_hints().line);
-    output.push_str("\n\n");
+    output.push('\n');
+    if let Some(note) = context_source_note(request.hook_source.as_deref()) {
+        output.push_str(note);
+        output.push('\n');
+    }
+    output.push('\n');
 
     let mut stats = ContextRenderStats {
         host: request.host.as_env_value().to_string(),
         branch: request.current_branch.clone(),
+        hook_source: request.hook_source.clone(),
         total_char_limit: policy.limits.total_char_limit,
         memories_loaded: loaded.memories.len() + loaded.lessons.len(),
         project_preferences: preference_summary.project_rendered,
@@ -262,6 +270,7 @@ fn empty_stats(request: &ContextRequest) -> ContextRenderStats {
     ContextRenderStats {
         host: request.host.as_env_value().to_string(),
         branch: request.current_branch.clone(),
+        hook_source: request.hook_source.clone(),
         ..ContextRenderStats::default()
     }
 }
@@ -307,6 +316,7 @@ pub(in crate::context) struct SectionRenderStats {
 pub(in crate::context) struct ContextRenderStats {
     pub host: String,
     pub branch: Option<String>,
+    pub hook_source: Option<String>,
     pub total_char_limit: usize,
     pub memories_loaded: usize,
     pub core: SectionRenderStats,
@@ -324,9 +334,10 @@ pub(in crate::context) struct ContextRenderStats {
 
 pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats) -> String {
     let branch = stats.branch.as_deref().unwrap_or("-");
+    let source = context_source_footer(stats.hook_source.as_deref());
     let estimated_tokens = estimate_tokens(stats.output_chars);
     format!(
-        "{} context memories loaded. {} core ({} chars). {} lessons ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). host={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
+        "{} context memories loaded. {} core ({} chars). {} lessons ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). host={} source={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
         stats.memories_loaded,
         stats.core.count,
         stats.core.chars,
@@ -341,6 +352,7 @@ pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats)
         stats.sessions.count,
         stats.sessions.chars,
         stats.host,
+        source,
         branch,
         stats.output_chars,
         estimated_tokens,
@@ -357,12 +369,13 @@ fn build_context_debug_trace(
 ) -> String {
     let mut trace = String::from("## Debug Trace\n");
     trace.push_str(&format!(
-        "- request host={} project={} cwd={} branch={} session={}\n",
+        "- request host={} project={} cwd={} branch={} session={} source={}\n",
         request.host.as_env_value(),
         request.project,
         request.cwd,
         request.current_branch.as_deref().unwrap_or("-"),
-        request.session_id.as_deref().unwrap_or("-")
+        request.session_id.as_deref().unwrap_or("-"),
+        request.hook_source.as_deref().unwrap_or("-")
     ));
     trace.push_str(&format!(
         "- limits total={} core_items={} core_chars={} lessons={} lesson_chars={} index_items={} index_chars={} sessions={} preferences(project={}, global={}, chars={})\n",
@@ -443,6 +456,18 @@ fn build_context_debug_trace(
     trace
 }
 
+fn context_source_note(source: Option<&str>) -> Option<&'static str> {
+    match source?.trim().to_ascii_lowercase().as_str() {
+        "compact" => Some(
+            "REMEM_CONTEXT_SOURCE=compact: Codex compact triggered this memory context reload.",
+        ),
+        "clear" => {
+            Some("REMEM_CONTEXT_SOURCE=clear: context was reloaded after an explicit clear.")
+        }
+        _ => None,
+    }
+}
+
 fn context_debug_enabled() -> bool {
     std::env::var("REMEM_CONTEXT_DEBUG")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
@@ -492,14 +517,41 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     *output = truncated;
 }
 
-fn build_context_header(project: &str, current_branch: Option<&str>) -> String {
+pub(in crate::context) fn build_context_header(
+    project: &str,
+    current_branch: Option<&str>,
+    hook_source: Option<&str>,
+) -> String {
     let branch_label = current_branch
         .map(|branch| format!(" @{}", branch))
         .unwrap_or_default();
+    let source_label = context_source_header_label(hook_source)
+        .map(|label| format!(" [{}]", label))
+        .unwrap_or_default();
     format!(
-        "# [{}{}] context {}\n",
+        "# [{}{}] context {}{}\n",
         project,
         branch_label,
-        format_header_datetime()
+        format_header_datetime(),
+        source_label
     )
+}
+
+fn context_source_header_label(source: Option<&str>) -> Option<&'static str> {
+    match source?.trim().to_ascii_lowercase().as_str() {
+        "compact" => Some("REMEM POST-COMPACT RELOAD"),
+        "clear" => Some("REMEM CLEAR RELOAD"),
+        _ => None,
+    }
+}
+
+fn context_source_footer(source: Option<&str>) -> &'static str {
+    match source
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("compact") => "compact",
+        Some("clear") => "clear",
+        _ => "-",
+    }
 }
