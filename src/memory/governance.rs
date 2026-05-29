@@ -63,6 +63,67 @@ pub struct GovernMemoryResult {
     pub affected: Vec<GovernedMemory>,
 }
 
+#[derive(Debug, Clone)]
+pub struct GovernanceSelector<'a> {
+    pub project: &'a str,
+    pub query: Option<&'a str>,
+    pub memory_type: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+pub fn select_memory_ids(conn: &Connection, selector: &GovernanceSelector<'_>) -> Result<Vec<i64>> {
+    let mut conditions = vec!["project = ?1".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+        vec![Box::new(selector.project.to_string())];
+    let mut idx = 2;
+
+    if let Some(status) = normalized_status_filter(selector.status)? {
+        conditions.push(format!("status = ?{idx}"));
+        params.push(Box::new(status));
+        idx += 1;
+    }
+
+    if let Some(memory_type) = trimmed(selector.memory_type) {
+        conditions.push(format!("memory_type = ?{idx}"));
+        params.push(Box::new(memory_type.to_string()));
+        idx += 1;
+    }
+
+    if let Some(query) = trimmed(selector.query) {
+        let pattern = like_pattern(query);
+        conditions.push(format!(
+            "(title LIKE ?{idx} ESCAPE '\\' \
+             OR content LIKE ?{next_idx} ESCAPE '\\' \
+             OR COALESCE(search_context, '') LIKE ?{third_idx} ESCAPE '\\')",
+            idx = idx,
+            next_idx = idx + 1,
+            third_idx = idx + 2
+        ));
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern));
+        idx += 3;
+    }
+
+    params.push(Box::new(selector.limit.max(1)));
+    params.push(Box::new(selector.offset.max(0)));
+    let sql = format!(
+        "SELECT id FROM memories \
+         WHERE {} \
+         ORDER BY updated_at_epoch DESC, id DESC \
+         LIMIT ?{} OFFSET ?{}",
+        conditions.join(" AND "),
+        idx,
+        idx + 1
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&params);
+    let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, i64>(0))?;
+    crate::db::query::collect_rows(rows)
+}
+
 pub fn govern_memories(
     conn: &Connection,
     req: &GovernMemoryRequest<'_>,
@@ -117,6 +178,40 @@ fn unique_ids(ids: &[i64]) -> Vec<i64> {
         .copied()
         .filter(|id| *id > 0 && seen.insert(*id))
         .collect()
+}
+
+fn trimmed(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn normalized_status_filter(status: Option<&str>) -> Result<Option<String>> {
+    let Some(status) = trimmed(status) else {
+        return Ok(Some("active".to_string()));
+    };
+    let normalized = status.to_lowercase();
+    if matches!(normalized.as_str(), "all" | "*") {
+        return Ok(None);
+    }
+    if matches!(
+        normalized.as_str(),
+        "active" | "stale" | "rejected" | "deleted" | "archived" | "superseded"
+    ) {
+        return Ok(Some(normalized));
+    }
+    bail!("unsupported memory status filter: {status}");
+}
+
+fn like_pattern(query: &str) -> String {
+    let mut pattern = String::with_capacity(query.len() + 2);
+    pattern.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
 }
 
 fn normalized_reason(req: &GovernMemoryRequest<'_>) -> Result<Option<String>> {
