@@ -61,16 +61,45 @@ fn normalize_sql_whitespace(sql: &str) -> String {
         .join(" ")
 }
 
+fn normalize_identifier(token: &str) -> &str {
+    token.trim_matches(|c| matches!(c, '"' | '\'' | '`' | '[' | ']' | '('))
+}
+
 fn defines_memories_table(sql: &str) -> bool {
     let normalized = normalize_sql_whitespace(sql);
-    normalized.contains("create table if not exists memories")
-        || normalized.contains("create table memories")
+    let tokens: Vec<&str> = normalized.split_whitespace().collect();
+
+    tokens.iter().enumerate().any(|(index, token)| {
+        if *token != "create" || tokens.get(index + 1) != Some(&"table") {
+            return false;
+        }
+
+        let table_index = if tokens.get(index + 2..index + 5) == Some(&["if", "not", "exists"]) {
+            index + 5
+        } else {
+            index + 2
+        };
+
+        tokens
+            .get(table_index)
+            .is_some_and(|name| normalize_identifier(name) == "memories")
+    })
 }
 
 #[test]
 fn memories_table_ddl_detection_collapses_whitespace() {
     assert!(defines_memories_table(
         "CREATE TABLE IF NOT EXISTS\n    memories (id INTEGER PRIMARY KEY)"
+    ));
+}
+
+#[test]
+fn memories_table_ddl_detection_requires_exact_table_name() {
+    assert!(!defines_memories_table(
+        "CREATE TABLE IF NOT EXISTS memories_backup (id INTEGER PRIMARY KEY)"
+    ));
+    assert!(!defines_memories_table(
+        "CREATE TABLE IF NOT EXISTS memories_fts (title, content)"
     ));
 }
 
