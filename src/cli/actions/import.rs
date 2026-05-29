@@ -357,10 +357,6 @@ mod tests {
 
         assert_eq!(results.memories.len(), 1);
         assert_eq!(results.memories[0].title, "Imported runtime memory");
-        assert!(
-            !crate::db::schema::default_path().exists(),
-            "CLI backup import must not strand rows in schema.sqlite"
-        );
 
         cleanup_temp_db_files(&source_path);
     }

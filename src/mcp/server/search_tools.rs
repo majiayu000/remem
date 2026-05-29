@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
 use super::super::types::{RawSearchHit, SearchParams, SearchResult};
+use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::memory::service;
 
@@ -15,7 +16,8 @@ impl MemoryServer {
     pub(super) fn search(
         &self,
         Parameters(params): Parameters<SearchParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "search";
         let start = std::time::Instant::now();
         let requested_multi_hop = params.multi_hop.unwrap_or(false);
         crate::log::info(
@@ -31,7 +33,7 @@ impl MemoryServer {
                 params.offset.unwrap_or(0),
             ),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             let req = service::SearchRequest {
                 query: params.query.clone(),
                 project: params.project.clone(),
@@ -47,7 +49,7 @@ impl MemoryServer {
             };
             let search_set = service::search_memories(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
-                e.to_string()
+                McpToolError::db_query(TOOL, e)
             })?;
             let req_limit = req.limit;
             let req_offset = req.offset;
@@ -144,7 +146,7 @@ impl MemoryServer {
             }
             if !raw_hits_json.is_empty() {
                 response["raw_hits"] =
-                    serde_json::to_value(&raw_hits_json).map_err(|e| e.to_string())?;
+                    errors::to_json_value(TOOL, &raw_hits_json)?;
                 response["raw_hits_note"] = serde_json::Value::String(
                     "raw_hits are source_type='raw_archive' chat rows, not curated memories; use search_raw for literal recall."
                         .to_string(),
@@ -154,7 +156,7 @@ impl MemoryServer {
                 response["has_more"] = serde_json::Value::Bool(true);
                 response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
             }
-            serde_json::to_string_pretty(&response).map_err(|e| e.to_string())
+            errors::to_json_pretty(TOOL, &response)
         })
     }
 }

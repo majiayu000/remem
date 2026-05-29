@@ -1,15 +1,35 @@
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::{db, memory};
 
-pub(in crate::cli) fn run_show(id: i64) -> Result<()> {
+pub(in crate::cli) fn run_show(id: i64, json: bool) -> Result<()> {
     let conn = db::open_db()?;
     let memories = memory::get_memories_by_ids(&conn, &[id], None)?;
 
     let Some(memory) = memories.first() else {
+        if json {
+            let output = ShowJson {
+                found: false,
+                id,
+                memory: None,
+            };
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            return Ok(());
+        }
         println!("Memory {} not found.", id);
         return Ok(());
     };
+
+    if json {
+        let output = ShowJson {
+            found: true,
+            id,
+            memory: Some(memory.clone()),
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
 
     println!("ID:       {}", memory.id);
     println!("Title:    {}", memory.title);
@@ -41,4 +61,11 @@ pub(super) fn format_memory_timestamp(epoch: i64) -> String {
     chrono::DateTime::from_timestamp(epoch, 0)
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct ShowJson {
+    pub found: bool,
+    pub id: i64,
+    pub memory: Option<memory::Memory>,
 }

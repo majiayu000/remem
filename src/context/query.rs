@@ -90,7 +90,13 @@ fn load_project_memories(
         excluded_types,
         policy.limits.candidate_fetch_limit as i64,
     )
-    .unwrap_or_default();
+    .unwrap_or_else(|e| {
+        crate::log::error(
+            "context",
+            &format!("failed to load recent context memories for {project}: {e}"),
+        );
+        Vec::new()
+    });
     for memory in recent {
         if seen_ids.insert(memory.id) {
             memories.push(memory);
@@ -98,18 +104,24 @@ fn load_project_memories(
     }
 
     let project_query = project.rsplit('/').next().unwrap_or(project);
-    if let Ok(searched) = memory::search_project_memories_excluding_types(
+    match memory::search_project_memories_excluding_types(
         conn,
         project,
         project_query,
         excluded_types,
         BASENAME_SEARCH_LIMIT,
     ) {
-        for memory in searched {
-            if seen_ids.insert(memory.id) {
-                memories.push(memory);
+        Ok(searched) => {
+            for memory in searched {
+                if seen_ids.insert(memory.id) {
+                    memories.push(memory);
+                }
             }
         }
+        Err(e) => crate::log::error(
+            "context",
+            &format!("failed to search context memories for {project}: {e}"),
+        ),
     }
 
     memories

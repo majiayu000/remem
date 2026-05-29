@@ -9,6 +9,7 @@ pub(super) struct ContextRequest {
     pub cwd: String,
     pub project: String,
     pub session_id: Option<String>,
+    pub hook_source: Option<String>,
     pub current_branch: Option<String>,
     pub host: HostKind,
     pub use_colors: bool,
