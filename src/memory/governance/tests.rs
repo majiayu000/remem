@@ -105,6 +105,161 @@ fn govern_memories_dry_run_lists_targets_without_mutation_or_audit() -> Result<(
 }
 
 #[test]
+fn select_memory_ids_filters_query_type_project_and_status_for_preview() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let active_match = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("migration-plan"),
+        "Migration plan",
+        "Old migration plan should be reviewed.",
+        "decision",
+        None,
+    )?;
+    let stale_match = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("stale-migration-plan"),
+        "Stale migration plan",
+        "Old migration plan already superseded.",
+        "decision",
+        None,
+    )?;
+    let other_type = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("migration-discovery"),
+        "Migration discovery",
+        "Old migration plan evidence.",
+        "discovery",
+        None,
+    )?;
+    insert_memory(
+        &conn,
+        Some("s1"),
+        "other",
+        Some("other-migration-plan"),
+        "Migration plan",
+        "Old migration plan in another project.",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET status = 'stale' WHERE id = ?1",
+        params![stale_match],
+    )?;
+
+    let ids = select_memory_ids(
+        &conn,
+        &GovernanceSelector {
+            project: "proj",
+            query: Some("old migration"),
+            memory_type: Some("decision"),
+            status: Some("active"),
+            limit: 10,
+            offset: 0,
+        },
+    )?;
+
+    assert_eq!(ids, vec![active_match]);
+    assert!(!ids.contains(&stale_match));
+    assert!(!ids.contains(&other_type));
+
+    let result = govern_memories(
+        &conn,
+        &GovernMemoryRequest {
+            project: "proj",
+            ids: &ids,
+            action: MemoryGovernanceAction::MarkStale,
+            reason: None,
+            actor: Some("test"),
+            dry_run: true,
+            confirm_destructive: false,
+        },
+    )?;
+    assert!(result.dry_run);
+    let status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [active_match],
+        |row| row.get(0),
+    )?;
+    assert_eq!(status, "active");
+    Ok(())
+}
+
+#[test]
+fn selected_batch_apply_writes_one_audit_event_per_item() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let first = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("pollution-one"),
+        "Pollution one",
+        "Project pollution from an old run.",
+        "discovery",
+        None,
+    )?;
+    let second = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("pollution-two"),
+        "Pollution two",
+        "Project pollution from another old run.",
+        "discovery",
+        None,
+    )?;
+
+    let ids = select_memory_ids(
+        &conn,
+        &GovernanceSelector {
+            project: "proj",
+            query: Some("project pollution"),
+            memory_type: Some("discovery"),
+            status: None,
+            limit: 10,
+            offset: 0,
+        },
+    )?;
+    assert_eq!(ids, vec![second, first]);
+
+    let result = govern_memories(
+        &conn,
+        &GovernMemoryRequest {
+            project: "proj",
+            ids: &ids,
+            action: MemoryGovernanceAction::Reject,
+            reason: Some("project pollution"),
+            actor: Some("codex-test"),
+            dry_run: false,
+            confirm_destructive: true,
+        },
+    )?;
+
+    assert_eq!(result.affected.len(), 2);
+    let audit_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM events WHERE event_type = 'memory_governance'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(audit_count, 2);
+    for id in [first, second] {
+        let status: String =
+            conn.query_row("SELECT status FROM memories WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(status, "rejected");
+    }
+    Ok(())
+}
+
+#[test]
 fn govern_memories_writes_audit_and_removes_deleted_memory_from_fts() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn);

@@ -149,6 +149,13 @@ fn cli_parses_governance_delete_options() {
             action,
             reason,
             actor,
+            query,
+            memory_type,
+            status,
+            limit,
+            offset,
+            from_file,
+            read_stdin,
             confirm_destructive,
             dry_run,
             ids,
@@ -157,9 +164,77 @@ fn cli_parses_governance_delete_options() {
             assert!(matches!(action, MemoryGovernanceCliAction::Delete));
             assert_eq!(reason.as_deref(), Some("bad memory"));
             assert_eq!(actor.as_deref(), Some("codex"));
+            assert!(query.is_none());
+            assert!(memory_type.is_none());
+            assert!(status.is_none());
+            assert_eq!(limit, 50);
+            assert_eq!(offset, 0);
+            assert!(from_file.is_none());
+            assert!(!read_stdin);
             assert!(confirm_destructive);
             assert!(!dry_run);
             assert_eq!(ids, vec![42, 43]);
+        }
+        _ => panic!("expected govern command"),
+    }
+}
+
+#[test]
+fn cli_parses_governance_batch_selectors_and_id_sources() {
+    let cli = Cli::parse_from([
+        "remem",
+        "govern",
+        "--project",
+        "/tmp/remem",
+        "--action",
+        "stale",
+        "--query",
+        "old migration plan",
+        "--type",
+        "decision",
+        "--status",
+        "active",
+        "--limit",
+        "25",
+        "--offset",
+        "5",
+        "--from-file",
+        "ids.txt",
+        "--stdin",
+        "42",
+    ]);
+
+    match cli.command {
+        Commands::Govern {
+            project,
+            action,
+            reason,
+            actor,
+            query,
+            memory_type,
+            status,
+            limit,
+            offset,
+            from_file,
+            read_stdin,
+            confirm_destructive,
+            dry_run,
+            ids,
+        } => {
+            assert_eq!(project.as_deref(), Some("/tmp/remem"));
+            assert!(matches!(action, MemoryGovernanceCliAction::Stale));
+            assert!(reason.is_none());
+            assert!(actor.is_none());
+            assert_eq!(query.as_deref(), Some("old migration plan"));
+            assert_eq!(memory_type.as_deref(), Some("decision"));
+            assert_eq!(status.as_deref(), Some("active"));
+            assert_eq!(limit, 25);
+            assert_eq!(offset, 5);
+            assert_eq!(from_file.as_deref(), Some(std::path::Path::new("ids.txt")));
+            assert!(read_stdin);
+            assert!(!confirm_destructive);
+            assert!(!dry_run);
+            assert_eq!(ids, vec![42]);
         }
         _ => panic!("expected govern command"),
     }
