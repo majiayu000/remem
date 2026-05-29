@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "remem-ai"
-version = "0.4.6"
+version = "0.4.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -1227,7 +1227,7 @@ dependencies = [
  "sha2",
  "tokio",
  "toml_edit",
- "tower-http",
+ "tower",
 ]
 
 [[package]]

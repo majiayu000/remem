@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::database::{check_database, check_disk_space, check_pending_queue, check_worker_daemon};
 use super::environment::{check_binary, check_hooks, check_mcp};
+use super::native_memory::check_native_memory_sync;
 use super::schema::check_schema_migration;
 use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION};
 
@@ -49,6 +50,7 @@ fn collect_checks() -> Vec<Check> {
     checks.extend(check_mcp());
     checks.push(check_worker_daemon());
     checks.push(check_pending_queue());
+    checks.push(check_native_memory_sync());
     checks.push(check_disk_space());
     checks
 }

@@ -1,15 +1,19 @@
 use crate::memory::lesson::{LessonMemory, LessonMetadata};
 use crate::workstream::{WorkStream, WorkStreamStatus};
 
+use super::super::host::HostKind;
 use super::super::policy::ContextLimits;
-use super::super::render::{build_context_stats_footer, ContextRenderStats, SectionRenderStats};
+use super::super::render::{
+    build_context_header, build_context_stats_footer, empty_context_output, ContextRenderStats,
+    SectionRenderStats,
+};
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
     render_memory_index, render_memory_index_with_limits,
     render_memory_index_with_limits_excluding, render_recent_sessions,
     render_recent_sessions_with_limit, render_workstreams, render_workstreams_with_limits,
 };
-use super::super::types::SessionSummaryBrief;
+use super::super::types::{ContextRequest, SessionSummaryBrief};
 use super::{sample_memory, sample_memory_with_epoch, sample_workstream};
 
 #[test]
@@ -85,6 +89,25 @@ fn render_memory_index_prioritizes_known_types() {
     let custom_pos = output.find("**custom**").unwrap();
     assert!(decision_pos < bugfix_pos);
     assert!(bugfix_pos < custom_pos);
+}
+
+#[test]
+fn render_memory_index_labels_and_orders_procedure_memories() {
+    let mut output = String::new();
+    let memories = vec![
+        sample_memory(1, "session_activity", "Recent session"),
+        sample_memory(2, "procedure", "Review procedure"),
+        sample_memory(3, "discovery", "Discovery title"),
+    ];
+
+    render_memory_index(&mut output, &memories);
+
+    let discovery_pos = output.find("**Discoveries**").unwrap();
+    let procedure_pos = output.find("**Procedures**").unwrap();
+    let session_pos = output.find("**Sessions**").unwrap();
+    assert!(output.contains("Review procedure"));
+    assert!(discovery_pos < procedure_pos);
+    assert!(procedure_pos < session_pos);
 }
 
 #[test]
@@ -352,6 +375,7 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
     let footer = build_context_stats_footer(&ContextRenderStats {
         host: "codex-cli".to_string(),
         branch: Some("fix/context".to_string()),
+        hook_source: Some("compact".to_string()),
         total_char_limit: 12_000,
         memories_loaded: 7,
         core: SectionRenderStats {
@@ -390,9 +414,36 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
     assert!(footer.contains("1 lessons (180 chars)"));
     assert!(footer.contains("3 preferences (project:2 global:1"));
     assert!(footer.contains("host=codex-cli"));
+    assert!(footer.contains("source=compact"));
     assert!(footer.contains("branch=fix/context"));
     assert!(footer.contains("total=3200 chars/~800 tokens"));
     assert!(footer.contains("truncated=yes"));
+}
+
+#[test]
+fn context_header_marks_compact_reload_visibly() {
+    let header = build_context_header("/tmp/remem", Some("main"), Some("compact"));
+
+    assert!(header.starts_with("# [/tmp/remem @main] context "));
+    assert!(header.contains("[REMEM POST-COMPACT RELOAD]"));
+}
+
+#[test]
+fn empty_context_marks_compact_reload_visibly() {
+    let output = empty_context_output(&ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: None,
+        hook_source: Some("compact".to_string()),
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: false,
+    });
+
+    assert!(output.starts_with("# [/tmp/remem @main] context "));
+    assert!(output.contains("[REMEM POST-COMPACT RELOAD]"));
+    assert!(output.contains("REMEM_CONTEXT_SOURCE=compact"));
+    assert!(output.contains("No previous sessions found."));
 }
 
 fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {

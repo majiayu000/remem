@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
 use super::super::types::{CommitLookupParams, SessionCommitsParams};
+use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 
 #[tool_router(router = tool_router_commit, vis = "pub(super)")]
@@ -12,7 +13,8 @@ impl MemoryServer {
     pub(super) fn lookup_commit(
         &self,
         Parameters(params): Parameters<CommitLookupParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "lookup_commit";
         crate::log::info(
             "mcp",
             &format!(
@@ -20,14 +22,20 @@ impl MemoryServer {
                 params.sha, params.project
             ),
         );
-        self.with_conn(|conn| {
+        if params.sha.trim().is_empty() {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "commit SHA is required",
+            ));
+        }
+        self.with_conn(TOOL, |conn| {
             let results =
                 crate::git_trace::lookup_commit(conn, params.project.as_deref(), &params.sha)
                     .map_err(|err| {
                         crate::log::warn("mcp", &format!("lookup_commit failed: {}", err));
-                        err.to_string()
+                        McpToolError::db_query(TOOL, err)
                     })?;
-            serde_json::to_string_pretty(&results).map_err(|err| err.to_string())
+            errors::to_json_pretty(TOOL, &results)
         })
     }
 
@@ -37,7 +45,8 @@ impl MemoryServer {
     pub(super) fn commits_for_session(
         &self,
         Parameters(params): Parameters<SessionCommitsParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "commits_for_session";
         crate::log::info(
             "mcp",
             &format!(
@@ -47,7 +56,13 @@ impl MemoryServer {
                 params.limit.unwrap_or(20)
             ),
         );
-        self.with_conn(|conn| {
+        if params.session_id.trim().is_empty() {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "session_id is required",
+            ));
+        }
+        self.with_conn(TOOL, |conn| {
             let results = crate::git_trace::commits_for_session(
                 conn,
                 params.project.as_deref(),
@@ -56,9 +71,9 @@ impl MemoryServer {
             )
             .map_err(|err| {
                 crate::log::warn("mcp", &format!("commits_for_session failed: {}", err));
-                err.to_string()
+                McpToolError::db_query(TOOL, err)
             })?;
-            serde_json::to_string_pretty(&results).map_err(|err| err.to_string())
+            errors::to_json_pretty(TOOL, &results)
         })
     }
 }

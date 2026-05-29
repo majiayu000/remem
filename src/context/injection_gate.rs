@@ -80,7 +80,7 @@ pub(super) fn apply_context_gate(
     let conn = match crate::db::open_db() {
         Ok(conn) => conn,
         Err(error) => {
-            crate::log::warn(
+            crate::log::error(
                 "context-gate",
                 &format!("fail_open reason=open_db error={}", error),
             );
@@ -458,6 +458,9 @@ fn normalize_context_for_hash(output: &str) -> String {
                 continue;
             }
         }
+        if line.starts_with("remem context source: ") || line.starts_with("REMEM_CONTEXT_SOURCE=") {
+            continue;
+        }
         normalized.push_str(&normalize_stats_footer_totals(line));
         normalized.push('\n');
     }
@@ -585,6 +588,18 @@ mod tests {
         let b = "# [/tmp/remem] context 2026-05-25 10:00am\nBody\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=101 chars/~26 tokens limit=12000 truncated=no\n";
 
         assert_eq!(context_fingerprint(a), context_fingerprint(b));
+    }
+
+    #[test]
+    fn fingerprint_ignores_context_source_note() {
+        let normal =
+            "# [/tmp/remem] context now\nUse `search`/`get_observations` for details.\n\nBody\n";
+        let post_compact = "# [/tmp/remem] context now [REMEM POST-COMPACT RELOAD]\nUse `search`/`get_observations` for details.\nREMEM_CONTEXT_SOURCE=compact: Codex compact triggered this memory context reload.\n\nBody\n";
+
+        assert_eq!(
+            context_fingerprint(normal),
+            context_fingerprint(post_compact)
+        );
     }
 
     #[test]

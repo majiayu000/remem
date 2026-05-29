@@ -160,3 +160,14 @@ pub struct AiUsageSourceTotals {
     pub total_tokens: i64,
     pub estimated_cost_usd: f64,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiUsageBreakdown {
+    pub project: Option<String>,
+    pub executor: String,
+    pub usage_source: String,
+    pub pricing_source: String,
+    pub calls: i64,
+    pub total_tokens: i64,
+    pub estimated_cost_usd: f64,
+}
