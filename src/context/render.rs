@@ -114,7 +114,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
                 &format!("open_db failed for project={}: {}", request.project, error),
             );
             return Ok(RenderedContext {
-                output: empty_state_output(&request.project),
+                output: empty_context_output(request),
                 stats: empty_stats(request),
             });
         }
@@ -145,7 +145,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         && loaded.workstreams.is_empty()
     {
         return Ok(RenderedContext {
-            output: empty_state_output(&request.project),
+            output: empty_context_output(request),
             stats: empty_stats(request),
         });
     }
@@ -264,6 +264,15 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         &stats_footer,
     );
     Ok(RenderedContext { output, stats })
+}
+
+pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> String {
+    let header = build_context_header(
+        &request.project,
+        request.current_branch.as_deref(),
+        request.hook_source.as_deref(),
+    );
+    empty_state_output(&header, context_source_note(request.hook_source.as_deref()))
 }
 
 fn empty_stats(request: &ContextRequest) -> ContextRenderStats {

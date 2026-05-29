@@ -1,9 +1,11 @@
 use crate::memory::lesson::{LessonMemory, LessonMetadata};
 use crate::workstream::{WorkStream, WorkStreamStatus};
 
+use super::super::host::HostKind;
 use super::super::policy::ContextLimits;
 use super::super::render::{
-    build_context_header, build_context_stats_footer, ContextRenderStats, SectionRenderStats,
+    build_context_header, build_context_stats_footer, empty_context_output, ContextRenderStats,
+    SectionRenderStats,
 };
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
@@ -11,7 +13,7 @@ use super::super::sections::{
     render_memory_index_with_limits_excluding, render_recent_sessions,
     render_recent_sessions_with_limit, render_workstreams, render_workstreams_with_limits,
 };
-use super::super::types::SessionSummaryBrief;
+use super::super::types::{ContextRequest, SessionSummaryBrief};
 use super::{sample_memory, sample_memory_with_epoch, sample_workstream};
 
 #[test]
@@ -405,6 +407,24 @@ fn context_header_marks_compact_reload_visibly() {
 
     assert!(header.starts_with("# [/tmp/remem @main] context "));
     assert!(header.contains("[REMEM POST-COMPACT RELOAD]"));
+}
+
+#[test]
+fn empty_context_marks_compact_reload_visibly() {
+    let output = empty_context_output(&ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: None,
+        hook_source: Some("compact".to_string()),
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: false,
+    });
+
+    assert!(output.starts_with("# [/tmp/remem @main] context "));
+    assert!(output.contains("[REMEM POST-COMPACT RELOAD]"));
+    assert!(output.contains("REMEM_CONTEXT_SOURCE=compact"));
+    assert!(output.contains("No previous sessions found."));
 }
 
 fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {
