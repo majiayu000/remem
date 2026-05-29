@@ -7,57 +7,20 @@ use crate::db;
 
 const SERVER_INSTRUCTIONS: &str = r#"Persistent memory for Claude Code and Codex sessions.
 
-## Workflow
-1. **Context index** is auto-injected at session start (titles + types, ~50 tokens each)
-2. When you need details: `search(query)` → compact envelope with result IDs and `next_step.source`
-3. Then: `get_observations(ids, source)` → full narrative, facts, concepts, files
-4. Use `timeline(anchor/query)` to understand chronological context around a change
-5. Use `save_memory(text)` to persist important decisions or discoveries (and local markdown backup)
-6. If curated `search` is empty/sparse, it auto-attaches `raw_hits` labeled `source_type="raw_archive"` (every user/assistant turn captured at Stop time). Call `search_raw(query)` directly when you need to recall a literal phrase that was never summarized or promoted.
+Retrieval:
+- Use `search(query, project?)` for compact memory IDs.
+- Use `get_observations(ids, source)` only for selected full details.
+- Use `search_raw(query)` for literal chat recall when curated search is sparse.
+- Use `timeline(anchor/query)` for chronological context around a change.
 
-## Local document rule
-- If user asks to save/write/update a document, create or edit a local file first
-- `save_memory` is long-term memory backup, not a replacement for project docs
+Persistence:
+- Use `save_memory` only for durable decisions, bugfix root causes, important discoveries, architecture notes, or user preferences.
+- For user-requested documents, write the local/project file first; memory is only a backup.
+- Search before saving and use a stable kebab-case `topic_key` for repeat topics.
 
-## When to search
-- User asks about past work, previous sessions, or "what did we do"
-- You need implementation details for code you're about to modify
-- Debugging an issue that may have been fixed before
-- Looking for architecture decisions or rationale
-
-## Search strategy for complex questions
-- **Decompose** complex questions into 2-3 focused sub-queries and call search() for each
-- **Iterate**: if <5 results, extract names/entities from results and search again
-- **Multi-hop**: set multi_hop=true when spanning multiple people or topics
-
-## When to save memory (MUST follow)
-Call `save_memory` immediately when:
-1. **Making a technical decision** → type=decision, record what was chosen, why, what was rejected
-2. **Fixing a bug** → type=bugfix, record root cause, fix, how to prevent
-3. **Discovering a code constraint/pattern** → type=discovery, record finding and impact
-4. **Completing a feature module** → type=architecture, record design points and file structure
-5. **Learning a user preference** → type=preference, record preference and reasoning
-
-## topic_key rules
-- Same topic MUST use a stable topic_key — cross-session updates to same memory instead of duplicates
-- Format: kebab-case descriptive key, e.g. "fts5-search-strategy", "auth-middleware-design"
-- Before saving, search first to check if a memory on this topic already exists
-
-## Do NOT save
-- Single file edits (git tracks these)
-- Temporary debugging steps (only save conclusions)
-- Content that duplicates an existing memory (search first)
-
-## Tips
-- The context index is usually sufficient — only fetch details when needed
-- bugfix and decision types often contain critical context worth fetching
-- Search supports project filter to scope results
-- Observations with status="stale" may be outdated. Prefer active observations when available.
-
-## WorkStreams
-- `workstreams(project)` lists active high-level tasks tracked across sessions
-- `update_workstream(id, status?, next_action?, blockers?)` manually updates a workstream
-- WorkStreams are auto-created from session summaries — no manual creation needed"#;
+Workstreams:
+- `workstreams(project)` lists active tasks.
+- `update_workstream(id, status?, next_action?, blockers?)` updates status, next action, or blockers."#;
 
 #[tool_handler]
 impl ServerHandler for MemoryServer {
