@@ -12,6 +12,7 @@ Same pipeline as LoCoMo eval but against your actual memories:
 
 Usage:
   # Requires remem API running: remem api --port 5567
+  # Reads REMEM_API_TOKEN or ~/.remem/.api-token for REST API auth.
   python eval/local/run_local_eval.py
   python eval/local/run_local_eval.py --n 50 --model gpt-5.4
 """
@@ -47,6 +48,45 @@ def _load_env_file(path):
 
 # Project root .env (two levels up from eval/local/)
 _PROJECT_ENV = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+
+
+def load_remem_api_token(token_file=None):
+    env_token = os.environ.get("REMEM_API_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
+    token_path = Path(
+        token_file
+        or os.environ.get("REMEM_API_TOKEN_FILE", "~/.remem/.api-token")
+    ).expanduser()
+    try:
+        token = token_path.read_text().strip()
+    except OSError as exc:
+        raise RuntimeError(
+            "remem API token unavailable. Start `remem api` once, set "
+            "REMEM_API_TOKEN, or pass --api-token-file."
+        ) from exc
+    if not token:
+        raise RuntimeError(f"remem API token file is empty: {token_path}")
+    return token
+
+
+def create_remem_client(token_file=None):
+    token = load_remem_api_token(token_file)
+    return httpx.Client(headers={"Authorization": f"Bearer {token}"})
+
+
+def response_excerpt(resp):
+    text = resp.text.strip()
+    return f": {text[:500]}" if text else ""
+
+
+def require_status(resp, expected, action):
+    if resp.status_code != expected:
+        raise RuntimeError(
+            f"remem API {action} failed: expected {expected}, "
+            f"got {resp.status_code}{response_excerpt(resp)}"
+        )
 
 
 def create_openai_client():
@@ -187,18 +227,14 @@ def generate_qa_pairs(openai_client, memories, model):
 
 def search_remem(http, base_url, project, question, top_k=20):
     """Search remem API."""
-    try:
-        resp = http.get(
-            f"{base_url}/api/v1/search",
-            params={"query": question, "project": project, "limit": top_k},
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("data", []) if isinstance(data, dict) else data
-    except Exception as e:
-        print(f"    Search error: {e}")
-    return []
+    resp = http.get(
+        f"{base_url}/api/v1/search",
+        params={"query": question, "project": project, "limit": top_k},
+        timeout=30,
+    )
+    require_status(resp, 200, "search local eval context")
+    data = resp.json()
+    return data.get("data", []) if isinstance(data, dict) else data
 
 
 # ---------------------------------------------------------------------------
@@ -365,13 +401,18 @@ def main():
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument("--project", default=None, help="Filter by project")
     parser.add_argument("--skip-gen", action="store_true", help="Reuse cached QA pairs")
+    parser.add_argument(
+        "--api-token-file",
+        default=None,
+        help="Path to remem .api-token (default: REMEM_API_TOKEN_FILE or ~/.remem/.api-token)",
+    )
     args = parser.parse_args()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     qa_cache = RESULTS_DIR / "qa_pairs.json"
 
     openai_client = create_openai_client()
-    http = httpx.Client()
+    http = create_remem_client(args.api_token_file)
 
     if args.skip_gen and qa_cache.exists():
         print(f"Loading cached QA pairs from {qa_cache}")

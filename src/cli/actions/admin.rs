@@ -8,25 +8,7 @@ use crate::cli::types::AdminAction;
 pub(in crate::cli) fn run_admin(action: AdminAction) -> Result<()> {
     match action {
         AdminAction::Backup { output } => run_backup(output),
-        AdminAction::ResetSchema {
-            confirm_destructive,
-        } => run_reset_schema(confirm_destructive),
     }
-}
-
-fn run_reset_schema(confirm_destructive: bool) -> Result<()> {
-    if !confirm_destructive {
-        anyhow::bail!(
-            "reset-schema destroys the schema database at {}.\n\
-             Re-run with --confirm-destructive to proceed.",
-            crate::db::schema::default_path().display()
-        );
-    }
-    let path = crate::db::schema::default_path();
-    crate::db::schema::reset_at(&path)
-        .with_context(|| format!("reset schema db at {}", path.display()))?;
-    println!("Reset schema database at: {}", path.display());
-    Ok(())
 }
 
 fn run_backup(output: Option<PathBuf>) -> Result<()> {
@@ -191,15 +173,6 @@ mod tests {
         let dst = unique_temp_path();
         let err = backup_db(&src, &dst).unwrap_err().to_string();
         assert!(err.contains("not found"), "got: {err}");
-    }
-
-    #[test]
-    fn reset_schema_without_confirmation_returns_error() {
-        let action = AdminAction::ResetSchema {
-            confirm_destructive: false,
-        };
-        let err = run_admin(action).unwrap_err().to_string();
-        assert!(err.contains("--confirm-destructive"), "got: {err}");
     }
 
     #[test]

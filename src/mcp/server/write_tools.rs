@@ -3,6 +3,7 @@ use rmcp::{tool, tool_router};
 use serde_json::json;
 
 use super::super::types::{GovernMemoryParams, SaveMemoryParams, TimelineReportParams};
+use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::{db, memory::service};
 
@@ -10,6 +11,47 @@ fn detect_branch_from_cwd() -> Option<String> {
     let cwd = std::env::current_dir().ok()?;
     let cwd_str = cwd.to_str()?;
     db::detect_git_branch(cwd_str)
+}
+
+fn map_save_memory_error(tool: &'static str, err: anyhow::Error) -> McpToolError {
+    if err.is::<service::LocalCopyError>() {
+        McpToolError::invalid_request(tool, err.to_string())
+    } else {
+        McpToolError::db_query(tool, err)
+    }
+}
+
+fn validate_governance_request(
+    tool: &'static str,
+    params: &GovernMemoryParams,
+) -> McpToolResult<()> {
+    if !params.ids.iter().any(|id| *id > 0) {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "memory governance requires at least one memory id",
+        ));
+    }
+    if params.dry_run.unwrap_or(false) {
+        return Ok(());
+    }
+    if !params.confirm_destructive.unwrap_or(false) {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "memory governance mutation requires confirm_destructive=true",
+        ));
+    }
+    let has_reason = params
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|reason| !reason.is_empty());
+    if !has_reason {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "memory governance mutation requires an explicit reason",
+        ));
+    }
+    Ok(())
 }
 
 #[tool_router(router = tool_router_write, vis = "pub(super)")]
@@ -26,7 +68,8 @@ impl MemoryServer {
     pub(super) fn save_memory(
         &self,
         Parameters(params): Parameters<SaveMemoryParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "save_memory";
         crate::log::info(
             "mcp",
             &format!(
@@ -43,7 +86,7 @@ impl MemoryServer {
             .clone()
             .filter(|b| !b.trim().is_empty())
             .or_else(detect_branch_from_cwd);
-        self.with_conn(move |conn| {
+        self.with_conn(TOOL, move |conn| {
             let req = service::SaveMemoryRequest {
                 text: params.text.clone(),
                 title: params.title.clone(),
@@ -59,7 +102,7 @@ impl MemoryServer {
             };
             let saved = service::save_memory(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
-                e.to_string()
+                map_save_memory_error(TOOL, e)
             })?;
 
             crate::log::info(
@@ -73,15 +116,17 @@ impl MemoryServer {
                     saved.local_path
                 ),
             );
-            serde_json::to_string(&json!({
-                "id": saved.id,
-                "status": saved.status,
-                "memory_type": saved.memory_type,
-                "upserted": saved.upserted,
-                "local_status": saved.local_status,
-                "local_path": saved.local_path,
-            }))
-            .map_err(|e| e.to_string())
+            errors::to_json_string(
+                TOOL,
+                &json!({
+                    "id": saved.id,
+                    "status": saved.status,
+                    "memory_type": saved.memory_type,
+                    "upserted": saved.upserted,
+                    "local_status": saved.local_status,
+                    "local_path": saved.local_path,
+                }),
+            )
         })
     }
 
@@ -93,7 +138,8 @@ impl MemoryServer {
     pub(super) fn govern_memory(
         &self,
         Parameters(params): Parameters<GovernMemoryParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "govern_memory";
         crate::log::info(
             "mcp",
             &format!(
@@ -105,7 +151,8 @@ impl MemoryServer {
             ),
         );
         let action = crate::memory::governance::MemoryGovernanceAction::parse(&params.action)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| McpToolError::invalid_request(TOOL, e.to_string()))?;
+        validate_governance_request(TOOL, &params)?;
         let project = params
             .project
             .clone()
@@ -116,7 +163,7 @@ impl MemoryServer {
                     .map(|cwd| db::project_from_cwd(&cwd.to_string_lossy()))
                     .unwrap_or_else(|| "unknown".to_string())
             });
-        self.with_conn(move |conn| {
+        self.with_conn(TOOL, move |conn| {
             let result = crate::memory::governance::govern_memories(
                 conn,
                 &crate::memory::governance::GovernMemoryRequest {
@@ -131,9 +178,9 @@ impl MemoryServer {
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("govern_memory failed: {}", e));
-                e.to_string()
+                McpToolError::db_query(TOOL, e)
             })?;
-            serde_json::to_string(&result).map_err(|e| e.to_string())
+            errors::to_json_string(TOOL, &result)
         })
     }
 
@@ -143,15 +190,16 @@ impl MemoryServer {
     pub(super) fn timeline_report(
         &self,
         Parameters(params): Parameters<TimelineReportParams>,
-    ) -> Result<String, String> {
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "timeline_report";
         let full = params.full.unwrap_or(false);
         crate::log::info(
             "mcp",
             &format!("timeline_report project={:?} full={}", params.project, full),
         );
-        self.with_conn(|conn| {
+        self.with_conn(TOOL, |conn| {
             crate::timeline::generate_timeline_report(conn, &params.project, full)
-                .map_err(|e| e.to_string())
+                .map_err(|e| McpToolError::db_query(TOOL, e))
         })
     }
 }

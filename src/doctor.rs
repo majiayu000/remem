@@ -1,5 +1,6 @@
 mod database;
 mod environment;
+mod native_memory;
 mod report;
 mod schema;
 #[cfg(test)]

@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchExplain {
     pub query: String,
     pub project: Option<String>,
@@ -35,19 +37,19 @@ impl SearchExplain {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchExplainChannel {
     pub name: String,
     pub hits: Vec<ChannelHit>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChannelHit {
     pub memory_id: i64,
     pub rank: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchExplainResult {
     pub memory_id: i64,
     pub final_rank: usize,
@@ -58,7 +60,7 @@ pub struct SearchExplainResult {
     pub contributions: Vec<ChannelContribution>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChannelContribution {
     pub channel: String,
     pub rank: usize,
