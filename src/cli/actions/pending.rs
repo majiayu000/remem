@@ -1,14 +1,29 @@
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::cli::types::PendingAction;
-use crate::db;
+use crate::db::{self, pending::admin::FailedPendingRow};
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     let conn = db::open_db()?;
 
     match action {
-        PendingAction::ListFailed { project, limit } => {
+        PendingAction::ListFailed {
+            project,
+            limit,
+            json,
+        } => {
             let rows = db::pending::admin::list_failed(&conn, project.as_deref(), limit)?;
+            if json {
+                let output = PendingListFailedJson {
+                    project,
+                    limit: limit.max(1),
+                    count: rows.len(),
+                    failed: rows,
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+                return Ok(());
+            }
             if rows.is_empty() {
                 println!("No failed pending observations.");
                 return Ok(());
@@ -76,4 +91,46 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PendingListFailedJson {
+    project: Option<String>,
+    limit: i64,
+    count: usize,
+    failed: Vec<FailedPendingRow>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    #[test]
+    fn cli_pending_list_failed_json_is_machine_parseable(
+    ) -> std::result::Result<(), serde_json::Error> {
+        let output = PendingListFailedJson {
+            project: Some("proj".to_string()),
+            limit: 1,
+            count: 1,
+            failed: vec![FailedPendingRow {
+                id: 1,
+                session_id: "session-1".to_string(),
+                project: "proj".to_string(),
+                tool_name: "Bash".to_string(),
+                attempt_count: 3,
+                updated_at_epoch: 10,
+                last_error: Some("failed".to_string()),
+            }],
+        };
+
+        let text = serde_json::to_string(&output)?;
+        let parsed: Value = serde_json::from_str(&text)?;
+
+        assert_eq!(parsed["project"], "proj");
+        assert_eq!(parsed["count"], 1);
+        assert_eq!(parsed["failed"][0]["tool_name"], "Bash");
+        Ok(())
+    }
 }

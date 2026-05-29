@@ -255,7 +255,9 @@ remem uninstall
 remem doctor
 remem search "query"
 remem search "query" --branch main --type decision --multi-hop --offset 10
+remem search "query" --json
 remem show <id>
+remem show <id> --json
 remem eval
 remem eval-e2e --json
 remem eval-local
@@ -263,10 +265,13 @@ remem backfill-entities
 remem encrypt
 remem api --port 5567
 remem status
+remem status --json
 remem usage --days 14 --weeks 8
 remem pending list-failed
+remem pending list-failed --json
 remem pending retry-failed --dry-run
 remem pending purge-failed --dry-run --older-than-days 7
+remem govern --action stale --dry-run --json <id>
 remem review list
 remem review approve <id>
 remem review discard <id>
@@ -281,6 +286,19 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+### Scriptable JSON output
+
+These commands emit one JSON object and no human text on stdout when `--json`
+is set:
+
+| Command | Stable top-level fields |
+|---|---|
+| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `today`, `top_projects` |
+| `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
+| `remem show <id> --json` | `found`, `id`, `memory` |
+| `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
+| `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
 ## REST API
 

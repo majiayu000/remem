@@ -81,6 +81,7 @@ pub(in crate::cli) struct GovernanceCliRequest<'a> {
     pub(in crate::cli) read_stdin: bool,
     pub(in crate::cli) confirm_destructive: bool,
     pub(in crate::cli) dry_run: bool,
+    pub(in crate::cli) json: bool,
     pub(in crate::cli) ids: &'a [i64],
 }
 
@@ -117,6 +118,16 @@ pub(in crate::cli) fn run_governance(req: GovernanceCliRequest<'_>) -> Result<()
         let input_supplied =
             selector_used || req.from_file.is_some() || req.read_stdin || !req.ids.is_empty();
         if input_supplied {
+            if req.json {
+                let output = memory::governance::GovernMemoryResult {
+                    dry_run,
+                    action: action.as_str().to_string(),
+                    reason: req.reason.map(str::to_string),
+                    affected: Vec::new(),
+                };
+                println!("{}", serde_json::to_string_pretty(&output)?);
+                return Ok(());
+            }
             let mode = if dry_run { "dry-run" } else { "applied" };
             println!(
                 "memory governance {} action={} project={} affected=0",
@@ -130,7 +141,7 @@ pub(in crate::cli) fn run_governance(req: GovernanceCliRequest<'_>) -> Result<()
             "memory governance requires at least one memory id or selector (--query, --memory-type, --status, --from-file, --stdin)"
         );
     }
-    if dry_run && !req.dry_run && !req.confirm_destructive {
+    if dry_run && !req.dry_run && !req.confirm_destructive && !req.json {
         println!(
             "memory governance preview: --confirm-destructive not supplied; no changes written"
         );
@@ -147,6 +158,10 @@ pub(in crate::cli) fn run_governance(req: GovernanceCliRequest<'_>) -> Result<()
             confirm_destructive: req.confirm_destructive,
         },
     )?;
+    if req.json {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+        return Ok(());
+    }
     let mode = if result.dry_run { "dry-run" } else { "applied" };
     println!(
         "memory governance {} action={} project={} affected={}",
@@ -212,7 +227,10 @@ fn parse_governance_id_text(input: &str) -> Result<Vec<i64>> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
+    use crate::memory::governance::{GovernMemoryResult, GovernedMemory};
 
     #[test]
     fn parse_governance_id_text_accepts_commas_and_whitespace() -> Result<()> {
@@ -241,6 +259,30 @@ mod tests {
         let ids = collect_governance_ids(&[4], Some(&path), false)?;
         std::fs::remove_file(&path)?;
         assert_eq!(ids, vec![4, 5, 6, 7]);
+        Ok(())
+    }
+
+    #[test]
+    fn cli_governance_json_result_is_machine_parseable(
+    ) -> std::result::Result<(), serde_json::Error> {
+        let result = GovernMemoryResult {
+            dry_run: true,
+            action: "stale".to_string(),
+            reason: Some("stale fact".to_string()),
+            affected: vec![GovernedMemory {
+                id: 7,
+                title: "Old memory".to_string(),
+                previous_status: "active".to_string(),
+                new_status: "stale".to_string(),
+            }],
+        };
+
+        let text = serde_json::to_string(&result)?;
+        let parsed: Value = serde_json::from_str(&text)?;
+
+        assert_eq!(parsed["dry_run"], true);
+        assert_eq!(parsed["action"], "stale");
+        assert_eq!(parsed["affected"][0]["new_status"], "stale");
         Ok(())
     }
 }

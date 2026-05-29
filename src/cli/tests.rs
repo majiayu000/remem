@@ -84,6 +84,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             include_stale,
             multi_hop,
             explain,
+            json,
         } => {
             assert_eq!(query, "Melanie rollout");
             assert_eq!(project.as_deref(), Some("personal"));
@@ -94,6 +95,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             assert!(include_stale);
             assert!(multi_hop);
             assert!(!explain);
+            assert!(!json);
         }
         _ => panic!("expected search command"),
     }
@@ -158,6 +160,7 @@ fn cli_parses_governance_delete_options() {
             read_stdin,
             confirm_destructive,
             dry_run,
+            json,
             ids,
         } => {
             assert_eq!(project.as_deref(), Some("/tmp/remem"));
@@ -173,7 +176,74 @@ fn cli_parses_governance_delete_options() {
             assert!(!read_stdin);
             assert!(confirm_destructive);
             assert!(!dry_run);
+            assert!(!json);
             assert_eq!(ids, vec![42, 43]);
+        }
+        _ => panic!("expected govern command"),
+    }
+}
+
+#[test]
+fn cli_parses_scriptable_json_flags() {
+    let status = Cli::parse_from(["remem", "status", "--json"]);
+    match status.command {
+        Commands::Status { json } => assert!(json),
+        _ => panic!("expected status command"),
+    }
+
+    let search = Cli::parse_from(["remem", "search", "context gate", "--json"]);
+    match search.command {
+        Commands::Search { json, .. } => assert!(json),
+        _ => panic!("expected search command"),
+    }
+
+    let show = Cli::parse_from(["remem", "show", "7", "--json"]);
+    match show.command {
+        Commands::Show { id, json } => {
+            assert_eq!(id, 7);
+            assert!(json);
+        }
+        _ => panic!("expected show command"),
+    }
+
+    let pending = Cli::parse_from(["remem", "pending", "list-failed", "--json"]);
+    match pending.command {
+        Commands::Pending {
+            action:
+                super::types::PendingAction::ListFailed {
+                    project,
+                    limit,
+                    json,
+                },
+        } => {
+            assert!(project.is_none());
+            assert_eq!(limit, 20);
+            assert!(json);
+        }
+        _ => panic!("expected pending list-failed command"),
+    }
+
+    let govern = Cli::parse_from([
+        "remem",
+        "govern",
+        "--action",
+        "stale",
+        "--dry-run",
+        "--json",
+        "42",
+    ]);
+    match govern.command {
+        Commands::Govern {
+            action,
+            dry_run,
+            json,
+            ids,
+            ..
+        } => {
+            assert!(matches!(action, MemoryGovernanceCliAction::Stale));
+            assert!(dry_run);
+            assert!(json);
+            assert_eq!(ids, vec![42]);
         }
         _ => panic!("expected govern command"),
     }
@@ -219,6 +289,7 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
             read_stdin,
             confirm_destructive,
             dry_run,
+            json,
             ids,
         } => {
             assert_eq!(project.as_deref(), Some("/tmp/remem"));
@@ -234,6 +305,7 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
             assert!(read_stdin);
             assert!(!confirm_destructive);
             assert!(!dry_run);
+            assert!(!json);
             assert_eq!(ids, vec![42]);
         }
         _ => panic!("expected govern command"),

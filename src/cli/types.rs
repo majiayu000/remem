@@ -107,6 +107,9 @@ pub(super) enum Commands {
         confirm_destructive: bool,
         #[arg(long)]
         dry_run: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
         #[arg()]
         ids: Vec<i64>,
     },
@@ -121,7 +124,11 @@ pub(super) enum Commands {
         #[arg(long, default_value = "8")]
         weeks: i64,
     },
-    Status,
+    Status {
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
     Doctor {
         /// Emit a single JSON object with per-check status. Stable shape;
         /// fields: `version`, `status`, `fails`, `warns`, `checks[]`.
@@ -150,6 +157,9 @@ pub(super) enum Commands {
         multi_hop: bool,
         #[arg(long)]
         explain: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
     },
     Commit {
         #[command(subcommand)]
@@ -157,6 +167,8 @@ pub(super) enum Commands {
     },
     Show {
         id: i64,
+        #[arg(long)]
+        json: bool,
     },
     Why {
         id: i64,
@@ -276,6 +288,8 @@ pub(in crate::cli) enum PendingAction {
         project: Option<String>,
         #[arg(long, short = 'n', default_value = "20")]
         limit: i64,
+        #[arg(long)]
+        json: bool,
     },
     RetryFailed {
         #[arg(long, short)]

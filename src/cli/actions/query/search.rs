@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::{
     db,
@@ -20,6 +21,7 @@ pub(in crate::cli) fn run_search(
     include_stale: bool,
     multi_hop: bool,
     explain: bool,
+    json: bool,
 ) -> Result<()> {
     let conn = db::open_db()?;
     let request = build_search_request(
@@ -34,6 +36,22 @@ pub(in crate::cli) fn run_search(
         explain,
     );
     let results = crate::memory::service::search_memories(&conn, &request)?;
+    if json {
+        let output = build_search_json(
+            query,
+            project,
+            memory_type,
+            limit,
+            offset,
+            branch,
+            include_stale,
+            multi_hop,
+            explain,
+            &results,
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
     print!("{}", render_search_results(&results, offset, limit.max(1)));
     Ok(())
 }
@@ -105,6 +123,96 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
     append_search_explain(&mut output, results.explain.as_ref());
 
     output
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_search_json(
+    query: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    branch: Option<&str>,
+    include_stale: bool,
+    multi_hop: bool,
+    explain: bool,
+    results: &SearchResultSet,
+) -> SearchJson {
+    let normalized_limit = limit.max(1);
+    SearchJson {
+        query: query.to_string(),
+        project: project.map(str::to_string),
+        memory_type: memory_type.map(str::to_string),
+        limit: normalized_limit,
+        offset: offset.max(0),
+        branch: branch.map(str::to_string),
+        include_stale,
+        multi_hop_requested: multi_hop,
+        explain_requested: explain,
+        count: results.memories.len(),
+        has_more: results.has_more,
+        next_offset: results.has_more.then_some(offset.max(0) + normalized_limit),
+        results: results.memories.clone(),
+        raw_hits: results
+            .raw_hits
+            .iter()
+            .map(|raw| RawHitJson {
+                id: raw.id,
+                session_id: raw.session_id.clone(),
+                project: raw.project.clone(),
+                role: raw.role.clone(),
+                content: raw.content.clone(),
+                source: raw.source.clone(),
+                branch: raw.branch.clone(),
+                cwd: raw.cwd.clone(),
+                created_at_epoch: raw.created_at_epoch,
+            })
+            .collect(),
+        multi_hop: results.multi_hop.as_ref().map(|meta| MultiHopJson {
+            hops: meta.hops,
+            entities_discovered: meta.entities_discovered.clone(),
+        }),
+        explain_details: results.explain.clone(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct SearchJson {
+    pub query: String,
+    pub project: Option<String>,
+    pub memory_type: Option<String>,
+    pub limit: i64,
+    pub offset: i64,
+    pub branch: Option<String>,
+    pub include_stale: bool,
+    pub multi_hop_requested: bool,
+    pub explain_requested: bool,
+    pub count: usize,
+    pub has_more: bool,
+    pub next_offset: Option<i64>,
+    pub results: Vec<Memory>,
+    pub raw_hits: Vec<RawHitJson>,
+    pub multi_hop: Option<MultiHopJson>,
+    pub explain_details: Option<SearchExplain>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct MultiHopJson {
+    pub hops: u8,
+    pub entities_discovered: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct RawHitJson {
+    pub id: i64,
+    pub session_id: String,
+    pub project: String,
+    pub role: String,
+    pub content: String,
+    pub source: String,
+    pub branch: Option<String>,
+    pub cwd: Option<String>,
+    pub created_at_epoch: i64,
 }
 
 fn append_empty_search_guidance(output: &mut String) {

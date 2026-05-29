@@ -4,10 +4,14 @@ use crate::memory::{
     Memory,
 };
 use crate::retrieval::search::{ChannelContribution, SearchExplain, SearchExplainResult};
+use serde_json::Value;
 
 use super::{
-    search::{build_search_request, preview_raw_text, preview_text, render_search_results},
-    show::format_memory_timestamp,
+    search::{
+        build_search_json, build_search_request, preview_raw_text, preview_text,
+        render_search_results,
+    },
+    show::{format_memory_timestamp, ShowJson},
     why::{render_why_memory, ContextGateSummary},
 };
 
@@ -214,6 +218,61 @@ fn cli_query_raw_preview_uses_first_line_and_truncates() {
 
     assert_eq!(preview.len(), 100);
     assert!(preview.chars().all(|ch| ch == 'r'));
+}
+
+#[test]
+fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
+    let result = SearchResultSet {
+        memories: vec![sample_memory()],
+        multi_hop: Some(MultiHopMeta {
+            hops: 1,
+            entities_discovered: vec!["Mem0".to_string()],
+        }),
+        has_more: true,
+        explain: Some(sample_explain()),
+        raw_hits: vec![sample_raw()],
+    };
+    let output = build_search_json(
+        "needle",
+        Some("proj"),
+        Some("decision"),
+        3,
+        6,
+        Some("main"),
+        true,
+        true,
+        true,
+        &result,
+    );
+
+    let text = serde_json::to_string(&output)?;
+    let parsed: Value = serde_json::from_str(&text)?;
+
+    assert_eq!(parsed["query"], "needle");
+    assert_eq!(parsed["limit"], 3);
+    assert_eq!(parsed["next_offset"], 9);
+    assert_eq!(parsed["results"][0]["id"], 1);
+    assert_eq!(parsed["raw_hits"][0]["id"], 9);
+    assert_eq!(parsed["multi_hop"]["entities_discovered"][0], "Mem0");
+    assert_eq!(parsed["explain_details"]["query"], "needle");
+    Ok(())
+}
+
+#[test]
+fn cli_show_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
+    let output = ShowJson {
+        found: true,
+        id: 1,
+        memory: Some(sample_memory()),
+    };
+
+    let text = serde_json::to_string(&output)?;
+    let parsed: Value = serde_json::from_str(&text)?;
+
+    assert_eq!(parsed["found"], true);
+    assert_eq!(parsed["id"], 1);
+    assert_eq!(parsed["memory"]["title"], "Title");
+    Ok(())
 }
 
 #[test]
