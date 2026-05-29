@@ -20,7 +20,7 @@ fn load_status_report() -> Result<StatusReport> {
     let db_size = std::fs::metadata(&db_path)
         .with_context(|| format!("failed to stat database path {}", db_path.display()))?
         .len();
-    let version = env!("CARGO_PKG_VERSION");
+    let version = crate::build_info::version_label();
     let stats = db::query_system_stats(&conn)?;
 
     let today_start = chrono::Local::now()
@@ -33,7 +33,7 @@ fn load_status_report() -> Result<StatusReport> {
     let now = chrono::Utc::now().timestamp();
 
     Ok(StatusReport {
-        version: version.to_string(),
+        version,
         database: StatusDatabase {
             path: db_path.display().to_string(),
             size_bytes: db_size,

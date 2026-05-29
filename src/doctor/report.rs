@@ -68,8 +68,11 @@ fn tally(checks: &[Check]) -> DoctorOutcome {
 }
 
 fn write_human<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) -> Result<()> {
-    let version = env!("CARGO_PKG_VERSION");
-    writeln!(out, "remem v{} — system check", version)?;
+    writeln!(
+        out,
+        "remem v{} — system check",
+        crate::build_info::version_label()
+    )?;
     writeln!(out)?;
 
     for check in checks {
@@ -103,7 +106,8 @@ fn write_json<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) -
 
     let report = ReportJson {
         schema_version: REPORT_SCHEMA_VERSION,
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::build_info::package_version(),
+        binary_schema_version: crate::build_info::binary_schema_version(),
         status: overall.as_json_tag(),
         fails: outcome.fails,
         warns: outcome.warns,
@@ -192,6 +196,10 @@ mod tests {
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(
+            parsed["binary_schema_version"],
+            crate::migrate::latest_schema_version()
+        );
         assert_eq!(parsed["status"], "fail");
         assert_eq!(parsed["fails"], 1);
         assert_eq!(parsed["warns"], 0);

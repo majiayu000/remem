@@ -6,10 +6,19 @@ mod tests;
 mod types;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Command, CommandFactory, FromArgMatches};
 
 use types::Cli;
 
 pub async fn run() -> Result<()> {
-    dispatch::run_cli(Cli::parse()).await
+    let matches = cli_command().get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
+    dispatch::run_cli(cli).await
+}
+
+fn cli_command() -> Command {
+    let version = crate::build_info::version_label();
+    Cli::command()
+        .version(version.clone())
+        .long_version(version)
 }

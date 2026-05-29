@@ -22,6 +22,23 @@ fn cli_resolve_cwd_arg_falls_back_to_current_dir() {
 }
 
 #[test]
+fn cli_version_reports_supported_schema_version() {
+    let version = super::cli_command().render_version();
+
+    assert!(
+        version.contains(env!("CARGO_PKG_VERSION")),
+        "got: {version}"
+    );
+    assert!(
+        version.contains(&format!(
+            "schema v{}",
+            crate::migrate::latest_schema_version()
+        )),
+        "got: {version}"
+    );
+}
+
+#[test]
 fn cli_parses_review_edit_options() {
     let cli = Cli::parse_from([
         "remem",

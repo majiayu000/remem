@@ -33,14 +33,12 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
     transition_from_old_system(conn)?;
 
     let applied = applied_versions(conn)?;
-    let binary_latest = MIGRATIONS
-        .last()
-        .map(|migration| migration.version)
-        .unwrap_or(0);
+    let binary_latest = super::latest_schema_version();
     let db_latest = applied.iter().copied().max().unwrap_or(0);
     if db_latest > binary_latest {
         return Err(anyhow!(
-            "database is at schema v{db_latest} but this binary only knows up to v{binary_latest}; please upgrade remem"
+            "database is at schema v{db_latest} but this binary ({}) only knows up to v{binary_latest}; please upgrade remem and verify `remem --version` reports schema v{db_latest} or newer",
+            crate::build_info::version_label()
         ));
     }
     for migration in MIGRATIONS {
@@ -65,10 +63,7 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
         );
     }
 
-    let latest = MIGRATIONS
-        .last()
-        .map(|migration| migration.version)
-        .unwrap_or(0);
+    let latest = super::latest_schema_version();
     let current_user_version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
