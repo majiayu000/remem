@@ -1,10 +1,13 @@
 use rusqlite::Connection;
 
 use super::{DailyActivityStats, ProjectCount, SystemStats};
-use crate::db::models::{AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage};
+use crate::db::models::{
+    AiUsageBreakdown, AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage,
+};
 use crate::db::query::{
-    query_ai_usage_source_totals, query_ai_usage_totals, query_daily_activity_stats,
-    query_daily_ai_usage, query_system_stats, query_top_projects, query_weekly_ai_usage,
+    query_ai_usage_breakdown, query_ai_usage_source_totals, query_ai_usage_totals,
+    query_daily_activity_stats, query_daily_ai_usage, query_system_stats, query_top_projects,
+    query_weekly_ai_usage,
 };
 
 fn setup_stats_schema(conn: &Connection) {
@@ -254,29 +257,60 @@ fn insert_usage(
     cache_read_tokens: i64,
     estimated_cost_usd: f64,
 ) {
+    insert_usage_with_source(
+        conn,
+        Some(project),
+        created_at_epoch,
+        "codex-cli",
+        input_tokens,
+        output_tokens,
+        reasoning_tokens,
+        cache_read_tokens,
+        estimated_cost_usd,
+        "codex_log",
+        "remem_static",
+    );
+}
+
+fn insert_usage_with_source(
+    conn: &Connection,
+    project: Option<&str>,
+    created_at_epoch: i64,
+    executor: &str,
+    input_tokens: i64,
+    output_tokens: i64,
+    reasoning_tokens: i64,
+    cache_read_tokens: i64,
+    estimated_cost_usd: f64,
+    usage_source: &str,
+    pricing_source: &str,
+) {
     conn.execute(
         "INSERT INTO ai_usage_events
          (created_at, created_at_epoch, project, operation, executor, model,
           input_tokens, output_tokens, reasoning_tokens, cache_read_tokens, total_tokens,
           estimated_cost_usd, usage_source, pricing_source)
-         VALUES ('2026-01-01T00:00:00Z', ?1, ?2, 'summary', 'codex-cli', 'codex-default',
-                 ?3, ?4, ?5, ?6, ?7, ?8, 'codex_log', 'remem_static')",
+         VALUES ('2026-01-01T00:00:00Z', ?1, ?2, 'summary', ?3, 'codex-default',
+                 ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             created_at_epoch,
             project,
+            executor,
             input_tokens,
             output_tokens,
             reasoning_tokens,
             cache_read_tokens,
             input_tokens + output_tokens + reasoning_tokens + cache_read_tokens,
-            estimated_cost_usd
+            estimated_cost_usd,
+            usage_source,
+            pricing_source
         ],
     )
     .expect("usage insert should succeed");
 }
 
 #[test]
-fn query_ai_usage_groups_daily_and_weekly_token_costs() {
+fn query_ai_usage_groups_daily_and_weekly_token_costs() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     setup_stats_schema(&conn);
 
@@ -310,6 +344,20 @@ fn query_ai_usage_groups_daily_and_weekly_token_costs() {
     assert_eq!(
         alpha_sources,
         vec![AiUsageSourceTotals {
+            usage_source: "codex_log".to_string(),
+            pricing_source: "remem_static".to_string(),
+            calls: 3,
+            total_tokens: 1090,
+            estimated_cost_usd: 0.006,
+        }]
+    );
+
+    let alpha_breakdown = query_ai_usage_breakdown(&conn, Some(jan_05_2026), Some("alpha"), 10)?;
+    assert_eq!(
+        alpha_breakdown,
+        vec![AiUsageBreakdown {
+            project: Some("alpha".to_string()),
+            executor: "codex-cli".to_string(),
             usage_source: "codex_log".to_string(),
             pricing_source: "remem_static".to_string(),
             calls: 3,
@@ -377,4 +425,95 @@ fn query_ai_usage_groups_daily_and_weekly_token_costs() {
             },
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn query_ai_usage_breakdown_exposes_project_executor_and_source() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory().expect("in-memory db should open");
+    setup_stats_schema(&conn);
+
+    let jan_05_2026 = 1_767_571_200;
+    insert_usage_with_source(
+        &conn,
+        Some("/Users/lifcc/.remem"),
+        jan_05_2026,
+        "cli",
+        900,
+        100,
+        0,
+        0,
+        0.003,
+        "text_estimate",
+        "remem_static",
+    );
+    insert_usage_with_source(
+        &conn,
+        Some("alpha"),
+        jan_05_2026 + 60,
+        "codex-cli",
+        100,
+        50,
+        0,
+        25,
+        0.001,
+        "codex_log",
+        "remem_static",
+    );
+    insert_usage_with_source(
+        &conn,
+        None,
+        jan_05_2026 + 120,
+        "http",
+        80,
+        20,
+        0,
+        0,
+        0.0005,
+        "anthropic_usage",
+        "remem_static",
+    );
+
+    let breakdown = query_ai_usage_breakdown(&conn, Some(jan_05_2026), None, 10)?;
+
+    assert_eq!(
+        breakdown,
+        vec![
+            AiUsageBreakdown {
+                project: Some("/Users/lifcc/.remem".to_string()),
+                executor: "cli".to_string(),
+                usage_source: "text_estimate".to_string(),
+                pricing_source: "remem_static".to_string(),
+                calls: 1,
+                total_tokens: 1000,
+                estimated_cost_usd: 0.003,
+            },
+            AiUsageBreakdown {
+                project: Some("alpha".to_string()),
+                executor: "codex-cli".to_string(),
+                usage_source: "codex_log".to_string(),
+                pricing_source: "remem_static".to_string(),
+                calls: 1,
+                total_tokens: 175,
+                estimated_cost_usd: 0.001,
+            },
+            AiUsageBreakdown {
+                project: None,
+                executor: "http".to_string(),
+                usage_source: "anthropic_usage".to_string(),
+                pricing_source: "remem_static".to_string(),
+                calls: 1,
+                total_tokens: 100,
+                estimated_cost_usd: 0.0005,
+            },
+        ]
+    );
+
+    let limited = query_ai_usage_breakdown(&conn, Some(jan_05_2026), None, 1)?;
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].project.as_deref(), Some("/Users/lifcc/.remem"));
+
+    let empty = query_ai_usage_breakdown(&conn, Some(jan_05_2026), None, 0)?;
+    assert!(empty.is_empty());
+    Ok(())
 }
