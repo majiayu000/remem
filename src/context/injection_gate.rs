@@ -80,7 +80,7 @@ pub(super) fn apply_context_gate(
     let conn = match crate::db::open_db() {
         Ok(conn) => conn,
         Err(error) => {
-            crate::log::warn(
+            crate::log::error(
                 "context-gate",
                 &format!("fail_open reason=open_db error={}", error),
             );
