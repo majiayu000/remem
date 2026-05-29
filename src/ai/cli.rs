@@ -21,6 +21,7 @@ pub(super) async fn call_cli(system: &str, user_message: &str) -> Result<AiCallR
             "--no-session-persistence",
         ])
         .current_dir(&working_dir)
+        .env("REMEM_DISABLE_HOOKS", "1")
         .env_remove("CLAUDECODE")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

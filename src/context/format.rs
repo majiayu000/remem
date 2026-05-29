@@ -1,20 +1,15 @@
 use chrono::{Local, TimeZone};
 
+use crate::memory::MemoryType;
+
 pub(super) fn format_header_datetime() -> String {
     Local::now().format("%Y-%m-%d %-I:%M%P %:z").to_string()
 }
 
 pub(super) fn type_label(memory_type: &str) -> &'static str {
-    match memory_type {
-        "decision" => "Decisions",
-        "bugfix" => "Bug Fixes",
-        "architecture" => "Architecture",
-        "discovery" => "Discoveries",
-        "lesson" => "Lessons",
-        "preference" => "Preferences",
-        "session_activity" => "Sessions",
-        _ => "Other",
-    }
+    MemoryType::parse(memory_type)
+        .map(MemoryType::label)
+        .unwrap_or("Other")
 }
 
 pub(super) fn format_epoch_short(epoch: i64) -> String {

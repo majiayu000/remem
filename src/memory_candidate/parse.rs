@@ -63,10 +63,11 @@ pub(super) fn normalize_scope(raw: &str) -> Result<String> {
 
 pub(super) fn normalize_memory_type(raw: &str) -> Result<String> {
     let value = raw.trim().to_ascii_lowercase();
-    if crate::memory::MEMORY_TYPES.contains(&value.as_str()) && value != "session_activity" {
-        Ok(value)
-    } else {
-        bail!("malformed memory_candidate output: invalid memory type '{value}'")
+    match crate::memory::MemoryType::parse(&value) {
+        Some(memory_type) if memory_type != crate::memory::MemoryType::SessionActivity => {
+            Ok(memory_type.as_str().to_string())
+        }
+        _ => bail!("malformed memory_candidate output: invalid memory type '{value}'"),
     }
 }
 

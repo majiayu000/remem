@@ -171,6 +171,8 @@ pub async fn run_sandbox_eval(options: E2eEvalOptions) -> Result<E2eEvalReport> 
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("create eval data dir {}", data_dir.display()))?;
     let _restore = EnvRestore::set("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string());
+    crate::api::ensure_api_token().context("create sandbox API token")?;
+    let api_token = crate::api::load_api_token().context("load sandbox API token")?;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -190,7 +192,7 @@ pub async fn run_sandbox_eval(options: E2eEvalOptions) -> Result<E2eEvalReport> 
     });
 
     let client = reqwest::Client::new();
-    let run_result = run_api_boundary_eval(&client, &base_url, k).await;
+    let run_result = run_api_boundary_eval(&client, &base_url, &api_token, k).await;
     let _ = shutdown_tx.send(());
     let server_result = server.await.context("join sandbox eval API server")?;
     server_result.context("sandbox eval API server failed")?;
@@ -210,18 +212,20 @@ pub async fn run_sandbox_eval(options: E2eEvalOptions) -> Result<E2eEvalReport> 
 async fn run_api_boundary_eval(
     client: &reqwest::Client,
     base_url: &str,
+    api_token: &str,
     k: usize,
 ) -> Result<E2eEvalReport> {
-    wait_for_status(client, base_url).await?;
+    wait_for_status(client, base_url, api_token).await?;
     let mut saved_ids = Vec::with_capacity(CORPUS.len());
     for memory in CORPUS {
-        let saved = save_memory_via_api(client, base_url, memory).await?;
+        let saved = save_memory_via_api(client, base_url, api_token, memory).await?;
         saved_ids.push(saved.id);
     }
 
     let mut query_reports = Vec::with_capacity(QUERIES.len());
     for query in QUERIES {
-        let api_topic_keys = search_topic_keys_via_api(client, base_url, query.query, k).await?;
+        let api_topic_keys =
+            search_topic_keys_via_api(client, base_url, api_token, query.query, k).await?;
         let keyword_topic_keys = keyword_baseline_topic_keys(query.query, k);
         query_reports.push(E2eQueryReport {
             id: query.id.to_string(),
@@ -260,11 +264,11 @@ async fn run_api_boundary_eval(
     })
 }
 
-async fn wait_for_status(client: &reqwest::Client, base_url: &str) -> Result<()> {
+async fn wait_for_status(client: &reqwest::Client, base_url: &str, api_token: &str) -> Result<()> {
     let url = format!("{}/api/v1/status", base_url);
     let mut last_error = None;
     for _ in 0..20 {
-        match client.get(&url).send().await {
+        match client.get(&url).bearer_auth(api_token).send().await {
             Ok(response) if response.status().is_success() => return Ok(()),
             Ok(response) => last_error = Some(anyhow!("status returned {}", response.status())),
             Err(error) => last_error = Some(error.into()),
@@ -277,6 +281,7 @@ async fn wait_for_status(client: &reqwest::Client, base_url: &str) -> Result<()>
 async fn save_memory_via_api(
     client: &reqwest::Client,
     base_url: &str,
+    api_token: &str,
     memory: &CorpusMemory,
 ) -> Result<ApiSaveResponse> {
     let request = ApiSaveRequest {
@@ -290,6 +295,7 @@ async fn save_memory_via_api(
     };
     let response = client
         .post(format!("{}/api/v1/memories", base_url))
+        .bearer_auth(api_token)
         .json(&request)
         .send()
         .await
@@ -308,12 +314,14 @@ async fn save_memory_via_api(
 async fn search_topic_keys_via_api(
     client: &reqwest::Client,
     base_url: &str,
+    api_token: &str,
     query: &str,
     k: usize,
 ) -> Result<Vec<String>> {
     let limit = k.to_string();
     let response = client
         .get(format!("{}/api/v1/search", base_url))
+        .bearer_auth(api_token)
         .query(&[
             ("query", query),
             ("project", PROJECT),
