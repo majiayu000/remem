@@ -65,7 +65,8 @@ pub(super) fn build_search_request(
 pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limit: i64) -> String {
     let mut output = String::new();
     if results.memories.is_empty() && results.raw_hits.is_empty() {
-        output.push_str("No results found.\n");
+        output.push_str("No curated memories found.\n");
+        append_empty_search_guidance(&mut output);
         append_search_explain(&mut output, results.explain.as_ref());
         return output;
     }
@@ -81,12 +82,13 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
         for memory in &results.memories {
             output.push_str(&format_memory_line(memory));
         }
-        if results.has_more {
-            output.push_str(&format!(
-                "\nMore results available; use --offset {}.\n",
-                offset.max(0) + limit.max(1)
-            ));
-        }
+        append_curated_next_steps(
+            &mut output,
+            &results.memories[0],
+            results.has_more,
+            offset,
+            limit,
+        );
     }
 
     if !results.raw_hits.is_empty() {
@@ -98,10 +100,50 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
         for raw in &results.raw_hits {
             output.push_str(&format_raw_hit_line(raw));
         }
+        append_raw_fallback_next_step(&mut output);
     }
     append_search_explain(&mut output, results.explain.as_ref());
 
     output
+}
+
+fn append_empty_search_guidance(output: &mut String) {
+    output.push_str("\nTry:\n");
+    output.push_str("  remem search \"<query>\" --include-stale\n");
+    output.push_str("  remem search \"<query>\" --multi-hop\n");
+    output.push_str("  remem search \"<query>\" --project /path/to/repo\n");
+    output.push_str("  remem search \"<query>\" --explain\n");
+}
+
+fn append_curated_next_steps(
+    output: &mut String,
+    first_memory: &Memory,
+    has_more: bool,
+    offset: i64,
+    limit: i64,
+) {
+    output.push_str("\nNext:\n");
+    output.push_str(&format!(
+        "  remem show {}        # full details for one memory\n",
+        first_memory.id
+    ));
+    output.push_str(&format!(
+        "  remem why {}         # visibility and retrieval diagnostics\n",
+        first_memory.id
+    ));
+    if has_more {
+        output.push_str(&format!(
+            "  remem search \"<query>\" --offset {}\n",
+            offset.max(0) + limit.max(1)
+        ));
+    }
+}
+
+fn append_raw_fallback_next_step(output: &mut String) {
+    output.push_str("\nNext:\n");
+    output.push_str(
+        "  use raw hits for recall only; promote durable conclusions with review/save_memory.\n",
+    );
 }
 
 fn append_search_explain(output: &mut String, explain: Option<&SearchExplain>) {

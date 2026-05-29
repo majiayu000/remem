@@ -15,6 +15,8 @@ pub(super) use import::run_import;
 pub(super) use maintenance::{run_cleanup, run_dream, run_encrypt, run_governance};
 pub(super) use pending::run_pending;
 pub(super) use preferences::run_preferences;
-pub(super) use query::{run_backfill_entities, run_commit, run_search, run_show, run_status};
+pub(super) use query::{
+    run_backfill_entities, run_commit, run_search, run_show, run_status, run_why,
+};
 pub(super) use review::run_review;
 pub(super) use usage::run_usage;

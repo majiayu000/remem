@@ -100,6 +100,32 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
 }
 
 #[test]
+fn cli_parses_why_project_and_branch_filters() {
+    let cli = Cli::parse_from([
+        "remem",
+        "why",
+        "78360",
+        "--project",
+        "/tmp/remem",
+        "--branch",
+        "main",
+    ]);
+
+    match cli.command {
+        Commands::Why {
+            id,
+            project,
+            branch,
+        } => {
+            assert_eq!(id, 78360);
+            assert_eq!(project.as_deref(), Some("/tmp/remem"));
+            assert_eq!(branch.as_deref(), Some("main"));
+        }
+        _ => panic!("expected why command"),
+    }
+}
+
+#[test]
 fn cli_parses_governance_delete_options() {
     let cli = Cli::parse_from([
         "remem",

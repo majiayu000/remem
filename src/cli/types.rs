@@ -137,6 +137,13 @@ pub(super) enum Commands {
     Show {
         id: i64,
     },
+    Why {
+        id: i64,
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+    },
     Eval {
         #[arg(long, default_value = "eval/golden.json")]
         dataset: String,
