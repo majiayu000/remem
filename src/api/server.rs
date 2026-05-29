@@ -1,50 +1,24 @@
 use axum::{
-    http::{header, Method},
+    middleware,
     routing::{get, post},
     Router,
 };
-use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use super::auth::{ensure_api_token, require_api_token};
 use super::handlers::{handle_get_memory, handle_save_memory, handle_search, handle_status};
 use super::types::DbState;
 
 pub fn build_router(_port: u16) -> Router<DbState> {
-    // Allow any localhost origin (any port) so browser clients served from a
-    // different port than the API (common in dev and production setups) are not
-    // blocked.  Requests from non-localhost origins are still rejected.
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(
-            |origin: &axum::http::HeaderValue, _| {
-                let b = origin.as_bytes();
-                // localhost — with or without explicit port, http or https
-                b == b"http://localhost"
-                || b == b"https://localhost"
-                || b.starts_with(b"http://localhost:")
-                || b.starts_with(b"https://localhost:")
-                // IPv4 loopback
-                || b == b"http://127.0.0.1"
-                || b == b"https://127.0.0.1"
-                || b.starts_with(b"http://127.0.0.1:")
-                || b.starts_with(b"https://127.0.0.1:")
-                // IPv6 loopback
-                || b == b"http://[::1]"
-                || b == b"https://[::1]"
-                || b.starts_with(b"http://[::1]:")
-                || b.starts_with(b"https://[::1]:")
-            },
-        ))
-        .allow_methods([Method::GET, Method::POST])
-        .allow_headers([header::CONTENT_TYPE]);
-
     Router::new()
         .route("/api/v1/search", get(handle_search))
         .route("/api/v1/memory", get(handle_get_memory))
         .route("/api/v1/memories", post(handle_save_memory))
         .route("/api/v1/status", get(handle_status))
-        .layer(cors)
+        .route_layer(middleware::from_fn(require_api_token))
 }
 
 pub async fn run_api_server(port: u16) -> anyhow::Result<()> {
+    let token_path = ensure_api_token()?;
     let app = build_router(port).with_state(DbState);
     let addr = format!("127.0.0.1:{}", port);
 
@@ -53,6 +27,10 @@ pub async fn run_api_server(port: u16) -> anyhow::Result<()> {
         "remem REST API v{} on http://{}",
         env!("CARGO_PKG_VERSION"),
         addr
+    );
+    println!(
+        "API token: Authorization: Bearer $(cat {})",
+        token_path.display()
     );
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

@@ -1,5 +1,6 @@
 mod commit_tools;
 mod context_tools;
+mod errors;
 mod raw_tools;
 mod runtime;
 mod search_tools;
@@ -10,6 +11,8 @@ mod write_tools;
 
 use anyhow::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
+
+use errors::{McpToolError, McpToolResult};
 
 #[derive(Clone)]
 pub(super) struct MemoryServer {
@@ -28,11 +31,11 @@ impl MemoryServer {
         })
     }
 
-    fn with_conn<F, T>(&self, f: F) -> Result<T, String>
+    fn with_conn<F, T>(&self, tool: &'static str, f: F) -> McpToolResult<T>
     where
-        F: FnOnce(&rusqlite::Connection) -> Result<T, String>,
+        F: FnOnce(&rusqlite::Connection) -> McpToolResult<T>,
     {
-        let conn = crate::db::open_db().map_err(|e| format!("DB open failed: {}", e))?;
+        let conn = crate::db::open_db().map_err(|e| McpToolError::db_open(tool, e))?;
         f(&conn)
     }
 }
