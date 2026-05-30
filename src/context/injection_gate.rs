@@ -9,6 +9,7 @@ use super::invocation::ContextInvocation;
 mod delta;
 
 const DEFAULT_GATE_HOSTS: &str = "codex-cli";
+const DEFAULT_SUPPRESSED_SOURCES: &str = "compact";
 const DEFAULT_FALLBACK_COOLDOWN_SECS: i64 = 900;
 const DEFAULT_RETENTION_DAYS: i64 = 30;
 
@@ -56,6 +57,13 @@ pub(super) fn apply_context_gate(
     let mode = resolve_gate_mode(invocation.gate_mode.as_deref());
     if mode == ContextGateMode::Off {
         return decision(output, ContextGateAction::Bypassed, "gate_off");
+    }
+    if source_is_suppressed(invocation.source.as_deref()) {
+        return decision(
+            String::new(),
+            ContextGateAction::Suppressed,
+            "suppressed_source",
+        );
     }
     if !has_trusted_gate_identity(invocation) {
         crate::log::warn(
@@ -271,8 +279,20 @@ fn host_is_gated(host: HostKind) -> bool {
 fn source_requires_fresh_emission(source: Option<&str>) -> bool {
     matches!(
         source.map(|value| value.trim().to_ascii_lowercase()),
-        Some(value) if value == "clear" || value == "compact"
+        Some(value) if value == "clear"
     )
+}
+
+fn source_is_suppressed(source: Option<&str>) -> bool {
+    let Some(source) = source.map(|value| value.trim().to_ascii_lowercase()) else {
+        return false;
+    };
+    let suppressed_sources = std::env::var("REMEM_CONTEXT_SUPPRESS_SOURCES")
+        .unwrap_or_else(|_| DEFAULT_SUPPRESSED_SOURCES.to_string());
+    suppressed_sources
+        .split(',')
+        .map(|candidate| candidate.trim().to_ascii_lowercase())
+        .any(|candidate| candidate == source)
 }
 
 fn has_trusted_gate_identity(invocation: &ContextInvocation) -> bool {
@@ -707,9 +727,30 @@ mod tests {
     #[test]
     fn restart_source_requires_fresh_emission() {
         assert!(source_requires_fresh_emission(Some("clear")));
-        assert!(source_requires_fresh_emission(Some("Compact")));
+        assert!(!source_requires_fresh_emission(Some("Compact")));
         assert!(!source_requires_fresh_emission(Some("startup")));
         assert!(!source_requires_fresh_emission(None));
+    }
+
+    #[test]
+    fn compact_source_is_suppressed_by_default() {
+        assert!(source_is_suppressed(Some("Compact")));
+        assert!(!source_is_suppressed(Some("clear")));
+        assert!(!source_is_suppressed(Some("startup")));
+        assert!(!source_is_suppressed(None));
+    }
+
+    #[test]
+    fn compact_source_suppresses_even_first_context() {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-compact");
+        let mut invocation = invocation(Some("sess-compact"));
+        invocation.source = Some("compact".to_string());
+        let output = "# [/tmp/remem] context now\nBody\n".to_string();
+
+        let decision = apply_context_gate(&invocation, output);
+        assert_eq!(decision.action, ContextGateAction::Suppressed);
+        assert_eq!(decision.reason, "suppressed_source");
+        assert!(decision.output.is_empty());
     }
 
     #[test]
