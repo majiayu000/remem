@@ -66,7 +66,7 @@ pub struct OwnerSnapshot {
 
 pub fn reroute_objects(conn: &Connection, req: &RerouteRequest<'_>) -> Result<ScopeMutationResult> {
     ensure_refs(req.refs)?;
-    validate_owner(req.owner_scope, req.owner_key)?;
+    let (owner_scope, owner_key) = normalize_owner(req.owner_scope, req.owner_key)?;
     let reason = normalized_reason(req.reason);
     let dry_run = req.dry_run || !req.confirm;
     let tx = conn.unchecked_transaction()?;
@@ -81,9 +81,12 @@ pub fn reroute_objects(conn: &Connection, req: &RerouteRequest<'_>) -> Result<Sc
                 .source_project
                 .clone()
                 .or_else(|| target.project.clone()),
-            target_project: target_project_after(&target.owner.target_project, &req.target_project),
-            owner_scope: Some(req.owner_scope.to_string()),
-            owner_key: Some(req.owner_key.to_string()),
+            target_project: target_project_after(
+                &target.owner.target_project,
+                &req.target_project,
+            )?,
+            owner_scope: Some(owner_scope.clone()),
+            owner_key: Some(owner_key.clone()),
             topic_domain: req
                 .topic_domain
                 .map(str::to_string)
@@ -95,7 +98,7 @@ pub fn reroute_objects(conn: &Connection, req: &RerouteRequest<'_>) -> Result<Sc
             context_class: req
                 .context_class
                 .map(str::to_string)
-                .or_else(|| default_context_class(req.owner_scope).map(str::to_string))
+                .or_else(|| default_context_class(&owner_scope).map(str::to_string))
                 .or_else(|| target.owner.context_class.clone()),
         };
         affected.push(ObjectMutation {
@@ -176,7 +179,7 @@ fn ensure_refs(refs: &[ObjectRef]) -> Result<()> {
     Ok(())
 }
 
-fn validate_owner(owner_scope: &str, owner_key: &str) -> Result<()> {
+fn normalize_owner(owner_scope: &str, owner_key: &str) -> Result<(String, String)> {
     let owner_scope = owner_scope.trim();
     let owner_key = owner_key.trim();
     if owner_key.is_empty() {
@@ -188,7 +191,7 @@ fn validate_owner(owner_scope: &str, owner_key: &str) -> Result<()> {
     ) {
         bail!("unsupported owner-scope: {owner_scope}");
     }
-    Ok(())
+    Ok((owner_scope.to_string(), owner_key.to_string()))
 }
 
 pub(super) fn normalized_reason(reason: Option<&str>) -> Option<String> {
@@ -217,11 +220,20 @@ fn archive_status(kind: ScopeObjectKind) -> &'static str {
     }
 }
 
-fn target_project_after(previous: &Option<String>, update: &TargetProjectUpdate) -> Option<String> {
+fn target_project_after(
+    previous: &Option<String>,
+    update: &TargetProjectUpdate,
+) -> Result<Option<String>> {
     match update {
-        TargetProjectUpdate::Preserve => previous.clone(),
-        TargetProjectUpdate::Clear => None,
-        TargetProjectUpdate::Set(value) => Some(value.clone()),
+        TargetProjectUpdate::Preserve => Ok(previous.clone()),
+        TargetProjectUpdate::Clear => Ok(None),
+        TargetProjectUpdate::Set(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                bail!("target-project must not be empty");
+            }
+            Ok(Some(value.to_string()))
+        }
     }
 }
 

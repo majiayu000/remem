@@ -144,6 +144,15 @@ fn seed_stash_pollution(conn: &Connection) {
             0.42,
             None,
         ),
+        (
+            1060,
+            "Stash repo Codex approval UI",
+            "Stash repo implements Codex approval UI copy for its own settings screen.",
+            "discovery",
+            "stash-ui",
+            0.95,
+            None,
+        ),
     ];
 
     for (id, title, content, memory_type, topic_domain, confidence, expires_at_epoch) in memory_rows
@@ -179,6 +188,34 @@ fn seed_stash_pollution(conn: &Connection) {
          SET owner_scope = NULL, owner_key = NULL, routing_confidence = 0.42
          WHERE id = 1050",
         [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch, status, scope, source_project,
+          target_project, owner_scope, owner_key, topic_domain,
+          routing_confidence, context_class)
+         VALUES
+         (1051, 'stash-session', ?1, 'topic-1051', 'Backfilled route',
+          'A v019 backfilled route should still be reviewed when confidence is missing.',
+          'discovery', ?2, ?2, 'active', 'project', ?1, ?1, 'repo', ?1,
+          'stash-ui', NULL, 'startup_core')",
+        params![STASH, NOW - 10],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch, status, scope, source_project,
+          target_project, owner_scope, owner_key, topic_domain,
+          routing_confidence, context_class)
+         VALUES
+         (1033, 'stash-session', ?1, 'topic-1033', 'Preference: global UI critique',
+          'Prefer direct UI critique for all product reviews.',
+          'preference', ?2, ?2, 'active', 'global', ?1, NULL, 'user',
+          'user:default', 'user-preference', 0.95, 'startup_core')",
+        params![STASH, NOW - 9],
     )
     .unwrap();
 
@@ -250,6 +287,7 @@ fn stash_pollution_audit_classifies_cleanup_buckets() -> Result<()> {
     assert!(has_ref(pollution, "workstream:2010"));
     assert!(has_ref(pollution, "workstream:2011"));
     assert!(has_ref(pollution, "workstream:2012"));
+    assert!(!has_ref(pollution, "memory:1060"));
 
     let codex = pollution
         .iter()
@@ -263,17 +301,21 @@ fn stash_pollution_audit_classifies_cleanup_buckets() -> Result<()> {
         .duplicate_preferences
         .iter()
         .any(|cluster| cluster.cluster_key == "ui-critique"
-            && cluster.canonical_ref == "memory:1031"
+            && cluster.canonical_ref == "memory:1030"
             && cluster.refs.contains(&"memory:1030".to_string())
-            && cluster.refs.contains(&"memory:1032".to_string())));
+            && cluster.refs.contains(&"memory:1032".to_string())
+            && !cluster.refs.contains(&"memory:1033".to_string())));
     assert!(report
         .duplicate_workstreams
         .iter()
         .any(|cluster| cluster.cluster_key == "stash-sidebar-polish"
+            && cluster.canonical_ref == "workstream:2020"
             && cluster.refs.contains(&"workstream:2020".to_string())
             && cluster.refs.contains(&"workstream:2021".to_string())));
     assert!(has_ref(&report.stale_temporal_facts, "memory:1040"));
     assert!(has_ref(&report.low_confidence_routing, "memory:1050"));
+    assert!(has_ref(&report.low_confidence_routing, "memory:1051"));
+    assert!(has_ref(&report.low_confidence_routing, "memory:1060"));
     Ok(())
 }
 
@@ -373,6 +415,102 @@ fn reroute_defaults_to_dry_run_and_confirm_preserves_provenance() -> Result<()> 
 }
 
 #[test]
+fn audit_limit_is_applied_per_bucket_after_classification() -> Result<()> {
+    let conn = setup_conn();
+    let now = NOW;
+    for id in 1..=8 {
+        conn.execute(
+            "INSERT INTO memories
+             (id, session_id, project, topic_key, title, content, memory_type,
+              created_at_epoch, updated_at_epoch, status, scope, source_project,
+              target_project, owner_scope, owner_key, topic_domain,
+              routing_confidence, context_class)
+             VALUES
+             (?1, 'limit-session', ?2, ?3, ?4, 'Stash repo UI memory.',
+              'discovery', ?5, ?5, 'active', 'project', ?2, ?2, 'repo',
+              ?2, 'stash-ui', 0.95, 'startup_core')",
+            params![
+                id,
+                STASH,
+                format!("topic-limit-{id}"),
+                format!("Correct repo memory {id}"),
+                now + id
+            ],
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch, status, scope, source_project,
+          target_project, owner_scope, owner_key, topic_domain,
+          routing_confidence, context_class)
+         VALUES
+         (99, 'limit-session', ?1, 'topic-old-codex', 'Codex sandbox',
+          'Codex CLI uses workspace-write sandbox approvals.', 'discovery',
+          ?2, ?2, 'active', 'project', ?1, ?1, 'repo', ?1, 'codex-sandbox',
+          0.95, 'startup_core')",
+        params![STASH, now - 10_000],
+    )?;
+
+    let report = audit_scope(
+        &conn,
+        &ScopeAuditRequest {
+            project: STASH,
+            limit: 1,
+            now_epoch: now,
+        },
+    )?;
+
+    assert_eq!(report.likely_correct_repo_memory.len(), 1);
+    assert_eq!(report.likely_cross_tool_domain_pollution.len(), 1);
+    assert_eq!(
+        report.likely_cross_tool_domain_pollution[0].object_ref,
+        "memory:99"
+    );
+    Ok(())
+}
+
+#[test]
+fn reroute_trims_owner_scope_and_key_before_persisting() -> Result<()> {
+    let conn = setup_conn();
+    seed_stash_pollution(&conn);
+    let parsed_refs = parse_object_refs(&refs(&["memory:1010"]))?;
+
+    reroute_objects(
+        &conn,
+        &RerouteRequest {
+            refs: &parsed_refs,
+            owner_scope: " tool ",
+            owner_key: " codex-cli ",
+            target_project: TargetProjectUpdate::Clear,
+            topic_domain: Some("codex-sandbox"),
+            context_class: None,
+            routing_confidence: Some(1.0),
+            reason: Some("trim owner fields"),
+            dry_run: false,
+            confirm: true,
+        },
+    )?;
+
+    let routed: (String, String, Option<String>, String) = conn.query_row(
+        "SELECT owner_scope, owner_key, target_project, context_class
+         FROM memories WHERE id = 1010",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        routed,
+        (
+            "tool".to_string(),
+            "codex-cli".to_string(),
+            None,
+            "search_only".to_string()
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn archive_mixed_refs_does_not_hard_delete_and_rolls_back_on_invalid_ref() -> Result<()> {
     let conn = setup_conn();
     seed_stash_pollution(&conn);
@@ -463,7 +601,7 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     )?;
     assert!(preview.dry_run);
     assert_eq!(preview.clusters.len(), 1);
-    assert_eq!(preview.clusters[0].canonical_ref, "memory:1031");
+    assert_eq!(preview.clusters[0].canonical_ref, "memory:1030");
     let merged = preview.clusters[0].merged_content.as_deref().unwrap();
     assert!(merged.contains("direct UI critique"));
     assert!(merged.contains("avoid decorative fluff"));
@@ -484,10 +622,19 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
         },
     )?;
     assert!(!applied.dry_run);
-    assert_eq!(applied.affected.len(), 2);
+    assert_eq!(applied.affected.len(), 3);
+    let canonical_mutation = applied
+        .affected
+        .iter()
+        .find(|mutation| mutation.object_ref == "memory:1030")
+        .expect("canonical mutation should be reported");
+    assert_eq!(
+        canonical_mutation.new_owner.owner_scope.as_deref(),
+        Some("repo")
+    );
     let canonical: (String, String, String, String, String) = conn.query_row(
         "SELECT status, content, owner_scope, owner_key, target_project
-         FROM memories WHERE id = 1031",
+         FROM memories WHERE id = 1030",
         [],
         |row| {
             Ok((
@@ -506,7 +653,7 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     assert_eq!(canonical.2, "repo");
     assert_eq!(canonical.3, STASH);
     assert_eq!(canonical.4, STASH);
-    for id in [1030, 1032] {
+    for id in [1031, 1032] {
         assert_eq!(
             conn.query_row(
                 "SELECT status, source_project FROM memories WHERE id = ?1",
@@ -516,6 +663,15 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
             ("stale".to_string(), STASH.to_string())
         );
     }
+    let global_pref: (String, String, Option<String>) = conn.query_row(
+        "SELECT status, owner_scope, target_project FROM memories WHERE id = 1033",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        global_pref,
+        ("active".to_string(), "user".to_string(), None)
+    );
     let prefs = memory::preference::query_project_preferences(&conn, STASH, 10)?;
     let ui_prefs = prefs
         .iter()

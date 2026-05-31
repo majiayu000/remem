@@ -160,6 +160,11 @@ fn target_project_update(
     target_project: Option<&str>,
     clear_target_project: bool,
 ) -> Result<TargetProjectUpdate> {
+    let owner_scope = owner_scope.trim();
+    let owner_key = owner_key.trim();
+    if owner_key.is_empty() {
+        bail!("owner-key must not be empty");
+    }
     if clear_target_project && target_project.is_some() {
         bail!("use either --target-project or --clear-target-project, not both");
     }
@@ -268,5 +273,40 @@ fn print_duplicate_bucket(name: &str, clusters: &[memory::scope_cleanup::Duplica
             cluster.canonical_ref,
             cluster.refs.join(",")
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_project_update_rejects_clear_and_set_conflict() {
+        let err = target_project_update("repo", "/tmp/stash", Some("/tmp/stash"), true)
+            .expect_err("clear and set should conflict");
+        assert!(err
+            .to_string()
+            .contains("use either --target-project or --clear-target-project"));
+    }
+
+    #[test]
+    fn target_project_update_rejects_empty_target_project() {
+        let err = target_project_update("repo", "/tmp/stash", Some("  "), false)
+            .expect_err("empty target_project should fail");
+        assert!(err.to_string().contains("target-project must not be empty"));
+    }
+
+    #[test]
+    fn target_project_update_defaults_repo_to_trimmed_owner_key() -> Result<()> {
+        let update = target_project_update(" repo ", " /tmp/stash ", None, false)?;
+        assert_eq!(update, TargetProjectUpdate::Set("/tmp/stash".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn target_project_update_defaults_tool_to_clear() -> Result<()> {
+        let update = target_project_update(" tool ", " codex-cli ", None, false)?;
+        assert_eq!(update, TargetProjectUpdate::Clear);
+        Ok(())
     }
 }

@@ -161,7 +161,7 @@ pub(super) enum Commands {
         #[arg(long, value_delimiter = ',', num_args = 1..)]
         refs: Vec<String>,
         /// Compatibility shorthand for memory:<id> refs. Commas are accepted.
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
         ids: Vec<i64>,
         /// New owner scope: user, workspace, repo, tool, domain, workstream, or session.
         #[arg(long)]
@@ -203,7 +203,7 @@ pub(super) enum Commands {
         #[arg(long, value_delimiter = ',', num_args = 1..)]
         refs: Vec<String>,
         /// Compatibility shorthand for memory:<id> refs. Commas are accepted.
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
         ids: Vec<i64>,
         /// Human-readable reason written to the audit event.
         #[arg(long)]

@@ -56,8 +56,8 @@ pub struct DuplicateCluster {
 
 pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<ScopeAuditReport> {
     let limit = req.limit.clamp(1, 500);
-    let memories = load_memory_audit_rows(conn, req.project, limit)?;
-    let workstreams = load_workstream_audit_rows(conn, req.project, limit)?;
+    let memories = load_memory_audit_rows(conn, req.project)?;
+    let workstreams = load_workstream_audit_rows(conn, req.project)?;
 
     let mut likely_correct_repo_memory = Vec::new();
     let mut likely_cross_tool_domain_pollution = Vec::new();
@@ -83,7 +83,9 @@ pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<Sco
                 Some("archive"),
             ));
         }
-        let suggestion = route_suggestion(&row.routing_blob());
+        let routing_blob = row.routing_blob();
+        let suggestion = route_suggestion(&routing_blob);
+        let has_repo_evidence = row.has_strong_repo_evidence(req.project, &routing_blob);
         if is_repo_owned_for_project(
             req.project,
             row.project.as_str(),
@@ -92,11 +94,17 @@ pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<Sco
             row.owner_key.as_deref(),
             row.target_project.as_deref(),
         ) {
-            if let Some(suggestion) = suggestion {
+            if let Some(suggestion) = suggestion.as_ref().filter(|_| !has_repo_evidence) {
                 likely_cross_tool_domain_pollution.push(row.audit_item(
                     suggestion.reason,
-                    Some(&suggestion),
+                    Some(suggestion),
                     Some("reroute"),
+                ));
+            } else if suggestion.is_some() && has_repo_evidence {
+                low_confidence_routing.push(row.audit_item(
+                    "repo evidence conflicts with tool/domain routing keywords",
+                    suggestion.as_ref(),
+                    Some("review"),
                 ));
             } else if row.status == "active"
                 && row.memory_type != "preference"
@@ -122,7 +130,9 @@ pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<Sco
                 Some("review"),
             ));
         }
-        let suggestion = route_suggestion(&row.routing_blob());
+        let routing_blob = row.routing_blob();
+        let suggestion = route_suggestion(&routing_blob);
+        let has_repo_evidence = row.has_strong_repo_evidence(req.project, &routing_blob);
         if is_repo_owned_for_project(
             req.project,
             row.project.as_str(),
@@ -131,11 +141,17 @@ pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<Sco
             row.owner_key.as_deref(),
             row.target_project.as_deref(),
         ) {
-            if let Some(suggestion) = suggestion {
+            if let Some(suggestion) = suggestion.as_ref().filter(|_| !has_repo_evidence) {
                 likely_cross_tool_domain_pollution.push(row.audit_item(
                     suggestion.reason,
-                    Some(&suggestion),
+                    Some(suggestion),
                     Some("pause"),
+                ));
+            } else if suggestion.is_some() && has_repo_evidence {
+                low_confidence_routing.push(row.audit_item(
+                    "repo evidence conflicts with tool/domain routing keywords",
+                    suggestion.as_ref(),
+                    Some("review"),
                 ));
             } else if row.status == "active"
                 && !is_low_confidence(row.owner_scope.as_deref(), row.routing_confidence)
@@ -154,7 +170,7 @@ pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<Sco
         limit,
         likely_correct_repo_memory: take_limit(likely_correct_repo_memory, limit),
         likely_cross_tool_domain_pollution: take_limit(likely_cross_tool_domain_pollution, limit),
-        duplicate_preferences: take_limit(preference_clusters(&memories), limit),
+        duplicate_preferences: take_limit(preference_clusters(&memories, req.project), limit),
         duplicate_workstreams: take_limit(workstream_clusters(&workstreams), limit),
         stale_temporal_facts: take_limit(stale_temporal_facts, limit),
         low_confidence_routing: take_limit(low_confidence_routing, limit),
@@ -238,10 +254,7 @@ fn is_repo_owned_for_project(
 }
 
 fn is_low_confidence(owner_scope: Option<&str>, confidence: Option<f64>) -> bool {
-    owner_scope.is_none()
-        || confidence
-            .map(|value| value < LOW_CONFIDENCE_THRESHOLD)
-            .unwrap_or(false)
+    owner_scope.is_none() || confidence.is_none_or(|value| value < LOW_CONFIDENCE_THRESHOLD)
 }
 
 fn take_limit<T>(mut values: Vec<T>, limit: i64) -> Vec<T> {
@@ -266,7 +279,6 @@ pub(super) struct MemoryAuditRow {
     routing_confidence: Option<f64>,
     context_class: Option<String>,
     expires_at_epoch: Option<i64>,
-    updated_at_epoch: i64,
 }
 
 impl MemoryAuditRow {
@@ -283,6 +295,10 @@ impl MemoryAuditRow {
             self.context_class.as_deref().unwrap_or_default()
         )
         .to_ascii_lowercase()
+    }
+
+    fn has_strong_repo_evidence(&self, project: &str, routing_blob: &str) -> bool {
+        has_repo_evidence(project, routing_blob, self.topic_domain.as_deref())
     }
 
     fn audit_item(
@@ -314,21 +330,19 @@ impl MemoryAuditRow {
 pub(super) fn load_memory_audit_rows(
     conn: &Connection,
     project: &str,
-    limit: i64,
 ) -> Result<Vec<MemoryAuditRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, project, title, content, memory_type, status, scope,
                 source_project, target_project, owner_scope, owner_key, topic_domain,
-                routing_confidence, context_class, expires_at_epoch, updated_at_epoch
+                routing_confidence, context_class, expires_at_epoch
          FROM memories
          WHERE project = ?1
             OR source_project = ?1
             OR target_project = ?1
             OR (owner_scope = 'repo' AND owner_key = ?1)
-         ORDER BY updated_at_epoch DESC, id DESC
-         LIMIT ?2",
+         ORDER BY updated_at_epoch DESC, id DESC",
     )?;
-    let rows = stmt.query_map(params![project, limit], |row| {
+    let rows = stmt.query_map(params![project], |row| {
         Ok(MemoryAuditRow {
             id: row.get(0)?,
             project: row.get(1)?,
@@ -345,7 +359,6 @@ pub(super) fn load_memory_audit_rows(
             routing_confidence: row.get(12)?,
             context_class: row.get(13)?,
             expires_at_epoch: row.get(14)?,
-            updated_at_epoch: row.get(15)?,
         })
     })?;
     crate::db::query::collect_rows(rows)
@@ -367,7 +380,6 @@ struct WorkstreamAuditRow {
     topic_domain: Option<String>,
     routing_confidence: Option<f64>,
     context_class: Option<String>,
-    updated_at_epoch: i64,
 }
 
 impl WorkstreamAuditRow {
@@ -389,6 +401,10 @@ impl WorkstreamAuditRow {
             self.context_class.as_deref().unwrap_or_default()
         )
         .to_ascii_lowercase()
+    }
+
+    fn has_strong_repo_evidence(&self, project: &str, routing_blob: &str) -> bool {
+        has_repo_evidence(project, routing_blob, self.topic_domain.as_deref())
     }
 
     fn audit_item(
@@ -417,24 +433,19 @@ impl WorkstreamAuditRow {
     }
 }
 
-fn load_workstream_audit_rows(
-    conn: &Connection,
-    project: &str,
-    limit: i64,
-) -> Result<Vec<WorkstreamAuditRow>> {
+fn load_workstream_audit_rows(conn: &Connection, project: &str) -> Result<Vec<WorkstreamAuditRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, project, title, status, progress, next_action, blockers,
                 source_project, target_project, owner_scope, owner_key, topic_domain,
-                routing_confidence, context_class, updated_at_epoch
+                routing_confidence, context_class
          FROM workstreams
          WHERE project = ?1
             OR source_project = ?1
             OR target_project = ?1
             OR (owner_scope = 'repo' AND owner_key = ?1)
-         ORDER BY updated_at_epoch DESC, id DESC
-         LIMIT ?2",
+         ORDER BY updated_at_epoch DESC, id DESC",
     )?;
-    let rows = stmt.query_map(params![project, limit], |row| {
+    let rows = stmt.query_map(params![project], |row| {
         Ok(WorkstreamAuditRow {
             id: row.get(0)?,
             project: row.get(1)?,
@@ -450,29 +461,46 @@ fn load_workstream_audit_rows(
             topic_domain: row.get(11)?,
             routing_confidence: row.get(12)?,
             context_class: row.get(13)?,
-            updated_at_epoch: row.get(14)?,
         })
     })?;
     crate::db::query::collect_rows(rows)
 }
 
-pub(super) fn preference_clusters(rows: &[MemoryAuditRow]) -> Vec<DuplicateCluster> {
+pub(super) fn preference_clusters(rows: &[MemoryAuditRow], project: &str) -> Vec<DuplicateCluster> {
     let mut groups: BTreeMap<String, Vec<&MemoryAuditRow>> = BTreeMap::new();
     for row in rows {
         if row.memory_type != "preference" || row.status != "active" {
             continue;
         }
+        if !is_repo_owned_for_project(
+            project,
+            row.project.as_str(),
+            row.scope.as_deref(),
+            row.owner_scope.as_deref(),
+            row.owner_key.as_deref(),
+            row.target_project.as_deref(),
+        ) {
+            continue;
+        }
         let key = preference_cluster_key(&row.title, &row.content);
-        groups.entry(key).or_default().push(row);
+        let namespace = format!(
+            "{}:{}:{}:{}",
+            row.owner_scope.as_deref().unwrap_or("legacy"),
+            row.owner_key.as_deref().unwrap_or(row.project.as_str()),
+            row.target_project.as_deref().unwrap_or(""),
+            key
+        );
+        groups.entry(namespace).or_default().push(row);
     }
     groups
         .into_iter()
-        .filter_map(|(key, mut members)| {
+        .filter_map(|(namespace, mut members)| {
+            let key = namespace.rsplit(':').next().unwrap_or("unique").to_string();
             if key == "unique" || members.len() < 2 {
                 return None;
             }
-            members.sort_by_key(|row| (row.content.len(), row.updated_at_epoch, row.id));
-            let canonical = members.last().copied()?;
+            members.sort_by_key(|row| row.id);
+            let canonical = members.first().copied()?;
             let refs = members
                 .iter()
                 .map(|row| row.object_ref().to_string())
@@ -539,8 +567,8 @@ fn workstream_clusters(rows: &[WorkstreamAuditRow]) -> Vec<DuplicateCluster> {
             if key == "unique" || members.len() < 2 {
                 return None;
             }
-            members.sort_by_key(|row| (row.updated_at_epoch, row.id));
-            let canonical = members.last().copied()?;
+            members.sort_by_key(|row| row.id);
+            let canonical = members.first().copied()?;
             Some(DuplicateCluster {
                 cluster_key: key,
                 canonical_ref: canonical.object_ref().to_string(),
@@ -577,4 +605,18 @@ fn normalize_text(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn has_repo_evidence(project: &str, routing_blob: &str, topic_domain: Option<&str>) -> bool {
+    let slug = project
+        .rsplit('/')
+        .next()
+        .unwrap_or(project)
+        .to_ascii_lowercase();
+    let project_lower = project.to_ascii_lowercase();
+    topic_domain
+        .map(|domain| domain.to_ascii_lowercase().starts_with(&slug))
+        .unwrap_or(false)
+        || routing_blob.contains(&slug)
+        || routing_blob.contains(&project_lower)
 }

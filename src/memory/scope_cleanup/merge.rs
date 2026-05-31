@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
@@ -26,8 +26,8 @@ pub fn merge_preferences(
     req: &MergePreferencesRequest<'_>,
 ) -> Result<MergePreferencesResult> {
     let dry_run = req.dry_run || !req.confirm;
-    let memories = load_memory_audit_rows(conn, req.project, 500)?;
-    let clusters = preference_clusters(&memories);
+    let memories = load_memory_audit_rows(conn, req.project)?;
+    let clusters = preference_clusters(&memories, req.project);
     let mut affected = Vec::new();
     if dry_run || clusters.is_empty() {
         return Ok(MergePreferencesResult {
@@ -47,7 +47,21 @@ pub fn merge_preferences(
             .merged_content
             .as_deref()
             .ok_or_else(|| anyhow!("duplicate preference cluster missing merged content"))?;
-        tx.execute(
+        let canonical_new_owner = OwnerSnapshot {
+            source_project: canonical
+                .owner
+                .source_project
+                .clone()
+                .or_else(|| canonical.project.clone()),
+            target_project: Some(req.project.to_string()),
+            owner_scope: Some("repo".to_string()),
+            owner_key: Some(req.project.to_string()),
+            topic_domain: canonical.owner.topic_domain.clone(),
+            routing_confidence: canonical.owner.routing_confidence,
+            routing_reason: canonical.owner.routing_reason.clone(),
+            context_class: canonical.owner.context_class.clone(),
+        };
+        let updated = tx.execute(
             "UPDATE memories
              SET content = ?1,
                  status = 'active',
@@ -59,12 +73,23 @@ pub fn merge_preferences(
              WHERE id = ?4",
             params![merged, req.project, now, canonical_ref.id],
         )?;
+        if updated != 1 {
+            bail!("failed to update canonical preference {}", canonical_ref);
+        }
+        affected.push(ObjectMutation {
+            object_ref: canonical_ref.to_string(),
+            title: canonical.title.clone(),
+            previous_status: canonical.status.clone(),
+            new_status: "active".to_string(),
+            previous_owner: canonical.owner.clone(),
+            new_owner: canonical_new_owner.clone(),
+        });
         insert_scope_cleanup_event(
             &tx,
             "merge-preferences",
             &canonical,
             "active",
-            &canonical.owner,
+            &canonical_new_owner,
             Some("canonical preference updated with merged duplicate content"),
             now,
         )?;
@@ -75,38 +100,27 @@ pub fn merge_preferences(
             }
             let object_ref = ObjectRef::parse(object_ref)?;
             let target = load_target(&tx, object_ref)?;
-            tx.execute(
+            let updated = tx.execute(
                 "UPDATE memories SET status = 'stale', updated_at_epoch = ?1 WHERE id = ?2",
                 params![now, object_ref.id],
             )?;
-            let new_owner = OwnerSnapshot {
-                source_project: target
-                    .owner
-                    .source_project
-                    .clone()
-                    .or_else(|| target.project.clone()),
-                target_project: Some(req.project.to_string()),
-                owner_scope: Some("repo".to_string()),
-                owner_key: Some(req.project.to_string()),
-                topic_domain: target.owner.topic_domain.clone(),
-                routing_confidence: target.owner.routing_confidence,
-                routing_reason: Some("superseded by merged preference".to_string()),
-                context_class: target.owner.context_class.clone(),
-            };
+            if updated != 1 {
+                bail!("failed to stale duplicate preference {}", object_ref);
+            }
             affected.push(ObjectMutation {
                 object_ref: object_ref.to_string(),
                 title: target.title.clone(),
                 previous_status: target.status.clone(),
                 new_status: "stale".to_string(),
                 previous_owner: target.owner.clone(),
-                new_owner: new_owner.clone(),
+                new_owner: target.owner.clone(),
             });
             insert_scope_cleanup_event(
                 &tx,
                 "merge-preferences",
                 &target,
                 "stale",
-                &new_owner,
+                &target.owner,
                 Some("duplicate preference superseded by canonical row"),
                 now,
             )?;
