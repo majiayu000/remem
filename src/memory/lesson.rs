@@ -148,7 +148,7 @@ pub fn list_lessons_for_context(
          FROM memories m
          JOIN memory_lessons l ON l.memory_id = m.id
          WHERE m.memory_type = 'lesson'
-           AND m.status = 'active'
+           AND {current_filter}
            AND ((m.owner_scope = 'repo' AND m.owner_key = ?1)
                 OR (m.owner_scope = 'repo' AND m.target_project = ?1)
                 OR (m.owner_scope = 'user' AND m.owner_key = 'user:default')
@@ -162,7 +162,9 @@ pub fn list_lessons_for_context(
            l.reinforcement_count DESC,
            l.last_reinforced_at_epoch DESC
          LIMIT ?5",
-        cols = prefixed_memory_cols("m")
+        cols = prefixed_memory_cols("m"),
+        current_filter =
+            crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false),
     ))?;
     let rows = stmt.query_map(
         params![

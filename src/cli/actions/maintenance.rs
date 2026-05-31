@@ -66,9 +66,25 @@ pub(in crate::cli) fn run_encrypt() -> Result<()> {
 
 pub(in crate::cli) fn run_cleanup() -> Result<()> {
     let conn = db::open_db()?;
+    let expired_memories =
+        memory::lifecycle::expire_active_memories(&conn, chrono::Utc::now().timestamp())?;
+    let workstreams_paused = crate::workstream::auto_pause_all_inactive(
+        &conn,
+        crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
+    )?;
+    let workstreams_abandoned = crate::workstream::auto_abandon_all_inactive(
+        &conn,
+        crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
+    )?;
     let events_deleted = memory::cleanup_old_events(&conn, 30)?;
     let memories_archived = memory::archive_stale_memories(&conn, 180)?;
     println!("Cleanup complete:");
+    println!("  Expired memories marked stale: {}", expired_memories);
+    println!("  Inactive workstreams paused: {}", workstreams_paused);
+    println!(
+        "  Long-paused workstreams abandoned: {}",
+        workstreams_abandoned
+    );
     println!("  Old events deleted (>30 days): {}", events_deleted);
     println!(
         "  Stale memories archived (>180 days): {}",

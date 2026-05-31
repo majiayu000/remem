@@ -120,7 +120,7 @@ fn test_archive_stale_memories() {
     conn.execute(
         "INSERT INTO memories (session_id, project, title, content, memory_type, \
          created_at_epoch, updated_at_epoch, status)
-         VALUES ('s1', 'proj', 'old', 'old content', 'decision', ?1, ?1, 'active')",
+         VALUES ('s1', 'proj', 'old', 'old content', 'decision', ?1, ?1, 'stale')",
         params![old],
     )
     .unwrap();
@@ -133,6 +133,14 @@ fn test_archive_stale_memories() {
     .unwrap();
 
     assert_eq!(archive_stale_memories(&conn, 180).unwrap(), 1);
+    let archived: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM memories WHERE status = 'archived'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(archived, 1);
     let active: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM memories WHERE status = 'active'",
@@ -141,4 +149,25 @@ fn test_archive_stale_memories() {
         )
         .unwrap();
     assert_eq!(active, 1);
+}
+
+#[test]
+fn test_archive_stale_memories_does_not_archive_old_active_durable_memory() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let old = chrono::Utc::now().timestamp() - (365 * 86400);
+    conn.execute(
+        "INSERT INTO memories (session_id, project, title, content, memory_type, \
+         created_at_epoch, updated_at_epoch, status)
+         VALUES ('s1', 'proj', 'old decision', 'keep durable decision', 'architecture', ?1, ?1, 'active')",
+        params![old],
+    )
+    .unwrap();
+
+    assert_eq!(archive_stale_memories(&conn, 180).unwrap(), 0);
+    let status: String = conn
+        .query_row("SELECT status FROM memories", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(status, "active");
 }

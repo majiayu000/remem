@@ -164,6 +164,21 @@ pub fn memory_status_filter_sql(column: &str, include_inactive: bool) -> String 
     }
 }
 
+pub fn memory_current_filter_sql(
+    status_column: &str,
+    expires_column: &str,
+    include_inactive: bool,
+) -> String {
+    if include_inactive {
+        memory_status_filter_sql(status_column, true)
+    } else {
+        format!(
+            "{status_column} = 'active' AND \
+             ({expires_column} IS NULL OR {expires_column} > CAST(strftime('%s', 'now') AS INTEGER))"
+        )
+    }
+}
+
 pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     map_memory_row(row)
 }

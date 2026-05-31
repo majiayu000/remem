@@ -44,8 +44,9 @@ pub fn search_memories_like_filtered(
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
 
-    conditions.push(crate::memory::memory_status_filter_sql(
+    conditions.push(crate::memory::memory_current_filter_sql(
         "m.status",
+        "m.expires_at_epoch",
         include_inactive,
     ));
 
