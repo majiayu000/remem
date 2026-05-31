@@ -5,6 +5,7 @@ use crate::{db, memory};
 
 use super::database::{check_database, check_pending_queue, check_worker_daemon};
 use super::report::{run_doctor_with_writer, DoctorOptions};
+use super::schema::check_schema_migration;
 
 #[test]
 fn check_database_reports_shared_active_memory_count() {
@@ -116,6 +117,20 @@ fn check_pending_queue_reports_shared_counts() {
             stats.stuck_jobs,
         )
     );
+}
+
+#[test]
+fn check_schema_migration_reads_encrypted_database() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("doctor-encrypted-schema");
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.path.join(".key"), "doctor-schema-key")?;
+    let conn = db::open_db()?;
+    drop(conn);
+
+    let check = check_schema_migration();
+    assert_eq!(check.icon(), "ok");
+    assert!(check.detail.contains("up to date"), "got: {}", check.detail);
+    Ok(())
 }
 
 #[test]

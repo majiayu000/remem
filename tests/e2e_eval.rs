@@ -15,6 +15,7 @@ fn eval_e2e_runs_in_sandbox_without_touching_parent_data_dir() {
     let output = Command::new(env!("CARGO_BIN_EXE_remem"))
         .args(["eval-e2e", "--json", "--k", "3"])
         .env("REMEM_DATA_DIR", &sentinel)
+        .env("REMEM_ALLOW_PLAINTEXT_DB", "1")
         .output()
         .expect("run remem eval-e2e");
 

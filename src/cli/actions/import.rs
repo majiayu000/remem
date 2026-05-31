@@ -360,4 +360,23 @@ mod tests {
 
         cleanup_temp_db_files(&source_path);
     }
+
+    #[test]
+    fn backup_import_refuses_plaintext_target_without_override() {
+        let _data_dir = ScopedTestDataDir::new("import-fail-closed-target");
+        std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+        let source_path = unique_temp_db_path("runtime-import-fail-closed");
+        let source = create_source_db(&source_path);
+        drop(source);
+
+        let err = match run_import_backup(source_path.clone(), true) {
+            Ok(()) => panic!("import target must not open plaintext without explicit override"),
+            Err(err) => err,
+        };
+        let message = format!("{err:#}");
+        assert!(message.contains("open runtime database"), "got: {message}");
+        assert!(message.contains("SQLCipher key"), "got: {message}");
+
+        cleanup_temp_db_files(&source_path);
+    }
 }

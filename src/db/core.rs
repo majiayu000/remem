@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn deterministic_hash(data: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -52,6 +52,7 @@ pub fn db_path() -> PathBuf {
 
 pub fn open_db() -> Result<Connection> {
     let path = db_path();
+    let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
@@ -64,17 +65,22 @@ pub fn open_db() -> Result<Connection> {
         }
     }
 
-    let conn = Connection::open(&path)
+    let conn = open_configured_connection(&path, key.as_deref())?;
+    crate::retrieval::vector::load_vec_extension(&conn)?;
+    crate::migrate::run_migrations(&conn)?;
+    crate::retrieval::vector::ensure_vec_table(&conn)?;
+    Ok(conn)
+}
+
+pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Result<Connection> {
+    let conn = Connection::open(path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
 
-    super::crypto::apply_cipher_key_if_available(&conn)?;
+    super::crypto::configure_cipher(&conn, key)?;
 
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;
-    crate::retrieval::vector::load_vec_extension(&conn)?;
-    crate::migrate::run_migrations(&conn)?;
-    crate::retrieval::vector::ensure_vec_table(&conn)?;
     Ok(conn)
 }
 

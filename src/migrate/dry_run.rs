@@ -1,5 +1,9 @@
 use anyhow::{bail, ensure, Context, Result};
-use rusqlite::{backup::Backup, Connection};
+use rusqlite::{
+    backup::Backup,
+    types::{Type, ValueRef},
+    Connection,
+};
 use std::{
     fs::{self, OpenOptions},
     io::ErrorKind,
@@ -41,6 +45,15 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
             });
         }
     };
+    if let Some(key) = crate::db::load_cipher_key() {
+        if let Err(error) = crate::db::configure_cipher(&test_conn, Some(&key)) {
+            return Ok(DryRunResult {
+                current_version,
+                pending_count: applied_pending_count(&applied),
+                error: Some(format!("database clone: {}", error)),
+            });
+        }
+    }
     if let Err(error) = clone_database(real_conn, &mut test_conn) {
         return Ok(DryRunResult {
             current_version,
@@ -134,12 +147,32 @@ fn logical_current_version(raw_current_version: i64, applied: &[i64]) -> i64 {
 }
 
 fn clone_database(src: &Connection, dst: &mut Connection) -> Result<()> {
-    let page_size: i64 = src.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+    let page_size = query_page_size(src)?;
     ensure!(page_size > 0, "source database page_size must be positive");
     dst.execute_batch(&format!("PRAGMA page_size = {page_size}"))?;
     let backup = Backup::new(src, dst)?;
     backup.run_to_completion(100, Duration::from_millis(1), None)?;
     Ok(())
+}
+
+fn query_page_size(conn: &Connection) -> Result<i64> {
+    conn.query_row("PRAGMA page_size", [], |row| match row.get_ref(0)? {
+        ValueRef::Integer(value) => Ok(value),
+        ValueRef::Text(bytes) => {
+            let text = std::str::from_utf8(bytes).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+            })?;
+            text.parse::<i64>().map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+            })
+        }
+        other => Err(rusqlite::Error::InvalidColumnType(
+            0,
+            "page_size".to_string(),
+            other.data_type(),
+        )),
+    })
+    .map_err(Into::into)
 }
 
 struct DryRunTempPath {
