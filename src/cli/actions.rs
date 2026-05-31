@@ -6,6 +6,7 @@ mod pending;
 mod preferences;
 mod query;
 mod review;
+mod scope_cleanup;
 mod shared;
 mod usage;
 
@@ -21,4 +22,7 @@ pub(super) use query::{
     run_backfill_entities, run_commit, run_search, run_show, run_status, run_why,
 };
 pub(super) use review::run_review;
+pub(super) use scope_cleanup::{
+    run_archive, run_audit_scope, run_merge_preferences, run_reroute, RerouteCliRequest,
+};
 pub(super) use usage::run_usage;

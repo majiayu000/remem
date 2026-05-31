@@ -143,6 +143,96 @@ pub(super) enum Commands {
         #[arg()]
         ids: Vec<i64>,
     },
+    /// Audit likely mis-scoped memories and workstreams for one project.
+    AuditScope {
+        /// Project path to audit. Defaults to the current project.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Maximum rows per audit bucket.
+        #[arg(long, short = 'n', default_value = "50")]
+        limit: i64,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reroute object-qualified memory refs to a new owner without deleting history.
+    Reroute {
+        /// Object refs such as memory:123 or workstream:18. Commas are accepted.
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
+        refs: Vec<String>,
+        /// Compatibility shorthand for memory:<id> refs. Commas are accepted.
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
+        ids: Vec<i64>,
+        /// New owner scope: user, workspace, repo, tool, domain, workstream, or session.
+        #[arg(long)]
+        owner_scope: String,
+        /// New owner key inside the owner scope.
+        #[arg(long)]
+        owner_key: String,
+        /// Set target_project to this project path.
+        #[arg(long)]
+        target_project: Option<String>,
+        /// Store SQL NULL in target_project.
+        #[arg(long)]
+        clear_target_project: bool,
+        /// Optional topic domain to store with the route.
+        #[arg(long)]
+        topic_domain: Option<String>,
+        /// Optional context class to store with the route.
+        #[arg(long)]
+        context_class: Option<String>,
+        /// Optional routing confidence.
+        #[arg(long)]
+        confidence: Option<f64>,
+        /// Human-readable reason written to the audit event.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Required to write changes. Omit for dry-run preview.
+        #[arg(long)]
+        confirm: bool,
+        /// Preview without writing changes.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Archive memory refs or pause workstream refs without hard-deleting rows.
+    Archive {
+        /// Object refs such as memory:123 or workstream:18. Commas are accepted.
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
+        refs: Vec<String>,
+        /// Compatibility shorthand for memory:<id> refs. Commas are accepted.
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
+        ids: Vec<i64>,
+        /// Human-readable reason written to the audit event.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Required to write changes. Omit for dry-run preview.
+        #[arg(long)]
+        confirm: bool,
+        /// Preview without writing changes.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Merge duplicate active project preferences into one canonical row.
+    MergePreferences {
+        /// Project path to clean. Defaults to the current project.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Preview without writing changes.
+        #[arg(long)]
+        dry_run: bool,
+        /// Required to write changes.
+        #[arg(long)]
+        confirm: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show token and cost accounting.
     Usage {
         /// Restrict usage totals to one project path.
