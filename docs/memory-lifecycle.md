@@ -33,6 +33,11 @@ Candidate review state is separate from memory state:
 | `discarded` | Candidate was rejected after review. |
 | `defer` outcome | No candidate row is created; the extraction task keeps the reason in `last_error` and retries later. |
 
+Session summaries are not a shortcut to active memories. Durable decisions,
+learned facts, and preferences derived from summaries must be written as
+`pending_review` memory candidates with source event evidence, then promoted
+through the same routing and lifecycle path as observation-derived candidates.
+
 ## Provenance Rules
 
 Every promoted memory should keep enough provenance to explain why it exists:

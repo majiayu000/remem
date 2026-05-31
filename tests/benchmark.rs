@@ -8,10 +8,10 @@
 mod bench_fixtures;
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 use remem::{
-    memory,
+    db, memory,
     retrieval::{entity, search, search_multihop},
     summarize,
 };
@@ -76,8 +76,8 @@ fn bench_memory_capture_rate() -> Result<()> {
             if event.event_type == "file_edit" && event.detail.is_some() {
                 total_meaningful += 1;
 
-                // Simulate promotion: insert as memory (in production this is done
-                // by summary → promote_summary_to_memories)
+                // Simulate active memory after review. Summary-derived facts now
+                // enter the candidate lifecycle before activation.
                 memory::insert_memory(
                     &conn,
                     Some(&session.session_id),
@@ -691,23 +691,31 @@ fn bench_summary_parse_partial() -> Result<()> {
 }
 
 #[test]
-fn bench_summary_promote_creates_memories() -> Result<()> {
-    let conn = Connection::open_in_memory()?;
+fn bench_summary_promote_creates_candidates() -> Result<()> {
+    let mut conn = Connection::open_in_memory()?;
     setup_full_schema(&conn)?;
 
     let session_id = "promote-test-001";
     let project = "tools/remem";
 
-    // Register session
-    conn.execute(
-        "INSERT INTO sdk_sessions (content_session_id, memory_session_id, project, started_at_epoch) \
-         VALUES (?1, ?1, ?2, ?3)",
-        params![session_id, project, chrono::Utc::now().timestamp()],
+    db::record_captured_event(
+        &conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id,
+            project,
+            cwd: Some(project),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content: "summary source payload",
+            task_kind: None,
+        },
     )?;
 
-    // Promote fields to memories
-    memory::promote_summary_to_memories(
-        &conn,
+    // Summary-derived durable facts become reviewable candidates, not active memories.
+    memory::promote_summary_to_memory_candidates(
+        &mut conn,
         session_id,
         project,
         Some("Implement benchmark framework"),
@@ -716,53 +724,50 @@ fn bench_summary_promote_creates_memories() -> Result<()> {
         Some("Always run cargo check before cargo test"),
     )?;
 
-    // Verify memories were created
-    let all = memory::get_recent_memories(&conn, project, 50)?;
-
-    let decisions: Vec<_> = all.iter().filter(|m| m.memory_type == "decision").collect();
-    let discoveries: Vec<_> = all
-        .iter()
-        .filter(|m| m.memory_type == "discovery")
-        .collect();
-    let preferences: Vec<_> = all
-        .iter()
-        .filter(|m| m.memory_type == "preference")
-        .collect();
+    let memory_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+    let decisions: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates WHERE memory_type = 'decision'",
+        [],
+        |row| row.get(0),
+    )?;
+    let discoveries: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates WHERE memory_type = 'discovery'",
+        [],
+        |row| row.get(0),
+    )?;
+    let preferences: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates WHERE memory_type = 'preference'",
+        [],
+        |row| row.get(0),
+    )?;
 
     eprintln!(
-        "[Promote] total={} decisions={} discoveries={} preferences={}",
-        all.len(),
-        decisions.len(),
-        discoveries.len(),
-        preferences.len(),
+        "[Promote] active_memories={} decisions={} discoveries={} preferences={}",
+        memory_count, decisions, discoveries, preferences,
     );
 
+    assert_eq!(memory_count, 0, "Summaries must not write active memories");
     assert!(
-        !decisions.is_empty(),
-        "Decisions should be promoted to memories"
+        decisions > 0,
+        "Decisions should be promoted to memory candidates"
     );
     assert!(
-        !discoveries.is_empty(),
-        "Discoveries should be promoted to memories"
+        discoveries > 0,
+        "Discoveries should be promoted to memory candidates"
     );
-    assert!(
-        !preferences.is_empty(),
-        "Preferences should be promoted to memories"
-    );
+    assert!(preferences > 0, "Preferences should become candidates");
 
-    // Verify promoted preferences follow the current project-scope default.
-    let project_prefs: Vec<_> = preferences
-        .iter()
-        .filter(|m| m.scope == "project")
-        .collect();
-    eprintln!(
-        "[Promote] project preferences: {}/{}",
-        project_prefs.len(),
-        preferences.len()
-    );
+    let project_prefs: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates
+         WHERE memory_type = 'preference' AND scope = 'project'",
+        [],
+        |row| row.get(0),
+    )?;
+    eprintln!("[Promote] project preference candidates: {project_prefs}/{preferences}");
     assert!(
-        !project_prefs.is_empty(),
-        "Promoted preferences should default to project scope"
+        project_prefs > 0,
+        "Preference candidates should default to project scope"
     );
 
     Ok(())

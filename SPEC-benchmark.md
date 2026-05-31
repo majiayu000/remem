@@ -48,8 +48,8 @@ Project A 存入 global preference → Project B 查询 → 验证 global scope 
 ### Scenario 6: Time Decay Ranking
 插入新旧两组相同相关度记忆 → 搜索 → 验证新记忆排名高于旧记忆。
 
-### Scenario 7: Summary Parse & Promotion
-输入 AI 生成的 summary XML → parse_summary → promote_summary_to_memories → 验证 decisions/discoveries/preferences 被正确提取为独立记忆。
+### Scenario 7: Summary Parse & Candidate Promotion
+输入 AI 生成的 summary XML → parse_summary → promote_summary_to_memory_candidates → 验证 decisions/discoveries/preferences 被正确提取为待审候选，不直接写入 active memories。
 
 ### Scenario 8: Search Filter By Type
 插入不同 memory type → 按 type 搜索 → 验证过滤语义和排序稳定。

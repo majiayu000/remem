@@ -117,7 +117,7 @@ pub(super) fn finalize_summary(
         }
     }
 
-    if let Err(err) = crate::memory::promote_summary_to_memories(
+    if let Err(err) = crate::memory::promote_summary_to_memory_candidates(
         conn,
         session_id,
         project,
@@ -126,10 +126,13 @@ pub(super) fn finalize_summary(
         summary.learned.as_deref(),
         summary.preferences.as_deref(),
     ) {
-        crate::log::warn("summary-job", &format!("memory promotion failed: {}", err));
+        crate::log::warn(
+            "summary-job",
+            &format!("memory candidate promotion failed: {}", err),
+        );
         db::clear_summarize_cooldown_for_message(conn, project, msg_hash)
-            .context("failed to clear summary retry marker after memory promotion failure")?;
-        return Err(err).context("memory promotion failed");
+            .context("failed to clear summary retry marker after memory candidate failure")?;
+        return Err(err).context("memory candidate promotion failed");
     }
     Ok(())
 }
@@ -247,17 +250,34 @@ mod tests {
         Ok(conn)
     }
 
+    fn record_summary_evidence(conn: &Connection, session_id: &str, project: &str) -> Result<i64> {
+        let outcome = db::record_captured_event(
+            conn,
+            &db::CaptureEventInput {
+                host: "codex-cli",
+                session_id,
+                project,
+                cwd: Some(project),
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: "summary source payload",
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+        Ok(outcome.event_row_id)
+    }
+
     #[test]
-    fn promotion_failure_releases_lock_and_clears_retry_marker() -> Result<()> {
+    fn candidate_failure_releases_lock_and_clears_retry_marker() -> Result<()> {
         let mut conn = setup_conn()?;
 
-        let project = "proj/promotion-failure";
+        let project = "proj/candidate-failure";
         let session_id = "content-session-1";
         let memory_sid = "memory-session-1";
         let msg_hash = "message-hash-1";
 
         assert!(db::try_acquire_summarize_lock(&mut conn, project, 60)?);
-        conn.execute_batch("DROP TABLE memories;")?;
 
         let err = finalize_summary(
             &mut conn,
@@ -281,10 +301,11 @@ mod tests {
                 workstream_blockers: None,
             },
         )
-        .expect_err("promotion failure should surface to the worker");
+        .expect_err("missing candidate evidence should surface to the worker");
 
         assert!(
-            err.to_string().contains("memory promotion failed"),
+            err.to_string()
+                .contains("memory candidate promotion failed"),
             "unexpected error: {err:#}"
         );
 
@@ -303,6 +324,136 @@ mod tests {
             !db::is_duplicate_message(&conn, project, msg_hash)?,
             "duplicate marker should not suppress retry after promotion failure"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_summary_creates_candidates_without_active_memories() -> Result<()> {
+        let mut conn = setup_conn()?;
+        let project = "test/proj";
+        let session_id = "summary-candidate-session";
+        let memory_sid = "mem-summary-candidate";
+        let evidence_id = record_summary_evidence(&conn, session_id, project)?;
+
+        finalize_summary(
+            &mut conn,
+            session_id,
+            memory_sid,
+            project,
+            "hash-summary-candidate",
+            ParsedSummary {
+                request: Some("Repair summary memory governance".to_string()),
+                completed: Some("Saved summary row".to_string()),
+                decisions: Some(
+                    "Use memory candidates for summary-derived durable decisions".to_string(),
+                ),
+                learned: Some(
+                    "FTS5 trigram tokenizer handles CJK search without word boundaries".to_string(),
+                ),
+                next_steps: None,
+                preferences: Some(
+                    "Always review summary-derived preferences before activation".to_string(),
+                ),
+                workstream: None,
+                workstream_progress: None,
+                workstream_next: None,
+                workstream_blockers: None,
+            },
+        )?;
+
+        let memory_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+        let candidate_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(memory_count, 0);
+        assert_eq!(candidate_count, 3);
+
+        let rows = conn
+            .prepare(
+                "SELECT memory_type, review_status, evidence_event_ids,
+                        source_project, owner_scope, owner_key
+                 FROM memory_candidates
+                 ORDER BY id ASC",
+            )?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let evidence_json = serde_json::to_string(&vec![evidence_id])?;
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "decision".to_string(),
+                    "pending_review".to_string(),
+                    evidence_json.clone(),
+                    project.to_string(),
+                    "repo".to_string(),
+                    project.to_string()
+                ),
+                (
+                    "discovery".to_string(),
+                    "pending_review".to_string(),
+                    evidence_json.clone(),
+                    project.to_string(),
+                    "repo".to_string(),
+                    project.to_string()
+                ),
+                (
+                    "preference".to_string(),
+                    "pending_review".to_string(),
+                    evidence_json,
+                    project.to_string(),
+                    "repo".to_string(),
+                    project.to_string()
+                )
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_summary_with_no_durable_candidates_does_not_require_evidence() -> Result<()> {
+        let mut conn = setup_conn()?;
+
+        finalize_summary(
+            &mut conn,
+            "summary-no-candidates",
+            "mem-summary-no-candidates",
+            "test/proj",
+            "hash-summary-no-candidates",
+            ParsedSummary {
+                request: Some("Tiny update".to_string()),
+                completed: Some("Done".to_string()),
+                decisions: Some("Short".to_string()),
+                learned: Some("Also short".to_string()),
+                next_steps: None,
+                preferences: None,
+                workstream: None,
+                workstream_progress: None,
+                workstream_next: None,
+                workstream_blockers: None,
+            },
+        )?;
+
+        let memory_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+        let candidate_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(memory_count, 0);
+        assert_eq!(candidate_count, 0);
         Ok(())
     }
 

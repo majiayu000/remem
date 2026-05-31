@@ -1,6 +1,8 @@
 pub(crate) const MIN_DECISION_LEN: usize = 30;
+#[cfg(test)]
 const MAX_TITLE_LEN: usize = 120;
 
+#[cfg(test)]
 pub(crate) fn build_title(content: &str, request: &str, label: &str) -> String {
     let source = if content.len() >= 20 {
         content
@@ -11,11 +13,6 @@ pub(crate) fn build_title(content: &str, request: &str, label: &str) -> String {
         return format!("Session {label}");
     }
     let truncated = truncate_at_boundary(source, MAX_TITLE_LEN - label.len() - 5);
-    format!("{truncated} — {label}")
-}
-
-pub(crate) fn build_item_title(item: &str, label: &str, _index: usize) -> String {
-    let truncated = truncate_at_boundary(item, MAX_TITLE_LEN - label.len() - 5);
     format!("{truncated} — {label}")
 }
 
