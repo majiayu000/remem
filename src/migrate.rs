@@ -5,6 +5,8 @@ mod state;
 mod tests;
 #[cfg(test)]
 mod tests_convergence;
+#[cfg(test)]
+mod tests_schema;
 mod transition;
 mod types;
 

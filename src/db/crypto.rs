@@ -184,7 +184,10 @@ pub fn encrypt_database(key: &str) -> Result<()> {
         );
     }
     let conn = Connection::open(&db_file)?;
-    conn.execute_batch("PRAGMA busy_timeout=5000;")?;
+    // Enforce foreign keys so ON DELETE CASCADE / SET NULL behave during the
+    // sqlcipher_export copy; foreign_keys defaults to OFF on every new
+    // connection (#244).
+    conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
     conn.execute(
         &format!(
             "ATTACH DATABASE '{}' AS encrypted KEY '{}'",

@@ -81,3 +81,73 @@ pub fn search_memories_fts_filtered(
     let rows = stmt.query_map(refs.as_slice(), map_memory_row_pub)?;
     crate::db::query::collect_rows(rows)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::migrate::run_migrations(&conn).unwrap();
+        conn
+    }
+
+    fn insert_memory(conn: &Connection, id: i64, body: &str, status: &str) {
+        conn.execute(
+            "INSERT INTO memories(id, project, title, content, memory_type, created_at_epoch,
+                updated_at_epoch, status)
+             VALUES (?1, 'proj', 'title', ?2, 'decision', 100, 100, ?3)",
+            rusqlite::params![id, body, status],
+        )
+        .unwrap();
+    }
+
+    /// Reproduction for #236: before v019 a stale row never entered memories_fts,
+    /// so the JOIN dropped it and include_inactive bm25 search returned empty.
+    #[test]
+    fn include_inactive_finds_stale_rows() {
+        let conn = setup_conn();
+        insert_memory(&conn, 1, "deprecated zookeeper approach", "stale");
+
+        // active-only search must hide the stale row
+        let active_only = search_memories_fts_filtered(
+            &conn,
+            "zookeeper",
+            Some("proj"),
+            None,
+            10,
+            0,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(
+            active_only.is_empty(),
+            "active-only search must hide stale rows: {active_only:?}"
+        );
+
+        // include_inactive must surface the stale row via the bm25 path
+        let with_inactive =
+            search_memories_fts_filtered(&conn, "zookeeper", Some("proj"), None, 10, 0, true, None)
+                .unwrap();
+        assert_eq!(
+            with_inactive.len(),
+            1,
+            "include_inactive must retrieve stale"
+        );
+        assert_eq!(with_inactive[0].status, "stale");
+    }
+
+    /// Active rows must remain retrievable on the default (active-only) path.
+    #[test]
+    fn active_path_still_finds_active_rows() {
+        let conn = setup_conn();
+        insert_memory(&conn, 1, "current kafka pipeline", "active");
+
+        let hits =
+            search_memories_fts_filtered(&conn, "kafka", Some("proj"), None, 10, 0, false, None)
+                .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].status, "active");
+    }
+}

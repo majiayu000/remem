@@ -100,6 +100,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_ownership",
         sql: include_str!("../migrations/v019_memory_ownership.sql"),
     },
+    Migration {
+        version: 20,
+        name: "memory_fts_all_status",
+        sql: include_str!("../migrations/v020_memory_fts_all_status.sql"),
+    },
+    Migration {
+        version: 21,
+        name: "raw_messages_session_dedup",
+        sql: include_str!("../migrations/v021_raw_messages_session_dedup.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

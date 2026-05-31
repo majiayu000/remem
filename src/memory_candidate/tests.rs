@@ -7,13 +7,13 @@ use super::{process_with_generator, MemoryCandidateResult};
 
 mod ttl;
 
-fn setup_conn() -> Connection {
+pub(super) fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");
     conn
 }
 
-fn setup_task(conn: &mut Connection, session_id: &str) -> Result<db::ExtractionTask> {
+pub(super) fn setup_task(conn: &mut Connection, session_id: &str) -> Result<db::ExtractionTask> {
     setup_task_with_project(conn, session_id, "/tmp/remem")
 }
 

@@ -104,6 +104,39 @@ impl MemoryType {
             .copied()
             .find(|memory_type| memory_type.as_str() == value)
     }
+
+    /// Map a raw observation_type (the legal observation vocabulary lives in
+    /// `crate::db::models::OBSERVATION_TYPES`: bugfix/feature/refactor/discovery/
+    /// decision/change) onto the candidate `MemoryType` it can support.
+    ///
+    /// The candidate vocabulary and the observation vocabulary are different
+    /// word lists, so a raw string-equality comparison between them is wrong:
+    /// `architecture` is a valid candidate type but never a valid observation
+    /// type, so an architecture candidate could never be matched and could
+    /// never auto-promote. `feature`/`refactor`/`change` observations all
+    /// describe project discoveries, so they collapse onto `Discovery`.
+    pub fn from_observation_type(observation_type: &str) -> Option<Self> {
+        match observation_type.trim().to_ascii_lowercase().as_str() {
+            "bugfix" => Some(Self::Bugfix),
+            "decision" => Some(Self::Decision),
+            "discovery" | "feature" | "refactor" | "change" => Some(Self::Discovery),
+            _ => None,
+        }
+    }
+
+    /// Whether an observation of `observation_type` can serve as supporting
+    /// evidence for a candidate of `self`. Auto-promotable candidate types are
+    /// matched to their observation equivalent; `Architecture` candidates have
+    /// no observation equivalent, so they accept `Discovery`-class evidence
+    /// (the closest project-knowledge observation class).
+    pub fn supports_observation_type(self, observation_type: &str) -> bool {
+        match Self::from_observation_type(observation_type) {
+            Some(mapped) => {
+                mapped == self || (self == Self::Architecture && mapped == Self::Discovery)
+            }
+            None => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +263,36 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(MEMORY_TYPES, canonical.as_slice());
+    }
+
+    #[test]
+    fn architecture_candidate_accepts_discovery_class_observations() {
+        // architecture is a valid candidate type but never a valid observation
+        // type; it must accept discovery-class observation evidence.
+        assert!(MemoryType::Architecture.supports_observation_type("discovery"));
+        assert!(MemoryType::Architecture.supports_observation_type("feature"));
+        assert!(MemoryType::Architecture.supports_observation_type("refactor"));
+        assert!(MemoryType::Architecture.supports_observation_type("change"));
+        // but not unrelated classes
+        assert!(!MemoryType::Architecture.supports_observation_type("bugfix"));
+        assert!(!MemoryType::Architecture.supports_observation_type("decision"));
+    }
+
+    #[test]
+    fn auto_promote_types_match_their_observation_equivalents() {
+        assert!(MemoryType::Bugfix.supports_observation_type("bugfix"));
+        assert!(MemoryType::Decision.supports_observation_type("decision"));
+        assert!(MemoryType::Discovery.supports_observation_type("discovery"));
+        // feature/refactor/change all collapse onto discovery
+        assert!(MemoryType::Discovery.supports_observation_type("feature"));
+        assert!(MemoryType::Discovery.supports_observation_type("refactor"));
+        assert!(MemoryType::Discovery.supports_observation_type("change"));
+        // mismatches stay false
+        assert!(!MemoryType::Bugfix.supports_observation_type("decision"));
+        assert!(!MemoryType::Decision.supports_observation_type("discovery"));
+        // unknown observation type maps to nothing
+        assert!(MemoryType::from_observation_type("architecture").is_none());
+        assert!(MemoryType::from_observation_type("nonsense").is_none());
     }
 
     #[test]
