@@ -100,9 +100,9 @@ pub fn audit_scope(conn: &Connection, req: &ScopeAuditRequest<'_>) -> Result<Sco
                 ));
             } else if row.status == "active"
                 && row.memory_type != "preference"
-                && !row
+                && row
                     .expires_at_epoch
-                    .is_some_and(|expires| expires <= req.now_epoch)
+                    .is_none_or(|expires| expires > req.now_epoch)
                 && !is_low_confidence(row.owner_scope.as_deref(), row.routing_confidence)
             {
                 likely_correct_repo_memory.push(row.audit_item(
