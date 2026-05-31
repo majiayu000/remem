@@ -19,9 +19,18 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
         }
         Err(error) => {
             if let Err(rollback_error) = conn.execute_batch("ROLLBACK") {
-                crate::log::warn(
+                // A failed rollback can leave the database in a partially-migrated
+                // state, so this is never a benign warning (U-29). Surface it at
+                // error level and keep both error chains.
+                crate::log::error(
                     "migrate",
-                    &format!("rollback failed after migration error: {rollback_error}"),
+                    &format!(
+                        "rollback failed after migration error: {rollback_error}; \
+                         original migration error: {error:#}"
+                    ),
+                );
+                return Err(
+                    error.context(format!("migration rollback also failed: {rollback_error}"))
                 );
             }
             Err(error)
@@ -63,11 +72,19 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
         );
     }
 
-    let latest = super::latest_schema_version();
+    // Keep PRAGMA user_version consistent with what `_schema_migrations`
+    // actually records: derive it from the highest applied migration, not from
+    // the binary's latest known version. Using the binary version here would
+    // claim a schema level the database may not have reached if a later
+    // migration was never applied (#244).
+    let max_applied = applied_versions(conn)?
+        .into_iter()
+        .max()
+        .unwrap_or(OLD_BASELINE_VERSION);
     let current_user_version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
-    let user_version = current_user_version.max(OLD_BASELINE_VERSION - 1 + latest);
+    let user_version = current_user_version.max(OLD_BASELINE_VERSION - 1 + max_applied);
     conn.execute_batch(&format!("PRAGMA user_version = {}", user_version))?;
     Ok(())
 }

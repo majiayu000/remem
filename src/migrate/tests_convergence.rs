@@ -289,3 +289,58 @@ fn real_queries_work_on_upgraded_db() -> Result<()> {
 
     Ok(())
 }
+
+/// #244: PRAGMA user_version must stay consistent with the highest version
+/// recorded in _schema_migrations. Both a fresh DB and an upgraded legacy DB
+/// must report user_version == OLD_BASELINE_VERSION - 1 + max_applied.
+#[test]
+fn user_version_tracks_max_applied_migration() -> Result<()> {
+    let expected = super::types::OLD_BASELINE_VERSION - 1 + super::latest_schema_version();
+
+    for conn in [make_fresh_db()?, make_upgraded_v10_db()?] {
+        let max_applied = super::state::applied_versions(&conn)?
+            .into_iter()
+            .max()
+            .expect("at least one migration applied");
+        let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+
+        assert_eq!(
+            max_applied,
+            super::latest_schema_version(),
+            "all migrations must be recorded in _schema_migrations"
+        );
+        assert_eq!(
+            user_version, expected,
+            "user_version must equal OLD_BASELINE_VERSION-1 + max applied version"
+        );
+    }
+    Ok(())
+}
+
+/// #244: all known migrations must end up recorded in _schema_migrations after
+/// a legacy upgrade, so PRAGMA user_version (derived from the max applied
+/// version) cannot drift ahead of what was actually applied.
+#[test]
+fn legacy_upgrade_records_every_migration() -> Result<()> {
+    let conn = make_upgraded_v10_db()?;
+    let applied = super::state::applied_versions(&conn)?;
+    for migration in super::types::MIGRATIONS {
+        assert!(
+            applied.contains(&migration.version),
+            "migration v{} must be recorded after upgrade: {applied:?}",
+            migration.version
+        );
+    }
+    Ok(())
+}
+
+/// #244: foreign_keys must be ON for the runtime connection so ON DELETE
+/// CASCADE / SET NULL actually fire.
+#[test]
+fn open_db_enables_foreign_keys() -> Result<()> {
+    let _guard = crate::db::test_support::ScopedTestDataDir::new("fk-pragma");
+    let conn = crate::db::open_db()?;
+    let fk_on: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    assert_eq!(fk_on, 1, "open_db must enable PRAGMA foreign_keys");
+    Ok(())
+}

@@ -33,13 +33,15 @@ fn exact_content_hash(content: &str) -> String {
     format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
 }
 
-/// Insert one raw message. UNIQUE(project, role, content_hash) makes this
-/// idempotent across repeated Stop-hook drains of the same transcript.
+/// Insert one raw message. UNIQUE(project, session_id, role, content_hash)
+/// makes this idempotent across repeated Stop-hook drains of the same
+/// transcript while still preserving identical text spoken in different
+/// sessions (issue #237).
 /// Returns the row id of the existing or newly inserted message, or None
 /// when the content is empty.
 /// Outcome of a raw-message insert attempt.
 ///
-/// `inserted == false` means a row with the same `(project, role,
+/// `inserted == false` means a row with the same `(project, session_id, role,
 /// content_hash)` already existed and `id` points at the pre-existing row
 /// rather than a newly created one.
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +71,7 @@ pub fn insert_raw_message(
         "INSERT INTO raw_messages \
          (session_id, project, role, content, content_hash, source, branch, cwd, created_at_epoch) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
-         ON CONFLICT(project, role, content_hash) DO NOTHING",
+         ON CONFLICT(project, session_id, role, content_hash) DO NOTHING",
         params![session_id, project, role, trimmed, hash, source, branch, cwd, now],
     )?;
 
@@ -80,8 +82,9 @@ pub fn insert_raw_message(
         }))
     } else {
         let existing: i64 = conn.query_row(
-            "SELECT id FROM raw_messages WHERE project = ?1 AND role = ?2 AND content_hash = ?3",
-            params![project, role, hash],
+            "SELECT id FROM raw_messages \
+             WHERE project = ?1 AND session_id = ?2 AND role = ?3 AND content_hash = ?4",
+            params![project, session_id, role, hash],
             |row| row.get(0),
         )?;
         Ok(Some(RawInsertOutcome {
@@ -270,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_is_idempotent_per_project_role_content() {
+    fn insert_is_idempotent_per_session_role_content() {
         let conn = setup_conn();
         let id1 = insert_raw_message(
             &conn,
@@ -284,9 +287,10 @@ mod tests {
         )
         .unwrap()
         .expect("first insert returns Some");
+        // Same session + same text => deduped onto the existing row.
         let id2 = insert_raw_message(
             &conn,
-            "s2",
+            "s1",
             "/proj",
             ROLE_USER,
             "hello world",
@@ -303,6 +307,47 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// Regression for #237: the same text spoken in two different sessions must
+    /// keep BOTH turns. The old UNIQUE(project, role, content_hash) globally
+    /// deduped across sessions and silently dropped the second turn.
+    #[test]
+    fn identical_text_across_sessions_keeps_both_turns() {
+        let conn = setup_conn();
+        let id1 = insert_raw_message(
+            &conn,
+            "s1",
+            "/proj",
+            ROLE_USER,
+            "let's deploy the service",
+            SOURCE_HOOK,
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("first insert returns Some");
+        let id2 = insert_raw_message(
+            &conn,
+            "s2",
+            "/proj",
+            ROLE_USER,
+            "let's deploy the service",
+            SOURCE_HOOK,
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("second insert returns Some");
+
+        assert!(id1.inserted, "first session turn must be inserted");
+        assert!(id2.inserted, "second session turn must also be inserted");
+        assert_ne!(id1.id, id2.id, "the two sessions must keep distinct rows");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "both session turns must be preserved");
     }
 
     #[test]
