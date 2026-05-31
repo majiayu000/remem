@@ -73,7 +73,7 @@ pub fn open_db() -> Result<Connection> {
 }
 
 pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Result<Connection> {
-    let conn = Connection::open(&path)
+    let conn = Connection::open(path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
 
     super::crypto::configure_cipher(&conn, key)?;
