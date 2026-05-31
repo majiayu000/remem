@@ -149,7 +149,10 @@ pub fn list_lessons_for_context(
          JOIN memory_lessons l ON l.memory_id = m.id
          WHERE m.memory_type = 'lesson'
            AND m.status = 'active'
-           AND (m.project = ?1 OR m.scope = 'global')
+           AND ((m.owner_scope = 'repo' AND m.owner_key = ?1)
+                OR (m.owner_scope = 'repo' AND m.target_project = ?1)
+                OR (m.owner_scope = 'user' AND m.owner_key = 'user:default')
+                OR (m.owner_scope IS NULL AND (m.project = ?1 OR m.scope = 'global')))
            AND l.confidence >= ?2
            AND (l.stale_after_epoch IS NULL OR l.stale_after_epoch > ?3)
            AND (?4 IS NULL OR m.branch = ?4 OR m.branch IS NULL)

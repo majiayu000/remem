@@ -186,3 +186,79 @@ fn query_recent_summaries_allows_normal_summary_after_low_signal_same_cluster() 
         Some("Validated current runtime hook behavior")
     );
 }
+
+#[test]
+fn query_recent_summaries_excludes_tool_and_domain_owned_rows() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_session_summary_schema(&conn);
+    let project = "/tmp/stash";
+
+    insert_session_summary(
+        &conn,
+        project,
+        "Legacy Stash session",
+        Some("Legacy project rows remain compatible"),
+        300,
+    );
+    insert_owned_summary(
+        &conn,
+        project,
+        "Repo Stash session",
+        "repo",
+        project,
+        Some(project),
+        301,
+    );
+    insert_owned_summary(
+        &conn,
+        project,
+        "Codex sandbox session",
+        "tool",
+        "codex-cli",
+        None,
+        302,
+    );
+    insert_owned_summary(
+        &conn,
+        project,
+        "Grok API session",
+        "domain",
+        "grok-api",
+        None,
+        303,
+    );
+
+    let summaries = query_recent_summaries(&conn, project, 10).unwrap();
+    let requests = summaries
+        .iter()
+        .map(|summary| summary.request.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(requests, vec!["Repo Stash session", "Legacy Stash session"]);
+}
+
+fn insert_owned_summary(
+    conn: &Connection,
+    project: &str,
+    request: &str,
+    owner_scope: &str,
+    owner_key: &str,
+    target_project: Option<&str>,
+    created_at_epoch: i64,
+) {
+    conn.execute(
+        "INSERT INTO session_summaries
+         (project, request, completed, created_at_epoch, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, ?2, 'done', ?3, ?1, ?4, ?5, ?6)",
+        rusqlite::params![
+            project,
+            request,
+            created_at_epoch,
+            target_project,
+            owner_scope,
+            owner_key
+        ],
+    )
+    .unwrap();
+}

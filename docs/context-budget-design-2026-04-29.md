@@ -83,7 +83,7 @@ struct ContextLimits {
     session_limit: usize,               // default 5
     self_diagnostic_limit: usize,       // default 2
     preference_project_limit: usize,    // default 20
-    preference_global_limit: usize,     // default 0
+    preference_global_limit: usize,     // default 5 for owner_scope=user
     preference_char_limit: usize,       // default 1500
 }
 ```

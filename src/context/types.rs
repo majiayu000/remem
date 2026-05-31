@@ -3,6 +3,7 @@ use crate::memory::Memory;
 use crate::workstream::WorkStream;
 
 use super::host::HostKind;
+use super::ownership::{OwnerCounts, OwnerTrace};
 
 #[derive(Debug, Clone)]
 pub(super) struct ContextRequest {
@@ -28,4 +29,6 @@ pub(super) struct LoadedContext {
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
+    pub owner_traces: Vec<OwnerTrace>,
+    pub owner_counts: OwnerCounts,
 }
