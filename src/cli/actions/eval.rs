@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::db;
 
@@ -24,6 +24,21 @@ pub(in crate::cli) async fn run_eval_e2e(k: usize, json: bool, keep_data_dir: bo
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print!("{}", report);
+    }
+    Ok(())
+}
+
+pub(in crate::cli) fn run_eval_governance(k: usize, json: bool) -> Result<()> {
+    let report = crate::eval::governance::run_sandbox_eval(
+        crate::eval::governance::GovernanceEvalOptions { k },
+    )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", report);
+    }
+    if !report.metrics.all_checks_passed {
+        bail!("eval-governance checks failed");
     }
     Ok(())
 }

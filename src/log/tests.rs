@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use super::config::{log_max_bytes, log_path, DEFAULT_LOG_MAX_BYTES};
+use super::config::{log_max_bytes, log_path, with_log_dir, DEFAULT_LOG_MAX_BYTES};
 use super::open_log_append;
 use super::write::rotate_if_needed;
 use crate::db::test_support::ScopedTestDataDir;
@@ -52,6 +52,24 @@ fn open_log_append_creates_log_file_in_data_dir() {
 
     let path = log_path().expect("log path should resolve");
     assert!(path.exists(), "log file should exist at {:?}", path);
+}
+
+#[test]
+fn with_log_dir_overrides_log_path_for_current_thread() {
+    let dir = std::env::temp_dir().join(format!(
+        "remem-log-override-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("log override dir should create");
+
+    let path = with_log_dir(&dir, || log_path().expect("log path should resolve"));
+
+    assert_eq!(path, dir.join("remem.log"));
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
