@@ -8,11 +8,17 @@ use crate::db;
 use crate::memory::format::{xml_escape_attr, xml_escape_text};
 use crate::memory::MemoryType;
 
+mod apply;
 mod parse;
 pub(crate) mod review;
+mod route;
 
+use apply::{
+    promote_candidate_to_memory_with_route, update_candidate_after_lifecycle, CandidateApplyOutcome,
+};
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
+pub(super) use route::{route_candidate, CandidateRoute};
 
 const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
@@ -236,17 +242,26 @@ fn persist_candidates(
             continue;
         }
 
-        let review_status = if should_auto_promote(candidate, batch) {
-            "auto_promoted"
-        } else {
-            "pending_review"
-        };
+        let observation_texts = batch
+            .observations
+            .iter()
+            .map(|observation| observation.text.as_str());
+        let route = route_candidate(
+            &task.project,
+            task.session_id.as_deref(),
+            candidate,
+            observation_texts,
+        );
+        let review_status = "pending_review";
         let now = chrono::Utc::now().timestamp();
         tx.execute(
             "INSERT INTO memory_candidates
              (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
-              confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+              confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
+              source_project, target_project, owner_scope, owner_key, topic_domain,
+              routing_confidence, routing_reason, context_class)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 task.project_id,
                 candidate.scope,
@@ -257,15 +272,33 @@ fn persist_candidates(
                 candidate.confidence,
                 candidate.risk_class,
                 review_status,
-                now
+                now,
+                task.project,
+                route.target_project.as_deref(),
+                route.owner_scope,
+                route.owner_key,
+                route.topic_domain.as_deref(),
+                route.routing_confidence,
+                route.routing_reason,
+                route.context_class
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();
         summary.candidates += 1;
 
-        if review_status == "auto_promoted" {
-            promote_task_candidate(&tx, task, candidate_id, candidate, &evidence_json)?;
-            summary.promoted += 1;
+        if should_auto_promote(candidate, batch, &route, &evidence_json) {
+            let outcome =
+                promote_task_candidate(&tx, task, candidate_id, candidate, &evidence_json, &route)?;
+            update_candidate_after_lifecycle(
+                &tx,
+                candidate_id,
+                candidate,
+                &route,
+                outcome.review_status_for("auto_promoted"),
+            )?;
+            if outcome.promoted {
+                summary.promoted += 1;
+            }
         } else {
             summary.pending_review += 1;
         }
@@ -314,78 +347,38 @@ fn promote_task_candidate(
     candidate_id: i64,
     candidate: &ParsedMemoryCandidate,
     evidence_json: &str,
-) -> Result<()> {
-    promote_candidate_to_memory(
+    route: &CandidateRoute,
+) -> Result<CandidateApplyOutcome> {
+    promote_candidate_to_memory_with_route(
         conn,
         task.session_id.as_deref(),
         &task.project,
         candidate_id,
         candidate,
         evidence_json,
-    )?;
-    Ok(())
+        route,
+    )
 }
 
-pub(super) fn promote_candidate_to_memory(
-    conn: &Connection,
-    session_id: Option<&str>,
-    project: &str,
-    candidate_id: i64,
+fn should_auto_promote(
     candidate: &ParsedMemoryCandidate,
+    batch: &ObservationBatch,
+    route: &CandidateRoute,
     evidence_json: &str,
-) -> Result<i64> {
-    let title = candidate_title(candidate);
-    let memory_id = if candidate.memory_type == "lesson" {
-        crate::memory::lesson::save_lesson(
-            conn,
-            &crate::memory::lesson::SaveLessonRequest {
-                session_id,
-                project,
-                topic_key: Some(&candidate.topic_key),
-                title: &title,
-                content: &candidate.text,
-                confidence: candidate.confidence,
-                source_evidence: Some(evidence_json),
-                files: None,
-                branch: None,
-                scope: &candidate.scope,
-                created_at_epoch: None,
-                stale_after_epoch: None,
-            },
-        )?
-    } else {
-        crate::memory::insert_memory_full(
-            conn,
-            session_id,
-            project,
-            Some(&candidate.topic_key),
-            &title,
-            &candidate.text,
-            &candidate.memory_type,
-            None,
-            None,
-            &candidate.scope,
-            None,
-        )?
-    };
-    conn.execute(
-        "UPDATE memories
-         SET evidence_event_ids = ?1,
-             source_candidate_id = ?2,
-             confidence = ?3
-        WHERE id = ?4",
-        params![evidence_json, candidate_id, candidate.confidence, memory_id],
-    )?;
-    Ok(memory_id)
-}
-
-fn should_auto_promote(candidate: &ParsedMemoryCandidate, batch: &ObservationBatch) -> bool {
+) -> bool {
     candidate.scope == "project"
         && candidate.risk_class == "low"
         && candidate.confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
+        && route.is_repo_owned()
+        && route.routing_confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
+        && has_evidence_ids(evidence_json)
         && MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote)
         && !contains_auto_promote_unsafe_marker(&candidate.text)
         && is_supported_by_source_observation(candidate, batch)
+}
+
+fn has_evidence_ids(evidence_json: &str) -> bool {
+    serde_json::from_str::<Vec<i64>>(evidence_json).is_ok_and(|ids| !ids.is_empty())
 }
 
 fn is_supported_by_source_observation(
