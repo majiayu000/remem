@@ -31,6 +31,76 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             created_at_epoch INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS hosts (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id INTEGER PRIMARY KEY,
+            root_path TEXT NOT NULL UNIQUE,
+            git_remote TEXT,
+            git_branch TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY,
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            project_path TEXT NOT NULL,
+            project_key TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            UNIQUE(workspace_id, project_path)
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY,
+            host_id INTEGER NOT NULL REFERENCES hosts(id),
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            session_id TEXT NOT NULL,
+            started_at_epoch INTEGER,
+            last_seen_at_epoch INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            UNIQUE(host_id, project_id, session_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS event_blobs (
+            id INTEGER PRIMARY KEY,
+            content_hash TEXT NOT NULL UNIQUE,
+            content_encoding TEXT NOT NULL,
+            content_bytes BLOB NOT NULL,
+            original_bytes INTEGER NOT NULL,
+            stored_bytes INTEGER NOT NULL,
+            created_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS captured_events (
+            id INTEGER PRIMARY KEY,
+            host_id INTEGER NOT NULL REFERENCES hosts(id),
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            project_id INTEGER NOT NULL REFERENCES projects(id),
+            session_row_id INTEGER NOT NULL REFERENCES sessions(id),
+            session_id TEXT NOT NULL,
+            turn_id TEXT,
+            event_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            role TEXT,
+            tool_name TEXT,
+            content_text TEXT,
+            content_blob_id INTEGER REFERENCES event_blobs(id),
+            content_hash TEXT NOT NULL,
+            token_estimate INTEGER NOT NULL DEFAULT 0,
+            retention_class TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL,
+            inserted_at_epoch INTEGER NOT NULL,
+            UNIQUE(host_id, session_id, event_id)
+        );
+
         CREATE TABLE IF NOT EXISTS memories (
             id INTEGER PRIMARY KEY,
             session_id TEXT,
@@ -154,6 +224,34 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             lease_owner TEXT,
             lease_expires_epoch INTEGER
         );
+
+        CREATE TABLE IF NOT EXISTS memory_candidates (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id),
+            scope TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            topic_key TEXT NOT NULL,
+            text TEXT NOT NULL,
+            evidence_event_ids TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            risk_class TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            source_project TEXT,
+            target_project TEXT,
+            owner_scope TEXT,
+            owner_key TEXT,
+            topic_domain TEXT,
+            routing_confidence REAL,
+            routing_reason TEXT,
+            context_class TEXT,
+            expires_at_epoch INTEGER,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_candidates_dedupe
+            ON memory_candidates(project_id, scope, memory_type, topic_key, text);
 
         CREATE TABLE IF NOT EXISTS workstreams (
             id INTEGER PRIMARY KEY,

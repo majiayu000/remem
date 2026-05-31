@@ -78,13 +78,20 @@ struct ObservationBatch {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct ParsedMemoryCandidate {
-    pub(super) scope: String,
-    pub(super) memory_type: String,
-    pub(super) topic_key: String,
-    pub(super) text: String,
-    pub(super) confidence: f64,
-    pub(super) risk_class: String,
+pub(crate) struct ParsedMemoryCandidate {
+    pub(crate) scope: String,
+    pub(crate) memory_type: String,
+    pub(crate) topic_key: String,
+    pub(crate) text: String,
+    pub(crate) confidence: f64,
+    pub(crate) risk_class: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct CandidatePersistSummary {
+    pub(crate) candidates: usize,
+    pub(crate) promoted: usize,
+    pub(crate) pending_review: usize,
 }
 
 pub(crate) async fn process(task: &db::ExtractionTask) -> Result<MemoryCandidateResult> {
@@ -233,24 +240,79 @@ fn persist_candidates(
     task: &db::ExtractionTask,
     batch: &ObservationBatch,
     candidates: &[ParsedMemoryCandidate],
-) -> Result<PersistSummary> {
-    let evidence_json = serde_json::to_string(&batch.evidence_event_ids)?;
+) -> Result<CandidatePersistSummary> {
+    let route_texts = batch
+        .observations
+        .iter()
+        .map(|observation| observation.text.as_str())
+        .collect::<Vec<_>>();
+    persist_candidate_rows(
+        conn,
+        CandidatePersistSource {
+            project_id: task.project_id,
+            project: &task.project,
+            session_id: task.session_id.as_deref(),
+            evidence_event_ids: &batch.evidence_event_ids,
+            route_texts,
+        },
+        candidates,
+        Some(batch),
+    )
+}
+
+pub(crate) fn persist_summary_candidates(
+    conn: &mut Connection,
+    session_id: &str,
+    project_id: i64,
+    project: &str,
+    evidence_event_ids: &[i64],
+    candidates: &[ParsedMemoryCandidate],
+) -> Result<CandidatePersistSummary> {
+    let route_texts = candidates
+        .iter()
+        .map(|candidate| candidate.text.as_str())
+        .collect::<Vec<_>>();
+    persist_candidate_rows(
+        conn,
+        CandidatePersistSource {
+            project_id,
+            project,
+            session_id: Some(session_id),
+            evidence_event_ids,
+            route_texts,
+        },
+        candidates,
+        None,
+    )
+}
+
+struct CandidatePersistSource<'a> {
+    project_id: i64,
+    project: &'a str,
+    session_id: Option<&'a str>,
+    evidence_event_ids: &'a [i64],
+    route_texts: Vec<&'a str>,
+}
+
+fn persist_candidate_rows(
+    conn: &mut Connection,
+    source: CandidatePersistSource<'_>,
+    candidates: &[ParsedMemoryCandidate],
+    auto_promote_batch: Option<&ObservationBatch>,
+) -> Result<CandidatePersistSummary> {
+    let evidence_json = serde_json::to_string(source.evidence_event_ids)?;
     let tx = conn.transaction()?;
-    let mut summary = PersistSummary::default();
+    let mut summary = CandidatePersistSummary::default();
     for candidate in candidates {
-        if candidate_exists(&tx, task.project_id, candidate)? {
+        if candidate_exists(&tx, source.project_id, candidate)? {
             continue;
         }
 
-        let observation_texts = batch
-            .observations
-            .iter()
-            .map(|observation| observation.text.as_str());
         let route = route_candidate(
-            &task.project,
-            task.session_id.as_deref(),
+            source.project,
+            source.session_id,
             candidate,
-            observation_texts,
+            source.route_texts.iter().copied(),
         );
         let review_status = "pending_review";
         let now = chrono::Utc::now().timestamp();
@@ -263,7 +325,7 @@ fn persist_candidates(
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
                      ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
-                task.project_id,
+                source.project_id,
                 candidate.scope,
                 candidate.memory_type,
                 candidate.topic_key,
@@ -273,7 +335,7 @@ fn persist_candidates(
                 candidate.risk_class,
                 review_status,
                 now,
-                task.project,
+                source.project,
                 route.target_project.as_deref(),
                 route.owner_scope,
                 route.owner_key,
@@ -286,9 +348,18 @@ fn persist_candidates(
         let candidate_id = tx.last_insert_rowid();
         summary.candidates += 1;
 
-        if should_auto_promote(candidate, batch, &route, &evidence_json) {
-            let outcome =
-                promote_task_candidate(&tx, task, candidate_id, candidate, &evidence_json, &route)?;
+        if auto_promote_batch
+            .is_some_and(|batch| should_auto_promote(candidate, batch, &route, &evidence_json))
+        {
+            let outcome = promote_source_candidate(
+                &tx,
+                source.session_id,
+                source.project,
+                candidate_id,
+                candidate,
+                &evidence_json,
+                &route,
+            )?;
             update_candidate_after_lifecycle(
                 &tx,
                 candidate_id,
@@ -305,13 +376,6 @@ fn persist_candidates(
     }
     tx.commit()?;
     Ok(summary)
-}
-
-#[derive(Default)]
-struct PersistSummary {
-    candidates: usize,
-    promoted: usize,
-    pending_review: usize,
 }
 
 fn candidate_exists(
@@ -341,9 +405,10 @@ fn candidate_exists(
     Ok(existing.is_some())
 }
 
-fn promote_task_candidate(
+fn promote_source_candidate(
     conn: &Connection,
-    task: &db::ExtractionTask,
+    session_id: Option<&str>,
+    project: &str,
     candidate_id: i64,
     candidate: &ParsedMemoryCandidate,
     evidence_json: &str,
@@ -351,8 +416,8 @@ fn promote_task_candidate(
 ) -> Result<CandidateApplyOutcome> {
     promote_candidate_to_memory_with_route(
         conn,
-        task.session_id.as_deref(),
-        &task.project,
+        session_id,
+        project,
         candidate_id,
         candidate,
         evidence_json,

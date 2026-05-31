@@ -5,4 +5,4 @@ mod summary;
 mod tests;
 
 pub use slug::slugify_for_topic;
-pub use summary::promote_summary_to_memories;
+pub use summary::promote_summary_to_memory_candidates;
