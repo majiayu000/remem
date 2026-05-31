@@ -210,7 +210,11 @@ fn query_owner_included_memory_rows(
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
     push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
-    conditions.push(crate::memory::memory_status_filter_sql("status", false));
+    conditions.push(crate::memory::memory_current_filter_sql(
+        "status",
+        "expires_at_epoch",
+        false,
+    ));
 
     if let Some(query) = query {
         let like_pattern = format!("%{query}%");
@@ -281,7 +285,11 @@ fn query_owner_exclusion_traces(
     let mut idx = 1;
     push_context_related_filter(project, &mut idx, &mut conditions, &mut params);
     push_owner_excluded_filter(project, &mut idx, &mut conditions, &mut params);
-    conditions.push(crate::memory::memory_status_filter_sql("status", false));
+    conditions.push(crate::memory::memory_current_filter_sql(
+        "status",
+        "expires_at_epoch",
+        false,
+    ));
     push_excluded_type_filter(excluded_types, &mut idx, &mut conditions, &mut params);
     params.push(Box::new(limit));
 

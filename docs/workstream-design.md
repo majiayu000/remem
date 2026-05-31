@@ -150,7 +150,7 @@ CREATE TABLE workstream_sessions (
 
 3. 关闭：
    - AI 判断 session 完成了该任务 → completed
-   - 超过 7 天无活动 → paused（自动）
+   - 超过 14 天无活动 → paused（自动）
    - 超过 30 天无活动 → abandoned（自动）
 
 4. 恢复：新 session 的 request 匹配到 paused workstream → 重新激活
@@ -212,7 +212,7 @@ update_workstream(id, status?, next_action?, blockers?) → 手动更新
 | 创建时机 | Stop hook（复用 summary AI 调用） | 不增加额外 AI 调用成本 |
 | 匹配策略 | FTS5 语义匹配已有 workstream | 避免重复创建；允许跨 session 关联 |
 | 关联粒度 | 1 workstream : N sessions | 一个任务可能跨多个 session |
-| 自动关闭 | 7d→paused, 30d→abandoned | 避免 stale workstream 堆积 |
+| 自动关闭 | 14d→paused, 30d→abandoned | 避免 stale workstream 堆积 |
 | 存储位置 | 同一个 remem.db | 不引入新的存储依赖 |
 
 ## 参考资料

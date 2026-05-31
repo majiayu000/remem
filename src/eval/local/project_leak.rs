@@ -95,6 +95,7 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'active',
                 scope TEXT NOT NULL DEFAULT 'project',
                 branch TEXT,
+                expires_at_epoch INTEGER,
                 updated_at_epoch INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE entities (

@@ -11,6 +11,7 @@ pub(super) fn setup_entity_schema(conn: &Connection) {
             branch TEXT,
             status TEXT NOT NULL DEFAULT 'active',
             scope TEXT NOT NULL DEFAULT 'project',
+            expires_at_epoch INTEGER,
             updated_at_epoch INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE entities (

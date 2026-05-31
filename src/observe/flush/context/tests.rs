@@ -49,7 +49,8 @@ fn setup_existing_context_schema(conn: &Connection) -> Result<()> {
             updated_at_epoch INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
             branch TEXT,
-            scope TEXT DEFAULT 'project'
+            scope TEXT DEFAULT 'project',
+            expires_at_epoch INTEGER
         );",
     )?;
     Ok(())

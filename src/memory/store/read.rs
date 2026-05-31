@@ -18,7 +18,11 @@ pub fn get_recent_memories_excluding_types(
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
     idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
-    conditions.push(crate::memory::memory_status_filter_sql("status", false));
+    conditions.push(crate::memory::memory_current_filter_sql(
+        "status",
+        "expires_at_epoch",
+        false,
+    ));
 
     if !excluded_types.is_empty() {
         let placeholders: Vec<String> = excluded_types
@@ -61,7 +65,11 @@ pub fn get_recent_project_memories_excluding_types(
     params.push(Box::new(project.to_string()));
     idx += 1;
     conditions.push("COALESCE(scope, 'project') != 'global'".to_string());
-    conditions.push(crate::memory::memory_status_filter_sql("status", false));
+    conditions.push(crate::memory::memory_current_filter_sql(
+        "status",
+        "expires_at_epoch",
+        false,
+    ));
 
     if !excluded_types.is_empty() {
         let placeholders: Vec<String> = excluded_types
@@ -109,7 +117,11 @@ pub fn search_project_memories_excluding_types(
     params.push(Box::new(project.to_string()));
     idx += 1;
     conditions.push("COALESCE(scope, 'project') != 'global'".to_string());
-    conditions.push(crate::memory::memory_status_filter_sql("status", false));
+    conditions.push(crate::memory::memory_current_filter_sql(
+        "status",
+        "expires_at_epoch",
+        false,
+    ));
 
     let like_pattern = format!("%{query}%");
     conditions.push(format!("(title LIKE ?{idx} OR content LIKE ?{idx})"));
@@ -167,8 +179,9 @@ pub fn list_memories(
     let mut idx = 1;
     idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
 
-    conditions.push(crate::memory::memory_status_filter_sql(
+    conditions.push(crate::memory::memory_current_filter_sql(
         "status",
+        "expires_at_epoch",
         include_inactive,
     ));
     if let Some(memory_type) = memory_type {

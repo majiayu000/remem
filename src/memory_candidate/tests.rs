@@ -5,6 +5,8 @@ use crate::db::{self, record_captured_event, CaptureEventInput, ExtractionTaskKi
 
 use super::{process_with_generator, MemoryCandidateResult};
 
+mod ttl;
+
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");

@@ -30,8 +30,9 @@ pub fn search_by_time_filtered(
     ];
     let mut idx = 3;
 
-    conditions.push(crate::memory::memory_status_filter_sql(
+    conditions.push(crate::memory::memory_current_filter_sql(
         "status",
+        "expires_at_epoch",
         include_inactive,
     ));
     if let Some(project) = project {

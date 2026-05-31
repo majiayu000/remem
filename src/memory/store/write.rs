@@ -68,6 +68,8 @@ pub fn insert_memory_full(
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let created_at = created_at_override.unwrap_or(now);
+    let (expires_at_epoch, valid_from_epoch) =
+        crate::memory::lifecycle::ttl_metadata(memory_type, topic_key, content, now);
     let search_context = build_search_context(memory_type, topic_key, content, files);
     let ownership = default_ownership(project, scope);
 
@@ -88,12 +90,14 @@ pub fn insert_memory_full(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
                      scope = ?8, search_context = ?9, \
-                     source_project = COALESCE(source_project, ?10), \
-                     target_project = COALESCE(target_project, ?11), \
-                     owner_scope = COALESCE(owner_scope, ?12), \
-                     owner_key = COALESCE(owner_key, ?13), \
-                     context_class = COALESCE(context_class, ?14) \
-                     WHERE id = ?15",
+                     status = 'active', valid_to_epoch = NULL, \
+                     expires_at_epoch = ?10, valid_from_epoch = ?11, \
+                     source_project = COALESCE(source_project, ?12), \
+                     target_project = COALESCE(target_project, ?13), \
+                     owner_scope = COALESCE(owner_scope, ?14), \
+                     owner_key = COALESCE(owner_key, ?15), \
+                     context_class = COALESCE(context_class, ?16) \
+                     WHERE id = ?17",
                     params![
                         session_id,
                         title,
@@ -104,6 +108,8 @@ pub fn insert_memory_full(
                         branch,
                         scope,
                         search_context,
+                        expires_at_epoch,
+                        valid_from_epoch,
                         ownership.source_project,
                         ownership.target_project,
                         ownership.owner_scope,
@@ -122,9 +128,10 @@ pub fn insert_memory_full(
         "INSERT INTO memories \
          (session_id, project, topic_key, title, content, memory_type, files, search_context, \
           created_at_epoch, updated_at_epoch, status, branch, scope, \
-          source_project, target_project, owner_scope, owner_key, context_class) \
+          source_project, target_project, owner_scope, owner_key, context_class, \
+          expires_at_epoch, valid_from_epoch) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, \
-                 ?13, ?14, ?15, ?16, ?17)",
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             session_id,
             project,
@@ -142,7 +149,9 @@ pub fn insert_memory_full(
             ownership.target_project,
             ownership.owner_scope,
             ownership.owner_key,
-            ownership.context_class
+            ownership.context_class,
+            expires_at_epoch,
+            valid_from_epoch
         ],
     )?;
     let id = conn.last_insert_rowid();

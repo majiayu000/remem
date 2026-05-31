@@ -16,6 +16,7 @@ pub fn find_matching_workstream(
              WHERE title = ?2 AND status IN ('active', 'paused')
                AND ((owner_scope = 'repo' AND owner_key = ?1)
                     OR (owner_scope = 'repo' AND target_project = ?1)
+                    OR (owner_scope = 'workstream' AND target_project = ?1)
                     OR (owner_scope IS NULL AND project = ?1))",
             params![project, title],
             map_workstream_row,
@@ -33,6 +34,7 @@ pub fn find_matching_workstream(
          WHERE status IN ('active', 'paused')
            AND ((owner_scope = 'repo' AND owner_key = ?1)
                 OR (owner_scope = 'repo' AND target_project = ?1)
+                OR (owner_scope = 'workstream' AND target_project = ?1)
                 OR (owner_scope IS NULL AND project = ?1))
          ORDER BY updated_at_epoch DESC",
     )?;
