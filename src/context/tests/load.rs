@@ -30,6 +30,23 @@ fn load_context_data_logs_primary_memory_query_failures() {
 }
 
 #[test]
+fn load_context_data_records_lesson_query_failures() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    conn.execute("DROP TABLE memory_lessons", []).unwrap();
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy);
+
+    assert!(loaded.lessons.is_empty());
+    assert_eq!(loaded.errors.len(), 1);
+    assert_eq!(loaded.errors[0].section, "lessons");
+    assert!(loaded.errors[0]
+        .message
+        .contains("failed to load lessons for /tmp/remem"));
+}
+
+#[test]
 fn load_context_data_dedupes_generated_topic_keys_by_workstream_context() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);

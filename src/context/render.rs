@@ -18,11 +18,11 @@ use super::sections::{
     render_memory_index_with_limits_excluding, render_recent_sessions_with_limit,
     render_workstreams_with_limits,
 };
-use super::types::ContextRequest;
+use super::types::{ContextLoadError, ContextRequest};
 
-struct RenderedContext {
-    output: String,
-    stats: ContextRenderStats,
+pub(in crate::context) struct RenderedContext {
+    pub(in crate::context) output: String,
+    pub(in crate::context) stats: ContextRenderStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +91,7 @@ fn render_loaded_context_for_eval(
     let (preference_output, _) = render_preferences_to_buffer(conn, project, project, policy)?;
     let mut output = preference_output;
 
+    render_context_load_errors(&mut output, &loaded.errors);
     if !loaded.lessons.is_empty() {
         render_lessons_with_limit(
             &mut output,
@@ -210,7 +211,10 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
     Ok(())
 }
 
-fn render_context_output(request: &ContextRequest, debug: bool) -> Result<RenderedContext> {
+pub(in crate::context) fn render_context_output(
+    request: &ContextRequest,
+    debug: bool,
+) -> Result<RenderedContext> {
     let profile = resolve_profile(request.host);
     let policy = profile.default_policy();
     let conn = match db::open_db() {
@@ -220,14 +224,26 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
                 "context",
                 &format!("open_db failed for project={}: {}", request.project, error),
             );
-            return Ok(RenderedContext {
-                output: empty_context_output(request),
-                stats: empty_stats(request),
-            });
+            let mut output = context_error_output(
+                request,
+                &[ContextLoadError::new(
+                    "database",
+                    format!("failed to open remem database: {error}"),
+                )],
+            );
+            let mut stats = empty_stats(request);
+            stats.total_char_limit = policy.limits.total_char_limit;
+            stats.output_chars = char_len(&output);
+            enforce_total_char_limit_preserving_footer(
+                &mut output,
+                policy.limits.total_char_limit,
+                "",
+            );
+            return Ok(RenderedContext { output, stats });
         }
     };
 
-    let loaded = load_context_data_with_policy(
+    let mut loaded = load_context_data_with_policy(
         &conn,
         &request.project,
         request.current_branch.as_deref(),
@@ -237,7 +253,14 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         match render_preferences_to_buffer(&conn, &request.project, &request.cwd, &policy) {
             Ok(rendered) => rendered,
             Err(error) => {
-                crate::log::warn("context", &format!("render_preferences failed: {}", error));
+                let message = format!(
+                    "failed to render preferences for {}: {error}",
+                    request.project
+                );
+                crate::log::error("context", &message);
+                loaded
+                    .errors
+                    .push(ContextLoadError::new("preferences", message));
                 (
                     String::new(),
                     crate::memory::preference::PreferenceRenderSummary::default(),
@@ -250,6 +273,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         && loaded.lessons.is_empty()
         && loaded.summaries.is_empty()
         && loaded.workstreams.is_empty()
+        && loaded.errors.is_empty()
     {
         return Ok(RenderedContext {
             output: empty_context_output(request),
@@ -271,6 +295,7 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
     }
     output.push('\n');
 
+    render_context_load_errors(&mut output, &loaded.errors);
     let mut stats = ContextRenderStats {
         host: request.host.as_env_value().to_string(),
         branch: request.current_branch.clone(),
@@ -377,6 +402,41 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         &stats_footer,
     );
     Ok(RenderedContext { output, stats })
+}
+
+fn context_error_output(request: &ContextRequest, errors: &[ContextLoadError]) -> String {
+    let mut output = String::new();
+    output.push_str(&build_context_header(
+        &request.project,
+        request.current_branch.as_deref(),
+        request.hook_source.as_deref(),
+    ));
+    if let Some(note) = context_source_note(request.hook_source.as_deref()) {
+        output.push_str(note);
+        output.push('\n');
+    }
+    output.push('\n');
+    render_context_load_errors(&mut output, errors);
+    output
+}
+
+fn render_context_load_errors(output: &mut String, errors: &[ContextLoadError]) {
+    if errors.is_empty() {
+        return;
+    }
+
+    output.push_str("## Context Load Errors\n");
+    for error in errors {
+        output.push_str("- ");
+        output.push_str(error.section);
+        output.push_str(": ");
+        output.push_str(&truncate_chars_with_ellipsis(
+            &error.message.replace('\n', " "),
+            240,
+        ));
+        output.push('\n');
+    }
+    output.push('\n');
 }
 
 pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> String {

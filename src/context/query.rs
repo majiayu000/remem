@@ -8,7 +8,7 @@ use crate::memory::{self, Memory};
 use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
-use super::types::{LoadedContext, SessionSummaryBrief};
+use super::types::{ContextLoadError, LoadedContext, SessionSummaryBrief};
 
 const BASENAME_SEARCH_LIMIT: i64 = 20;
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
@@ -31,6 +31,7 @@ pub(super) fn load_context_data_with_policy(
     current_branch: Option<&str>,
     policy: &ContextPolicy,
 ) -> LoadedContext {
+    let mut errors = Vec::new();
     let memory_selection = load_project_memories(conn, project, current_branch, policy);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
@@ -41,10 +42,9 @@ pub(super) fn load_context_data_with_policy(
         policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit) as i64,
     )
     .unwrap_or_else(|e| {
-        crate::log::error(
-            "context",
-            &format!("failed to load lessons for {project}: {e}"),
-        );
+        let message = format!("failed to load lessons for {project}: {e}");
+        crate::log::error("context", &message);
+        errors.push(ContextLoadError::new("lessons", message));
         Vec::new()
     });
 
@@ -70,6 +70,7 @@ pub(super) fn load_context_data_with_policy(
         lessons,
         summaries,
         workstreams,
+        errors,
         owner_traces: memory_selection.owner_traces,
         owner_counts: memory_selection.owner_counts,
     }

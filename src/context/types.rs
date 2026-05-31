@@ -1,6 +1,7 @@
 use crate::memory::lesson::LessonMemory;
 use crate::memory::Memory;
 use crate::workstream::WorkStream;
+use std::fmt;
 
 use super::host::HostKind;
 use super::ownership::{OwnerCounts, OwnerTrace};
@@ -29,6 +30,22 @@ pub(super) struct LoadedContext {
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
+    pub errors: Vec<ContextLoadError>,
     pub owner_traces: Vec<OwnerTrace>,
     pub owner_counts: OwnerCounts,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ContextLoadError {
+    pub section: &'static str,
+    pub message: String,
+}
+
+impl ContextLoadError {
+    pub(super) fn new(section: &'static str, error: impl fmt::Display) -> Self {
+        Self {
+            section,
+            message: error.to_string(),
+        }
+    }
 }
