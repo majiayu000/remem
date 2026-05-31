@@ -86,7 +86,7 @@ pub fn insert_memory_full(
                 conn.execute(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
-                     scope = ?8, search_context = ?9 WHERE id = ?10",
+                     scope = ?8, search_context = ?9, status = 'active' WHERE id = ?10",
                     params![
                         session_id,
                         title,

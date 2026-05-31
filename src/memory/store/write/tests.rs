@@ -38,6 +38,110 @@ fn test_topic_key_upsert() {
 }
 
 #[test]
+fn test_topic_key_upsert_reactivates_stale_row() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("deploy-runbook"),
+        "Deploy runbook v1",
+        "Old steps.",
+        "procedure",
+        None,
+    )
+    .unwrap();
+
+    // Simulate the row aging out (e.g. via cleanup) into a non-active state.
+    conn.execute(
+        "UPDATE memories SET status = 'stale' WHERE id = ?1",
+        params![id1],
+    )
+    .unwrap();
+
+    // The same topic_key is upserted with fresh content.
+    let id2 = insert_memory(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("deploy-runbook"),
+        "Deploy runbook v2",
+        "New steps after fix.",
+        "procedure",
+        None,
+    )
+    .unwrap();
+    assert_eq!(id1, id2);
+
+    // The row must be reactivated so the updated content is visible again.
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            params![id1],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "active");
+
+    let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].title, "Deploy runbook v2");
+    assert_eq!(memories[0].text, "New steps after fix.");
+}
+
+#[test]
+fn test_topic_key_upsert_reactivates_archived_row() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("api-token-rotation"),
+        "Token rotation v1",
+        "Original notes.",
+        "decision",
+        None,
+    )
+    .unwrap();
+
+    conn.execute(
+        "UPDATE memories SET status = 'archived' WHERE id = ?1",
+        params![id1],
+    )
+    .unwrap();
+
+    let id2 = insert_memory(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("api-token-rotation"),
+        "Token rotation v2",
+        "Rotation now automated.",
+        "decision",
+        None,
+    )
+    .unwrap();
+    assert_eq!(id1, id2);
+
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            params![id1],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "active");
+
+    let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].title, "Token rotation v2");
+}
+
+#[test]
 fn test_created_at_override() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
