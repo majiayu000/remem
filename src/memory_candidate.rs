@@ -371,6 +371,18 @@ fn persist_candidate_rows(
                 summary.promoted += 1;
             }
         } else {
+            crate::log::warn(
+                "memory-candidate",
+                &format!(
+                    "candidate routed to pending_review: id={} type={} scope={} risk={} confidence={:.2} reason={}",
+                    candidate_id,
+                    candidate.memory_type,
+                    candidate.scope,
+                    candidate.risk_class,
+                    candidate.confidence,
+                    auto_promote_block_reason(candidate, auto_promote_batch, &route, &evidence_json)
+                ),
+            );
             summary.pending_review += 1;
         }
     }
@@ -446,6 +458,48 @@ fn has_evidence_ids(evidence_json: &str) -> bool {
     serde_json::from_str::<Vec<i64>>(evidence_json).is_ok_and(|ids| !ids.is_empty())
 }
 
+/// Explain why a candidate did not auto-promote, mirroring the checks in
+/// `should_auto_promote`. Used for observability when a candidate is routed to
+/// pending_review (U-29: a downgrade with user-visible effect must be logged).
+fn auto_promote_block_reason(
+    candidate: &ParsedMemoryCandidate,
+    batch: Option<&ObservationBatch>,
+    route: &CandidateRoute,
+    evidence_json: &str,
+) -> &'static str {
+    if candidate.scope != "project" {
+        return "scope_not_project";
+    }
+    if candidate.risk_class != "low" {
+        return "risk_class_not_low";
+    }
+    if candidate.confidence < AUTO_PROMOTE_MIN_CONFIDENCE {
+        return "confidence_below_threshold";
+    }
+    if !route.is_repo_owned() {
+        return "route_not_repo_owned";
+    }
+    if route.routing_confidence < AUTO_PROMOTE_MIN_CONFIDENCE {
+        return "routing_confidence_below_threshold";
+    }
+    if !has_evidence_ids(evidence_json) {
+        return "missing_evidence_ids";
+    }
+    if !MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote) {
+        return "memory_type_not_auto_promotable";
+    }
+    if contains_auto_promote_unsafe_marker(&candidate.text) {
+        return "contains_unsafe_marker";
+    }
+    let Some(batch) = batch else {
+        return "missing_source_observation_batch";
+    };
+    if !is_supported_by_source_observation(candidate, batch) {
+        return "no_supporting_source_observation";
+    }
+    "unknown"
+}
+
 fn is_supported_by_source_observation(
     candidate: &ParsedMemoryCandidate,
     batch: &ObservationBatch,
@@ -454,9 +508,12 @@ fn is_supported_by_source_observation(
     if candidate_text.chars().count() < 24 {
         return false;
     }
+    let Some(candidate_type) = MemoryType::parse(&candidate.memory_type) else {
+        return false;
+    };
     batch.observations.iter().any(|observation| {
         observation.confidence >= AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
-            && observation.observation_type == candidate.memory_type
+            && candidate_type.supports_observation_type(&observation.observation_type)
             && normalize_evidence_text(&observation.text).contains(&candidate_text)
     })
 }
@@ -515,4 +572,6 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
+#[cfg(test)]
+mod tests_autopromote;
