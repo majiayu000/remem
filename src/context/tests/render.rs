@@ -4,8 +4,8 @@ use crate::workstream::{WorkStream, WorkStreamStatus};
 use super::super::host::HostKind;
 use super::super::policy::ContextLimits;
 use super::super::render::{
-    build_context_header, build_context_stats_footer, empty_context_output, ContextRenderStats,
-    SectionRenderStats,
+    build_context_header, build_context_stats_footer, empty_context_output, render_context_output,
+    ContextRenderStats, SectionRenderStats,
 };
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
@@ -445,6 +445,34 @@ fn empty_context_marks_compact_reload_visibly() {
     assert!(output.contains("[REMEM POST-COMPACT RELOAD]"));
     assert!(output.contains("REMEM_CONTEXT_SOURCE=compact"));
     assert!(output.contains("No previous sessions found."));
+}
+
+#[test]
+fn render_context_output_exposes_lesson_query_failures() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-lesson-error");
+    let conn = crate::db::open_db().unwrap();
+    conn.execute("DROP TABLE memory_lessons", []).unwrap();
+    drop(conn);
+
+    let rendered = render_context_output(
+        &ContextRequest {
+            cwd: "/tmp/remem".to_string(),
+            project: "/tmp/remem".to_string(),
+            session_id: None,
+            hook_source: Some("session_start".to_string()),
+            current_branch: Some("main".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+        },
+        false,
+    )
+    .unwrap();
+
+    assert!(rendered.output.contains("## Context Load Errors"));
+    assert!(rendered
+        .output
+        .contains("- lessons: failed to load lessons for /tmp/remem"));
+    assert!(!rendered.output.contains("No previous sessions found."));
 }
 
 fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {
