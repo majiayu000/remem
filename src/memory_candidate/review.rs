@@ -2,8 +2,9 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    normalize_memory_type, normalize_scope, normalize_topic_key, promote_candidate_to_memory,
-    ParsedMemoryCandidate,
+    normalize_memory_type, normalize_scope, normalize_topic_key,
+    promote_candidate_to_memory_with_route, route_candidate, update_candidate_after_lifecycle,
+    CandidateRoute, ParsedMemoryCandidate,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +34,14 @@ pub(crate) struct CandidateEdit {
 struct CandidateRow {
     id: i64,
     project: Option<String>,
+    source_project: Option<String>,
+    target_project: Option<String>,
+    owner_scope: Option<String>,
+    owner_key: Option<String>,
+    topic_domain: Option<String>,
+    routing_confidence: Option<f64>,
+    routing_reason: Option<String>,
+    context_class: Option<String>,
     scope: String,
     memory_type: String,
     topic_key: String,
@@ -54,7 +63,9 @@ pub(crate) fn list_pending(
         let mut stmt = conn.prepare(
             "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
-                    c.review_status, c.created_at_epoch
+                    c.review_status, c.created_at_epoch, c.source_project,
+                    c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
+                    c.routing_confidence, c.routing_reason, c.context_class
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status = 'pending_review'
@@ -70,7 +81,9 @@ pub(crate) fn list_pending(
         let mut stmt = conn.prepare(
             "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
-                    c.review_status, c.created_at_epoch
+                    c.review_status, c.created_at_epoch, c.source_project,
+                    c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
+                    c.routing_confidence, c.routing_reason, c.context_class
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status = 'pending_review'
@@ -162,6 +175,14 @@ impl CandidateRow {
             risk_class: row.get(8)?,
             review_status: row.get(9)?,
             created_at_epoch: row.get(10)?,
+            source_project: row.get(11)?,
+            target_project: row.get(12)?,
+            owner_scope: row.get(13)?,
+            owner_key: row.get(14)?,
+            topic_domain: row.get(15)?,
+            routing_confidence: row.get(16)?,
+            routing_reason: row.get(17)?,
+            context_class: row.get(18)?,
         })
     }
 
@@ -211,13 +232,49 @@ impl CandidateRow {
             risk_class: self.risk_class.clone(),
         })
     }
+
+    fn route_for(&self, candidate: &ParsedMemoryCandidate) -> CandidateRoute {
+        match (
+            self.owner_scope.as_ref(),
+            self.owner_key.as_ref(),
+            self.routing_confidence,
+            self.routing_reason.as_ref(),
+            self.context_class.as_ref(),
+        ) {
+            (
+                Some(owner_scope),
+                Some(owner_key),
+                Some(routing_confidence),
+                Some(routing_reason),
+                Some(context_class),
+            ) => CandidateRoute {
+                owner_scope: owner_scope.clone(),
+                owner_key: owner_key.clone(),
+                target_project: self.target_project.clone(),
+                topic_domain: self.topic_domain.clone(),
+                routing_confidence,
+                routing_reason: routing_reason.clone(),
+                context_class: context_class.clone(),
+            },
+            _ => {
+                let project = self
+                    .source_project
+                    .as_deref()
+                    .or(self.project.as_deref())
+                    .unwrap_or("<unknown>");
+                route_candidate(project, None, candidate, std::iter::empty())
+            }
+        }
+    }
 }
 
 fn load_candidate(conn: &Connection, id: i64) -> Result<Option<CandidateRow>> {
     conn.query_row(
         "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
                 c.text, c.evidence_event_ids, c.confidence, c.risk_class,
-                c.review_status, c.created_at_epoch
+                c.review_status, c.created_at_epoch, c.source_project,
+                c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
+                c.routing_confidence, c.routing_reason, c.context_class
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.id = ?1",
@@ -246,39 +303,35 @@ fn promote_row(
     edited: Option<&ParsedMemoryCandidate>,
 ) -> Result<i64> {
     let project = row
-        .project
+        .source_project
         .as_deref()
-        .context("candidate is missing project path")?;
+        .or(row.project.as_deref())
+        .context("candidate is missing source project path")?;
     let candidate = edited.cloned().unwrap_or_else(|| row.as_candidate());
-    let memory_id = promote_candidate_to_memory(
+    let route = if edited.is_some() {
+        route_candidate(project, None, &candidate, std::iter::empty())
+    } else {
+        row.route_for(&candidate)
+    };
+    let outcome = promote_candidate_to_memory_with_route(
         conn,
         None,
         project,
         row.id,
         &candidate,
         &row.evidence_event_ids,
+        &route,
     )?;
+    let status = outcome.review_status_for(review_status);
     let now = chrono::Utc::now().timestamp();
+    update_candidate_after_lifecycle(conn, row.id, &candidate, &route, status)?;
     conn.execute(
-        "UPDATE memory_candidates
-         SET scope = ?1,
-             memory_type = ?2,
-             topic_key = ?3,
-             text = ?4,
-             review_status = ?5,
-             updated_at_epoch = ?6
-         WHERE id = ?7",
-        params![
-            candidate.scope,
-            candidate.memory_type,
-            candidate.topic_key,
-            candidate.text,
-            review_status,
-            now,
-            row.id
-        ],
+        "UPDATE memory_candidates SET updated_at_epoch = ?1 WHERE id = ?2",
+        params![now, row.id],
     )?;
-    Ok(memory_id)
+    outcome
+        .memory_id
+        .context("candidate promotion produced no memory id")
 }
 
 fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String>> {
@@ -446,6 +499,58 @@ mod tests {
     }
 
     #[test]
+    fn review_approve_lesson_candidate_supersedes_old_lesson() -> Result<()> {
+        let mut conn = setup_conn();
+        let old_id = crate::memory::lesson::save_lesson(
+            &conn,
+            &crate::memory::lesson::SaveLessonRequest {
+                session_id: None,
+                project: "/tmp/remem",
+                topic_key: Some("review-lesson-update"),
+                title: "Old lesson",
+                content: "Old lesson content",
+                confidence: 0.8,
+                source_evidence: None,
+                files: None,
+                branch: None,
+                scope: "project",
+                created_at_epoch: None,
+                stale_after_epoch: None,
+            },
+        )?;
+        let id = insert_pending_candidate_with_scope_and_type(
+            &mut conn,
+            "review-lesson-update",
+            "Updated lesson content",
+            "project",
+            "lesson",
+        )?;
+
+        let new_id = approve_candidate(&mut conn, id)?.expect("candidate should approve");
+
+        let old_status: String = conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            params![old_id],
+            |row| row.get(0),
+        )?;
+        let (content, metadata_count): (String, i64) = conn.query_row(
+            "SELECT m.content, COUNT(l.memory_id)
+             FROM memories m
+             LEFT JOIN memory_lessons l ON l.memory_id = m.id
+             WHERE m.id = ?1",
+            params![new_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let memory_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+        assert_eq!(old_status, "stale");
+        assert_eq!(content, "Updated lesson content");
+        assert_eq!(metadata_count, 1);
+        assert_eq!(memory_count, 2);
+        Ok(())
+    }
+
+    #[test]
     fn review_discard_marks_candidate_without_deleting_evidence() -> Result<()> {
         let mut conn = setup_conn();
         let id = insert_pending_candidate(&mut conn, "review-discard", "Discard this memory")?;
@@ -514,9 +619,9 @@ mod tests {
     }
 
     #[test]
-    fn review_approve_updates_duplicate_topic_memory() -> Result<()> {
+    fn review_approve_supersedes_duplicate_topic_memory() -> Result<()> {
         let mut conn = setup_conn();
-        crate::memory::insert_memory_full(
+        let old_id = crate::memory::insert_memory_full(
             &conn,
             None,
             "/tmp/remem",
@@ -535,13 +640,22 @@ mod tests {
 
         let memory_count: i64 =
             conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
-        let content: String = conn.query_row(
-            "SELECT content FROM memories WHERE topic_key = 'review-dup'",
+        let (content, owner_scope, owner_key): (String, String, String) = conn.query_row(
+            "SELECT content, owner_scope, owner_key FROM memories
+             WHERE topic_key = 'review-dup' AND status = 'active'",
             [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let old_status: String = conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            params![old_id],
             |row| row.get(0),
         )?;
-        assert_eq!(memory_count, 1);
+        assert_eq!(memory_count, 2);
         assert_eq!(content, "Updated memory");
+        assert_eq!(old_status, "stale");
+        assert_eq!(owner_scope, "repo");
+        assert_eq!(owner_key, "/tmp/remem");
         Ok(())
     }
 
