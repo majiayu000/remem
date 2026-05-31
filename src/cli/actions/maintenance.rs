@@ -47,10 +47,20 @@ pub(in crate::cli) fn run_encrypt() -> Result<()> {
     println!("Key saved to {}", key_path.display());
 
     println!("Encrypting database (this may take a moment)...");
-    db::encrypt_database(&key)?;
+    if db::db_path().exists() {
+        db::encrypt_database(&key)?;
+    } else {
+        let _conn = db::open_db()?;
+        println!(
+            "Initialized encrypted database at {}",
+            db::db_path().display()
+        );
+    }
 
     println!("Done. Database is now encrypted with SQLCipher.");
-    println!("Backup saved as remem.db.bak");
+    if db::db_path().with_extension("db.bak").exists() {
+        println!("Backup saved as remem.db.bak");
+    }
     Ok(())
 }
 
@@ -230,12 +240,33 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
     use crate::memory::governance::{GovernMemoryResult, GovernedMemory};
 
     #[test]
     fn parse_governance_id_text_accepts_commas_and_whitespace() -> Result<()> {
         let ids = parse_governance_id_text("1, 2\n3\t4")?;
         assert_eq!(ids, vec![1, 2, 3, 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn run_encrypt_initializes_missing_database() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("encrypt-empty");
+        std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+
+        run_encrypt()?;
+
+        assert!(test_dir.path.join(".key").exists());
+        assert!(test_dir.db_path().exists());
+        let header = std::fs::read(test_dir.db_path())?;
+        assert_ne!(&header[..16], b"SQLite format 3\0");
+
+        let conn = rusqlite::Connection::open(test_dir.db_path())?;
+        crate::db::apply_cipher_key_if_available(&conn)?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| row.get(0))?;
+        assert!(count > 0);
         Ok(())
     }
 

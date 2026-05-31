@@ -1,7 +1,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-pub(super) fn load_cipher_key() -> Option<String> {
+pub(crate) const ALLOW_PLAINTEXT_ENV: &str = "REMEM_ALLOW_PLAINTEXT_DB";
+
+pub(crate) fn load_cipher_key() -> Option<String> {
     if let Ok(key) = std::env::var("REMEM_CIPHER_KEY") {
         if !key.is_empty() {
             return Some(key);
@@ -18,6 +20,36 @@ pub(super) fn load_cipher_key() -> Option<String> {
         }
     }
     None
+}
+
+pub(crate) fn plaintext_db_allowed() -> bool {
+    std::env::var(ALLOW_PLAINTEXT_ENV).as_deref() == Ok("1")
+}
+
+pub(crate) fn require_cipher_key_or_plaintext_override() -> Result<Option<String>> {
+    let key = load_cipher_key();
+    if key.is_none() && !plaintext_db_allowed() {
+        anyhow::bail!(
+            "refusing to open remem database without a SQLCipher key; run `remem encrypt` to create a key and encrypted database, or set {ALLOW_PLAINTEXT_ENV}=1 to explicitly allow an unencrypted database"
+        );
+    }
+    Ok(key)
+}
+
+pub(crate) fn configure_cipher(conn: &Connection, key: Option<&str>) -> Result<bool> {
+    if let Some(key) = key {
+        conn.pragma_update(None, "key", key)?;
+        if !can_read_schema(conn) {
+            anyhow::bail!("SQLCipher key was applied but the database schema is unreadable");
+        }
+        return Ok(true);
+    }
+
+    crate::log::error(
+        "db",
+        &format!("opening unencrypted remem database because {ALLOW_PLAINTEXT_ENV}=1 is set"),
+    );
+    Ok(false)
 }
 
 pub(crate) fn apply_cipher_key_if_available(conn: &Connection) -> Result<bool> {
@@ -180,6 +212,45 @@ pub fn encrypt_database(key: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
+
+    #[test]
+    fn open_db_refuses_plaintext_without_explicit_override() {
+        let test_dir = ScopedTestDataDir::new("cipher-fail-closed");
+        std::env::remove_var(ALLOW_PLAINTEXT_ENV);
+
+        let err = match crate::db::open_db() {
+            Ok(_) => panic!("open_db must fail closed without a cipher key"),
+            Err(err) => err,
+        };
+
+        let message = err.to_string();
+        assert!(message.contains("SQLCipher key"), "got: {message}");
+        assert!(
+            message.contains(ALLOW_PLAINTEXT_ENV),
+            "override must be explicit: {message}"
+        );
+        assert!(
+            !test_dir.db_path().exists(),
+            "fail-closed path must not create a plaintext database"
+        );
+    }
+
+    #[test]
+    fn open_db_allows_plaintext_only_with_explicit_override() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("cipher-plaintext-override");
+
+        let conn = crate::db::open_db()?;
+        let table_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| row.get(0))?;
+        assert!(table_count > 0);
+        drop(conn);
+
+        let header = std::fs::read(test_dir.db_path())?;
+        assert_eq!(&header[..16], b"SQLite format 3\0");
+        let log = std::fs::read_to_string(test_dir.path.join("remem.log"))?;
+        assert!(log.contains("opening unencrypted remem database"));
+        Ok(())
+    }
 
     #[test]
     fn generate_cipher_key_writes_64_hex_chars() -> Result<()> {

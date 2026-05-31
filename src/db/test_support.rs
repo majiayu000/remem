@@ -13,6 +13,7 @@ fn env_lock() -> &'static Mutex<()> {
 pub struct ScopedTestDataDir {
     _guard: MutexGuard<'static, ()>,
     previous: Option<OsString>,
+    previous_allow_plaintext: Option<OsString>,
     pub path: PathBuf,
 }
 
@@ -20,6 +21,7 @@ impl ScopedTestDataDir {
     pub fn new(label: &str) -> Self {
         let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("REMEM_DATA_DIR");
+        let previous_allow_plaintext = std::env::var_os("REMEM_ALLOW_PLAINTEXT_DB");
         let unique = format!(
             "remem-test-{}-{}-{}",
             label,
@@ -32,9 +34,11 @@ impl ScopedTestDataDir {
         let path = std::env::temp_dir().join(unique);
         let _ = std::fs::remove_dir_all(&path);
         std::env::set_var("REMEM_DATA_DIR", &path);
+        std::env::set_var("REMEM_ALLOW_PLAINTEXT_DB", "1");
         Self {
             _guard: guard,
             previous,
+            previous_allow_plaintext,
             path,
         }
     }
@@ -59,6 +63,11 @@ impl Drop for ScopedTestDataDir {
             std::env::set_var("REMEM_DATA_DIR", previous);
         } else {
             std::env::remove_var("REMEM_DATA_DIR");
+        }
+        if let Some(previous) = self.previous_allow_plaintext.as_ref() {
+            std::env::set_var("REMEM_ALLOW_PLAINTEXT_DB", previous);
+        } else {
+            std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
         }
         let _ = std::fs::remove_dir_all(&self.path);
     }

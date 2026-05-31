@@ -11,7 +11,18 @@ pub(super) fn check_schema_migration() -> Check {
         };
     }
 
-    let real_conn = match rusqlite::Connection::open(&db_path) {
+    let key = match db::require_cipher_key_or_plaintext_override() {
+        Ok(key) => key,
+        Err(err) => {
+            return Check {
+                name: "Schema",
+                status: Status::Fail,
+                detail: format!("cannot open DB: {}", err),
+            };
+        }
+    };
+
+    let real_conn = match db::open_configured_connection(&db_path, key.as_deref()) {
         Ok(conn) => conn,
         Err(err) => {
             return Check {
@@ -21,14 +32,6 @@ pub(super) fn check_schema_migration() -> Check {
             };
         }
     };
-    if let Err(err) = real_conn.execute_batch("PRAGMA busy_timeout=5000;") {
-        return Check {
-            name: "Schema",
-            status: Status::Fail,
-            detail: format!("cannot set busy_timeout: {}", err),
-        };
-    }
-
     match crate::migrate::dry_run_pending(&real_conn) {
         Ok(result) => {
             if let Some(err) = result.error {
