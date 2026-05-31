@@ -1,9 +1,6 @@
 use crate::db::test_support::ScopedTestDataDir;
 
-use super::{
-    event_summary, parse_tool_hook, pending_tool_input, pending_tool_response,
-    should_skip_bash_command, should_skip_tool,
-};
+use super::{event_summary, parse_tool_hook, should_skip_bash_command, should_skip_tool};
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
     let log_path = scoped.path.join("remem.log");
@@ -145,49 +142,4 @@ fn noisy_commands_still_skip() {
     assert!(should_skip_bash_command("ps aux | grep remem"));
     assert!(should_skip_bash_command("rg event_summary"));
     assert!(should_skip_bash_command("find . -name '*.rs'"));
-}
-
-#[test]
-fn discovery_pending_payload_keeps_bounded_metadata_not_raw_output() {
-    let input = Some(serde_json::json!({"command": "rg -n sk-secret src/adapter"}));
-    let long_stdout = format!(
-        "src/a.rs:1:{}\n{}",
-        "A".repeat(64),
-        "src/b.rs:2:".repeat(200)
-    );
-    let response = Some(serde_json::json!({
-        "exitCode": 0,
-        "stdout": long_stdout,
-        "stderr": format!("warning token sk-{} {}", "x".repeat(80), "E".repeat(600))
-    }));
-
-    let tool_input = pending_tool_input("Bash", &input).expect("input payload");
-    assert!(tool_input.contains("[REDACTED]"));
-    assert!(!tool_input.contains("sk-secret"));
-
-    let tool_response = pending_tool_response("Bash", &input, &response).expect("response payload");
-    assert!(tool_response.contains("bounded_search_metadata"));
-    assert!(tool_response.contains("stdout_bytes"));
-    assert!(tool_response.contains("stderr_preview"));
-    assert!(!tool_response.contains("src/a.rs:1"));
-    assert!(!tool_response.contains(&"E".repeat(300)));
-    assert!(!tool_response.contains("sk-"));
-}
-
-#[test]
-fn grep_glob_pending_payload_uses_metadata_only_response() {
-    let input = Some(serde_json::json!({"pattern": "session_id", "path": "src"}));
-    let response = Some(serde_json::json!({
-        "files": ["src/adapter/common.rs", "src/observe/hook.rs"],
-        "output": "src/adapter/common.rs: session_id\nsrc/observe/hook.rs: session_id"
-    }));
-
-    let tool_input = pending_tool_input("Grep", &input).expect("grep input payload");
-    assert!(tool_input.contains("session_id"));
-    assert!(tool_input.contains("src"));
-
-    let tool_response = pending_tool_response("Grep", &input, &response).expect("grep response");
-    assert!(tool_response.contains("files_count"));
-    assert!(tool_response.contains("output_bytes"));
-    assert!(!tool_response.contains("src/adapter/common.rs: session_id"));
 }

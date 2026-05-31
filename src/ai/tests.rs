@@ -142,12 +142,11 @@ fn estimate_cost_usd_charges_cache_and_reasoning_separately() {
 }
 
 #[test]
-fn codex_summary_executor_falls_back_for_flush_operations() {
+fn codex_summary_executor_applies_to_extraction_operations() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", None),
             ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
-            ("REMEM_FLUSH_EXECUTOR", None),
             ("REMEM_COMPRESS_EXECUTOR", None),
             ("REMEM_DREAM_EXECUTOR", None),
         ],
@@ -168,51 +167,17 @@ fn codex_summary_executor_falls_back_for_flush_operations() {
                 executor_for_operation("memory_candidate"),
                 Some(AiExecutor::CodexCli)
             );
-            assert_eq!(executor_for_operation("flush"), Some(AiExecutor::CodexCli));
-            assert_eq!(
-                executor_for_operation("flush-task"),
-                Some(AiExecutor::CodexCli)
-            );
             assert_eq!(executor_for_operation("compress"), None);
         },
     );
 }
 
 #[test]
-fn explicit_flush_executor_override_wins_over_codex_fallback() {
-    with_env_vars(
-        &[
-            ("REMEM_EXECUTOR", Some("claude-cli")),
-            ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
-            ("REMEM_FLUSH_EXECUTOR", Some("http")),
-            ("REMEM_COMPRESS_EXECUTOR", None),
-            ("REMEM_DREAM_EXECUTOR", None),
-        ],
-        || {
-            assert_eq!(
-                executor_for_operation("summarize"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(
-                executor_for_operation("session_rollup"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(executor_for_operation("flush"), Some(AiExecutor::Http));
-            assert_eq!(executor_for_operation("flush-task"), Some(AiExecutor::Http));
-            assert_eq!(executor_for_operation("compress"), None);
-            assert_eq!(executor_for_operation("dream"), None);
-            assert_eq!(executor_for_operation("other"), Some(AiExecutor::ClaudeCli));
-        },
-    );
-}
-
-#[test]
-fn claude_summary_executor_does_not_broaden_flush_resolution() {
+fn claude_summary_executor_applies_to_extraction_operations() {
     with_env_vars(
         &[
             ("REMEM_EXECUTOR", None),
             ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
-            ("REMEM_FLUSH_EXECUTOR", None),
             ("REMEM_COMPRESS_EXECUTOR", None),
             ("REMEM_DREAM_EXECUTOR", None),
         ],
@@ -225,8 +190,10 @@ fn claude_summary_executor_does_not_broaden_flush_resolution() {
                 executor_for_operation("session_rollup"),
                 Some(AiExecutor::ClaudeCli)
             );
-            assert_eq!(executor_for_operation("flush"), None);
-            assert_eq!(executor_for_operation("flush-task"), None);
+            assert_eq!(
+                executor_for_operation("observation_extract"),
+                Some(AiExecutor::ClaudeCli)
+            );
         },
     );
 }
@@ -237,7 +204,6 @@ fn legacy_global_executor_applies_to_extraction_operations() {
         &[
             ("REMEM_EXECUTOR", Some("codex-cli")),
             ("REMEM_SUMMARY_EXECUTOR", None),
-            ("REMEM_FLUSH_EXECUTOR", None),
             ("REMEM_COMPRESS_EXECUTOR", None),
             ("REMEM_DREAM_EXECUTOR", None),
         ],
@@ -250,8 +216,6 @@ fn legacy_global_executor_applies_to_extraction_operations() {
                 executor_for_operation("session_rollup"),
                 Some(AiExecutor::CodexCli)
             );
-            assert_eq!(executor_for_operation("flush"), None);
-            assert_eq!(executor_for_operation("flush-task"), None);
             assert_eq!(executor_for_operation("compress"), None);
             assert_eq!(executor_for_operation("dream"), None);
         },
