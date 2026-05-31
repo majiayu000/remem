@@ -332,6 +332,137 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
 }
 
 #[test]
+fn cli_parses_scope_cleanup_commands() {
+    let audit = Cli::parse_from([
+        "remem",
+        "audit-scope",
+        "--project",
+        "/tmp/stash",
+        "--limit",
+        "25",
+        "--json",
+    ]);
+    match audit.command {
+        Commands::AuditScope {
+            project,
+            limit,
+            json,
+        } => {
+            assert_eq!(project.as_deref(), Some("/tmp/stash"));
+            assert_eq!(limit, 25);
+            assert!(json);
+        }
+        _ => panic!("expected audit-scope command"),
+    }
+
+    let reroute = Cli::parse_from([
+        "remem",
+        "reroute",
+        "--refs",
+        "memory:1010,memory:1011",
+        "--ids",
+        "42,43",
+        "--owner-scope",
+        "tool",
+        "--owner-key",
+        "codex-cli",
+        "--clear-target-project",
+        "--topic-domain",
+        "codex-sandbox",
+        "--context-class",
+        "search_only",
+        "--confidence",
+        "0.99",
+        "--reason",
+        "Stash cleanup",
+        "--confirm",
+        "--json",
+    ]);
+    match reroute.command {
+        Commands::Reroute {
+            refs,
+            ids,
+            owner_scope,
+            owner_key,
+            target_project,
+            clear_target_project,
+            topic_domain,
+            context_class,
+            confidence,
+            reason,
+            confirm,
+            dry_run,
+            json,
+        } => {
+            assert_eq!(refs, vec!["memory:1010", "memory:1011"]);
+            assert_eq!(ids, vec![42, 43]);
+            assert_eq!(owner_scope, "tool");
+            assert_eq!(owner_key, "codex-cli");
+            assert!(target_project.is_none());
+            assert!(clear_target_project);
+            assert_eq!(topic_domain.as_deref(), Some("codex-sandbox"));
+            assert_eq!(context_class.as_deref(), Some("search_only"));
+            assert_eq!(confidence, Some(0.99));
+            assert_eq!(reason.as_deref(), Some("Stash cleanup"));
+            assert!(confirm);
+            assert!(!dry_run);
+            assert!(json);
+        }
+        _ => panic!("expected reroute command"),
+    }
+
+    let archive = Cli::parse_from([
+        "remem",
+        "archive",
+        "--refs",
+        "memory:1040",
+        "workstream:2010",
+        "--reason",
+        "expired",
+    ]);
+    match archive.command {
+        Commands::Archive {
+            refs,
+            ids,
+            reason,
+            confirm,
+            dry_run,
+            json,
+        } => {
+            assert_eq!(refs, vec!["memory:1040", "workstream:2010"]);
+            assert!(ids.is_empty());
+            assert_eq!(reason.as_deref(), Some("expired"));
+            assert!(!confirm);
+            assert!(!dry_run);
+            assert!(!json);
+        }
+        _ => panic!("expected archive command"),
+    }
+
+    let merge = Cli::parse_from([
+        "remem",
+        "merge-preferences",
+        "--project",
+        "/tmp/stash",
+        "--dry-run",
+    ]);
+    match merge.command {
+        Commands::MergePreferences {
+            project,
+            dry_run,
+            confirm,
+            json,
+        } => {
+            assert_eq!(project.as_deref(), Some("/tmp/stash"));
+            assert!(dry_run);
+            assert!(!confirm);
+            assert!(!json);
+        }
+        _ => panic!("expected merge-preferences command"),
+    }
+}
+
+#[test]
 fn cli_parses_usage_options() {
     let cli = Cli::parse_from([
         "remem",

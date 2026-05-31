@@ -3,9 +3,10 @@ use anyhow::Result;
 use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
-    run_admin, run_backfill_entities, run_cleanup, run_commit, run_dream, run_encrypt, run_eval,
-    run_eval_e2e, run_eval_local, run_governance, run_import, run_pending, run_preferences,
-    run_review, run_search, run_show, run_status, run_usage, run_why, GovernanceCliRequest,
+    run_admin, run_archive, run_audit_scope, run_backfill_entities, run_cleanup, run_commit,
+    run_dream, run_encrypt, run_eval, run_eval_e2e, run_eval_local, run_governance, run_import,
+    run_merge_preferences, run_pending, run_preferences, run_reroute, run_review, run_search,
+    run_show, run_status, run_usage, run_why, GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands};
@@ -90,6 +91,54 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             json,
             ids: &ids,
         })?,
+        Commands::AuditScope {
+            project,
+            limit,
+            json,
+        } => run_audit_scope(project.as_deref(), limit, json)?,
+        Commands::Reroute {
+            refs,
+            ids,
+            owner_scope,
+            owner_key,
+            target_project,
+            clear_target_project,
+            topic_domain,
+            context_class,
+            confidence,
+            reason,
+            confirm,
+            dry_run,
+            json,
+        } => run_reroute(RerouteCliRequest {
+            refs: &refs,
+            ids: &ids,
+            owner_scope: &owner_scope,
+            owner_key: &owner_key,
+            target_project: target_project.as_deref(),
+            clear_target_project,
+            topic_domain: topic_domain.as_deref(),
+            context_class: context_class.as_deref(),
+            confidence,
+            reason: reason.as_deref(),
+            confirm,
+            dry_run,
+            json,
+        })?,
+        Commands::Archive {
+            refs,
+            ids,
+            reason,
+            confirm,
+            dry_run,
+            json,
+        } => run_archive(&refs, &ids, reason.as_deref(), confirm, dry_run, json)?,
+        Commands::MergePreferences {
+            project,
+            dry_run,
+            confirm,
+            json,
+        } => run_merge_preferences(project.as_deref(), dry_run, confirm, json)?,
         Commands::Usage {
             project,
             days,
