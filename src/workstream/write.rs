@@ -25,7 +25,12 @@ pub fn upsert_workstream(
         conn.execute(
             "UPDATE workstreams
              SET title = ?1, status = ?2, progress = ?3, next_action = ?4, blockers = ?5,
-                 updated_at_epoch = ?6, completed_at_epoch = COALESCE(?7, completed_at_epoch)
+                 updated_at_epoch = ?6, completed_at_epoch = COALESCE(?7, completed_at_epoch),
+                 source_project = COALESCE(source_project, ?9),
+                 target_project = COALESCE(target_project, ?9),
+                 owner_scope = COALESCE(owner_scope, 'repo'),
+                 owner_key = COALESCE(owner_key, ?9),
+                 context_class = COALESCE(context_class, 'startup_core')
              WHERE id = ?8",
             params![
                 title,
@@ -36,6 +41,7 @@ pub fn upsert_workstream(
                 now,
                 completed_at,
                 existing.id,
+                project,
             ],
         )?;
         existing.id
@@ -43,8 +49,9 @@ pub fn upsert_workstream(
         conn.execute(
             "INSERT INTO workstreams
              (project, title, status, progress, next_action, blockers,
-              created_at_epoch, updated_at_epoch, completed_at_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+              created_at_epoch, updated_at_epoch, completed_at_epoch,
+              source_project, target_project, owner_scope, owner_key, context_class)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?1, ?1, 'repo', ?1, 'startup_core')",
             params![
                 project,
                 title,

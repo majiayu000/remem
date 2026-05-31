@@ -15,7 +15,9 @@ pub fn query_project_preferences(
     let sql = format!(
         "SELECT {} FROM memories \
          WHERE memory_type = 'preference' AND status = 'active' \
-         AND project = ?1 AND (scope IS NULL OR scope = 'project') \
+         AND ((owner_scope = 'repo' AND owner_key = ?1) \
+              OR (owner_scope = 'repo' AND target_project = ?1) \
+              OR (owner_scope IS NULL AND project = ?1 AND (scope IS NULL OR scope = 'project'))) \
          GROUP BY COALESCE(topic_key, id) \
          ORDER BY MAX(updated_at_epoch) DESC LIMIT ?2",
         memory::MEMORY_COLS,
@@ -33,7 +35,8 @@ pub fn query_global_preferences(conn: &Connection, limit: usize) -> Result<Vec<M
     let sql = format!(
         "SELECT {} FROM memories \
          WHERE memory_type = 'preference' AND status = 'active' \
-         AND scope = 'global' \
+         AND ((owner_scope = 'user' AND owner_key = 'user:default') \
+              OR (owner_scope IS NULL AND scope = 'global')) \
          GROUP BY COALESCE(topic_key, id) \
          ORDER BY MAX(updated_at_epoch) DESC LIMIT ?1",
         memory::MEMORY_COLS,

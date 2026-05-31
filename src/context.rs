@@ -4,6 +4,7 @@ mod host;
 mod injection_gate;
 mod invocation;
 mod memory_traits;
+mod ownership;
 mod policy;
 mod query;
 mod render;

@@ -115,7 +115,18 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             updated_at_epoch INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
             branch TEXT,
-            scope TEXT DEFAULT 'project'
+            scope TEXT DEFAULT 'project',
+            source_project TEXT,
+            target_project TEXT,
+            owner_scope TEXT,
+            owner_key TEXT,
+            topic_domain TEXT,
+            routing_confidence REAL,
+            routing_reason TEXT,
+            context_class TEXT,
+            expires_at_epoch INTEGER,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -204,7 +215,18 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             preferences TEXT,
             branch TEXT,
             created_at_epoch INTEGER NOT NULL,
-            usage_tokens INTEGER DEFAULT 0
+            usage_tokens INTEGER DEFAULT 0,
+            source_project TEXT,
+            target_project TEXT,
+            owner_scope TEXT,
+            owner_key TEXT,
+            topic_domain TEXT,
+            routing_confidence REAL,
+            routing_reason TEXT,
+            context_class TEXT,
+            expires_at_epoch INTEGER,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS pending_observations (
@@ -261,7 +283,18 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             next_action TEXT,
             blockers TEXT,
             created_at_epoch INTEGER NOT NULL,
-            updated_at_epoch INTEGER NOT NULL
+            updated_at_epoch INTEGER NOT NULL,
+            source_project TEXT,
+            target_project TEXT,
+            owner_scope TEXT,
+            owner_key TEXT,
+            topic_domain TEXT,
+            routing_confidence REAL,
+            routing_reason TEXT,
+            context_class TEXT,
+            expires_at_epoch INTEGER,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
         );
         CREATE TABLE IF NOT EXISTS entities (
             id INTEGER PRIMARY KEY,

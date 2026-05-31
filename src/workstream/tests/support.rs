@@ -13,7 +13,18 @@ pub(super) fn setup_workstream_schema(conn: &Connection) {
             blockers TEXT,
             created_at_epoch INTEGER NOT NULL,
             updated_at_epoch INTEGER NOT NULL,
-            completed_at_epoch INTEGER
+            completed_at_epoch INTEGER,
+            source_project TEXT,
+            target_project TEXT,
+            owner_scope TEXT,
+            owner_key TEXT,
+            topic_domain TEXT,
+            routing_confidence REAL,
+            routing_reason TEXT,
+            context_class TEXT,
+            expires_at_epoch INTEGER,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
         );
         CREATE TABLE workstream_sessions (
             id INTEGER PRIMARY KEY,

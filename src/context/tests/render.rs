@@ -404,6 +404,7 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
             count: 1,
             chars: 80,
         },
+        owner_counts: Default::default(),
         core_ids: vec![1, 2],
         output_chars: 3_200,
         truncated: true,
