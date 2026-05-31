@@ -144,10 +144,7 @@ fn upsert_identity(
     now: i64,
 ) -> Result<IdentityIds> {
     let host_id = upsert_host(conn, normalize_host(input.host)?, now)?;
-    let root_path = input
-        .cwd
-        .map(|cwd| crate::db::canonical_project_path(cwd).display().to_string())
-        .unwrap_or_else(|| input.project.to_string());
+    let root_path = input.project.to_string();
     let git_branch = input.cwd.and_then(crate::db::detect_git_branch);
     let workspace_id = upsert_workspace(conn, &root_path, git_branch.as_deref(), now)?;
     let project_id = upsert_project(conn, workspace_id, input.project, now)?;

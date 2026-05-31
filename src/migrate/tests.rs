@@ -64,11 +64,11 @@ fn full_migration_on_empty_db() -> Result<()> {
     let applied = applied_versions(&conn)?;
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 30);
+    assert_eq!(user_version, 31);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -325,7 +325,7 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 30);
+    assert_eq!(user_version, 31);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -365,7 +365,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 30);
+    assert_eq!(result.current_version, 31);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())
@@ -713,6 +713,190 @@ fn memory_cols_all_present_after_migration() -> Result<()> {
         conn2.prepare(&query2).is_ok(),
         "all MEMORY_COLS must be queryable after v10 upgrade: {:?}",
         expected_cols
+    );
+
+    Ok(())
+}
+
+#[test]
+fn memory_ownership_migration_backfills_legacy_rows() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+
+    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 19) {
+        conn.execute_batch(migration.sql)?;
+    }
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+        );",
+    )?;
+    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 19) {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, ?3)",
+            params![migration.version, migration.name, 1_700_000_000_i64],
+        )?;
+    }
+
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (1, 's1', '/repo', 'repo-fact', 'Repo fact', 'body', 'decision',
+          NULL, 100, 100, 'active', NULL, 'project')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (2, 's1', '/repo', 'global-pref', 'Global pref', 'body', 'preference',
+          NULL, 100, 100, 'active', NULL, 'global')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO workstreams
+         (id, project, title, description, status, progress, next_action, blockers,
+          created_at_epoch, updated_at_epoch, completed_at_epoch)
+         VALUES (1, '/repo', 'Ship feature', NULL, 'active', NULL, NULL, NULL,
+          100, 100, NULL)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO workspaces(id, root_path, git_remote, git_branch, created_at_epoch, updated_at_epoch)
+         VALUES (1, '/repo', NULL, NULL, 100, 100)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO projects(id, workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+         VALUES (1, 1, '/repo', 'repo', 100, 100)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (1, 1, 'project', 'decision', 'candidate-fact', 'body', '[1]',
+          0.9, 'low', 'pending_review', 100, 100)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (id, memory_session_id, project, request, completed, decisions, learned,
+          next_steps, preferences, prompt_number, created_at, created_at_epoch,
+          discovery_tokens, project_id)
+         VALUES (1, 'm1', '/legacy-repo', 'req', 'done', '[]', '[]',
+          '[]', '[]', 1, 'now', 100, 0, 1)",
+        [],
+    )?;
+
+    run_migrations(&conn)?;
+
+    let memory: (String, Option<String>, String, String, String) = conn.query_row(
+        "SELECT source_project, target_project, owner_scope, owner_key, context_class
+         FROM memories WHERE id = 1",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        memory,
+        (
+            "/repo".to_string(),
+            Some("/repo".to_string()),
+            "repo".to_string(),
+            "/repo".to_string(),
+            "startup_core".to_string()
+        )
+    );
+
+    let global: (String, Option<String>, String, String) = conn.query_row(
+        "SELECT source_project, target_project, owner_scope, owner_key
+         FROM memories WHERE id = 2",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        global,
+        (
+            "/repo".to_string(),
+            None,
+            "user".to_string(),
+            "user:default".to_string()
+        )
+    );
+
+    let candidate: (String, Option<String>, String, String) = conn.query_row(
+        "SELECT source_project, target_project, owner_scope, owner_key
+         FROM memory_candidates WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        candidate,
+        (
+            "/repo".to_string(),
+            Some("/repo".to_string()),
+            "repo".to_string(),
+            "/repo".to_string()
+        )
+    );
+
+    let workstream: (String, String, String, String) = conn.query_row(
+        "SELECT source_project, target_project, owner_scope, owner_key
+         FROM workstreams WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        workstream,
+        (
+            "/repo".to_string(),
+            "/repo".to_string(),
+            "repo".to_string(),
+            "/repo".to_string()
+        )
+    );
+
+    let summary: (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = conn.query_row(
+        "SELECT source_project, target_project, owner_scope, owner_key, context_class
+         FROM session_summaries WHERE id = 1",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        summary,
+        (
+            "/repo".to_string(),
+            None,
+            None,
+            None,
+            "search_only".to_string()
+        )
     );
 
     Ok(())

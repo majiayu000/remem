@@ -95,6 +95,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "commit_session_links",
         sql: include_str!("../migrations/v018_commit_session_links.sql"),
     },
+    Migration {
+        version: 19,
+        name: "memory_ownership",
+        sql: include_str!("../migrations/v019_memory_ownership.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
