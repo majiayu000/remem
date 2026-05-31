@@ -1,6 +1,17 @@
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use std::path::{Path, PathBuf};
+
+thread_local! {
+    static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn with_data_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+    let _guard = DataDirOverrideGuard::set(dir.to_path_buf());
+    f()
+}
 
 pub fn deterministic_hash(data: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -37,6 +48,9 @@ pub fn project_from_cwd(cwd: &str) -> String {
 }
 
 pub fn data_dir() -> PathBuf {
+    if let Some(path) = DATA_DIR_OVERRIDE.with(|slot| slot.borrow().clone()) {
+        return path;
+    }
     std::env::var("REMEM_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -100,6 +114,26 @@ pub fn detect_git_branch(cwd: &str) -> Option<String> {
         None
     } else {
         Some(branch)
+    }
+}
+
+struct DataDirOverrideGuard {
+    previous: Option<PathBuf>,
+}
+
+impl DataDirOverrideGuard {
+    fn set(path: PathBuf) -> Self {
+        let previous = DATA_DIR_OVERRIDE.with(|slot| slot.replace(Some(path)));
+        Self { previous }
+    }
+}
+
+impl Drop for DataDirOverrideGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        DATA_DIR_OVERRIDE.with(|slot| {
+            slot.replace(previous);
+        });
     }
 }
 

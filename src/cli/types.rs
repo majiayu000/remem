@@ -338,6 +338,15 @@ pub(super) enum Commands {
         #[arg(long)]
         keep_data_dir: bool,
     },
+    /// Run sandboxed memory governance quality evaluation.
+    EvalGovernance {
+        /// Number of results to evaluate per query.
+        #[arg(long, short = 'k', default_value = "5")]
+        k: usize,
+        /// Emit the evaluation report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run local retrieval diagnostics.
     EvalLocal,
     /// Backfill entity records for existing memories.

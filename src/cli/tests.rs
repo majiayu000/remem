@@ -558,6 +558,19 @@ fn cli_parses_eval_e2e_options() {
 }
 
 #[test]
+fn cli_parses_eval_governance_options() {
+    let cli = Cli::parse_from(["remem", "eval-governance", "--json", "-k", "4"]);
+
+    match cli.command {
+        Commands::EvalGovernance { k, json } => {
+            assert_eq!(k, 4);
+            assert!(json);
+        }
+        _ => panic!("expected eval-governance command"),
+    }
+}
+
+#[test]
 fn cli_parses_pending_short_aliases() {
     let list = Cli::parse_from(["remem", "pending", "list", "--limit", "3"]);
     match list.command {
