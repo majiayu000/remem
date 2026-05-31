@@ -13,7 +13,11 @@ pub fn find_matching_workstream(
             "SELECT id, project, title, description, status, progress, next_action, blockers,
                     created_at_epoch, updated_at_epoch, completed_at_epoch
              FROM workstreams
-             WHERE project = ?1 AND title = ?2 AND status IN ('active', 'paused')",
+             WHERE title = ?2 AND status IN ('active', 'paused')
+               AND ((owner_scope = 'repo' AND owner_key = ?1)
+                    OR (owner_scope = 'repo' AND target_project = ?1)
+                    OR (owner_scope = 'workstream' AND target_project = ?1)
+                    OR (owner_scope IS NULL AND project = ?1))",
             params![project, title],
             map_workstream_row,
         )
@@ -27,7 +31,11 @@ pub fn find_matching_workstream(
         "SELECT id, project, title, description, status, progress, next_action, blockers,
                 created_at_epoch, updated_at_epoch, completed_at_epoch
          FROM workstreams
-         WHERE project = ?1 AND status IN ('active', 'paused')
+         WHERE status IN ('active', 'paused')
+           AND ((owner_scope = 'repo' AND owner_key = ?1)
+                OR (owner_scope = 'repo' AND target_project = ?1)
+                OR (owner_scope = 'workstream' AND target_project = ?1)
+                OR (owner_scope IS NULL AND project = ?1))
          ORDER BY updated_at_epoch DESC",
     )?;
     let rows = stmt.query_map(params![project], map_workstream_row)?;

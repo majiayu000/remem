@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 
 use crate::db;
@@ -8,7 +10,8 @@ use super::injection_gate::{apply_context_gate, ContextGateAction, ContextGateDe
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
-use super::policy::{ContextPolicy, SectionKind};
+use super::ownership::OwnerCounts;
+use super::policy::{ContextLimits, ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
     empty_state_output, render_core_memory_with_limits, render_lessons_with_limit,
@@ -20,6 +23,110 @@ use super::types::ContextRequest;
 struct RenderedContext {
     output: String,
     stats: ContextRenderStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContextEvalSnapshot {
+    pub memory_topic_keys: Vec<String>,
+    pub memory_titles: Vec<String>,
+    pub rendered_output: String,
+    pub total_included: usize,
+    pub safe_owner_included: usize,
+    pub unsafe_owner_included: usize,
+    pub excluded_owner_titles: Vec<String>,
+}
+
+pub(crate) fn governance_eval_snapshot(
+    conn: &rusqlite::Connection,
+    project: &str,
+    current_branch: Option<&str>,
+) -> Result<ContextEvalSnapshot> {
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+    let loaded = load_context_data_with_policy(conn, project, current_branch, &policy);
+    let rendered_output = render_loaded_context_for_eval(conn, project, &policy, &loaded)?;
+    let rendered_memories = loaded
+        .memories
+        .iter()
+        .filter(|memory| rendered_output.contains(&memory.title))
+        .collect::<Vec<_>>();
+    let memory_topic_keys = rendered_memories
+        .iter()
+        .filter_map(|memory| memory.topic_key.clone())
+        .collect::<Vec<_>>();
+    let memory_titles = rendered_memories
+        .iter()
+        .map(|memory| memory.title.clone())
+        .collect::<Vec<_>>();
+    let unsafe_owner_included = loaded
+        .owner_traces
+        .iter()
+        .filter(|trace| trace.included)
+        .filter(|trace| !matches!(trace.owner_scope.as_deref(), Some("repo") | None))
+        .count();
+    let excluded_owner_titles = loaded
+        .owner_traces
+        .iter()
+        .filter(|trace| !trace.included)
+        .map(|trace| trace.title.clone())
+        .collect::<Vec<_>>();
+    let total_included = loaded.memories.len();
+
+    Ok(ContextEvalSnapshot {
+        memory_topic_keys,
+        memory_titles,
+        rendered_output,
+        total_included,
+        safe_owner_included: total_included.saturating_sub(unsafe_owner_included),
+        unsafe_owner_included,
+        excluded_owner_titles,
+    })
+}
+
+fn render_loaded_context_for_eval(
+    conn: &rusqlite::Connection,
+    project: &str,
+    policy: &ContextPolicy,
+    loaded: &super::types::LoadedContext,
+) -> Result<String> {
+    let (preference_output, _) = render_preferences_to_buffer(conn, project, project, policy)?;
+    let mut output = preference_output;
+
+    if !loaded.lessons.is_empty() {
+        render_lessons_with_limit(
+            &mut output,
+            &loaded.lessons,
+            policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
+            policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+        );
+    }
+    if !loaded.memories.is_empty() {
+        let render_limits = section_render_limits(policy);
+        let core_summary =
+            render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
+        let core_ids: HashSet<i64> = core_summary.ids.into_iter().collect();
+        render_memory_index_with_limits_excluding(
+            &mut output,
+            &loaded.memories,
+            &render_limits,
+            &core_ids,
+        );
+    }
+    if !loaded.workstreams.is_empty() {
+        render_workstreams_with_limits(
+            &mut output,
+            &loaded.workstreams,
+            policy.section_item_limit(SectionKind::Workstreams, 5),
+            policy.section_char_limit(SectionKind::Workstreams, 1_200),
+        );
+    }
+    if !loaded.summaries.is_empty() {
+        render_recent_sessions_with_limit(
+            &mut output,
+            &loaded.summaries,
+            policy.section_char_limit(SectionKind::Sessions, 2_200),
+        );
+    }
+    Ok(output)
 }
 
 pub fn generate_context(
@@ -172,6 +279,12 @@ fn render_context_output(request: &ContextRequest, debug: bool) -> Result<Render
         memories_loaded: loaded.memories.len() + loaded.lessons.len(),
         project_preferences: preference_summary.project_rendered,
         global_preferences: preference_summary.global_rendered,
+        owner_counts: {
+            let mut counts = loaded.owner_counts.clone();
+            counts.add_repo(preference_summary.project_rendered);
+            counts.add_user(preference_summary.global_rendered);
+            counts
+        },
         ..ContextRenderStats::default()
     };
 
@@ -336,6 +449,7 @@ pub(in crate::context) struct ContextRenderStats {
     pub global_preferences: usize,
     pub sessions: SectionRenderStats,
     pub workstreams: SectionRenderStats,
+    pub owner_counts: OwnerCounts,
     pub core_ids: Vec<i64>,
     pub output_chars: usize,
     pub truncated: bool,
@@ -346,7 +460,7 @@ pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats)
     let source = context_source_footer(stats.hook_source.as_deref());
     let estimated_tokens = estimate_tokens(stats.output_chars);
     format!(
-        "{} context memories loaded. {} core ({} chars). {} lessons ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). host={} source={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
+        "{} context memories loaded. {} core ({} chars). {} lessons ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). owners repo={} user={} workspace={} tool={} domain={} workstream={} session={} legacy={} unknown={}. host={} source={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
         stats.memories_loaded,
         stats.core.count,
         stats.core.chars,
@@ -360,6 +474,15 @@ pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats)
         stats.preferences.chars,
         stats.sessions.count,
         stats.sessions.chars,
+        stats.owner_counts.repo,
+        stats.owner_counts.user,
+        stats.owner_counts.workspace,
+        stats.owner_counts.tool,
+        stats.owner_counts.domain,
+        stats.owner_counts.workstream,
+        stats.owner_counts.session,
+        stats.owner_counts.legacy,
+        stats.owner_counts.unknown,
         stats.host,
         source,
         branch,
@@ -370,7 +493,7 @@ pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats)
     )
 }
 
-fn build_context_debug_trace(
+pub(in crate::context) fn build_context_debug_trace(
     request: &ContextRequest,
     policy: &ContextPolicy,
     loaded: &super::types::LoadedContext,
@@ -413,6 +536,44 @@ fn build_context_debug_trace(
         "- preferences project_rendered={} global_rendered={} reason=scope_limits_then_claude_md_dedup\n",
         stats.project_preferences, stats.global_preferences
     ));
+    trace.push_str(&format!(
+        "- owner counts repo={} user={} workspace={} tool={} domain={} workstream={} session={} legacy={} unknown={}\n",
+        stats.owner_counts.repo,
+        stats.owner_counts.user,
+        stats.owner_counts.workspace,
+        stats.owner_counts.tool,
+        stats.owner_counts.domain,
+        stats.owner_counts.workstream,
+        stats.owner_counts.session,
+        stats.owner_counts.legacy,
+        stats.owner_counts.unknown
+    ));
+    for trace_row in loaded.owner_traces.iter().take(60) {
+        trace.push_str(&format!(
+            "- owner {} id={} scope={} key={} source_project={} target_project={} domain={} context_class={} {} reason={} title={}\n",
+            trace_row.object_kind,
+            trace_row.id,
+            trace_row.owner_scope.as_deref().unwrap_or("-"),
+            trace_row.owner_key.as_deref().unwrap_or("-"),
+            trace_row.source_project.as_deref().unwrap_or("-"),
+            trace_row.target_project.as_deref().unwrap_or("-"),
+            trace_row.topic_domain.as_deref().unwrap_or("-"),
+            trace_row.context_class.as_deref().unwrap_or("-"),
+            if trace_row.included {
+                "included"
+            } else {
+                "excluded"
+            },
+            trace_row.reason,
+            truncate_chars_with_ellipsis(&trace_row.title, 120)
+        ));
+    }
+    if loaded.owner_traces.len() > 60 {
+        trace.push_str(&format!(
+            "- owner trace truncated: {} additional rows omitted\n",
+            loaded.owner_traces.len() - 60
+        ));
+    }
     for (rank, lesson) in loaded.lessons.iter().enumerate() {
         trace.push_str(&format!(
             "- lesson rank={} id={} confidence={:.2} reinforced={} scope={} topic={} title={}\n",

@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
 
+pub const SHORT_CURRENT_TTL_SECONDS: i64 = 24 * 60 * 60;
+pub const BRANCH_SNAPSHOT_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLifecycleOp {
     Add,
@@ -83,20 +86,21 @@ pub fn apply_update(
     superseded_ids: &[i64],
 ) -> Result<LifecycleOutcome> {
     let tx = conn.unchecked_transaction()?;
-    let memory_id = crate::memory::insert_memory_full(
+    let mut superseded_targets = superseded_ids.to_vec();
+    superseded_targets.extend(find_active_same_state_key(&tx, project, topic_key, scope)?);
+    let memory_id = insert_replacement_memory(
         &tx,
         session_id,
         project,
-        Some(topic_key),
+        topic_key,
         title,
         content,
         memory_type,
         files,
         branch,
         scope,
-        None,
     )?;
-    let superseded = soft_supersede(&tx, project, superseded_ids, Some(memory_id))?;
+    let superseded = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
     tx.commit()?;
     Ok(LifecycleOutcome {
         op: MemoryLifecycleOp::Update,
@@ -127,6 +131,83 @@ pub fn apply_invalidate(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn insert_replacement_memory(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: &str,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+) -> Result<i64> {
+    let now = chrono::Utc::now().timestamp();
+    let (expires_at_epoch, valid_from_epoch) =
+        ttl_metadata(memory_type, Some(topic_key), content, now);
+    let search_context = crate::memory::search_context::build_search_context(
+        memory_type,
+        Some(topic_key),
+        content,
+        files,
+    );
+    let (target_project, owner_scope, owner_key) = if scope == "global" {
+        (None, "user", "user:default")
+    } else {
+        (Some(project), "repo", project)
+    };
+    conn.execute(
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, status, branch, scope,
+          source_project, target_project, owner_scope, owner_key, context_class,
+          expires_at_epoch, valid_from_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                 ?9, ?9, 'active', ?10, ?11,
+                 ?12, ?13, ?14, ?15, 'startup_core',
+                 ?16, ?17)",
+        params![
+            session_id,
+            project,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            files,
+            search_context,
+            now,
+            branch,
+            scope,
+            project,
+            target_project,
+            owner_scope,
+            owner_key,
+            expires_at_epoch,
+            valid_from_epoch
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn find_active_same_state_key(
+    conn: &Connection,
+    project: &str,
+    topic_key: &str,
+    scope: &str,
+) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM memories
+         WHERE project = ?1
+           AND topic_key = ?2
+           AND COALESCE(scope, 'project') = ?3
+           AND status = 'active'",
+    )?;
+    let rows = stmt.query_map(params![project, topic_key, scope], |row| row.get(0))?;
+    crate::db::query::collect_rows(rows)
+}
+
 pub fn noop(reason: impl Into<String>) -> LifecycleOutcome {
     LifecycleOutcome {
         op: MemoryLifecycleOp::Noop,
@@ -147,6 +228,70 @@ pub fn defer(reason: impl Into<String>) -> LifecycleOutcome {
         deferred: true,
         reason: Some(reason.into()),
     }
+}
+
+pub fn default_ttl_seconds(
+    memory_type: &str,
+    topic_key: Option<&str>,
+    content: &str,
+) -> Option<i64> {
+    let topic_key = topic_key.unwrap_or_default().to_ascii_lowercase();
+    let content = content.to_ascii_lowercase();
+
+    if has_any(&topic_key, short_current_needles()) {
+        return Some(SHORT_CURRENT_TTL_SECONDS);
+    }
+
+    if has_any(&topic_key, branch_snapshot_needles()) {
+        return Some(BRANCH_SNAPSHOT_TTL_SECONDS);
+    }
+
+    if durable_type_has_no_content_ttl(memory_type) {
+        return None;
+    }
+
+    if has_any(&content, short_current_needles()) {
+        return Some(SHORT_CURRENT_TTL_SECONDS);
+    }
+
+    if has_any(&content, branch_snapshot_needles()) {
+        return Some(BRANCH_SNAPSHOT_TTL_SECONDS);
+    }
+
+    None
+}
+
+pub fn expires_at_epoch(
+    memory_type: &str,
+    topic_key: Option<&str>,
+    content: &str,
+    now_epoch: i64,
+) -> Option<i64> {
+    default_ttl_seconds(memory_type, topic_key, content).map(|ttl| now_epoch + ttl)
+}
+
+pub fn ttl_metadata(
+    memory_type: &str,
+    topic_key: Option<&str>,
+    content: &str,
+    now_epoch: i64,
+) -> (Option<i64>, Option<i64>) {
+    let expires_at_epoch = expires_at_epoch(memory_type, topic_key, content, now_epoch);
+    let valid_from_epoch = expires_at_epoch.map(|_| now_epoch);
+    (expires_at_epoch, valid_from_epoch)
+}
+
+pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE memories
+         SET status = 'stale',
+             valid_to_epoch = COALESCE(valid_to_epoch, ?1),
+             updated_at_epoch = ?1
+         WHERE status = 'active'
+           AND expires_at_epoch IS NOT NULL
+           AND expires_at_epoch <= ?1",
+        params![now_epoch],
+    )?)
 }
 
 pub fn soft_supersede(
@@ -177,10 +322,14 @@ pub fn soft_supersede(
     }
 
     let mut changed = 0usize;
+    let now = chrono::Utc::now().timestamp();
     for id in targets {
         let updated = conn.execute(
-            "UPDATE memories SET status = 'stale' WHERE id = ?1 AND project = ?2",
-            params![id, project],
+            "UPDATE memories
+             SET status = 'stale',
+                 valid_to_epoch = COALESCE(valid_to_epoch, ?3)
+             WHERE id = ?1 AND project = ?2",
+            params![id, project, now],
         )?;
         if updated != 1 {
             return Err(anyhow!(
@@ -193,6 +342,61 @@ pub fn soft_supersede(
     }
     Ok(changed)
 }
+
+fn has_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn short_current_needles() -> &'static [&'static str] {
+    &[
+        "dev-server",
+        "dev server",
+        "localhost",
+        "127.0.0.1",
+        "port occupied",
+        "port is occupied",
+        "currently running",
+        "server running",
+        "local url",
+        "url healthy",
+        "healthy at",
+        "mergeability",
+        "mergeable",
+        "review status",
+        "review-status",
+        "ci state",
+        "ci status",
+        "ci-status",
+        "github actions",
+        "pull request",
+        "pull-request",
+        "pr #",
+    ]
+}
+
+fn branch_snapshot_needles() -> &'static [&'static str] {
+    &[
+        "git-divergence",
+        "branch-divergence",
+        "branch divergence",
+        "current branch",
+        "git status",
+        "ahead of",
+        "behind origin",
+        "diverged",
+        "dirty worktree",
+    ]
+}
+
+fn durable_type_has_no_content_ttl(memory_type: &str) -> bool {
+    matches!(
+        memory_type,
+        "architecture" | "bugfix" | "lesson" | "preference" | "procedure"
+    )
+}
+
+#[cfg(test)]
+mod ttl_tests;
 
 #[cfg(test)]
 mod tests {

@@ -10,7 +10,12 @@ const SELECT_FIELDS: &str =
 
 pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<WorkStream>> {
     let sql = format!(
-        "{} WHERE project = ?1 AND status IN ('active', 'paused') ORDER BY updated_at_epoch DESC",
+        "{} WHERE status = 'active'
+              AND ((owner_scope = 'repo' AND owner_key = ?1)
+                   OR (owner_scope = 'repo' AND target_project = ?1)
+                   OR (owner_scope = 'workstream' AND target_project = ?1)
+                   OR (owner_scope IS NULL AND project = ?1))
+              ORDER BY updated_at_epoch DESC",
         SELECT_FIELDS
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -26,7 +31,12 @@ pub fn query_workstreams(
     let (sql, filter_val) = if let Some(status) = status_filter {
         (
             format!(
-                "{} WHERE project = ?1 AND status = ?2 ORDER BY updated_at_epoch DESC",
+                "{} WHERE status = ?2
+                      AND ((owner_scope = 'repo' AND owner_key = ?1)
+                           OR (owner_scope = 'repo' AND target_project = ?1)
+                           OR (owner_scope = 'workstream' AND target_project = ?1)
+                           OR (owner_scope IS NULL AND project = ?1))
+                      ORDER BY updated_at_epoch DESC",
                 SELECT_FIELDS
             ),
             Some(status.to_string()),
@@ -34,7 +44,11 @@ pub fn query_workstreams(
     } else {
         (
             format!(
-                "{} WHERE project = ?1 ORDER BY updated_at_epoch DESC",
+                "{} WHERE ((owner_scope = 'repo' AND owner_key = ?1)
+                           OR (owner_scope = 'repo' AND target_project = ?1)
+                           OR (owner_scope = 'workstream' AND target_project = ?1)
+                           OR (owner_scope IS NULL AND project = ?1))
+                      ORDER BY updated_at_epoch DESC",
                 SELECT_FIELDS
             ),
             None,

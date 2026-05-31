@@ -141,3 +141,50 @@ fn test_completed_status() {
     assert_eq!(completed[0].status, WorkStreamStatus::Completed);
     assert!(completed[0].completed_at_epoch.is_some());
 }
+
+#[test]
+fn test_query_active_workstreams_excludes_paused_repo_rows() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT INTO workstreams (project, title, status, created_at_epoch, updated_at_epoch)
+         VALUES
+         ('test/proj', 'Active Task', 'active', ?1, ?1),
+         ('test/proj', 'Paused Task', 'paused', ?1, ?1)",
+        params![now],
+    )
+    .unwrap();
+
+    let active = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].title, "Active Task");
+}
+
+#[test]
+fn test_query_active_workstreams_excludes_tool_domain_owned_rows() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          source_project, target_project, owner_scope, owner_key)
+         VALUES
+         ('test/proj', 'Repo Task', 'active', ?1, ?1, 'test/proj', 'test/proj', 'repo', 'test/proj'),
+         ('test/proj', 'Codex Task', 'active', ?1, ?1, 'test/proj', NULL, 'tool', 'codex-cli'),
+         ('test/proj', 'Grok Task', 'paused', ?1, ?1, 'test/proj', NULL, 'domain', 'grok-api')",
+        params![now],
+    )
+    .unwrap();
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    let titles = workstreams
+        .iter()
+        .map(|workstream| workstream.title.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(titles, vec!["Repo Task"]);
+}

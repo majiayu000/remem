@@ -246,17 +246,20 @@ fn indexes_match_after_upgrade() -> Result<()> {
 /// This catches columns referenced in code but missing from both baseline and backfill.
 #[test]
 fn real_queries_work_on_upgraded_db() -> Result<()> {
-    use crate::memory::types::MEMORY_COLS;
+    use crate::memory::{memory_current_filter_sql, MEMORY_COLS};
 
     let conn = make_upgraded_v10_db()?;
+    let current_filter = memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
 
     // FTS search query (from memory_search/fts.rs)
     let fts_query = format!(
         "SELECT m.{} FROM memories m \
          JOIN memories_fts ON memories_fts.rowid = m.id \
          WHERE memories_fts MATCH 'test' \
+           AND {} \
          ORDER BY bm25(memories_fts, 10.0, 1.0, 3.0) LIMIT 10",
-        MEMORY_COLS.replace(", ", ", m.")
+        MEMORY_COLS.replace(", ", ", m."),
+        current_filter
     );
     assert!(
         conn.prepare(&fts_query).is_ok(),
@@ -264,11 +267,14 @@ fn real_queries_work_on_upgraded_db() -> Result<()> {
     );
 
     // LIKE fallback query (from memory_search/like.rs)
+    let current_filter = memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
     let like_query = format!(
         "SELECT m.{} FROM memories m \
          WHERE m.content LIKE '%test%' \
+           AND {} \
          ORDER BY m.updated_at_epoch DESC LIMIT 10",
-        MEMORY_COLS.replace(", ", ", m.")
+        MEMORY_COLS.replace(", ", ", m."),
+        current_filter
     );
     assert!(
         conn.prepare(&like_query).is_ok(),
@@ -276,11 +282,12 @@ fn real_queries_work_on_upgraded_db() -> Result<()> {
     );
 
     // Scope-aware read query (from memory/store/read.rs)
+    let current_filter = memory_current_filter_sql("status", "expires_at_epoch", false);
     let scope_query = format!(
         "SELECT {} FROM memories \
-         WHERE (project = 'test' OR scope = 'global') AND status = 'active' \
+         WHERE (project = 'test' OR scope = 'global') AND {} \
          ORDER BY updated_at_epoch DESC LIMIT 10",
-        MEMORY_COLS
+        MEMORY_COLS, current_filter
     );
     assert!(
         conn.prepare(&scope_query).is_ok(),

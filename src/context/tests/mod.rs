@@ -3,6 +3,7 @@ use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
 mod load;
+mod ownership;
 mod render;
 mod sessions;
 
@@ -102,6 +103,48 @@ pub(super) fn insert_memory_with_branch(
     .unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn insert_owned_memory(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    topic_key: Option<&str>,
+    memory_type: &str,
+    title: &str,
+    content: &str,
+    updated_at_epoch: i64,
+    owner_scope: &str,
+    owner_key: &str,
+    target_project: Option<&str>,
+    topic_domain: Option<&str>,
+) {
+    insert_memory(
+        conn,
+        id,
+        project,
+        topic_key,
+        memory_type,
+        title,
+        content,
+        updated_at_epoch,
+    );
+    conn.execute(
+        "UPDATE memories
+         SET source_project = ?1, target_project = ?2, owner_scope = ?3,
+             owner_key = ?4, topic_domain = ?5, context_class = 'startup_core'
+         WHERE id = ?6",
+        params![
+            project,
+            target_project,
+            owner_scope,
+            owner_key,
+            topic_domain,
+            id
+        ],
+    )
+    .unwrap();
+}
+
 pub(super) fn insert_global_memory(
     conn: &Connection,
     id: i64,
@@ -151,7 +194,18 @@ pub(super) fn create_session_summary_schema(conn: &Connection) {
             project TEXT,
             request TEXT,
             completed TEXT,
-            created_at_epoch INTEGER
+            created_at_epoch INTEGER,
+            source_project TEXT,
+            target_project TEXT,
+            owner_scope TEXT,
+            owner_key TEXT,
+            topic_domain TEXT,
+            routing_confidence REAL,
+            routing_reason TEXT,
+            context_class TEXT,
+            expires_at_epoch INTEGER,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
         );",
     )
     .unwrap();

@@ -304,7 +304,20 @@ fn persist_candidate_rows(
     let tx = conn.transaction()?;
     let mut summary = CandidatePersistSummary::default();
     for candidate in candidates {
-        if candidate_exists(&tx, source.project_id, candidate)? {
+        let now = chrono::Utc::now().timestamp();
+        let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
+            &candidate.memory_type,
+            Some(&candidate.topic_key),
+            &candidate.text,
+            now,
+        );
+        if candidate_exists(
+            &tx,
+            source.project_id,
+            candidate,
+            expires_at_epoch.is_some(),
+            now,
+        )? {
             continue;
         }
 
@@ -315,15 +328,15 @@ fn persist_candidate_rows(
             source.route_texts.iter().copied(),
         );
         let review_status = "pending_review";
-        let now = chrono::Utc::now().timestamp();
         tx.execute(
             "INSERT INTO memory_candidates
              (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
               confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
               source_project, target_project, owner_scope, owner_key, topic_domain,
-              routing_confidence, routing_reason, context_class)
+              routing_confidence, routing_reason, context_class, expires_at_epoch,
+              valid_from_epoch)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
-                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 source.project_id,
                 candidate.scope,
@@ -342,7 +355,9 @@ fn persist_candidate_rows(
                 route.topic_domain.as_deref(),
                 route.routing_confidence,
                 route.routing_reason,
-                route.context_class
+                route.context_class,
+                expires_at_epoch,
+                valid_from_epoch
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();
@@ -394,6 +409,8 @@ fn candidate_exists(
     conn: &Connection,
     project_id: i64,
     candidate: &ParsedMemoryCandidate,
+    candidate_has_ttl: bool,
+    now_epoch: i64,
 ) -> Result<bool> {
     let existing: Option<i64> = conn
         .query_row(
@@ -403,13 +420,19 @@ fn candidate_exists(
                AND memory_type = ?3
                AND topic_key = ?4
                AND text = ?5
+               AND (
+                    ?6 = 0
+                    OR (expires_at_epoch IS NOT NULL AND expires_at_epoch > ?7)
+               )
              LIMIT 1",
             params![
                 project_id,
                 candidate.scope,
                 candidate.memory_type,
                 candidate.topic_key,
-                candidate.text
+                candidate.text,
+                if candidate_has_ttl { 1_i64 } else { 0_i64 },
+                now_epoch
             ],
             |row| row.get(0),
         )

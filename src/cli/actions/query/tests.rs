@@ -287,13 +287,20 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
         last_emitted_epoch: 0,
     };
 
-    let output = render_why_memory(&sample_memory(), Some("proj"), Some("main"), Some(&gate));
+    let output = render_why_memory(
+        &sample_memory(),
+        Some("proj"),
+        Some("main"),
+        Some(&gate),
+        None,
+    );
 
     assert!(output.contains("Memory #1"));
     assert!(output.contains("project match: exact proj"));
     assert!(output.contains("branch match: branchless; visible in branch-scoped search for main"));
     assert!(output.contains("type: core memory type"));
     assert!(output.contains("status: active; default search can include it"));
+    assert!(output.contains("currentness: no TTL/currentness metadata available"));
     assert!(output.contains("query scoring: query-specific"));
     assert!(output.contains("context visibility: memory index candidate and core candidate"));
     assert!(output.contains("context gate: latest codex-cli output for proj: mode=suppressed"));

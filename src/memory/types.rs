@@ -197,6 +197,21 @@ pub fn memory_status_filter_sql(column: &str, include_inactive: bool) -> String 
     }
 }
 
+pub fn memory_current_filter_sql(
+    status_column: &str,
+    expires_column: &str,
+    include_inactive: bool,
+) -> String {
+    if include_inactive {
+        memory_status_filter_sql(status_column, true)
+    } else {
+        format!(
+            "{status_column} = 'active' AND \
+             ({expires_column} IS NULL OR {expires_column} > CAST(strftime('%s', 'now') AS INTEGER))"
+        )
+    }
+}
+
 pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     map_memory_row(row)
 }
@@ -314,7 +329,18 @@ pub mod tests_helper {
                 updated_at_epoch INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
                 branch TEXT,
-                scope TEXT DEFAULT 'project'
+                scope TEXT DEFAULT 'project',
+                source_project TEXT,
+                target_project TEXT,
+                owner_scope TEXT,
+                owner_key TEXT,
+                topic_domain TEXT,
+                routing_confidence REAL,
+                routing_reason TEXT,
+                context_class TEXT,
+                expires_at_epoch INTEGER,
+                valid_from_epoch INTEGER,
+                valid_to_epoch INTEGER
             );
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content, search_context,

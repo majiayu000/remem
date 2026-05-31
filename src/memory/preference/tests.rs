@@ -84,6 +84,79 @@ fn test_project_preferences_exclude_global_overlay() -> Result<()> {
 }
 
 #[test]
+fn test_project_preferences_exclude_tool_owned_rows_from_same_project() -> Result<()> {
+    let conn = setup_test_db();
+    let repo_pref = memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("local-pref"),
+        "Preference: Local workflow",
+        "Use the local project workflow",
+        "preference",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET source_project = project, target_project = project,
+             owner_scope = 'repo', owner_key = project
+         WHERE id = ?1",
+        [repo_pref],
+    )?;
+    let tool_pref = memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("codex-pref"),
+        "Preference: Codex approvals",
+        "Use Codex workspace-write approval mode",
+        "preference",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET source_project = project, target_project = NULL,
+             owner_scope = 'tool', owner_key = 'codex-cli'
+         WHERE id = ?1",
+        [tool_pref],
+    )?;
+
+    let prefs = query_project_preferences(&conn, "test/proj", 20)?;
+    assert_eq!(prefs.len(), 1);
+    assert_eq!(prefs[0].text, "Use the local project workflow");
+    Ok(())
+}
+
+#[test]
+fn test_user_owner_preferences_are_global_core_preferences() -> Result<()> {
+    let conn = setup_test_db();
+    let id = memory::insert_memory_full(
+        &conn,
+        None,
+        "other/proj",
+        Some("user-style"),
+        "Preference: User style",
+        "Keep answers concise",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET owner_scope = 'user', owner_key = 'user:default'
+         WHERE id = ?1",
+        [id],
+    )?;
+
+    let prefs = query_global_preferences(&conn, 10)?;
+    assert_eq!(prefs.len(), 1);
+    assert_eq!(prefs[0].text, "Keep answers concise");
+    Ok(())
+}
+
+#[test]
 fn test_render_preferences_global_limit_zero_does_not_leak_global() -> Result<()> {
     let conn = setup_test_db();
     memory::insert_memory_full(

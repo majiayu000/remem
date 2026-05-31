@@ -22,7 +22,7 @@
 │  search              │  │  1. flush (batch→obs, ≤15/batch)  │
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
-│  timeline_report     │  │  4. promote (summary→memory)       │
+│  timeline_report     │  │  4. candidate (summary→review)      │
 │  save_memory         │  │                                    │
 │  workstreams         │  │  Timeout: 180s global limit        │
 │  update_workstream   │  │                                    │
@@ -269,7 +269,7 @@ Short-lived process model (each hook = independent process) cannot dedup via in-
 - **Model mapping**: `REMEM_MODEL=haiku` → `claude-haiku-4-5-20251001` (HTTP uses full ID, CLI uses short name)
 - **Codex model**: `REMEM_CODEX_MODEL` defaults to `gpt-5.2`; set `auto` to omit `--model` and use the Codex CLI default
 - **Timeouts**: Single AI call 90s, entire worker 180s
-- **4 prompts**: observation (capture), summary (session summary), compress (long-term compression), promote (summary→memory)
+- **4 prompts**: observation (capture), summary (session summary), compress (long-term compression), candidate extraction (summary→reviewable memory candidates)
 - **Usage ledger**: `ai_usage_events` stores model, operation, token breakdown, usage source, pricing source, and estimated USD cost
 - **Precision levels**: provider/log usage (`anthropic_usage`, `codex_log`) is preferred; `text_estimate` is kept only as a fallback and marked in reports
 
@@ -304,13 +304,13 @@ Memories have a `scope` field: `project` (default) or `global`.
 | `global` | All projects | Explicit opt-in only |
 
 **How it works automatically:**
-- When a session summary is promoted to memories, `preference` type defaults to `scope=project`
-- When Claude calls `save_memory(type="preference")`, scope defaults to `project`
-- All memory types stay project-scoped unless the caller explicitly requests `scope=global`
-- General memory retrieval still uses the overlay query `WHERE (project = ? OR scope = 'global')`
-- SessionStart preference rendering uses project preferences by default; global preference injection is disabled unless `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` is set above `0`
+- Summary-derived durable facts become `memory_candidates`; they do not directly write active `memories`.
+- New active memory writes populate `source_project`, `target_project`, `owner_scope`, and `owner_key`.
+- SessionStart context uses owner-aware startup filters: repo-owned rows for the current repo, user-owned preferences, and legacy project rows only as a compatibility fallback.
+- Tool/domain-owned memories are excluded from startup context unless later task-aware retrieval explicitly asks for that owner class.
+- The context footer reports owner counts (`repo`, `user`, `tool`, `domain`, etc.), and `--debug` shows inclusion/exclusion reasons.
 
-Global preferences require deliberate action. Preferences learned in project A do not automatically appear in project B's SessionStart context.
+User preferences require explicit user/global ownership. Project preferences learned in project A do not automatically appear in project B's repo context.
 
 The `save_memory` MCP tool accepts an optional `scope` parameter for explicit control. The CLI supports `remem preferences add --global "text"` for manual global preferences.
 

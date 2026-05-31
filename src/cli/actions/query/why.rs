@@ -19,6 +19,14 @@ pub(super) struct ContextGateSummary {
     pub(super) last_emitted_epoch: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct MemoryCurrentness {
+    pub(super) expires_at_epoch: Option<i64>,
+    pub(super) valid_from_epoch: Option<i64>,
+    pub(super) valid_to_epoch: Option<i64>,
+    pub(super) now_epoch: i64,
+}
+
 pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&str>) -> Result<()> {
     let conn = db::open_db()?;
     let memories = memory::get_memories_by_ids(&conn, &[id], None)?;
@@ -32,6 +40,7 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
     let current_branch = resolve_current_branch(branch)?;
     let gate_project = context_gate_project(memory, current_project.as_deref());
     let gate = load_latest_context_gate_summary(&conn, gate_project)?;
+    let currentness = load_memory_currentness(&conn, memory.id)?;
 
     print!(
         "{}",
@@ -39,7 +48,8 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
             memory,
             current_project.as_deref(),
             current_branch.as_deref(),
-            gate.as_ref()
+            gate.as_ref(),
+            currentness.as_ref()
         )
     );
     Ok(())
@@ -98,11 +108,35 @@ fn load_latest_context_gate_summary(
     .map_err(Into::into)
 }
 
+fn load_memory_currentness(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<MemoryCurrentness>> {
+    let now_epoch = chrono::Utc::now().timestamp();
+    conn.query_row(
+        "SELECT expires_at_epoch, valid_from_epoch, valid_to_epoch
+         FROM memories
+         WHERE id = ?1",
+        [id],
+        |row| {
+            Ok(MemoryCurrentness {
+                expires_at_epoch: row.get(0)?,
+                valid_from_epoch: row.get(1)?,
+                valid_to_epoch: row.get(2)?,
+                now_epoch,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
 pub(super) fn render_why_memory(
     memory: &Memory,
     current_project: Option<&str>,
     current_branch: Option<&str>,
     gate: Option<&ContextGateSummary>,
+    currentness: Option<&MemoryCurrentness>,
 ) -> String {
     let mut output = String::new();
     output.push_str(&format!("Memory #{}\n", memory.id));
@@ -122,7 +156,11 @@ pub(super) fn render_why_memory(
     ));
     output.push_str(&format!(
         "  status: {}\n",
-        status_visibility(&memory.status)
+        status_visibility(&memory.status, currentness)
+    ));
+    output.push_str(&format!(
+        "  currentness: {}\n",
+        currentness_visibility(currentness)
     ));
     output.push_str(&format!(
         "  recency: updated {}\n",
@@ -133,7 +171,7 @@ pub(super) fn render_why_memory(
     );
     output.push_str(&format!(
         "  context visibility: {}\n",
-        context_visibility(&memory.memory_type, &memory.status)
+        context_visibility(&memory.memory_type, &memory.status, currentness)
     ));
     output.push_str(&format!(
         "  context gate: {}\n",
@@ -197,7 +235,24 @@ fn type_visibility(memory_type: &str) -> String {
     .to_string()
 }
 
-fn status_visibility(status: &str) -> String {
+fn status_visibility(status: &str, currentness: Option<&MemoryCurrentness>) -> String {
+    if let Some(currentness) = currentness {
+        if status == "active" {
+            if let Some(expires_at) = currentness.expires_at_epoch {
+                if expires_at <= currentness.now_epoch {
+                    return format!(
+                        "active but expired at {}; hidden by default current retrieval until cleanup marks it stale",
+                        format_memory_timestamp(expires_at)
+                    );
+                }
+                return format!(
+                    "active; default current retrieval can include it until {}",
+                    format_memory_timestamp(expires_at)
+                );
+            }
+        }
+    }
+
     match status {
         "active" => "active; default search can include it".to_string(),
         "stale" | "archived" => {
@@ -207,9 +262,42 @@ fn status_visibility(status: &str) -> String {
     }
 }
 
-fn context_visibility(memory_type: &str, status: &str) -> String {
+fn currentness_visibility(currentness: Option<&MemoryCurrentness>) -> String {
+    let Some(currentness) = currentness else {
+        return "no TTL/currentness metadata available".to_string();
+    };
+
+    let expires = currentness
+        .expires_at_epoch
+        .map(format_memory_timestamp)
+        .unwrap_or_else(|| "none".to_string());
+    let valid_from = currentness
+        .valid_from_epoch
+        .map(format_memory_timestamp)
+        .unwrap_or_else(|| "none".to_string());
+    let valid_to = currentness
+        .valid_to_epoch
+        .map(format_memory_timestamp)
+        .unwrap_or_else(|| "none".to_string());
+    format!("expires={expires}; valid_from={valid_from}; valid_to={valid_to}")
+}
+
+fn context_visibility(
+    memory_type: &str,
+    status: &str,
+    currentness: Option<&MemoryCurrentness>,
+) -> String {
     if status != "active" {
         return format!("not context-eligible by default because status={status}");
+    }
+    if let Some(currentness) = currentness {
+        if currentness
+            .expires_at_epoch
+            .is_some_and(|expires_at| expires_at <= currentness.now_epoch)
+        {
+            return "not context-eligible by default because the current fact is expired"
+                .to_string();
+        }
     }
 
     match memory_type {

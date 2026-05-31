@@ -70,6 +70,7 @@ pub(crate) fn route_candidate<'a>(
     }
     let haystack = haystack.to_ascii_lowercase();
 
+    let repo_file_evidence = candidate.scope == "project" && has_repo_file_evidence(&haystack);
     let mut matches = Vec::new();
     if candidate.scope == "global" {
         matches.push(RouteKind::UserPreference);
@@ -120,6 +121,15 @@ pub(crate) fn route_candidate<'a>(
     }
 
     if matches.is_empty() && candidate.scope == "project" {
+        matches.push(RouteKind::Repo);
+    }
+
+    if repo_file_evidence
+        && matches
+            .iter()
+            .any(|route| *route != RouteKind::UserPreference)
+    {
+        matches.clear();
         matches.push(RouteKind::Repo);
     }
 
@@ -175,6 +185,26 @@ pub(crate) fn route_candidate<'a>(
 
 fn has_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn has_repo_file_evidence(haystack: &str) -> bool {
+    has_any(
+        haystack,
+        &[
+            "src/",
+            "crates/",
+            "tests/",
+            "benches/",
+            "examples/",
+            "cargo.toml",
+            "package.json",
+            ".rs",
+            ".ts",
+            ".tsx",
+            ".py",
+            ".go",
+        ],
+    )
 }
 
 fn tool_route(owner_key: &str, domain: &str, reason: &str) -> CandidateRoute {
@@ -244,6 +274,20 @@ mod tests {
             "/repo/stash",
             Some("s1"),
             &candidate("Stash drag and drop keeps item ordering in the project UI."),
+            std::iter::empty(),
+        );
+
+        assert_eq!(route.owner_scope, "repo");
+        assert_eq!(route.owner_key, "/repo/stash");
+        assert_eq!(route.target_project.as_deref(), Some("/repo/stash"));
+    }
+
+    #[test]
+    fn repo_file_evidence_overrides_tool_keyword() {
+        let route = route_candidate(
+            "/repo/stash",
+            Some("s1"),
+            &candidate("The repo file src/approval_panel.rs renders Codex approval copy."),
             std::iter::empty(),
         );
 

@@ -68,7 +68,10 @@ pub fn insert_memory_full(
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let created_at = created_at_override.unwrap_or(now);
+    let (expires_at_epoch, valid_from_epoch) =
+        crate::memory::lifecycle::ttl_metadata(memory_type, topic_key, content, now);
     let search_context = build_search_context(memory_type, topic_key, content, files);
+    let ownership = default_ownership(project, scope);
 
     if let Some(topic_key) = topic_key {
         if !topic_key.is_empty() {
@@ -86,7 +89,15 @@ pub fn insert_memory_full(
                 conn.execute(
                     "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
                      memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
-                     scope = ?8, search_context = ?9, status = 'active' WHERE id = ?10",
+                     scope = ?8, search_context = ?9, \
+                     status = 'active', valid_to_epoch = NULL, \
+                     expires_at_epoch = ?10, valid_from_epoch = ?11, \
+                     source_project = COALESCE(source_project, ?12), \
+                     target_project = COALESCE(target_project, ?13), \
+                     owner_scope = COALESCE(owner_scope, ?14), \
+                     owner_key = COALESCE(owner_key, ?15), \
+                     context_class = COALESCE(context_class, ?16) \
+                     WHERE id = ?17",
                     params![
                         session_id,
                         title,
@@ -97,6 +108,13 @@ pub fn insert_memory_full(
                         branch,
                         scope,
                         search_context,
+                        expires_at_epoch,
+                        valid_from_epoch,
+                        ownership.source_project,
+                        ownership.target_project,
+                        ownership.owner_scope,
+                        ownership.owner_key,
+                        ownership.context_class,
                         id
                     ],
                 )?;
@@ -109,8 +127,11 @@ pub fn insert_memory_full(
     conn.execute(
         "INSERT INTO memories \
          (session_id, project, topic_key, title, content, memory_type, files, search_context, \
-          created_at_epoch, updated_at_epoch, status, branch, scope) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12)",
+          created_at_epoch, updated_at_epoch, status, branch, scope, \
+          source_project, target_project, owner_scope, owner_key, context_class, \
+          expires_at_epoch, valid_from_epoch) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, \
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             session_id,
             project,
@@ -123,12 +144,47 @@ pub fn insert_memory_full(
             created_at,
             now,
             branch,
-            scope
+            scope,
+            ownership.source_project,
+            ownership.target_project,
+            ownership.owner_scope,
+            ownership.owner_key,
+            ownership.context_class,
+            expires_at_epoch,
+            valid_from_epoch
         ],
     )?;
     let id = conn.last_insert_rowid();
     refresh_memory_entities(conn, id, title, content, "entity link failed");
     Ok(id)
+}
+
+struct DefaultOwnership<'a> {
+    source_project: &'a str,
+    target_project: Option<&'a str>,
+    owner_scope: &'static str,
+    owner_key: &'a str,
+    context_class: &'static str,
+}
+
+fn default_ownership<'a>(project: &'a str, scope: &str) -> DefaultOwnership<'a> {
+    if scope == "global" {
+        DefaultOwnership {
+            source_project: project,
+            target_project: None,
+            owner_scope: "user",
+            owner_key: "user:default",
+            context_class: "startup_core",
+        }
+    } else {
+        DefaultOwnership {
+            source_project: project,
+            target_project: Some(project),
+            owner_scope: "repo",
+            owner_key: project,
+            context_class: "startup_core",
+        }
+    }
 }
 
 fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str, message: &str) {

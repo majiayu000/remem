@@ -7,6 +7,8 @@ fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     conn.execute_batch(MIGRATIONS[0].sql)
         .expect("baseline schema should load");
+    conn.execute_batch("ALTER TABLE memories ADD COLUMN expires_at_epoch INTEGER;")
+        .expect("expires column should load");
     conn
 }
 

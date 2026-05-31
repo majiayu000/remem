@@ -33,8 +33,15 @@ pub(super) fn promote_candidate_to_memory_with_route(
     let title = candidate_title(candidate);
     let memory_project = route.memory_project(source_project);
     let memory_scope = route.memory_scope();
-    let active = find_active_same_topic(conn, candidate, route)?;
-    if let Some(existing) = active.iter().find(|row| {
+    let now = chrono::Utc::now().timestamp();
+    let candidate_has_ttl = crate::memory::lifecycle::default_ttl_seconds(
+        &candidate.memory_type,
+        Some(&candidate.topic_key),
+        &candidate.text,
+    )
+    .is_some();
+    let active = find_active_same_topic(conn, candidate, route, now, candidate_has_ttl)?;
+    if let Some(existing) = active.iter().filter(|row| row.is_current).find(|row| {
         normalize_evidence_text(&row.content) == normalize_evidence_text(&candidate.text)
     }) {
         return Ok(CandidateApplyOutcome {
@@ -75,6 +82,12 @@ pub(super) fn update_candidate_after_lifecycle(
     review_status: &str,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
+    let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
+        &candidate.memory_type,
+        Some(&candidate.topic_key),
+        &candidate.text,
+        now,
+    );
     conn.execute(
         "UPDATE memory_candidates
          SET scope = ?1,
@@ -89,8 +102,10 @@ pub(super) fn update_candidate_after_lifecycle(
              topic_domain = ?10,
              routing_confidence = ?11,
              routing_reason = ?12,
-             context_class = ?13
-         WHERE id = ?14",
+             context_class = ?13,
+             expires_at_epoch = ?14,
+             valid_from_epoch = ?15
+         WHERE id = ?16",
         params![
             candidate.scope,
             candidate.memory_type,
@@ -105,6 +120,8 @@ pub(super) fn update_candidate_after_lifecycle(
             route.routing_confidence,
             route.routing_reason,
             route.context_class,
+            expires_at_epoch,
+            valid_from_epoch,
             candidate_id
         ],
     )?;
@@ -115,15 +132,27 @@ pub(super) fn update_candidate_after_lifecycle(
 struct ActiveTopicMemory {
     id: i64,
     content: String,
+    is_current: bool,
 }
 
 fn find_active_same_topic(
     conn: &Connection,
     candidate: &ParsedMemoryCandidate,
     route: &CandidateRoute,
+    now_epoch: i64,
+    candidate_has_ttl: bool,
 ) -> Result<Vec<ActiveTopicMemory>> {
     let mut stmt = conn.prepare(
-        "SELECT id, content
+        "SELECT id, content,
+                CASE
+                    WHEN ?5 = 1 THEN
+                        CASE
+                            WHEN expires_at_epoch IS NOT NULL AND expires_at_epoch > ?6 THEN 1
+                            ELSE 0
+                        END
+                    WHEN expires_at_epoch IS NULL OR expires_at_epoch > ?6 THEN 1
+                    ELSE 0
+                END AS is_current
          FROM memories
          WHERE status = 'active'
            AND memory_type = ?1
@@ -143,12 +172,15 @@ fn find_active_same_topic(
             candidate.memory_type,
             candidate.topic_key,
             route.owner_scope,
-            route.owner_key
+            route.owner_key,
+            if candidate_has_ttl { 1_i64 } else { 0_i64 },
+            now_epoch
         ],
         |row| {
             Ok(ActiveTopicMemory {
                 id: row.get(0)?,
                 content: row.get(1)?,
+                is_current: row.get::<_, i64>(2)? == 1,
             })
         },
     )?;
@@ -169,6 +201,12 @@ fn insert_routed_memory(
     scope: &str,
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
+    let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
+        &candidate.memory_type,
+        Some(&candidate.topic_key),
+        &candidate.text,
+        now,
+    );
     let search_context = crate::memory::search_context::build_search_context(
         &candidate.memory_type,
         Some(&candidate.topic_key),
@@ -181,11 +219,12 @@ fn insert_routed_memory(
           created_at_epoch, updated_at_epoch, status, branch, scope,
           evidence_event_ids, source_candidate_id, confidence,
           source_project, target_project, owner_scope, owner_key, topic_domain,
-          routing_confidence, routing_reason, context_class)
+          routing_confidence, routing_reason, context_class, expires_at_epoch,
+          valid_from_epoch)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7,
                  ?8, ?8, 'active', NULL, ?9,
                  ?10, ?11, ?12,
-                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             session_id,
             memory_project,
@@ -206,7 +245,9 @@ fn insert_routed_memory(
             route.topic_domain.as_deref(),
             route.routing_confidence,
             route.routing_reason,
-            route.context_class
+            route.context_class,
+            expires_at_epoch,
+            valid_from_epoch
         ],
     )?;
     let memory_id = conn.last_insert_rowid();
@@ -258,8 +299,11 @@ fn soft_supersede_routed(
     let mut changed = 0usize;
     for id in targets {
         let updated = conn.execute(
-            "UPDATE memories SET status = 'stale' WHERE id = ?1",
-            params![id],
+            "UPDATE memories
+             SET status = 'stale',
+                 valid_to_epoch = COALESCE(valid_to_epoch, ?2)
+             WHERE id = ?1",
+            params![id, chrono::Utc::now().timestamp()],
         )?;
         if updated != 1 {
             bail!("failed to mark superseded memory stale: id={id}");

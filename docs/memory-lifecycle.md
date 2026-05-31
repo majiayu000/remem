@@ -24,6 +24,17 @@ soft state transition to preserve provenance and debugging history.
 memories remain in the database as historical evidence but should not rank as
 current facts unless a caller explicitly asks to include stale entries.
 
+Current operational facts can also carry `expires_at_epoch`. Default retrieval
+treats an expired active row as non-current even before cleanup runs. Cleanup
+then marks expired active rows `stale` and keeps the row for provenance.
+
+Default TTLs:
+
+- local service/port/URL health and PR/CI/review state: 24 hours
+- git branch divergence snapshots: 7 days
+- product, architecture, verified bugfix, lesson, procedure, and user
+  preference memories: no TTL unless explicitly superseded
+
 Candidate review state is separate from memory state:
 
 | Candidate state | Meaning |
