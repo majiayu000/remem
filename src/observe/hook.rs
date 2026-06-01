@@ -40,8 +40,11 @@ fn session_init_event(input: &str) -> Option<crate::adapter::ParsedHookEvent> {
 
 pub async fn observe() -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
+    observe_input(&input).await
+}
 
-    let Some((adapter, event)) = crate::adapter::detect_adapter(&input) else {
+async fn observe_input(input: &str) -> Result<()> {
+    let Some((adapter, event)) = crate::adapter::detect_adapter(input) else {
         return Ok(());
     };
     if adapter.should_skip(&event) || should_skip_bash_event(adapter, &event) {
@@ -63,24 +66,6 @@ pub async fn observe() -> Result<()> {
         summary.detail.as_deref(),
         summary.files_json.as_deref(),
         summary.exit_code,
-    )?;
-
-    let tool_input_str =
-        crate::adapter::common::pending_tool_input(&event.tool_name, &event.tool_input);
-    let tool_response_str = crate::adapter::common::pending_tool_response(
-        &event.tool_name,
-        &event.tool_input,
-        &event.tool_response,
-    );
-    db::enqueue_pending(
-        &conn,
-        adapter.name(),
-        &event.session_id,
-        &event.project,
-        &event.tool_name,
-        tool_input_str.as_deref(),
-        tool_response_str.as_deref(),
-        event.cwd.as_deref(),
     )?;
 
     crate::log::info(
@@ -177,7 +162,7 @@ mod tests {
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{record_capture_event, session_init_event, should_skip_bash_event};
+    use super::{observe_input, record_capture_event, session_init_event, should_skip_bash_event};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -270,5 +255,58 @@ mod tests {
             .expect("task count should query");
         assert_eq!(captured_count, 1);
         assert_eq!(task_count, 1);
+    }
+
+    #[tokio::test]
+    async fn observe_writes_only_normalized_capture_pipeline() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("observe-normalized-only");
+        let project_dir = std::env::temp_dir().join(format!(
+            "remem-observe-project-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&project_dir)?;
+        let input = serde_json::json!({
+            "session_id": "sess-normalized-observe",
+            "cwd": project_dir,
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/lib.rs"},
+            "tool_response": {"content": "edited"}
+        })
+        .to_string();
+
+        let test_result = async {
+            observe_input(&input).await?;
+
+            let conn = db::open_db()?;
+            let captured_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
+            let extraction_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM extraction_tasks", [], |row| {
+                    row.get(0)
+                })?;
+            let pending_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM pending_observations", [], |row| {
+                    row.get(0)
+                })?;
+            let observation_jobs: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM jobs WHERE job_type = 'observation'",
+                [],
+                |row| row.get(0),
+            )?;
+
+            anyhow::ensure!(captured_count == 1, "expected one captured event");
+            anyhow::ensure!(extraction_count == 1, "expected one extraction task");
+            anyhow::ensure!(pending_count == 0, "legacy pending queue must stay empty");
+            anyhow::ensure!(
+                observation_jobs == 0,
+                "legacy observation jobs must stay empty"
+            );
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        let _ = std::fs::remove_dir_all(&project_dir);
+        test_result
     }
 }

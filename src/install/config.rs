@@ -18,13 +18,6 @@ impl HookStrategy {
         }
     }
 
-    fn flush_executor(self) -> Option<&'static str> {
-        match self {
-            Self::ClaudeCode => None,
-            Self::Codex => Some("codex-cli"),
-        }
-    }
-
     fn include_session_init(self) -> bool {
         matches!(self, Self::ClaudeCode)
     }
@@ -71,21 +64,12 @@ fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
             subcommand
         )
     } else if subcommand == "summarize" {
-        match strategy.flush_executor() {
-            Some(flush_executor) => format!(
-                "REMEM_SUMMARY_EXECUTOR={} REMEM_FLUSH_EXECUTOR={} {} {}",
-                strategy.summary_executor(),
-                flush_executor,
-                bin,
-                subcommand
-            ),
-            None => format!(
-                "REMEM_SUMMARY_EXECUTOR={} {} {}",
-                strategy.summary_executor(),
-                bin,
-                subcommand
-            ),
-        }
+        format!(
+            "REMEM_SUMMARY_EXECUTOR={} {} {}",
+            strategy.summary_executor(),
+            bin,
+            subcommand
+        )
     } else if subcommand == "observe" || subcommand == "session-init" {
         format!(
             "REMEM_HOOK_ADAPTER={} {} {}",

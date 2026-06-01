@@ -113,20 +113,12 @@ fn enqueue_summary_jobs(
 ) -> Result<()> {
     let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
     if ready_pending > 0 {
-        let obs_payload = serde_json::json!({
-            "host": host,
-            "session_id": session_id,
-            "project": project,
-        });
-        db::enqueue_job(
-            conn,
-            host,
-            db::JobType::Observation,
-            project,
-            Some(session_id),
-            &obs_payload.to_string(),
-            50,
-        )?;
+        crate::log::warn(
+            "summarize",
+            &format!(
+                "ignored {ready_pending} legacy pending observation row(s); captures now use extraction_tasks"
+            ),
+        );
     }
     db::enqueue_job(
         conn,
@@ -141,7 +133,7 @@ fn enqueue_summary_jobs(
     crate::log::info(
         "summarize",
         &format!(
-            "QUEUED summary session={} project={} observation_pending={}",
+            "QUEUED summary session={} project={} legacy_pending_observations={}",
             session_id, project, ready_pending
         ),
     );
@@ -458,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn enqueue_summary_jobs_keeps_observation_job_when_pending_events_exist() {
+    fn enqueue_summary_jobs_ignores_legacy_pending_observations() {
         let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
         let conn = db::open_db().expect("db should open");
         db::enqueue_pending(
@@ -483,14 +475,7 @@ mod tests {
         .expect("summary jobs should enqueue");
 
         let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "observation".to_string(),
-                "summary".to_string(),
-                "compress".to_string()
-            ]
-        );
+        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
     }
 
     fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
