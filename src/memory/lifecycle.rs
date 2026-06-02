@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
 
+use crate::memory::state_key::StateKeyDecision;
+
 pub const SHORT_CURRENT_TTL_SECONDS: i64 = 24 * 60 * 60;
 pub const BRANCH_SNAPSHOT_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
 
@@ -86,8 +88,17 @@ pub fn apply_update(
     superseded_ids: &[i64],
 ) -> Result<LifecycleOutcome> {
     let tx = conn.unchecked_transaction()?;
+    let ownership = lifecycle_ownership(project, scope);
+    let state_key =
+        crate::memory::state_key::derive_state_key(memory_type, Some(topic_key), title, content);
     let mut superseded_targets = superseded_ids.to_vec();
-    superseded_targets.extend(find_active_same_state_key(&tx, project, topic_key, scope)?);
+    superseded_targets.extend(find_active_same_state_or_topic(
+        &tx,
+        &ownership,
+        memory_type,
+        topic_key,
+        state_key.as_ref(),
+    )?);
     let memory_id = insert_replacement_memory(
         &tx,
         session_id,
@@ -99,6 +110,8 @@ pub fn apply_update(
         files,
         branch,
         scope,
+        &ownership,
+        state_key.as_ref(),
     )?;
     let superseded = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
     tx.commit()?;
@@ -143,6 +156,8 @@ fn insert_replacement_memory(
     files: Option<&str>,
     branch: Option<&str>,
     scope: &str,
+    ownership: &LifecycleOwnership<'_>,
+    state_key: Option<&StateKeyDecision>,
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let (expires_at_epoch, valid_from_epoch) =
@@ -153,11 +168,6 @@ fn insert_replacement_memory(
         content,
         files,
     );
-    let (target_project, owner_scope, owner_key) = if scope == "global" {
-        (None, "user", "user:default")
-    } else {
-        (Some(project), "repo", project)
-    };
     conn.execute(
         "INSERT INTO memories
          (session_id, project, topic_key, title, content, memory_type, files, search_context,
@@ -180,31 +190,111 @@ fn insert_replacement_memory(
             now,
             branch,
             scope,
-            project,
-            target_project,
-            owner_scope,
-            owner_key,
+            ownership.source_project,
+            ownership.target_project,
+            ownership.owner_scope,
+            ownership.owner_key,
             expires_at_epoch,
             valid_from_epoch
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    let memory_id = conn.last_insert_rowid();
+    if let Some(state_key) = state_key {
+        crate::memory::state_key::attach_current_memory(
+            conn,
+            memory_id,
+            ownership.owner_scope,
+            ownership.owner_key,
+            memory_type,
+            state_key,
+            now,
+        )?;
+    }
+    Ok(memory_id)
 }
 
-fn find_active_same_state_key(
+struct LifecycleOwnership<'a> {
+    source_project: &'a str,
+    target_project: Option<&'a str>,
+    owner_scope: &'static str,
+    owner_key: &'a str,
+}
+
+fn lifecycle_ownership<'a>(project: &'a str, scope: &str) -> LifecycleOwnership<'a> {
+    if scope == "global" {
+        LifecycleOwnership {
+            source_project: project,
+            target_project: None,
+            owner_scope: "user",
+            owner_key: "user:default",
+        }
+    } else {
+        LifecycleOwnership {
+            source_project: project,
+            target_project: Some(project),
+            owner_scope: "repo",
+            owner_key: project,
+        }
+    }
+}
+
+fn find_active_same_state_or_topic(
     conn: &Connection,
-    project: &str,
+    ownership: &LifecycleOwnership<'_>,
+    memory_type: &str,
     topic_key: &str,
-    scope: &str,
+    state_key: Option<&StateKeyDecision>,
+) -> Result<Vec<i64>> {
+    let mut ids = Vec::new();
+    if let Some(state_key) = state_key {
+        ids.extend(crate::memory::state_key::active_memory_ids(
+            conn,
+            ownership.owner_scope,
+            ownership.owner_key,
+            memory_type,
+            &state_key.state_key,
+            chrono::Utc::now().timestamp(),
+            false,
+        )?);
+    }
+    ids.extend(find_active_same_topic_key(
+        conn,
+        ownership,
+        memory_type,
+        topic_key,
+    )?);
+    Ok(ids)
+}
+
+fn find_active_same_topic_key(
+    conn: &Connection,
+    ownership: &LifecycleOwnership<'_>,
+    memory_type: &str,
+    topic_key: &str,
 ) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT id FROM memories
-         WHERE project = ?1
+         WHERE memory_type = ?1
            AND topic_key = ?2
-           AND COALESCE(scope, 'project') = ?3
+           AND COALESCE(
+                owner_scope,
+                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+           ) = ?3
+           AND COALESCE(
+                owner_key,
+                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
+           ) = ?4
            AND status = 'active'",
     )?;
-    let rows = stmt.query_map(params![project, topic_key, scope], |row| row.get(0))?;
+    let rows = stmt.query_map(
+        params![
+            memory_type,
+            topic_key,
+            ownership.owner_scope,
+            ownership.owner_key
+        ],
+        |row| row.get(0),
+    )?;
     crate::db::query::collect_rows(rows)
 }
 

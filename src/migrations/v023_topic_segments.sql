@@ -1,4 +1,4 @@
--- v022_topic_segments: Topic Loom intermediate layer for topic continuity.
+-- v023_topic_segments: Topic Loom intermediate layer for topic continuity.
 --
 -- Session rollup emits coherent per-topic segments between captured events and
 -- final promoted memories. Memories remain the durable promoted product.
