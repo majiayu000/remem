@@ -103,11 +103,11 @@ pub(crate) fn render_inline_hints(actions: &[HealthAction]) -> Option<String> {
 }
 
 pub(crate) fn worker_once_fallback_human() -> &'static str {
-    "Stop hooks run remem worker --once"
+    "when Stop hooks are installed, they run remem worker --once"
 }
 
 pub(crate) fn worker_once_fallback_detail() -> &'static str {
-    "safe fallback: Stop hooks run `remem worker --once`"
+    "safe fallback when Stop hooks are installed: `remem worker --once`"
 }
 
 fn count_title(count: i64, singular: &str, plural: &str) -> String {

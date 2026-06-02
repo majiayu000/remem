@@ -17,7 +17,7 @@ pub(super) fn check_database() -> Check {
     let size = std::fs::metadata(&db_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    match db::open_db() {
+    match db::open_db_read_only() {
         Ok(conn) => match db::query_system_stats(&conn) {
             Ok(stats) => Check {
                 name: "Database",
@@ -44,7 +44,7 @@ pub(super) fn check_database() -> Check {
 }
 
 pub(super) fn check_pending_queue() -> Check {
-    let conn = match db::open_db() {
+    let conn = match db::open_db_read_only() {
         Ok(conn) => conn,
         Err(_) => {
             return Check {
@@ -116,7 +116,7 @@ pub(super) fn check_pending_queue() -> Check {
 }
 
 pub(super) fn check_worker_daemon() -> Check {
-    let conn = match db::open_db() {
+    let conn = match db::open_db_read_only() {
         Ok(conn) => conn,
         Err(_) => {
             return Check {

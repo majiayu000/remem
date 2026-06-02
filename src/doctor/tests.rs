@@ -293,13 +293,16 @@ fn check_worker_daemon_reports_healthy_heartbeat() {
 }
 
 #[test]
-fn check_worker_daemon_reports_missing_as_fallback_ok() {
+fn check_worker_daemon_reports_missing_as_fallback_ok() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-worker-missing");
+    let conn = db::open_db()?;
+    drop(conn);
 
     let check = check_worker_daemon();
     assert_eq!(check.icon(), "ok");
     assert_eq!(
         check.detail,
-        "not running; safe fallback: Stop hooks run `remem worker --once`"
+        "not running; safe fallback when Stop hooks are installed: `remem worker --once`"
     );
+    Ok(())
 }
