@@ -340,7 +340,21 @@ pub mod tests_helper {
                 context_class TEXT,
                 expires_at_epoch INTEGER,
                 valid_from_epoch INTEGER,
-                valid_to_epoch INTEGER
+                valid_to_epoch INTEGER,
+                state_key_id INTEGER
+            );
+            CREATE TABLE memory_state_keys (
+                id INTEGER PRIMARY KEY,
+                owner_scope TEXT NOT NULL,
+                owner_key TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                state_key TEXT NOT NULL,
+                state_label TEXT,
+                state_status TEXT NOT NULL DEFAULT 'active',
+                current_memory_id INTEGER,
+                created_at_epoch INTEGER NOT NULL,
+                updated_at_epoch INTEGER NOT NULL,
+                UNIQUE(owner_scope, owner_key, memory_type, state_key)
             );
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content, search_context,

@@ -5,6 +5,10 @@ use super::state::applied_versions;
 use super::{dry_run_pending, run_migrations, MIGRATIONS};
 use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path, ScopedTestDataDir};
 
+fn logical_user_version() -> i64 {
+    super::types::OLD_BASELINE_VERSION - 1 + super::latest_schema_version()
+}
+
 #[test]
 fn baseline_creates_all_tables() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -64,11 +68,14 @@ fn full_migration_on_empty_db() -> Result<()> {
     let applied = applied_versions(&conn)?;
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,]
+        MIGRATIONS
+            .iter()
+            .map(|migration| migration.version)
+            .collect::<Vec<_>>()
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 33);
+    assert_eq!(user_version, logical_user_version());
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -325,7 +332,7 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 33);
+    assert_eq!(user_version, logical_user_version());
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -365,7 +372,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 33);
+    assert_eq!(result.current_version, logical_user_version());
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())

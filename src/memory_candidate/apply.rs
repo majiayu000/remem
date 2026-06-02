@@ -40,7 +40,20 @@ pub(super) fn promote_candidate_to_memory_with_route(
         &candidate.text,
     )
     .is_some();
-    let active = find_active_same_topic(conn, candidate, route, now, candidate_has_ttl)?;
+    let state_key = crate::memory::state_key::derive_state_key(
+        &candidate.memory_type,
+        Some(&candidate.topic_key),
+        &title,
+        &candidate.text,
+    );
+    let active = find_active_same_state_or_topic(
+        conn,
+        candidate,
+        route,
+        state_key.as_ref(),
+        now,
+        candidate_has_ttl,
+    )?;
     if let Some(existing) = active.iter().filter(|row| row.is_current).find(|row| {
         normalize_evidence_text(&row.content) == normalize_evidence_text(&candidate.text)
     }) {
@@ -63,6 +76,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
         &title,
         evidence_json,
         memory_scope,
+        state_key.as_ref(),
     )?;
     let superseded_ids = active.iter().map(|row| row.id).collect::<Vec<_>>();
     let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
@@ -88,6 +102,13 @@ pub(super) fn update_candidate_after_lifecycle(
         &candidate.text,
         now,
     );
+    let title = candidate_title(candidate);
+    let state_key = crate::memory::state_key::derive_state_key(
+        &candidate.memory_type,
+        Some(&candidate.topic_key),
+        &title,
+        &candidate.text,
+    );
     conn.execute(
         "UPDATE memory_candidates
          SET scope = ?1,
@@ -104,8 +125,11 @@ pub(super) fn update_candidate_after_lifecycle(
              routing_reason = ?12,
              context_class = ?13,
              expires_at_epoch = ?14,
-             valid_from_epoch = ?15
-         WHERE id = ?16",
+             valid_from_epoch = ?15,
+             state_key = ?16,
+             state_key_confidence = ?17,
+             state_key_reason = ?18
+         WHERE id = ?19",
         params![
             candidate.scope,
             candidate.memory_type,
@@ -122,6 +146,11 @@ pub(super) fn update_candidate_after_lifecycle(
             route.context_class,
             expires_at_epoch,
             valid_from_epoch,
+            state_key
+                .as_ref()
+                .map(|decision| decision.state_key.as_str()),
+            state_key.as_ref().map(|decision| decision.confidence),
+            state_key.as_ref().map(|decision| decision.reason.as_str()),
             candidate_id
         ],
     )?;
@@ -187,6 +216,43 @@ fn find_active_same_topic(
     crate::db::query::collect_rows(rows)
 }
 
+fn find_active_same_state_or_topic(
+    conn: &Connection,
+    candidate: &ParsedMemoryCandidate,
+    route: &CandidateRoute,
+    state_key: Option<&crate::memory::state_key::StateKeyDecision>,
+    now_epoch: i64,
+    candidate_has_ttl: bool,
+) -> Result<Vec<ActiveTopicMemory>> {
+    if let Some(state_key) = state_key {
+        let ids = crate::memory::state_key::active_memory_ids(
+            conn,
+            &route.owner_scope,
+            &route.owner_key,
+            &candidate.memory_type,
+            &state_key.state_key,
+            now_epoch,
+            candidate_has_ttl,
+        )?;
+        if !ids.is_empty() {
+            let mut memories = Vec::with_capacity(ids.len());
+            for id in ids {
+                let content =
+                    conn.query_row("SELECT content FROM memories WHERE id = ?1", [id], |row| {
+                        row.get(0)
+                    })?;
+                memories.push(ActiveTopicMemory {
+                    id,
+                    content,
+                    is_current: true,
+                });
+            }
+            return Ok(memories);
+        }
+    }
+    find_active_same_topic(conn, candidate, route, now_epoch, candidate_has_ttl)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert_routed_memory(
     conn: &Connection,
@@ -199,6 +265,7 @@ fn insert_routed_memory(
     title: &str,
     evidence_json: &str,
     scope: &str,
+    state_key: Option<&crate::memory::state_key::StateKeyDecision>,
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
@@ -251,6 +318,17 @@ fn insert_routed_memory(
         ],
     )?;
     let memory_id = conn.last_insert_rowid();
+    if let Some(state_key) = state_key {
+        crate::memory::state_key::attach_current_memory(
+            conn,
+            memory_id,
+            &route.owner_scope,
+            &route.owner_key,
+            &candidate.memory_type,
+            state_key,
+            now,
+        )?;
+    }
     if candidate.memory_type == "lesson" {
         insert_lesson_metadata(conn, memory_id, candidate, evidence_json, now)?;
     }
