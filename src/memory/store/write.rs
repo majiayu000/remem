@@ -203,7 +203,19 @@ pub fn insert_memory_full_with_operation_log(
         )?;
         let mut logged_plan = operation_plan.clone();
         logged_plan.target_memory_id = Some(id);
-        insert_operation_log(conn, operation_input, &logged_plan, Some(id))?;
+        let operation_id = insert_operation_log(conn, operation_input, &logged_plan, Some(id))?;
+        crate::memory::edge::insert_supersedes_edges(
+            conn,
+            &logged_plan.superseded_ids,
+            id,
+            crate::memory::edge::MemoryEdgeWriteContext {
+                source_candidate_id: operation_input.source_candidate_id,
+                source_operation_id: Some(operation_id),
+                confidence: operation_input.confidence,
+                reason: Some(logged_plan.reason.as_str()),
+                ..Default::default()
+            },
+        )?;
         Ok((id, logged_plan.op))
     })
 }

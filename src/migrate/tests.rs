@@ -107,6 +107,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_state_keys",
         "topic_segments",
         "memory_operation_log",
+        "memory_edges",
     ] {
         let exists: bool = conn
             .query_row(
@@ -116,6 +117,20 @@ fn full_migration_on_empty_db() -> Result<()> {
             )
             .unwrap_or(false);
         assert!(exists, "{table} table should exist after migration");
+    }
+    for index in [
+        "idx_memory_edges_from",
+        "idx_memory_edges_to",
+        "idx_memory_edges_state",
+    ] {
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?1",
+                [index],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        assert!(exists, "{index} index should exist after migration");
     }
     Ok(())
 }

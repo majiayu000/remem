@@ -111,6 +111,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
         let mut plan = MemoryOperationPlan::new(op, state_key_value, reason)
             .with_superseded_ids(superseded_ids.clone());
 
+        let evidence_event_ids: Vec<i64> = serde_json::from_str(evidence_json)?;
         let memory_id = insert_routed_memory(
             conn,
             session_id,
@@ -126,7 +127,34 @@ pub(super) fn promote_candidate_to_memory_with_route(
         )?;
         plan.target_memory_id = Some(memory_id);
         let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
-        insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
+        let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
+        crate::memory::edge::insert_memory_edge(
+            conn,
+            &crate::memory::edge::MemoryEdgeInput {
+                edge_type: crate::memory::edge::MemoryEdgeType::DerivedFrom,
+                from_memory_id: None,
+                to_memory_id: Some(memory_id),
+                state_key_id: None,
+                source_candidate_id: Some(candidate_id),
+                evidence_event_ids: &evidence_event_ids,
+                source_operation_id: Some(operation_id),
+                confidence: Some(candidate.confidence),
+                reason: Some("candidate promoted from observation evidence"),
+            },
+        )?;
+        crate::memory::edge::insert_supersedes_edges(
+            conn,
+            &superseded_ids,
+            memory_id,
+            crate::memory::edge::MemoryEdgeWriteContext {
+                source_candidate_id: Some(candidate_id),
+                evidence_event_ids: &evidence_event_ids,
+                source_operation_id: Some(operation_id),
+                confidence: Some(candidate.confidence),
+                reason: Some(plan.reason.as_str()),
+                ..Default::default()
+            },
+        )?;
         Ok(CandidateApplyOutcome {
             memory_id: Some(memory_id),
             promoted: true,

@@ -114,6 +114,15 @@ pub fn apply_update(
         state_key.as_ref(),
     )?;
     let superseded = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
+    crate::memory::edge::insert_supersedes_edges(
+        &tx,
+        &superseded_targets,
+        memory_id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            reason: Some("lifecycle update supersedes old memory"),
+            ..Default::default()
+        },
+    )?;
     tx.commit()?;
     Ok(LifecycleOutcome {
         op: MemoryLifecycleOp::Update,
@@ -552,6 +561,50 @@ mod tests {
     }
 
     #[test]
+    fn update_records_supersedes_edge_in_same_transaction() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-lifecycle-edge";
+        let old_id = insert_memory(
+            &conn,
+            Some("s1"),
+            project,
+            Some("deploy-target"),
+            "Deploy target",
+            "Deploy target is staging.",
+            "decision",
+            None,
+        )?;
+
+        let outcome = apply_update(
+            &conn,
+            Some("s2"),
+            project,
+            "deploy-target",
+            "Deploy target",
+            "Deploy target is production.",
+            "decision",
+            None,
+            None,
+            "project",
+            &[old_id],
+        )?;
+        let Some(new_id) = outcome.memory_id else {
+            anyhow::bail!("update should create replacement");
+        };
+
+        let edge: (String, i64, i64) = conn.query_row(
+            "SELECT edge_type, from_memory_id, to_memory_id
+             FROM memory_edges
+             WHERE from_memory_id = ?1 AND to_memory_id = ?2",
+            [old_id, new_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(edge, ("supersedes".to_string(), old_id, new_id));
+        Ok(())
+    }
+
+    #[test]
     fn invalidate_marks_memory_stale_without_deleting_it() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         setup_memory_schema(&conn);
@@ -625,6 +678,9 @@ mod tests {
         )?;
         assert_eq!(active_new_count, 0);
         assert_eq!(old_status, "active");
+        let edge_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| row.get(0))?;
+        assert_eq!(edge_count, 0);
         Ok(())
     }
 

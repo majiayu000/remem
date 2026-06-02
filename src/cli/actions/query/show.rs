@@ -13,6 +13,7 @@ pub(in crate::cli) fn run_show(id: i64, json: bool) -> Result<()> {
                 found: false,
                 id,
                 memory: None,
+                relations: None,
             };
             println!("{}", serde_json::to_string_pretty(&output)?);
             return Ok(());
@@ -22,10 +23,12 @@ pub(in crate::cli) fn run_show(id: i64, json: bool) -> Result<()> {
     };
 
     if json {
+        let relations = memory::edge::load_memory_edge_summary(&conn, id)?;
         let output = ShowJson {
             found: true,
             id,
             memory: Some(memory.clone()),
+            relations: relations.has_edges().then_some(relations),
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
@@ -68,4 +71,6 @@ pub(super) struct ShowJson {
     pub found: bool,
     pub id: i64,
     pub memory: Option<memory::Memory>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relations: Option<memory::edge::MemoryEdgeSummary>,
 }

@@ -356,6 +356,9 @@ pub mod tests_helper {
                 updated_at_epoch INTEGER NOT NULL,
                 UNIQUE(owner_scope, owner_key, memory_type, state_key)
             );
+            CREATE TABLE memory_candidates (
+                id INTEGER PRIMARY KEY
+            );
             CREATE TABLE memory_operation_log (
                 id INTEGER PRIMARY KEY,
                 operation TEXT NOT NULL,
@@ -379,6 +382,30 @@ pub mod tests_helper {
             );
             CREATE INDEX idx_memory_operation_log_state
                 ON memory_operation_log(owner_scope, owner_key, memory_type, state_key, created_at_epoch);
+            CREATE TABLE memory_edges (
+                id INTEGER PRIMARY KEY,
+                edge_type TEXT NOT NULL,
+                from_memory_id INTEGER,
+                to_memory_id INTEGER,
+                state_key_id INTEGER,
+                source_candidate_id INTEGER,
+                evidence_event_ids TEXT,
+                source_operation_id INTEGER,
+                confidence REAL,
+                reason TEXT,
+                created_at_epoch INTEGER NOT NULL,
+                FOREIGN KEY(from_memory_id) REFERENCES memories(id),
+                FOREIGN KEY(to_memory_id) REFERENCES memories(id),
+                FOREIGN KEY(state_key_id) REFERENCES memory_state_keys(id),
+                FOREIGN KEY(source_candidate_id) REFERENCES memory_candidates(id),
+                FOREIGN KEY(source_operation_id) REFERENCES memory_operation_log(id)
+            );
+            CREATE INDEX idx_memory_edges_from
+                ON memory_edges(from_memory_id, edge_type);
+            CREATE INDEX idx_memory_edges_to
+                ON memory_edges(to_memory_id, edge_type);
+            CREATE INDEX idx_memory_edges_state
+                ON memory_edges(state_key_id, edge_type, created_at_epoch);
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content, search_context,
                 content='memories',
