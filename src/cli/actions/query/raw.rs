@@ -1,0 +1,247 @@
+use anyhow::Result;
+use rusqlite::Connection;
+use serde::Serialize;
+
+use crate::cli::types::{RawAction, RawRole};
+use crate::memory::raw_archive::{RawMessage, RawSearchRequest};
+use crate::{db, memory::raw_archive::search_raw_messages};
+
+use super::show::format_memory_timestamp;
+
+pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
+    match action {
+        RawAction::Search {
+            query,
+            project,
+            branch,
+            role,
+            limit,
+            offset,
+            json,
+        } => run_raw_search(
+            &query,
+            project.as_deref(),
+            branch.as_deref(),
+            role,
+            limit,
+            offset,
+            json,
+        ),
+    }
+}
+
+pub(super) fn run_raw_search(
+    query: &str,
+    project: Option<&str>,
+    branch: Option<&str>,
+    role: Option<RawRole>,
+    limit: i64,
+    offset: i64,
+    json: bool,
+) -> Result<()> {
+    let conn = db::open_db()?;
+    let normalized_limit = limit.max(1);
+    let normalized_offset = offset.max(0);
+    let request = build_raw_search_request(
+        query,
+        project,
+        branch,
+        role.map(RawRole::as_str),
+        normalized_limit + 1,
+        normalized_offset,
+    );
+    let mut rows = search_raw_archive(&conn, &request)?;
+    let has_more = rows.len() as i64 > normalized_limit;
+    rows.truncate(normalized_limit as usize);
+
+    if json {
+        let output = build_raw_search_json(
+            query,
+            project,
+            branch,
+            role.map(RawRole::as_str),
+            normalized_limit,
+            normalized_offset,
+            has_more,
+            &rows,
+        );
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    print!(
+        "{}",
+        render_raw_search_results(&rows, normalized_offset, normalized_limit, has_more)
+    );
+    Ok(())
+}
+
+pub(super) fn build_raw_search_request(
+    query: &str,
+    project: Option<&str>,
+    branch: Option<&str>,
+    role: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> RawSearchRequest {
+    RawSearchRequest {
+        query: query.to_string(),
+        project: project.map(str::to_string),
+        branch: branch.map(str::to_string),
+        role: role.map(str::to_string),
+        limit,
+        offset,
+    }
+}
+
+pub(super) fn search_raw_archive(
+    conn: &Connection,
+    request: &RawSearchRequest,
+) -> Result<Vec<RawMessage>> {
+    search_raw_messages(conn, request)
+}
+
+pub(super) fn render_raw_search_results(
+    rows: &[RawMessage],
+    offset: i64,
+    limit: i64,
+    has_more: bool,
+) -> String {
+    let mut output = String::new();
+    if rows.is_empty() {
+        output.push_str("No raw archive rows found.\n");
+        output.push_str(
+            "Curated search may still have promoted memories: remem search \"<query>\".\n",
+        );
+        return output;
+    }
+
+    output.push_str("Raw archive rows (not curated memories):\n\n");
+    for row in rows {
+        output.push_str(&format_raw_row(row));
+    }
+
+    output.push_str("\nNext:\n");
+    output.push_str("  raw rows are captured chat turns, not curated memories.\n");
+    output.push_str("  promote durable conclusions with review/save_memory.\n");
+    if has_more {
+        output.push_str(&format!(
+            "  remem raw search \"<query>\" --offset {}\n",
+            offset.max(0) + limit.max(1)
+        ));
+    }
+    output
+}
+
+pub(super) fn build_raw_search_json(
+    query: &str,
+    project: Option<&str>,
+    branch: Option<&str>,
+    role: Option<&str>,
+    limit: i64,
+    offset: i64,
+    has_more: bool,
+    rows: &[RawMessage],
+) -> RawSearchJson {
+    let normalized_limit = limit.max(1);
+    let normalized_offset = offset.max(0);
+    RawSearchJson {
+        query: query.to_string(),
+        project: project.map(str::to_string),
+        branch: branch.map(str::to_string),
+        role: role.map(str::to_string),
+        limit: normalized_limit,
+        offset: normalized_offset,
+        source_type: "raw_archive".to_string(),
+        note: "raw archive rows are captured chat turns, not curated memories".to_string(),
+        count: rows.len(),
+        has_more,
+        next_offset: has_more.then_some(normalized_offset + normalized_limit),
+        results: rows.iter().map(RawArchiveRowJson::from).collect(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct RawSearchJson {
+    pub query: String,
+    pub project: Option<String>,
+    pub branch: Option<String>,
+    pub role: Option<String>,
+    pub limit: i64,
+    pub offset: i64,
+    pub source_type: String,
+    pub note: String,
+    pub count: usize,
+    pub has_more: bool,
+    pub next_offset: Option<i64>,
+    pub results: Vec<RawArchiveRowJson>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct RawArchiveRowJson {
+    pub id: i64,
+    pub source_type: String,
+    pub session_id: String,
+    pub project: String,
+    pub role: String,
+    pub content: String,
+    pub source: String,
+    pub branch: Option<String>,
+    pub cwd: Option<String>,
+    pub created_at_epoch: i64,
+}
+
+impl From<&RawMessage> for RawArchiveRowJson {
+    fn from(row: &RawMessage) -> Self {
+        Self {
+            id: row.id,
+            source_type: "raw_archive".to_string(),
+            session_id: row.session_id.clone(),
+            project: row.project.clone(),
+            role: row.role.clone(),
+            content: row.content.clone(),
+            source: row.source.clone(),
+            branch: row.branch.clone(),
+            cwd: row.cwd.clone(),
+            created_at_epoch: row.created_at_epoch,
+        }
+    }
+}
+
+fn format_raw_row(row: &RawMessage) -> String {
+    let branch = row
+        .branch
+        .as_deref()
+        .map(|branch| format!(" | branch={branch}"))
+        .unwrap_or_default();
+    let cwd = row
+        .cwd
+        .as_deref()
+        .map(|cwd| format!(" | cwd={cwd}"))
+        .unwrap_or_default();
+    let preview = preview_raw_content(row);
+    let mut output = format!(
+        "  [raw:{}] {} | {} | {} | source={}{}{}\n",
+        row.id,
+        row.role,
+        row.project,
+        format_memory_timestamp(row.created_at_epoch),
+        row.source,
+        branch,
+        cwd
+    );
+    if !preview.is_empty() {
+        output.push_str(&format!("      {}\n", preview));
+    }
+    output
+}
+
+fn preview_raw_content(row: &RawMessage) -> String {
+    row.content
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect()
+}

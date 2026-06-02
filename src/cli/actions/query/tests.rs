@@ -1,5 +1,5 @@
 use crate::memory::{
-    raw_archive::RawMessage,
+    raw_archive::{insert_raw_message, RawMessage, ROLE_ASSISTANT, ROLE_USER, SOURCE_HOOK},
     service::{MultiHopMeta, SearchResultSet},
     Memory,
 };
@@ -7,6 +7,10 @@ use crate::retrieval::search::{ChannelContribution, SearchExplain, SearchExplain
 use serde_json::Value;
 
 use super::{
+    raw::{
+        build_raw_search_json, build_raw_search_request, render_raw_search_results,
+        search_raw_archive,
+    },
     search::{
         build_search_json, build_search_request, preview_raw_text, preview_text,
         render_search_results,
@@ -255,6 +259,131 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["raw_hits"][0]["id"], 9);
     assert_eq!(parsed["multi_hop"]["entities_discovered"][0], "Mem0");
     assert_eq!(parsed["explain_details"]["query"], "needle");
+    Ok(())
+}
+
+#[test]
+fn cli_raw_search_request_carries_raw_filters() {
+    let request = build_raw_search_request(
+        "literal phrase",
+        Some("/repo"),
+        Some("main"),
+        Some("user"),
+        21,
+        40,
+    );
+
+    assert_eq!(request.query, "literal phrase");
+    assert_eq!(request.project.as_deref(), Some("/repo"));
+    assert_eq!(request.branch.as_deref(), Some("main"));
+    assert_eq!(request.role.as_deref(), Some("user"));
+    assert_eq!(request.limit, 21);
+    assert_eq!(request.offset, 40);
+}
+
+#[test]
+fn cli_raw_search_uses_raw_archive_filters() -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    insert_raw_message(
+        &conn,
+        "s-user-main",
+        "/repo",
+        ROLE_USER,
+        "literal phrase from user on main",
+        SOURCE_HOOK,
+        Some("main"),
+        Some("/repo"),
+    )?;
+    insert_raw_message(
+        &conn,
+        "s-assistant-main",
+        "/repo",
+        ROLE_ASSISTANT,
+        "literal phrase from assistant on main",
+        SOURCE_HOOK,
+        Some("main"),
+        Some("/repo"),
+    )?;
+    insert_raw_message(
+        &conn,
+        "s-user-feature",
+        "/repo",
+        ROLE_USER,
+        "literal phrase from user on feature",
+        SOURCE_HOOK,
+        Some("feature"),
+        Some("/repo"),
+    )?;
+
+    let request = build_raw_search_request(
+        "literal phrase",
+        Some("/repo"),
+        Some("main"),
+        Some("user"),
+        20,
+        0,
+    );
+    let rows = search_raw_archive(&conn, &request)?;
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].role, ROLE_USER);
+    assert_eq!(rows[0].branch.as_deref(), Some("main"));
+    assert!(rows[0].content.contains("literal phrase"));
+    Ok(())
+}
+
+#[test]
+fn cli_raw_search_render_labels_rows_as_raw_not_curated() {
+    let output = render_raw_search_results(&[sample_raw()], 20, 20, true);
+
+    assert!(output.contains("Raw archive rows (not curated memories):"));
+    assert!(
+        output.contains("[raw:9] user | proj | 1970-01-01 00:00 UTC | source=hook | branch=main")
+    );
+    assert!(output.contains("raw rows are captured chat turns, not curated memories."));
+    assert!(output.contains("remem raw search \"<query>\" --offset 40"));
+}
+
+#[test]
+fn cli_raw_search_render_empty_mentions_curated_search() {
+    let output = render_raw_search_results(&[], 0, 20, false);
+
+    assert!(output.contains("No raw archive rows found."));
+    assert!(output.contains("Curated search may still have promoted memories"));
+    assert!(output.contains("remem search \"<query>\""));
+}
+
+#[test]
+fn cli_raw_search_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
+    let output = build_raw_search_json(
+        "literal phrase",
+        Some("proj"),
+        Some("main"),
+        Some("user"),
+        20,
+        40,
+        true,
+        &[sample_raw()],
+    );
+
+    let text = serde_json::to_string(&output)?;
+    let parsed: Value = serde_json::from_str(&text)?;
+
+    assert_eq!(parsed["query"], "literal phrase");
+    assert_eq!(parsed["project"], "proj");
+    assert_eq!(parsed["branch"], "main");
+    assert_eq!(parsed["role"], "user");
+    assert_eq!(parsed["source_type"], "raw_archive");
+    assert_eq!(
+        parsed["note"],
+        "raw archive rows are captured chat turns, not curated memories"
+    );
+    assert_eq!(parsed["count"], 1);
+    assert_eq!(parsed["has_more"], true);
+    assert_eq!(parsed["next_offset"], 60);
+    assert_eq!(parsed["results"][0]["source_type"], "raw_archive");
+    assert_eq!(parsed["results"][0]["content"], sample_raw().content);
     Ok(())
 }
 
