@@ -224,6 +224,8 @@ fn find_active_same_state_or_topic(
     now_epoch: i64,
     candidate_has_ttl: bool,
 ) -> Result<Vec<ActiveTopicMemory>> {
+    let mut memories = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     if let Some(state_key) = state_key {
         let ids = crate::memory::state_key::active_memory_ids(
             conn,
@@ -234,9 +236,8 @@ fn find_active_same_state_or_topic(
             now_epoch,
             candidate_has_ttl,
         )?;
-        if !ids.is_empty() {
-            let mut memories = Vec::with_capacity(ids.len());
-            for id in ids {
+        for id in ids {
+            if seen.insert(id) {
                 let content =
                     conn.query_row("SELECT content FROM memories WHERE id = ?1", [id], |row| {
                         row.get(0)
@@ -247,10 +248,14 @@ fn find_active_same_state_or_topic(
                     is_current: true,
                 });
             }
-            return Ok(memories);
         }
     }
-    find_active_same_topic(conn, candidate, route, now_epoch, candidate_has_ttl)
+    for memory in find_active_same_topic(conn, candidate, route, now_epoch, candidate_has_ttl)? {
+        if seen.insert(memory.id) {
+            memories.push(memory);
+        }
+    }
+    Ok(memories)
 }
 
 #[allow(clippy::too_many_arguments)]

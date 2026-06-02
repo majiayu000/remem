@@ -1,7 +1,11 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use crate::memory::state_key::StateKeyDecision;
+
+mod supersede;
+pub use supersede::soft_supersede;
+use supersede::soft_supersede_owned;
 
 pub const SHORT_CURRENT_TTL_SECONDS: i64 = 24 * 60 * 60;
 pub const BRANCH_SNAPSHOT_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -113,7 +117,7 @@ pub fn apply_update(
         &ownership,
         state_key.as_ref(),
     )?;
-    let superseded = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
+    let superseded = soft_supersede_owned(&tx, &ownership, &superseded_targets, Some(memory_id))?;
     tx.commit()?;
     Ok(LifecycleOutcome {
         op: MemoryLifecycleOp::Update,
@@ -384,55 +388,6 @@ pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize
     )?)
 }
 
-pub fn soft_supersede(
-    conn: &Connection,
-    project: &str,
-    memory_ids: &[i64],
-    replacement_id: Option<i64>,
-) -> Result<usize> {
-    let mut seen = std::collections::HashSet::with_capacity(memory_ids.len());
-    let targets = memory_ids
-        .iter()
-        .copied()
-        .filter(|id| Some(*id) != replacement_id && seen.insert(*id))
-        .collect::<Vec<_>>();
-    for id in &targets {
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1 AND project = ?2)",
-            params![id, project],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Err(anyhow!(
-                "failed to mark superseded memory stale: id={} project={}",
-                id,
-                project
-            ));
-        }
-    }
-
-    let mut changed = 0usize;
-    let now = chrono::Utc::now().timestamp();
-    for id in targets {
-        let updated = conn.execute(
-            "UPDATE memories
-             SET status = 'stale',
-                 valid_to_epoch = COALESCE(valid_to_epoch, ?3)
-             WHERE id = ?1 AND project = ?2",
-            params![id, project, now],
-        )?;
-        if updated != 1 {
-            return Err(anyhow!(
-                "failed to mark superseded memory stale: id={} project={}",
-                id,
-                project
-            ));
-        }
-        changed += updated;
-    }
-    Ok(changed)
-}
-
 fn has_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
@@ -548,6 +503,85 @@ mod tests {
         )?;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].text, "Deploy target is production.");
+        Ok(())
+    }
+
+    #[test]
+    fn global_state_key_update_supersedes_previous_repo_owner_row() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let repo_a = "/tmp/repo-a";
+        let repo_b = "/tmp/repo-b";
+        let old_id = crate::memory::insert_memory_full(
+            &conn,
+            Some("s1"),
+            repo_a,
+            Some("preference-aaaaaaaa"),
+            "Preference",
+            "Keep verification status separate from data and code changes.",
+            "preference",
+            None,
+            None,
+            "global",
+            None,
+        )?;
+
+        let outcome = apply_update(
+            &conn,
+            Some("s2"),
+            repo_b,
+            "preference-bbbbbbbb",
+            "Preference",
+            "Report data and code changes separately from verification status.",
+            "preference",
+            None,
+            None,
+            "global",
+            &[],
+        )?;
+        let new_id = outcome
+            .memory_id
+            .ok_or_else(|| anyhow::anyhow!("replacement id missing"))?;
+
+        assert_ne!(old_id, new_id);
+        assert_eq!(outcome.superseded, 1);
+        let old_status: String = conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            [old_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(old_status, "stale");
+        let (project, status, owner_scope, owner_key, state_key, current_memory_id): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+        ) = conn.query_row(
+            "SELECT m.project, m.status, m.owner_scope, m.owner_key, sk.state_key,
+                    sk.current_memory_id
+             FROM memories m
+             JOIN memory_state_keys sk ON sk.id = m.state_key_id
+             WHERE m.id = ?1",
+            [new_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        assert_eq!(project, repo_b);
+        assert_eq!(status, "active");
+        assert_eq!(owner_scope, "user");
+        assert_eq!(owner_key, "user:default");
+        assert_eq!(state_key, "verification-status-separation");
+        assert_eq!(current_memory_id, new_id);
         Ok(())
     }
 
