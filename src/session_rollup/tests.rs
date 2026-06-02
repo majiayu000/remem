@@ -240,15 +240,15 @@ async fn session_rollup_persists_later_same_topic_segments_in_session() -> Resul
 }
 
 #[tokio::test]
-async fn session_rollup_drops_out_of_range_segment_but_keeps_summary() -> Result<()> {
+async fn session_rollup_rejects_out_of_range_segment_without_writing() -> Result<()> {
     let mut conn = setup_conn();
     capture(&conn, "sess-invalid-segment", "tool_result", "one")?;
     let task = claim_rollup_task(&mut conn)?;
     let event_id = task.high_watermark_event_id.unwrap_or_default();
 
-    let result = process_with_summarizer(&mut conn, &task, move |_prompt| async move {
+    let err = process_with_summarizer(&mut conn, &task, move |_prompt| async move {
         Ok(xml_response(
-            "summary survives",
+            "summary does not survive",
             &format!(
                 r#"<segment topic_key="bad-segment" status="resolved">
                    <title>Bad segment</title>
@@ -260,13 +260,33 @@ async fn session_rollup_drops_out_of_range_segment_but_keeps_summary() -> Result
             ),
         ))
     })
-    .await?;
+    .await
+    .expect_err("invalid segment should fail the rollup");
 
-    assert_eq!(result, SessionRollupResult::Written);
-    assert_eq!(summary_count(&conn), 1);
+    assert!(err
+        .to_string()
+        .contains("evidence_event_ids absent from loaded rollup events"));
+    assert_eq!(summary_count(&conn), 0);
     let segments: i64 =
         conn.query_row("SELECT COUNT(*) FROM topic_segments", [], |row| row.get(0))?;
     assert_eq!(segments, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_missing_segments_tag_fails_without_writing() -> Result<()> {
+    let mut conn = setup_conn();
+    capture(&conn, "sess-missing-segments", "tool_result", "one")?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let err = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok("<summary>summary only</summary>".to_string())
+    })
+    .await
+    .expect_err("missing segments should fail");
+
+    assert!(err.to_string().contains("missing <segments>"));
+    assert_eq!(summary_count(&conn), 0);
     Ok(())
 }
 

@@ -268,4 +268,27 @@ mod tests {
         assert!(event_ids.windows(2).all(|pair| pair[0] < pair[1]));
         Ok(())
     }
+
+    #[test]
+    fn project_topic_trace_query_uses_project_trace_index() -> Result<()> {
+        let conn = conn();
+        let mut stmt = conn.prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT id
+             FROM topic_segments
+             WHERE project = ?1 AND topic_key = ?2
+             ORDER BY covered_from_event_id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params!["/tmp/remem", "release-plan", 12_i64], |row| {
+            row.get::<_, String>(3)
+        })?;
+        let plan = crate::db::query::collect_rows(rows)?.join("\n");
+
+        assert!(
+            plan.contains("idx_topic_segments_project_trace"),
+            "unexpected query plan: {plan}"
+        );
+        Ok(())
+    }
 }

@@ -126,7 +126,22 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             context_class TEXT,
             expires_at_epoch INTEGER,
             valid_from_epoch INTEGER,
-            valid_to_epoch INTEGER
+            valid_to_epoch INTEGER,
+            state_key_id INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_state_keys (
+            id INTEGER PRIMARY KEY,
+            owner_scope TEXT NOT NULL,
+            owner_key TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            state_key TEXT NOT NULL,
+            state_label TEXT,
+            state_status TEXT NOT NULL DEFAULT 'active',
+            current_memory_id INTEGER,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            UNIQUE(owner_scope, owner_key, memory_type, state_key)
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -270,7 +285,10 @@ pub fn setup_full_schema(conn: &Connection) -> Result<()> {
             context_class TEXT,
             expires_at_epoch INTEGER,
             valid_from_epoch INTEGER,
-            valid_to_epoch INTEGER
+            valid_to_epoch INTEGER,
+            state_key TEXT,
+            state_key_confidence REAL,
+            state_key_reason TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_memory_candidates_dedupe
             ON memory_candidates(project_id, scope, memory_type, topic_key, text);

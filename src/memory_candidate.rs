@@ -327,6 +327,12 @@ fn persist_candidate_rows(
             candidate,
             source.route_texts.iter().copied(),
         );
+        let state_key = crate::memory::state_key::derive_state_key(
+            &candidate.memory_type,
+            Some(&candidate.topic_key),
+            &candidate_title(candidate),
+            &candidate.text,
+        );
         let review_status = "pending_review";
         tx.execute(
             "INSERT INTO memory_candidates
@@ -334,9 +340,10 @@ fn persist_candidate_rows(
               confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
               source_project, target_project, owner_scope, owner_key, topic_domain,
               routing_confidence, routing_reason, context_class, expires_at_epoch,
-              valid_from_epoch)
+              valid_from_epoch, state_key, state_key_confidence, state_key_reason)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
-                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
+                     ?21, ?22, ?23)",
             params![
                 source.project_id,
                 candidate.scope,
@@ -357,7 +364,12 @@ fn persist_candidate_rows(
                 route.routing_reason,
                 route.context_class,
                 expires_at_epoch,
-                valid_from_epoch
+                valid_from_epoch,
+                state_key
+                    .as_ref()
+                    .map(|decision| decision.state_key.as_str()),
+                state_key.as_ref().map(|decision| decision.confidence),
+                state_key.as_ref().map(|decision| decision.reason.as_str())
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();

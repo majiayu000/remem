@@ -1,5 +1,8 @@
 use super::types::{Check, Status};
 use crate::db;
+use crate::doctor::health_action::{
+    queue_actions, render_inline_hints, worker_once_fallback_detail,
+};
 
 pub(super) fn check_database() -> Check {
     let db_path = db::db_path();
@@ -14,7 +17,7 @@ pub(super) fn check_database() -> Check {
     let size = std::fs::metadata(&db_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    match db::open_db() {
+    match db::open_db_read_only() {
         Ok(conn) => match db::query_system_stats(&conn) {
             Ok(stats) => Check {
                 name: "Database",
@@ -41,7 +44,7 @@ pub(super) fn check_database() -> Check {
 }
 
 pub(super) fn check_pending_queue() -> Check {
-    let conn = match db::open_db() {
+    let conn = match db::open_db_read_only() {
         Ok(conn) => conn,
         Err(_) => {
             return Check {
@@ -75,23 +78,33 @@ pub(super) fn check_pending_queue() -> Check {
         stats.stuck_jobs,
     );
 
+    let actions = queue_actions(
+        stats.failed_pending_observations,
+        stats.expired_processing_pending_observations,
+        stats.failed_jobs,
+        stats.stuck_jobs,
+    );
+    let action_suffix = render_inline_hints(&actions)
+        .map(|hints| format!("; actions: {hints}"))
+        .unwrap_or_default();
+
     if stats.expired_processing_pending_observations > 0 || stats.stuck_jobs > 0 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!("{} (will auto-recover)", detail),
+            detail: format!("{detail} (will auto-recover{action_suffix})"),
         }
     } else if stats.failed_pending_observations > 0 || stats.failed_jobs > 0 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!("{} (inspect failures)", detail),
+            detail: format!("{detail} (inspect failures{action_suffix})"),
         }
     } else if stats.ready_pending_observations > 100 {
         Check {
             name: "Pending queue",
             status: Status::Warn,
-            detail: format!("{} (backlog building up)", detail),
+            detail: format!("{detail} (backlog building up; action: `remem worker --once`)"),
         }
     } else {
         Check {
@@ -103,7 +116,7 @@ pub(super) fn check_pending_queue() -> Check {
 }
 
 pub(super) fn check_worker_daemon() -> Check {
-    let conn = match db::open_db() {
+    let conn = match db::open_db_read_only() {
         Ok(conn) => conn,
         Err(_) => {
             return Check {
@@ -139,14 +152,16 @@ pub(super) fn check_worker_daemon() -> Check {
             name: "Worker daemon",
             status: Status::Warn,
             detail: format!(
-                "stale, last heartbeat {}s ago ({}) — Stop hooks will use worker --once",
-                age_secs, owner
+                "stale, last heartbeat {}s ago ({}); {}",
+                age_secs,
+                owner,
+                worker_once_fallback_detail()
             ),
         },
         _ => Check {
             name: "Worker daemon",
             status: Status::Ok,
-            detail: "not running; Stop hooks will use worker --once".to_string(),
+            detail: format!("not running; {}", worker_once_fallback_detail()),
         },
     }
 }

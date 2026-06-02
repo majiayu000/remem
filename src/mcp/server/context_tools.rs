@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
@@ -154,10 +156,11 @@ impl MemoryServer {
                         &params.ids,
                         memories.iter().map(|memory| memory.id),
                     )?;
-                    memory_details_with_topic_traces(conn, &memories).map_err(|e| {
-                        crate::log::warn("mcp", &format!("load topic traces failed: {}", e));
-                        McpToolError::db_query(TOOL, e)
-                    })?
+                    memory_details_with_topic_traces(conn, &memories, params.project.as_deref())
+                        .map_err(|e| {
+                            crate::log::warn("mcp", &format!("load topic traces failed: {}", e));
+                            McpToolError::db_query(TOOL, e)
+                        })?
                 }
                 other => {
                     return Err(McpToolError::unsupported_source(
@@ -183,17 +186,31 @@ impl MemoryServer {
 fn memory_details_with_topic_traces(
     conn: &rusqlite::Connection,
     memories: &[memory::Memory],
+    requested_project: Option<&str>,
 ) -> anyhow::Result<serde_json::Value> {
     const TRACE_LIMIT: i64 = 12;
     let mut value = serde_json::to_value(memories)?;
     let Some(items) = value.as_array_mut() else {
         return Ok(value);
     };
+    let mut trace_cache = HashMap::new();
     for (item, memory) in items.iter_mut().zip(memories) {
         let Some(topic_key) = memory.topic_key.as_deref() else {
             continue;
         };
-        let trace = db::load_trace_by_topic_key(conn, &memory.project, topic_key, TRACE_LIMIT)?;
+        let trace_project = match requested_project {
+            Some(project) if project == memory.project => project,
+            Some(_) => continue,
+            None => memory.project.as_str(),
+        };
+        let cache_key = (trace_project.to_string(), topic_key.to_string());
+        if !trace_cache.contains_key(&cache_key) {
+            let trace = db::load_trace_by_topic_key(conn, trace_project, topic_key, TRACE_LIMIT)?;
+            trace_cache.insert(cache_key.clone(), trace);
+        }
+        let trace = trace_cache
+            .get(&cache_key)
+            .expect("trace cache should contain loaded key");
         if !trace.is_empty() {
             item["topic_trace"] = serde_json::to_value(trace)?;
         }
@@ -227,4 +244,79 @@ fn ensure_requested_ids_found(
         tool,
         format!("{source} id(s) not found: {missing:?}"),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use rusqlite::Connection;
+
+    use super::*;
+
+    fn memory_row(project: &str, scope: &str) -> crate::memory::Memory {
+        crate::memory::Memory {
+            id: 1,
+            session_id: Some("session-1".to_string()),
+            project: project.to_string(),
+            topic_key: Some("global-contract".to_string()),
+            title: "Global contract".to_string(),
+            text: "Global memory body".to_string(),
+            memory_type: "decision".to_string(),
+            files: None,
+            created_at_epoch: 10,
+            updated_at_epoch: 10,
+            status: "active".to_string(),
+            branch: None,
+            scope: scope.to_string(),
+        }
+    }
+
+    fn conn_with_trace() -> Result<Connection> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        crate::db::insert_topic_segment(
+            &conn,
+            &crate::db::TopicSegmentInput {
+                host_id: 1,
+                project_id: 1,
+                session_row_id: 1,
+                project: "/repo",
+                topic_key: "global-contract",
+                title: "Repo-only trace",
+                summary: "Trace belongs to /repo.",
+                status: "resolved",
+                segment_index: 0,
+                covered_from_event_id: 10,
+                covered_to_event_id: 12,
+                evidence_event_ids: "[10,12]",
+                files: None,
+                confidence: 0.8,
+            },
+        )?;
+        Ok(conn)
+    }
+
+    #[test]
+    fn topic_trace_is_omitted_for_requested_project_mismatch() -> Result<()> {
+        let conn = conn_with_trace()?;
+        let memories = vec![memory_row("/repo", "global")];
+
+        let value = memory_details_with_topic_traces(&conn, &memories, Some("/other"))?;
+
+        assert_eq!(value[0]["scope"], "global");
+        assert!(value[0]["topic_trace"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn topic_trace_is_attached_for_matching_requested_project() -> Result<()> {
+        let conn = conn_with_trace()?;
+        let memories = vec![memory_row("/repo", "project")];
+
+        let value = memory_details_with_topic_traces(&conn, &memories, Some("/repo"))?;
+
+        assert_eq!(value[0]["topic_trace"][0]["title"], "Repo-only trace");
+        Ok(())
+    }
 }

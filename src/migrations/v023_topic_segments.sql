@@ -1,4 +1,4 @@
--- v022_topic_segments: Topic Loom intermediate layer for topic continuity.
+-- v023_topic_segments: Topic Loom intermediate layer for topic continuity.
 --
 -- Session rollup emits coherent per-topic segments between captured events and
 -- final promoted memories. Memories remain the durable promoted product.
@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS topic_segments (
 
 CREATE INDEX IF NOT EXISTS idx_topic_segments_trace
     ON topic_segments(project_id, topic_key, covered_from_event_id);
+
+CREATE INDEX IF NOT EXISTS idx_topic_segments_project_trace
+    ON topic_segments(project, topic_key, covered_from_event_id);
 
 CREATE INDEX IF NOT EXISTS idx_topic_segments_session
     ON topic_segments(session_row_id, topic_key);

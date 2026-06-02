@@ -30,33 +30,25 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
         .filter(|summary| !summary.is_empty())
         .ok_or_else(|| anyhow!("session_rollup response missing non-empty <summary>"))?;
 
-    let Some(segments_xml) = extract_tag(text, "segments") else {
-        crate::log::info(
-            "session_rollup",
-            "response has no <segments>; writing summary only",
-        );
+    let segments_xml = extract_tag(text, "segments")
+        .ok_or_else(|| anyhow!("session_rollup response missing <segments>"))?;
+    if segments_xml.trim().is_empty() {
         return Ok(RollupOutput {
             summary_text,
             segments: Vec::new(),
         });
-    };
+    }
 
     let mut segments = Vec::new();
-    for (index, raw_segment) in iter_segment_blocks(&segments_xml).into_iter().enumerate() {
-        match parse_segment(index as i64, &raw_segment, range) {
-            Ok(Some(segment)) => segments.push(segment),
-            Ok(None) => {}
-            Err(error) => crate::log::warn(
-                "session_rollup",
-                &format!("dropping invalid topic segment: {error}"),
-            ),
-        }
+    for (index, raw_segment) in iter_segment_blocks(&segments_xml)?.into_iter().enumerate() {
+        let segment = parse_segment(index as i64, &raw_segment, range)
+            .map_err(|error| anyhow!("parse topic segment index {index}: {error}"))?;
+        segments.push(segment);
     }
     if segments.is_empty() {
-        crate::log::info(
-            "session_rollup",
-            "response produced no valid topic segments",
-        );
+        return Err(anyhow!(
+            "session_rollup response <segments> contains no <segment> blocks"
+        ));
     }
     Ok(RollupOutput {
         summary_text,
@@ -64,30 +56,30 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
     })
 }
 
-fn iter_segment_blocks(text: &str) -> Vec<String> {
+fn iter_segment_blocks(text: &str) -> Result<Vec<String>> {
     let mut blocks = Vec::new();
     let mut rest = text;
     while let Some(start_rel) = rest.find("<segment") {
         let after_start = &rest[start_rel..];
-        let Some(open_end_rel) = after_start.find('>') else {
-            break;
-        };
+        let open_end_rel = after_start
+            .find('>')
+            .context("segment missing opening tag terminator")?;
         let body_start = start_rel + open_end_rel + 1;
-        let Some(close_rel) = rest[body_start..].find("</segment>") else {
-            break;
-        };
+        let close_rel = rest[body_start..]
+            .find("</segment>")
+            .context("segment missing closing tag")?;
         let close_end = body_start + close_rel + "</segment>".len();
         blocks.push(rest[start_rel..close_end].to_string());
         rest = &rest[close_end..];
     }
-    blocks
+    Ok(blocks)
 }
 
 fn parse_segment(
     segment_index: i64,
     raw_segment: &str,
     range: &RollupRange,
-) -> Result<Option<ParsedTopicSegment>> {
+) -> Result<ParsedTopicSegment> {
     let open_end = raw_segment
         .find('>')
         .context("segment missing opening tag terminator")?;
@@ -158,7 +150,7 @@ fn parse_segment(
         .context("parse segment confidence")?
         .unwrap_or(0.75);
 
-    Ok(Some(ParsedTopicSegment {
+    Ok(ParsedTopicSegment {
         topic_key,
         title,
         summary,
@@ -169,7 +161,7 @@ fn parse_segment(
         evidence_event_ids,
         files,
         confidence,
-    }))
+    })
 }
 
 fn required_tag(body: &str, tag: &str) -> Result<String> {
@@ -305,8 +297,8 @@ mod tests {
     }
 
     #[test]
-    fn drops_segment_with_evidence_event_absent_from_loaded_events() -> Result<()> {
-        let parsed = parse_rollup_response(
+    fn rejects_segment_with_evidence_event_absent_from_loaded_events() {
+        let err = parse_rollup_response(
             r#"<summary>done</summary>
             <segments>
             <segment topic_key="interleaved-session" status="open">
@@ -318,8 +310,27 @@ mod tests {
             </segment>
             </segments>"#,
             &range(),
-        )?;
+        )
+        .expect_err("out-of-range evidence should fail the rollup parse");
 
+        assert!(err
+            .to_string()
+            .contains("evidence_event_ids absent from loaded rollup events"));
+    }
+
+    #[test]
+    fn missing_segments_tag_fails_entire_rollup_parse() {
+        let err = parse_rollup_response("<summary>done</summary>", &range())
+            .expect_err("missing segments should fail");
+        assert!(err.to_string().contains("missing <segments>"));
+    }
+
+    #[test]
+    fn explicit_empty_segments_is_accepted() -> Result<()> {
+        let parsed =
+            parse_rollup_response("<summary>done</summary><segments></segments>", &range())?;
+
+        assert_eq!(parsed.summary_text, "done");
         assert!(parsed.segments.is_empty());
         Ok(())
     }

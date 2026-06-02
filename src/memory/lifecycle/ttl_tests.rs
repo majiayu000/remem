@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 use super::*;
@@ -263,5 +263,126 @@ fn state_key_update_inserts_replacement_and_stales_old_fact() -> Result<()> {
     assert_eq!(rows[1].3, "Dev server is running on port 5173.");
     assert!(rows[1].4.is_some());
     assert!(rows[1].5.is_some());
+    Ok(())
+}
+
+#[test]
+fn exact_topic_update_still_replaces_legacy_memory_without_state_key() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let project = "test-lifecycle";
+    let topic_key = "repo:test-lifecycle:legacy-dev-server";
+    let old_id = insert_memory(
+        &conn,
+        Some("s1"),
+        project,
+        Some(topic_key),
+        "Dev server old",
+        "Dev server is running on port 3000.",
+        "discovery",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET state_key_id = NULL WHERE id = ?1",
+        [old_id],
+    )?;
+    conn.execute("DELETE FROM memory_state_keys", [])?;
+
+    let outcome = apply_update(
+        &conn,
+        Some("s2"),
+        project,
+        topic_key,
+        "Dev server current",
+        "Dev server is running on port 5173.",
+        "discovery",
+        None,
+        None,
+        "project",
+        &[],
+    )?;
+    let new_id = outcome.memory_id.context("replacement id")?;
+
+    assert_eq!(outcome.superseded, 1);
+    let old_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [old_id],
+        |row| row.get(0),
+    )?;
+    let new_state_key_id: Option<i64> = conn.query_row(
+        "SELECT state_key_id FROM memories WHERE id = ?1",
+        [new_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(old_status, "stale");
+    assert!(new_state_key_id.is_some());
+    Ok(())
+}
+
+#[test]
+fn hash_like_topic_update_replaces_same_semantic_state_key_and_moves_current_pointer() -> Result<()>
+{
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let project = "test-lifecycle";
+    let add = apply_add(
+        &conn,
+        Some("s1"),
+        project,
+        Some("preference-aaaaaaaa"),
+        "Preference",
+        "Keep verification status separate from data and code changes.",
+        "preference",
+        None,
+        None,
+        "global",
+    )?;
+    let old_id = add.memory_id.context("old memory id")?;
+
+    let outcome = apply_update(
+        &conn,
+        Some("s2"),
+        project,
+        "preference-bbbbbbbb",
+        "Preference",
+        "Report data and code changes separately from verification status.",
+        "preference",
+        None,
+        None,
+        "global",
+        &[],
+    )?;
+    let new_id = outcome.memory_id.context("replacement id")?;
+
+    assert_ne!(old_id, new_id);
+    assert_eq!(outcome.superseded, 1);
+    let (old_status, new_status): (String, String) = conn.query_row(
+        "SELECT old.status, new.status
+         FROM memories old
+         JOIN memories new ON new.id = ?2
+         WHERE old.id = ?1",
+        rusqlite::params![old_id, new_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(old_status, "stale");
+    assert_eq!(new_status, "active");
+
+    let (state_key_id, state_key, current_memory_id): (i64, String, i64) = conn.query_row(
+        "SELECT sk.id, sk.state_key, sk.current_memory_id
+         FROM memories m
+         JOIN memory_state_keys sk ON sk.id = m.state_key_id
+         WHERE m.id = ?1",
+        [new_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(state_key, "verification-status-separation");
+    assert_eq!(current_memory_id, new_id);
+
+    let old_state_key_id: i64 = conn.query_row(
+        "SELECT state_key_id FROM memories WHERE id = ?1",
+        [old_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(old_state_key_id, state_key_id);
     Ok(())
 }
