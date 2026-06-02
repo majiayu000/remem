@@ -1,10 +1,40 @@
-use anyhow::Result;
-use rusqlite::Connection;
+use anyhow::{bail, Result};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::merge::MergeResult;
+use crate::memory::lifecycle::MemoryLifecycleOp;
+use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
 pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) -> Result<()> {
     let tx = conn.transaction()?;
+    let superseded_ids =
+        validate_dream_superseded_ids(&tx, project, &result.memory_type, &result.superseded_ids)?;
+    validate_dream_target_topic(
+        &tx,
+        project,
+        &result.memory_type,
+        &result.topic_key,
+        &superseded_ids,
+    )?;
+    let state_key = crate::memory::state_key::derive_state_key(
+        &result.memory_type,
+        Some(&result.topic_key),
+        &result.title,
+        &result.content,
+    )
+    .map(|decision| decision.state_key);
+    let operation_input = MemoryOperationInput {
+        source: "dream".to_string(),
+        actor: "dream".to_string(),
+        source_project: project.to_string(),
+        owner_scope: "repo".to_string(),
+        owner_key: project.to_string(),
+        memory_type: result.memory_type.clone(),
+        topic_key: Some(result.topic_key.clone()),
+        state_key: state_key.clone(),
+        source_candidate_id: None,
+        confidence: None,
+    };
 
     // Upsert the merged memory (reuses existing topic_key upsert logic)
     let merged_id = crate::memory::insert_memory_full(
@@ -20,16 +50,104 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
         "project",
         None,
     )?;
+    let actual_superseded_ids = superseded_ids
+        .into_iter()
+        .filter(|id| *id != merged_id)
+        .collect::<Vec<_>>();
 
     crate::memory::lifecycle::soft_supersede(
         &tx,
         project,
-        &result.superseded_ids,
+        &actual_superseded_ids,
         Some(merged_id),
     )?;
+    let op = if result.superseded_ids.is_empty() {
+        MemoryLifecycleOp::Add
+    } else {
+        MemoryLifecycleOp::Update
+    };
+    let plan = MemoryOperationPlan::new(op, state_key, "dream consolidation applied")
+        .with_target_memory_id(Some(merged_id))
+        .with_superseded_ids(actual_superseded_ids);
+    insert_operation_log(&tx, &operation_input, &plan, Some(merged_id))?;
 
     tx.commit()?;
     Ok(())
+}
+
+fn validate_dream_superseded_ids(
+    conn: &Connection,
+    project: &str,
+    memory_type: &str,
+    superseded_ids: &[i64],
+) -> Result<Vec<i64>> {
+    let mut seen = std::collections::HashSet::with_capacity(superseded_ids.len());
+    let mut valid = Vec::new();
+    for id in superseded_ids.iter().copied().filter(|id| seen.insert(*id)) {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM memories
+                 WHERE id = ?1
+                   AND project = ?2
+                   AND memory_type = ?3
+                   AND COALESCE(
+                        owner_scope,
+                        CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+                   ) = 'repo'
+                   AND COALESCE(
+                        owner_key,
+                        CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
+                   ) = ?2
+             )",
+            params![id, project, memory_type],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            bail!("dream superseded memory id={id} is outside project/type/owner neighborhood");
+        }
+        valid.push(id);
+    }
+    Ok(valid)
+}
+
+fn validate_dream_target_topic(
+    conn: &Connection,
+    project: &str,
+    memory_type: &str,
+    topic_key: &str,
+    superseded_ids: &[i64],
+) -> Result<()> {
+    let existing_id = conn
+        .query_row(
+            "SELECT id FROM memories
+             WHERE project = ?1
+               AND memory_type = ?2
+               AND topic_key = ?3
+               AND COALESCE(
+                    owner_scope,
+                    CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+               ) = 'repo'
+               AND COALESCE(
+                    owner_key,
+                    CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
+               ) = ?1
+             ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
+                      updated_at_epoch DESC,
+                      id DESC
+             LIMIT 1",
+            params![project, memory_type, topic_key],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(existing_id) = existing_id else {
+        return Ok(());
+    };
+    if superseded_ids.contains(&existing_id) {
+        return Ok(());
+    }
+    bail!(
+        "dream target topic_key collides with memory id={existing_id} outside superseded neighborhood"
+    );
 }
 
 #[cfg(test)]
@@ -172,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_keeps_reused_topic_key_merge_active() {
+    fn test_apply_keeps_reused_topic_key_merge_active() -> Result<()> {
         let (mut conn, project) = setup();
         let old_id = insert_memory(
             &conn,
@@ -183,8 +301,7 @@ mod tests {
             "oldreusedneedle content",
             "decision",
             None,
-        )
-        .expect("insert");
+        )?;
 
         let result = MergeResult {
             topic_key: "reused-topic".to_owned(),
@@ -193,7 +310,7 @@ mod tests {
             content: "mergedreusedneedle content".to_owned(),
             superseded_ids: vec![old_id],
         };
-        apply(&mut conn, &project, &result).expect("apply");
+        apply(&mut conn, &project, &result)?;
 
         assert_eq!(status_for_id(&conn, old_id), "active");
         assert_eq!(active_count(&conn, &project, "reused-topic"), 1);
@@ -205,6 +322,59 @@ mod tests {
             !fts_indexed(&conn, old_id, "oldreusedneedle"),
             "old content must not remain indexed after the upsert"
         );
+        let operation: String = conn.query_row(
+            "SELECT operation FROM memory_operation_log ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(operation, "update");
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rejects_target_topic_collision_outside_superseded_neighborhood() -> Result<()> {
+        let (mut conn, project) = setup();
+        insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            Some("collision-topic"),
+            "Unrelated title",
+            "unrelated content",
+            "decision",
+            None,
+        )?;
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            Some("old-topic"),
+            "Old title",
+            "old content",
+            "decision",
+            None,
+        )?;
+
+        let result = MergeResult {
+            topic_key: "collision-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "merged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+
+        let error = apply(&mut conn, &project, &result).expect_err("collision should fail");
+        assert!(
+            error.to_string().contains("target topic_key collides"),
+            "expected collision error, got: {error:?}"
+        );
+        assert_eq!(status_for_id(&conn, old_id), "active");
+        let log_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_operation_log", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(log_count, 0);
+        Ok(())
     }
 
     #[test]
@@ -232,6 +402,46 @@ mod tests {
         apply(&mut conn, &project, &result).expect("apply");
 
         assert_eq!(status_for_id(&conn, old_id), "stale");
+    }
+
+    #[test]
+    fn test_apply_records_operation_log_for_superseded_ids() -> Result<()> {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            None,
+            "old title",
+            "old content",
+            "decision",
+            None,
+        )?;
+
+        let result = MergeResult {
+            topic_key: "logged-merged".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Logged title".to_owned(),
+            content: "Logged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+        apply(&mut conn, &project, &result)?;
+
+        let (operation, result_memory_id, superseded_ids): (String, i64, String) = conn.query_row(
+            "SELECT operation, result_memory_id, superseded_ids
+             FROM memory_operation_log
+             ORDER BY id DESC
+             LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(operation, "update");
+        assert_ne!(result_memory_id, old_id);
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&superseded_ids)?,
+            vec![old_id]
+        );
+        Ok(())
     }
 
     #[test]
@@ -274,6 +484,52 @@ mod tests {
 
         assert_eq!(active_count(&conn, &project, "merged-topic"), 0);
         assert_eq!(status_for_id(&conn, old_id), "active");
+    }
+
+    #[test]
+    fn test_apply_rolls_back_when_operation_log_insert_fails() -> Result<()> {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            Some("old-topic"),
+            "old title",
+            "old content",
+            "decision",
+            None,
+        )?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_operation_log_insert
+             BEFORE INSERT ON memory_operation_log
+             BEGIN
+                 SELECT RAISE(FAIL, 'forced operation log failure');
+             END;",
+        )?;
+
+        let result = MergeResult {
+            topic_key: "merged-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+
+        let error = apply(&mut conn, &project, &result).expect_err("apply should fail");
+        let error_chain = format!("{error:?}");
+        assert!(
+            error_chain.contains("forced operation log failure"),
+            "expected operation log trigger failure, got: {error_chain}"
+        );
+
+        let log_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_operation_log", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(active_count(&conn, &project, "merged-topic"), 0);
+        assert_eq!(status_for_id(&conn, old_id), "active");
+        assert_eq!(log_count, 0);
+        Ok(())
     }
 
     #[test]

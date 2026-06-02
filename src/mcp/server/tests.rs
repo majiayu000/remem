@@ -284,7 +284,7 @@ fn save_memory_response_reports_durable_feedback_shape() {
     let json: Value = serde_json::from_str(&response).expect("response should be json");
 
     assert_eq!(json["status"], "saved");
-    assert_eq!(json["operation"], "inserted");
+    assert_eq!(json["operation"], "add");
     assert_eq!(json["upserted"], true);
     assert_eq!(json["project"], "proj");
     assert_eq!(json["scope"], "project");

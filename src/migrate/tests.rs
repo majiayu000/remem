@@ -106,6 +106,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "git_commit_sessions",
         "memory_state_keys",
         "topic_segments",
+        "memory_operation_log",
     ] {
         let exists: bool = conn
             .query_row(

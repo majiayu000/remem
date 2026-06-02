@@ -171,7 +171,7 @@ async fn save_memory_response_reports_durable_feedback_shape() {
     let payload: Value = serde_json::from_slice(&body).expect("save response should be valid json");
 
     assert_eq!(payload["status"], "saved");
-    assert_eq!(payload["operation"], "inserted");
+    assert_eq!(payload["operation"], "add");
     assert_eq!(payload["upserted"], true);
     assert_eq!(payload["project"], "proj");
     assert_eq!(payload["scope"], "project");

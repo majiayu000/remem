@@ -472,6 +472,23 @@ async fn memory_candidate_existing_same_topic_same_text_becomes_noop() -> Result
         conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
     assert_eq!(review_status, "noop");
     assert_eq!(memory_count, 1);
+    let (operation, source_candidate_id, noop_reason): (String, Option<i64>, Option<String>) = conn
+        .query_row(
+            "SELECT operation, source_candidate_id, noop_reason
+             FROM memory_operation_log
+             ORDER BY id DESC
+             LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+    let candidate_id: i64 =
+        conn.query_row("SELECT id FROM memory_candidates", [], |row| row.get(0))?;
+    assert_eq!(operation, "noop");
+    assert_eq!(source_candidate_id, Some(candidate_id));
+    assert_eq!(
+        noop_reason.as_deref(),
+        Some("already represented by active memory")
+    );
     Ok(())
 }
 
@@ -534,6 +551,19 @@ async fn memory_candidate_newer_same_topic_supersedes_old_memory() -> Result<()>
     assert_eq!(old_status, "stale");
     assert_eq!(active_text, text);
     assert_eq!(memory_count, 2);
+    let (operation, superseded_ids): (String, String) = conn.query_row(
+        "SELECT operation, superseded_ids
+         FROM memory_operation_log
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(operation, "update");
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&superseded_ids)?,
+        vec![old_id]
+    );
     Ok(())
 }
 

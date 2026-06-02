@@ -1,7 +1,12 @@
 use anyhow::{bail, Result};
 use rusqlite::{params, Connection};
 
-use super::{candidate_title, normalize_evidence_text, CandidateRoute, ParsedMemoryCandidate};
+use super::{candidate_title, CandidateRoute, ParsedMemoryCandidate};
+use crate::memory::lifecycle::MemoryLifecycleOp;
+use crate::memory::operation::{
+    insert_operation_log, same_memory_text, with_operation_savepoint, MemoryOperationInput,
+    MemoryOperationPlan,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CandidateApplyOutcome {
@@ -33,58 +38,101 @@ pub(super) fn promote_candidate_to_memory_with_route(
     let title = candidate_title(candidate);
     let memory_project = route.memory_project(source_project);
     let memory_scope = route.memory_scope();
-    let now = chrono::Utc::now().timestamp();
-    let candidate_has_ttl = crate::memory::lifecycle::default_ttl_seconds(
-        &candidate.memory_type,
-        Some(&candidate.topic_key),
-        &candidate.text,
-    )
-    .is_some();
-    let state_key = crate::memory::state_key::derive_state_key(
-        &candidate.memory_type,
-        Some(&candidate.topic_key),
-        &title,
-        &candidate.text,
-    );
-    let active = find_active_same_state_or_topic(
-        conn,
-        candidate,
-        route,
-        state_key.as_ref(),
-        now,
-        candidate_has_ttl,
-    )?;
-    if let Some(existing) = active.iter().filter(|row| row.is_current).find(|row| {
-        normalize_evidence_text(&row.content) == normalize_evidence_text(&candidate.text)
-    }) {
-        return Ok(CandidateApplyOutcome {
-            memory_id: Some(existing.id),
-            promoted: false,
-            noop: true,
-            superseded: 0,
-        });
-    }
 
-    let memory_id = insert_routed_memory(
-        conn,
-        session_id,
-        source_project,
-        &memory_project,
-        candidate_id,
-        candidate,
-        route,
-        &title,
-        evidence_json,
-        memory_scope,
-        state_key.as_ref(),
-    )?;
-    let superseded_ids = active.iter().map(|row| row.id).collect::<Vec<_>>();
-    let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
-    Ok(CandidateApplyOutcome {
-        memory_id: Some(memory_id),
-        promoted: true,
-        noop: false,
-        superseded,
+    with_operation_savepoint(conn, || {
+        let now = chrono::Utc::now().timestamp();
+        let candidate_has_ttl = crate::memory::lifecycle::default_ttl_seconds(
+            &candidate.memory_type,
+            Some(&candidate.topic_key),
+            &candidate.text,
+        )
+        .is_some();
+        let state_key = crate::memory::state_key::derive_state_key(
+            &candidate.memory_type,
+            Some(&candidate.topic_key),
+            &title,
+            &candidate.text,
+        );
+        let state_key_value = state_key
+            .as_ref()
+            .map(|decision| decision.state_key.clone());
+        let operation_input = MemoryOperationInput {
+            source: "memory_candidate".to_string(),
+            actor: "memory_candidate".to_string(),
+            source_project: source_project.to_string(),
+            owner_scope: route.owner_scope.clone(),
+            owner_key: route.owner_key.clone(),
+            memory_type: candidate.memory_type.clone(),
+            topic_key: Some(candidate.topic_key.clone()),
+            state_key: state_key_value.clone(),
+            source_candidate_id: Some(candidate_id),
+            confidence: Some(candidate.confidence),
+        };
+        let active = find_active_same_state_or_topic(
+            conn,
+            candidate,
+            route,
+            state_key.as_ref(),
+            now,
+            candidate_has_ttl,
+        )?;
+        if let Some(existing) = active
+            .iter()
+            .filter(|row| row.is_current)
+            .find(|row| same_memory_text(&row.content, &candidate.text))
+        {
+            let plan = MemoryOperationPlan::new(
+                MemoryLifecycleOp::Noop,
+                state_key_value,
+                "candidate already represented by active memory",
+            )
+            .with_target_memory_id(Some(existing.id))
+            .with_noop_reason("already represented by active memory");
+            insert_operation_log(conn, &operation_input, &plan, Some(existing.id))?;
+            return Ok(CandidateApplyOutcome {
+                memory_id: Some(existing.id),
+                promoted: false,
+                noop: true,
+                superseded: 0,
+            });
+        }
+
+        let superseded_ids = active.iter().map(|row| row.id).collect::<Vec<_>>();
+        let op = if superseded_ids.is_empty() {
+            MemoryLifecycleOp::Add
+        } else {
+            MemoryLifecycleOp::Update
+        };
+        let reason = if superseded_ids.is_empty() {
+            "candidate creates new current memory"
+        } else {
+            "candidate replaces active state/topic memories"
+        };
+        let mut plan = MemoryOperationPlan::new(op, state_key_value, reason)
+            .with_superseded_ids(superseded_ids.clone());
+
+        let memory_id = insert_routed_memory(
+            conn,
+            session_id,
+            source_project,
+            &memory_project,
+            candidate_id,
+            candidate,
+            route,
+            &title,
+            evidence_json,
+            memory_scope,
+            state_key.as_ref(),
+        )?;
+        plan.target_memory_id = Some(memory_id);
+        let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
+        insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
+        Ok(CandidateApplyOutcome {
+            memory_id: Some(memory_id),
+            promoted: true,
+            noop: false,
+            superseded,
+        })
     })
 }
 

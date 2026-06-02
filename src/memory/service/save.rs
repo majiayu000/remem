@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,6 +9,7 @@ use super::local_copy::{
 };
 use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveMemoryResult};
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
+use crate::memory::lifecycle::MemoryLifecycleOp;
 
 #[derive(Debug)]
 pub struct LocalCopyError {
@@ -42,47 +43,105 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
 
     let scope = req.scope.as_deref().unwrap_or("project");
     let effective_topic_key = effective_topic_key(req, memory_type);
-    let operation = durable_operation(conn, project, effective_topic_key.as_deref(), scope)?;
 
     let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
     write_local_copy(&mut local_copy).map_err(LocalCopyError::from)?;
 
     let save_result = if memory_type == "lesson" {
-        save_lesson(
-            conn,
-            &SaveLessonRequest {
-                session_id: None,
+        crate::memory::operation::with_operation_savepoint(conn, || {
+            let (operation_input, operation_plan) = crate::memory::operation::plan_direct_save(
+                conn,
+                "direct",
+                "save_memory",
                 project,
-                topic_key: req.topic_key.as_deref(),
-                title,
-                content: &req.text,
-                confidence: 0.7,
-                source_evidence: None,
-                files: files_json.as_deref(),
-                branch: req.branch.as_deref(),
                 scope,
-                created_at_epoch: req.created_at_epoch,
-                stale_after_epoch: None,
-            },
-        )
+                memory_type,
+                effective_topic_key.as_deref(),
+                title,
+                &req.text,
+                None,
+                None,
+            )?;
+            let id = save_lesson(
+                conn,
+                &SaveLessonRequest {
+                    session_id: None,
+                    project,
+                    topic_key: req.topic_key.as_deref(),
+                    title,
+                    content: &req.text,
+                    confidence: 0.7,
+                    source_evidence: None,
+                    files: files_json.as_deref(),
+                    branch: req.branch.as_deref(),
+                    scope,
+                    created_at_epoch: req.created_at_epoch,
+                    stale_after_epoch: None,
+                },
+            )?;
+            let mut logged_plan = operation_plan.clone();
+            logged_plan.target_memory_id = Some(id);
+            if logged_plan.op == MemoryLifecycleOp::Noop {
+                logged_plan.op = MemoryLifecycleOp::Update;
+                logged_plan.noop_reason = None;
+                logged_plan.reason =
+                    "existing lesson memory was reinforced by direct save".to_string();
+            }
+            crate::memory::operation::insert_operation_log(
+                conn,
+                &operation_input,
+                &logged_plan,
+                Some(id),
+            )?;
+            Ok((id, logged_plan.op))
+        })
     } else {
-        crate::memory::insert_memory_full(
-            conn,
-            None,
-            project,
-            req.topic_key.as_deref(),
-            title,
-            &req.text,
-            memory_type,
-            files_json.as_deref(),
-            req.branch.as_deref(),
-            scope,
-            req.created_at_epoch,
-        )
+        crate::memory::operation::with_operation_savepoint(conn, || {
+            let (operation_input, operation_plan) = crate::memory::operation::plan_direct_save(
+                conn,
+                "direct",
+                "save_memory",
+                project,
+                scope,
+                memory_type,
+                effective_topic_key.as_deref(),
+                title,
+                &req.text,
+                None,
+                None,
+            )?;
+            if operation_plan.op == MemoryLifecycleOp::Noop {
+                let id = operation_plan
+                    .target_memory_id
+                    .ok_or_else(|| anyhow!("noop memory operation missing existing memory id"))?;
+                crate::memory::operation::insert_operation_log(
+                    conn,
+                    &operation_input,
+                    &operation_plan,
+                    Some(id),
+                )?;
+                return Ok((id, MemoryLifecycleOp::Noop));
+            }
+            crate::memory::insert_memory_full_with_operation_log(
+                conn,
+                None,
+                project,
+                req.topic_key.as_deref(),
+                title,
+                &req.text,
+                memory_type,
+                files_json.as_deref(),
+                req.branch.as_deref(),
+                scope,
+                req.created_at_epoch,
+                &operation_input,
+                &operation_plan,
+            )
+        })
     };
 
-    let id = match save_result {
-        Ok(id) => id,
+    let (id, operation) = match save_result {
+        Ok(result) => result,
         Err(err) => {
             if let Err(cleanup_err) = cleanup_local_copy(&local_copy) {
                 return Err(err.context(format!(
@@ -105,7 +164,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         scope: durable.scope,
         topic_key: durable.topic_key,
         branch: durable.branch,
-        operation: operation.to_string(),
+        operation: operation.as_str().to_string(),
         created_at_epoch: durable.created_at_epoch,
         updated_at_epoch: durable.updated_at_epoch,
         upserted: req.topic_key.is_some(),
@@ -184,32 +243,6 @@ fn effective_topic_key(req: &SaveMemoryRequest, memory_type: &str) -> Option<Str
         });
     }
     req.topic_key.clone()
-}
-
-fn durable_operation(
-    conn: &Connection,
-    project: &str,
-    topic_key: Option<&str>,
-    scope: &str,
-) -> Result<&'static str> {
-    let Some(topic_key) = topic_key.filter(|topic_key| !topic_key.is_empty()) else {
-        return Ok("inserted");
-    };
-    let existing_id = conn
-        .query_row(
-            "SELECT id FROM memories
-             WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
-             LIMIT 1",
-            params![project, topic_key, scope],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()
-        .context("check existing durable memory for topic_key upsert")?;
-    Ok(if existing_id.is_some() {
-        "updated"
-    } else {
-        "inserted"
-    })
 }
 
 struct DurableWriteDetails {

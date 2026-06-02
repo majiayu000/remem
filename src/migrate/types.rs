@@ -120,6 +120,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "topic_segments",
         sql: include_str!("../migrations/v023_topic_segments.sql"),
     },
+    Migration {
+        version: 24,
+        name: "memory_operation_log",
+        sql: include_str!("../migrations/v024_memory_operation_log.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
