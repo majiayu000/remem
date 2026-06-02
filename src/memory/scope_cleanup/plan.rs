@@ -8,7 +8,7 @@ use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
 use super::audit::{load_memory_audit_rows, preference_clusters};
-use super::mutate::{insert_scope_cleanup_event, load_target, ObjectMutation, OwnerSnapshot};
+use super::mutate::{insert_scope_cleanup_event, load_target, ObjectMutation};
 use super::ObjectRef;
 
 pub const CLEANUP_PLANNER_VERSION: &str = "memory-cleanup-v1";
@@ -149,32 +149,14 @@ pub fn apply_memory_cleanup_plan(
         let current_ref = ObjectRef::memory(group.current_id);
         let canonical = load_target(&tx, current_ref)?;
         let current_snapshot = snapshot_for(&group.row_snapshots, group.current_id)?;
-        let new_owner = OwnerSnapshot {
-            source_project: canonical
-                .owner
-                .source_project
-                .clone()
-                .or_else(|| canonical.project.clone()),
-            target_project: Some(plan.project.clone()),
-            owner_scope: Some("repo".to_string()),
-            owner_key: Some(plan.project.clone()),
-            topic_domain: canonical.owner.topic_domain.clone(),
-            routing_confidence: canonical.owner.routing_confidence,
-            routing_reason: canonical.owner.routing_reason.clone(),
-            context_class: canonical.owner.context_class.clone(),
-        };
         let merged = group.merged_content.as_deref();
         let updated = tx.execute(
             "UPDATE memories
              SET content = COALESCE(?1, content),
                  status = 'active',
-                 source_project = COALESCE(source_project, project),
-                 target_project = ?2,
-                 owner_scope = 'repo',
-                 owner_key = ?2,
-                 updated_at_epoch = ?3
-             WHERE id = ?4",
-            params![merged, plan.project, now, group.current_id],
+                 updated_at_epoch = ?2
+             WHERE id = ?3",
+            params![merged, now, group.current_id],
         )?;
         if updated != 1 {
             bail!(
@@ -189,14 +171,14 @@ pub fn apply_memory_cleanup_plan(
             previous_status: canonical.status.clone(),
             new_status: "active".to_string(),
             previous_owner: canonical.owner.clone(),
-            new_owner: new_owner.clone(),
+            new_owner: canonical.owner.clone(),
         });
         insert_scope_cleanup_event(
             &tx,
             "memory-cleanup",
             &canonical,
             "active",
-            &new_owner,
+            &canonical.owner,
             Some(group.reason.as_str()),
             now,
         )?;
@@ -318,6 +300,26 @@ fn validate_group(
         );
     }
 
+    let current_snapshot = snapshot_for(&group.row_snapshots, group.current_id)?;
+    if group.owner_scope != current_snapshot.owner_scope
+        || group.owner_key != current_snapshot.owner_key
+    {
+        bail!(
+            "cleanup group {} owner does not match current row owner",
+            group.cluster_key
+        );
+    }
+    if group.state_key != current_snapshot.state_key {
+        bail!(
+            "cleanup group {} state key does not match current row",
+            group.cluster_key
+        );
+    }
+    let current_owner = current_snapshot.owner_namespace(&plan.project);
+    let current_state_key_id = current_snapshot.state_key_id;
+    let current_state_key = current_snapshot.state_key.as_deref();
+    let topic_group = group.cluster_key.starts_with("topic:");
+
     for snapshot in &group.row_snapshots {
         let current = load_row_snapshot(conn, snapshot.id)?
             .ok_or_else(|| anyhow!("cleanup plan row {} no longer exists", snapshot.id))?;
@@ -343,6 +345,33 @@ fn validate_group(
                 "cleanup plan row {} does not belong to project {}",
                 snapshot.id,
                 plan.project
+            );
+        }
+        if snapshot.owner_namespace(&plan.project) != current_owner {
+            bail!(
+                "cleanup plan row {} owner does not match current row owner",
+                snapshot.id
+            );
+        }
+        match (current_state_key_id, current_state_key) {
+            (Some(state_key_id), _) if snapshot.state_key_id != Some(state_key_id) => {
+                bail!(
+                    "cleanup plan row {} state key does not match current row",
+                    snapshot.id
+                );
+            }
+            (None, Some(state_key)) if snapshot.state_key.as_deref() != Some(state_key) => {
+                bail!(
+                    "cleanup plan row {} state key does not match current row",
+                    snapshot.id
+                );
+            }
+            _ => {}
+        }
+        if topic_group && snapshot.topic_key != current_snapshot.topic_key {
+            bail!(
+                "cleanup plan row {} topic key does not match current row",
+                snapshot.id
             );
         }
     }
@@ -429,6 +458,18 @@ fn load_row_snapshot(conn: &Connection, id: i64) -> Result<Option<MemoryCleanupR
 }
 
 impl MemoryCleanupRowSnapshot {
+    fn owner_namespace(&self, project: &str) -> (String, String) {
+        match (self.owner_scope.as_deref(), self.owner_key.as_deref()) {
+            (Some(scope), Some(key)) => (scope.to_string(), key.to_string()),
+            _ if self.project == project
+                && self.scope.as_deref().unwrap_or("project") != "global" =>
+            {
+                ("legacy_repo".to_string(), project.to_string())
+            }
+            _ => ("legacy_other".to_string(), self.project.clone()),
+        }
+    }
+
     fn belongs_to_project(&self, project: &str) -> bool {
         self.source_project.as_deref() == Some(project)
             || self.target_project.as_deref() == Some(project)

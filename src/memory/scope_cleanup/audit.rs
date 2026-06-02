@@ -280,6 +280,7 @@ pub(super) struct MemoryAuditRow {
     pub(super) routing_confidence: Option<f64>,
     pub(super) context_class: Option<String>,
     pub(super) expires_at_epoch: Option<i64>,
+    pub(super) updated_at_epoch: i64,
     pub(super) state_key: Option<String>,
     pub(super) current_memory_id: Option<i64>,
 }
@@ -338,7 +339,7 @@ pub(super) fn load_memory_audit_rows(
         "SELECT m.id, m.project, m.topic_key, m.title, m.content, m.memory_type,
                 m.status, m.scope, m.source_project, m.target_project, m.owner_scope,
                 m.owner_key, m.topic_domain, m.routing_confidence, m.context_class,
-                m.expires_at_epoch, sk.state_key, sk.current_memory_id
+                m.expires_at_epoch, m.updated_at_epoch, sk.state_key, sk.current_memory_id
          FROM memories m
          LEFT JOIN memory_state_keys sk ON sk.id = m.state_key_id
          WHERE m.project = ?1
@@ -365,8 +366,9 @@ pub(super) fn load_memory_audit_rows(
             routing_confidence: row.get(13)?,
             context_class: row.get(14)?,
             expires_at_epoch: row.get(15)?,
-            state_key: row.get(16)?,
-            current_memory_id: row.get(17)?,
+            updated_at_epoch: row.get(16)?,
+            state_key: row.get(17)?,
+            current_memory_id: row.get(18)?,
         })
     })?;
     crate::db::query::collect_rows(rows)
@@ -535,7 +537,9 @@ pub(super) fn preference_clusters(rows: &[MemoryAuditRow], project: &str) -> Vec
                 return None;
             }
             emitted_sets.push(member_set);
-            let canonical = current_member(&members).or_else(|| members.first().copied())?;
+            let canonical = current_member(&members)
+                .or_else(|| latest_member(&members))
+                .or_else(|| members.first().copied())?;
             let refs = members
                 .iter()
                 .map(|row| row.object_ref().to_string())
@@ -586,6 +590,13 @@ fn current_member<'a>(members: &[&'a MemoryAuditRow]) -> Option<&'a MemoryAuditR
         .iter()
         .copied()
         .find(|row| row.current_memory_id == Some(row.id))
+}
+
+fn latest_member<'a>(members: &[&'a MemoryAuditRow]) -> Option<&'a MemoryAuditRow> {
+    members
+        .iter()
+        .copied()
+        .max_by_key(|row| (row.updated_at_epoch, row.id))
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {

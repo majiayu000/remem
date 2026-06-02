@@ -1,8 +1,10 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
 
 use crate::memory::scope_cleanup::{
     apply_memory_cleanup_plan, build_preference_cleanup_plan, MemoryCleanupPlan,
+    MemoryCleanupRowSnapshot,
 };
 
 use super::{seed_stash_pollution, setup_conn, STASH};
@@ -57,11 +59,11 @@ fn cleanup_plan_detects_ascii_and_cjk_duplicates_without_mutation() -> Result<()
     assert!(plan
         .groups
         .iter()
-        .any(|group| group.current_id == 2100 && group.stale_ids == vec![2101]));
+        .any(|group| group.current_id == 2101 && group.stale_ids == vec![2100]));
     assert!(plan
         .groups
         .iter()
-        .any(|group| group.current_id == 2110 && group.stale_ids == vec![2111]));
+        .any(|group| group.current_id == 2111 && group.stale_ids == vec![2110]));
     assert_active(&conn, &[2100, 2101, 2110, 2111])?;
     Ok(())
 }
@@ -79,15 +81,15 @@ fn cleanup_apply_stales_plan_ids_and_writes_audit() -> Result<()> {
     let result = apply_memory_cleanup_plan(&conn, &decoded)?;
 
     assert_eq!(result.groups_applied, 1);
-    assert_eq!(result.current_ids, vec![1030]);
-    assert_eq!(result.stale_ids, vec![1031, 1032]);
+    assert_eq!(result.current_ids, vec![1032]);
+    assert_eq!(result.stale_ids, vec![1030, 1031]);
     assert_eq!(
-        conn.query_row("SELECT status FROM memories WHERE id = 1030", [], |row| {
+        conn.query_row("SELECT status FROM memories WHERE id = 1032", [], |row| {
             row.get::<_, String>(0)
         })?,
         "active"
     );
-    for id in [1031, 1032] {
+    for id in [1030, 1031] {
         assert_eq!(
             conn.query_row("SELECT status FROM memories WHERE id = ?1", [id], |row| {
                 row.get::<_, String>(0)
@@ -154,6 +156,59 @@ fn cleanup_apply_rejects_plan_project_mismatch() -> Result<()> {
 }
 
 #[test]
+fn cleanup_apply_rejects_hand_edited_cross_owner_group() -> Result<()> {
+    let conn = setup_conn();
+    insert_pref(
+        &conn,
+        2200,
+        STASH,
+        "Preference: verify before claim",
+        "Always run fresh verification before claiming completion.",
+        Some("pref-a"),
+        "repo",
+        STASH,
+    )?;
+    insert_pref(
+        &conn,
+        2201,
+        STASH,
+        "Preference: fresh verification",
+        "Always run fresh verification before claiming completion.",
+        Some("pref-b"),
+        "repo",
+        STASH,
+    )?;
+    insert_pref(
+        &conn,
+        2210,
+        STASH,
+        "Preference: global verification",
+        "Always run fresh verification before claiming completion.",
+        Some("pref-c"),
+        "user",
+        "user:default",
+    )?;
+    let mut plan = build_preference_cleanup_plan(&conn, STASH)?;
+    let group = plan.groups.first_mut().expect("repo duplicate group");
+    group.stale_ids.push(2210);
+    group.row_snapshots.push(snapshot_for_test(
+        2210,
+        STASH,
+        "Always run fresh verification before claiming completion.",
+        Some("pref-c"),
+        Some("user"),
+        Some("user:default"),
+        None,
+    ));
+
+    let err = apply_memory_cleanup_plan(&conn, &plan).expect_err("cross-owner plan must fail");
+
+    assert!(err.to_string().contains("owner does not match"));
+    assert_active(&conn, &[2200, 2201, 2210])?;
+    Ok(())
+}
+
+#[test]
 fn cleanup_plan_keeps_cross_owner_preferences_separate() -> Result<()> {
     let conn = setup_conn();
     insert_pref(
@@ -190,14 +245,48 @@ fn cleanup_plan_keeps_cross_owner_preferences_separate() -> Result<()> {
     let plan = build_preference_cleanup_plan(&conn, STASH)?;
 
     assert_eq!(plan.groups.len(), 1);
-    assert_eq!(plan.groups[0].current_id, 2200);
-    assert_eq!(plan.groups[0].stale_ids, vec![2201]);
+    assert_eq!(plan.groups[0].current_id, 2201);
+    assert_eq!(plan.groups[0].stale_ids, vec![2200]);
     assert_eq!(
         plan.groups[0].owner_key.as_deref(),
         Some(STASH),
         "global preference must not be merged into repo cleanup"
     );
     Ok(())
+}
+
+fn snapshot_for_test(
+    id: i64,
+    project: &str,
+    content: &str,
+    topic_key: Option<&str>,
+    owner_scope: Option<&str>,
+    owner_key: Option<&str>,
+    target_project: Option<&str>,
+) -> MemoryCleanupRowSnapshot {
+    MemoryCleanupRowSnapshot {
+        id,
+        project: project.to_string(),
+        scope: Some("project".to_string()),
+        source_project: Some(project.to_string()),
+        target_project: target_project.map(str::to_string),
+        status: "active".to_string(),
+        content_sha256: content_sha256(content),
+        updated_at_epoch: 100,
+        owner_scope: owner_scope.map(str::to_string),
+        owner_key: owner_key.map(str::to_string),
+        memory_type: "preference".to_string(),
+        topic_key: topic_key.map(str::to_string),
+        state_key_id: None,
+        state_key: None,
+        current_memory_id: None,
+    }
+}
+
+fn content_sha256(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn insert_pref(
