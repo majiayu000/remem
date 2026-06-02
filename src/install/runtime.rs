@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 
+use crate::install::duplicates::{format_warning_lines, inspect_install_paths};
 use crate::install::host::{HookSupport, InstallTarget};
 use crate::install::hosts::resolve_hosts;
 use crate::install::paths::{binary_path, old_hooks_path, remem_data_dir};
@@ -23,6 +24,7 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
             }
         }
         eprintln!("  data   -> {}", remem_data_dir().display());
+        print_install_path_warnings(&bin);
         return Ok(());
     }
 
@@ -43,6 +45,7 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
     let api_token_path = crate::api::ensure_api_token()?;
     eprintln!("  API    -> token {}", api_token_path.display());
     eprintln!("  binary -> {}", bin);
+    print_install_path_warnings(&bin);
 
     let old_path = old_hooks_path();
     if old_path.exists() {
@@ -61,6 +64,20 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
     eprintln!("  3. Run 'remem status' to check system health");
 
     Ok(())
+}
+
+fn print_install_path_warnings(bin: &str) {
+    let report = inspect_install_paths(Some(std::path::Path::new(bin)));
+    let lines = format_warning_lines(&report);
+    if lines.is_empty() {
+        return;
+    }
+
+    eprintln!();
+    eprintln!("Install path warning:");
+    for line in lines {
+        eprintln!("{line}");
+    }
 }
 
 pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {

@@ -67,6 +67,14 @@ remem install --dry-run         # preview config changes
 
 Restart your AI coding tool after installation.
 
+Use one canonical `remem` command on PATH. Standalone and source installs
+should normally live at `~/.local/bin/remem`; Windows standalone installs
+should use `%USERPROFILE%\.local\bin\remem.exe`. If you install through a
+package manager such as Homebrew or Cargo, update through that same channel
+and avoid keeping a second manual copy earlier or later on PATH. `remem doctor`
+and `remem install --dry-run` warn when multiple `remem` executables are
+visible.
+
 ## Use With Codex
 
 For Codex-only setup:

@@ -15,6 +15,22 @@ pub(super) fn check_binary() -> Check {
     }
 }
 
+pub(super) fn check_install_paths() -> Check {
+    let configured = std::env::var_os("REMEM_INSTALL_BINARY")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok());
+    let report = crate::install::duplicates::inspect_install_paths(configured.as_deref());
+    Check {
+        name: "Install paths",
+        status: if report.has_warning() {
+            Status::Warn
+        } else {
+            Status::Ok
+        },
+        detail: crate::install::duplicates::format_doctor_detail(&report),
+    }
+}
+
 /// A single host we know how to validate. The strings are leaked static
 /// because `Check::name` takes `&'static str` — every host lives for the
 /// process, so leaking is fine.
