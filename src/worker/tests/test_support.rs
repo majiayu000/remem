@@ -79,7 +79,7 @@ EOF
 rm -f "$stdin_path"
 exit 0
 fi
-if grep -q "stable-kebab-case" "$stdin_path"; then
+if grep -q "REPLACE_WITH_TOPIC_KEY" "$stdin_path"; then
 cat <<'EOF' > "$output_path"
 <summary>Codex worker flush completed.</summary>
 <segments></segments>
