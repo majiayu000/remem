@@ -64,11 +64,11 @@ fn full_migration_on_empty_db() -> Result<()> {
     let applied = applied_versions(&conn)?;
     assert_eq!(
         applied,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,]
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 33);
+    assert_eq!(user_version, 34);
 
     let has_worker_heartbeats: bool = conn
         .query_row(
@@ -97,6 +97,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "rule_candidates",
         "git_commits",
         "git_commit_sessions",
+        "topic_segments",
     ] {
         let exists: bool = conn
             .query_row(
@@ -325,7 +326,7 @@ fn auto_upgrades_old_schema_version() -> Result<()> {
     );
 
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(user_version, 33);
+    assert_eq!(user_version, 34);
 
     // Verify missing columns were added
     let has_status: bool = conn
@@ -353,7 +354,11 @@ fn dry_run_pending_reports_no_pending_for_current_schema() -> Result<()> {
     let result = dry_run_pending(&conn)?;
 
     assert_eq!(result.pending_count, 0);
-    assert!(result.error.is_none());
+    assert!(
+        result.error.is_none(),
+        "unexpected dry-run error: {:?}",
+        result.error
+    );
     Ok(())
 }
 
@@ -365,7 +370,7 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
-    assert_eq!(result.current_version, 33);
+    assert_eq!(result.current_version, 34);
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
     Ok(())

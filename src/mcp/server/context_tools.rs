@@ -154,7 +154,10 @@ impl MemoryServer {
                         &params.ids,
                         memories.iter().map(|memory| memory.id),
                     )?;
-                    errors::to_json_value(TOOL, &memories)?
+                    memory_details_with_topic_traces(conn, &memories).map_err(|e| {
+                        crate::log::warn("mcp", &format!("load topic traces failed: {}", e));
+                        McpToolError::db_query(TOOL, e)
+                    })?
                 }
                 other => {
                     return Err(McpToolError::unsupported_source(
@@ -175,6 +178,27 @@ impl MemoryServer {
             errors::to_json_pretty(TOOL, &results)
         })
     }
+}
+
+fn memory_details_with_topic_traces(
+    conn: &rusqlite::Connection,
+    memories: &[memory::Memory],
+) -> anyhow::Result<serde_json::Value> {
+    const TRACE_LIMIT: i64 = 12;
+    let mut value = serde_json::to_value(memories)?;
+    let Some(items) = value.as_array_mut() else {
+        return Ok(value);
+    };
+    for (item, memory) in items.iter_mut().zip(memories) {
+        let Some(topic_key) = memory.topic_key.as_deref() else {
+            continue;
+        };
+        let trace = db::load_trace_by_topic_key(conn, &memory.project, topic_key, TRACE_LIMIT)?;
+        if !trace.is_empty() {
+            item["topic_trace"] = serde_json::to_value(trace)?;
+        }
+    }
+    Ok(value)
 }
 
 fn ensure_requested_ids_found(
