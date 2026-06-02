@@ -117,7 +117,7 @@ fn startup_context_excludes_unrelated_tool_and_domain_memories() {
 }
 
 #[test]
-fn debug_trace_and_footer_report_owner_reasons_and_counts() {
+fn debug_trace_reports_owner_reasons_and_counts() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
     let stash = "/Users/lifcc/Desktop/code/AI/tool/stash";
@@ -186,6 +186,6 @@ fn debug_trace_and_footer_report_owner_reasons_and_counts() {
     assert!(debug.contains("excluded reason=tool_not_relevant_to_startup"));
 
     let footer = build_context_stats_footer(&stats);
-    assert!(footer.contains("owners repo=1 user=0"));
-    assert!(footer.contains("tool=0 domain=0"));
+    assert!(!footer.contains("owners repo="));
+    assert!(!footer.contains("tool=0 domain=0"));
 }

@@ -7,7 +7,7 @@ fn build_hooks_contains_expected_claude_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::ClaudeCode);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
-        "REMEM_CONTEXT_HOST=claude-code /tmp/remem context"
+        "REMEM_CONTEXT_HOST=claude-code /tmp/remem context --color"
     );
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
@@ -32,7 +32,7 @@ fn build_hooks_contains_expected_codex_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::Codex);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
-        "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context"
+        "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context --color"
     );
     assert!(hooks.get("UserPromptSubmit").is_none());
     assert!(hooks.get("PostToolUse").is_none());

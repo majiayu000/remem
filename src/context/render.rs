@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::db;
 
-use super::format::{char_len, format_header_datetime, truncate_chars_with_ellipsis};
+use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
 use super::injection_gate::{apply_context_gate, ContextGateAction, ContextGateDecision};
 use super::invocation::{
@@ -282,14 +282,17 @@ pub(in crate::context) fn render_context_output(
     }
 
     let mut output = String::new();
-    output.push_str(&build_context_header(
+    output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
         request.hook_source.as_deref(),
+        request.host,
+        request.use_colors,
     ));
     output.push_str(profile.retrieval_hints().line);
     output.push('\n');
     if let Some(note) = context_source_note(request.hook_source.as_deref()) {
+        output.push('\n');
         output.push_str(note);
         output.push('\n');
     }
@@ -390,10 +393,10 @@ pub(in crate::context) fn render_context_output(
     }
 
     stats.output_chars = char_len(&output);
-    let mut stats_footer = build_context_stats_footer(&stats);
+    let mut stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
     stats.output_chars += char_len(&stats_footer);
     stats.truncated = stats.total_char_limit > 0 && stats.output_chars > stats.total_char_limit;
-    stats_footer = build_context_stats_footer(&stats);
+    stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
     stats.output_chars = char_len(&output) + char_len(&stats_footer);
     output.push_str(&stats_footer);
     enforce_total_char_limit_preserving_footer(
@@ -406,10 +409,12 @@ pub(in crate::context) fn render_context_output(
 
 fn context_error_output(request: &ContextRequest, errors: &[ContextLoadError]) -> String {
     let mut output = String::new();
-    output.push_str(&build_context_header(
+    output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
         request.hook_source.as_deref(),
+        request.host,
+        request.use_colors,
     ));
     if let Some(note) = context_source_note(request.hook_source.as_deref()) {
         output.push_str(note);
@@ -440,10 +445,12 @@ fn render_context_load_errors(output: &mut String, errors: &[ContextLoadError]) 
 }
 
 pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> String {
-    let header = build_context_header(
+    let header = build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
         request.hook_source.as_deref(),
+        request.host,
+        request.use_colors,
     );
     empty_state_output(&header, context_source_note(request.hook_source.as_deref()))
 }
@@ -515,42 +522,13 @@ pub(in crate::context) struct ContextRenderStats {
     pub truncated: bool,
 }
 
+#[cfg(test)]
 pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats) -> String {
-    let branch = stats.branch.as_deref().unwrap_or("-");
-    let source = context_source_footer(stats.hook_source.as_deref());
-    let estimated_tokens = estimate_tokens(stats.output_chars);
-    format!(
-        "{} context memories loaded. {} core ({} chars). {} lessons ({} chars). {} indexed ({} chars). {} preferences (project:{} global:{}, {} chars). {} sessions ({} chars). owners repo={} user={} workspace={} tool={} domain={} workstream={} session={} legacy={} unknown={}. host={} source={} branch={} total={} chars/~{} tokens limit={} truncated={}\n",
-        stats.memories_loaded,
-        stats.core.count,
-        stats.core.chars,
-        stats.lessons.count,
-        stats.lessons.chars,
-        stats.index.count,
-        stats.index.chars,
-        stats.preferences.count,
-        stats.project_preferences,
-        stats.global_preferences,
-        stats.preferences.chars,
-        stats.sessions.count,
-        stats.sessions.chars,
-        stats.owner_counts.repo,
-        stats.owner_counts.user,
-        stats.owner_counts.workspace,
-        stats.owner_counts.tool,
-        stats.owner_counts.domain,
-        stats.owner_counts.workstream,
-        stats.owner_counts.session,
-        stats.owner_counts.legacy,
-        stats.owner_counts.unknown,
-        stats.host,
-        source,
-        branch,
-        stats.output_chars,
-        estimated_tokens,
-        stats.total_char_limit,
-        if stats.truncated { "yes" } else { "no" },
-    )
+    build_context_stats_footer_with_style(stats, false)
+}
+
+fn build_context_stats_footer_with_style(stats: &ContextRenderStats, use_colors: bool) -> String {
+    super::style::context_stats_footer(stats, use_colors)
 }
 
 pub(in crate::context) fn build_context_debug_trace(
@@ -591,6 +569,21 @@ pub(in crate::context) fn build_context_debug_trace(
         stats.preferences.count,
         stats.sessions.count,
         stats.workstreams.count
+    ));
+    trace.push_str(&format!(
+        "- rendered_chars core={} lessons={} index={} preferences={} sessions={} workstreams={}\n",
+        stats.core.chars,
+        stats.lessons.chars,
+        stats.index.chars,
+        stats.preferences.chars,
+        stats.sessions.chars,
+        stats.workstreams.chars
+    ));
+    trace.push_str(&format!(
+        "- stats host={} branch={} source={}\n",
+        stats.host,
+        stats.branch.as_deref().unwrap_or("-"),
+        stats.hook_source.as_deref().unwrap_or("-")
     ));
     trace.push_str(&format!(
         "- preferences project_rendered={} global_rendered={} reason=scope_limits_then_claude_md_dedup\n",
@@ -688,12 +681,8 @@ pub(in crate::context) fn build_context_debug_trace(
 
 fn context_source_note(source: Option<&str>) -> Option<&'static str> {
     match source?.trim().to_ascii_lowercase().as_str() {
-        "compact" => Some(
-            "REMEM_CONTEXT_SOURCE=compact: Codex compact triggered this memory context reload.",
-        ),
-        "clear" => {
-            Some("REMEM_CONTEXT_SOURCE=clear: context was reloaded after an explicit clear.")
-        }
+        "compact" => Some("Codex compacted the chat, so remem refreshed memory context."),
+        "clear" => Some("Context was reloaded after an explicit clear."),
         _ => None,
     }
 }
@@ -702,10 +691,6 @@ fn context_debug_enabled() -> bool {
     std::env::var("REMEM_CONTEXT_DEBUG")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
-}
-
-fn estimate_tokens(chars: usize) -> usize {
-    (chars + 3) / 4
 }
 
 #[cfg(test)]
@@ -747,41 +732,27 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     *output = truncated;
 }
 
+#[cfg(test)]
 pub(in crate::context) fn build_context_header(
     project: &str,
     current_branch: Option<&str>,
     hook_source: Option<&str>,
 ) -> String {
-    let branch_label = current_branch
-        .map(|branch| format!(" @{}", branch))
-        .unwrap_or_default();
-    let source_label = context_source_header_label(hook_source)
-        .map(|label| format!(" [{}]", label))
-        .unwrap_or_default();
-    format!(
-        "# [{}{}] context {}{}\n",
+    build_context_header_with_style(
         project,
-        branch_label,
-        format_header_datetime(),
-        source_label
+        current_branch,
+        hook_source,
+        super::host::HostKind::Unknown,
+        false,
     )
 }
 
-fn context_source_header_label(source: Option<&str>) -> Option<&'static str> {
-    match source?.trim().to_ascii_lowercase().as_str() {
-        "compact" => Some("REMEM POST-COMPACT RELOAD"),
-        "clear" => Some("REMEM CLEAR RELOAD"),
-        _ => None,
-    }
-}
-
-fn context_source_footer(source: Option<&str>) -> &'static str {
-    match source
-        .map(|value| value.trim().to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("compact") => "compact",
-        Some("clear") => "clear",
-        _ => "-",
-    }
+fn build_context_header_with_style(
+    project: &str,
+    current_branch: Option<&str>,
+    hook_source: Option<&str>,
+    host: super::host::HostKind,
+    use_colors: bool,
+) -> String {
+    super::style::context_header(project, current_branch, hook_source, host, use_colors)
 }

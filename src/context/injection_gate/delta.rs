@@ -7,15 +7,12 @@ pub(super) fn build_delta_output(output: &str) -> String {
     }
 
     let (body, footer) = split_stats_footer(output);
+    let (header, body_without_header) = delta_header_and_body(body);
     let mut delta = String::new();
-    delta.push_str(&delta_header(body));
+    delta.push_str(&header);
     delta.push_str(
-        "remem context changed since the previous injection. Compact delta shown; run `remem context --force` for a full refresh.\n\n",
+        "Context changed since the previous injection. Showing a compact preview. Full context: `remem context --force`.\n\n",
     );
-    let body_without_header = body
-        .split_once('\n')
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
     delta.push_str(body_without_header.trim_start_matches('\n'));
 
     enforce_char_limit_preserving_footer(&mut delta, limit, footer);
@@ -23,29 +20,77 @@ pub(super) fn build_delta_output(output: &str) -> String {
 }
 
 fn split_stats_footer(output: &str) -> (&str, &str) {
-    let Some(last_line_start) = output.trim_end_matches('\n').rfind('\n') else {
-        return (output, "");
-    };
-    let footer_start = last_line_start + 1;
-    let footer = &output[footer_start..];
-    if super::is_context_stats_footer(footer.trim_end_matches('\n')) {
-        (&output[..footer_start], footer)
-    } else {
-        (output, "")
+    let trimmed = output.trim_end_matches('\n');
+    let mut offset = 0;
+    for segment in trimmed.split_inclusive('\n') {
+        let footer = &output[offset..];
+        if super::is_context_stats_footer(footer.trim_end_matches('\n')) {
+            return (&output[..offset], footer);
+        }
+        offset += segment.len();
     }
+    (output, "")
 }
 
-fn delta_header(output: &str) -> String {
-    let first_line = output.lines().next().unwrap_or("# remem context");
-    if let Some(context_idx) = first_line.find("] context ") {
-        let mut header = String::new();
-        header.push_str(&first_line[..context_idx]);
-        header.push_str("] context delta ");
-        header.push_str(&first_line[context_idx + "] context ".len()..]);
-        header.push('\n');
-        return header;
+fn delta_header_and_body(output: &str) -> (String, &str) {
+    if let Some(delta) = boxed_delta_header_and_body(output) {
+        return delta;
     }
-    "# remem context delta\n".to_string()
+
+    let first_line = output.lines().next().unwrap_or("# remem context");
+    let first_line = super::super::style::strip_ansi(first_line);
+    if first_line == "# remem context" || first_line == "remem context" {
+        let body = output
+            .split_once('\n')
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        return (
+            super::super::style::context_delta_title_line_like(
+                first_line.as_str(),
+                super::super::style::contains_ansi(output),
+            ),
+            body,
+        );
+    }
+    ("# remem context delta\n\n".to_string(), output)
+}
+
+fn boxed_delta_header_and_body(output: &str) -> Option<(String, &str)> {
+    let use_colors = super::super::style::contains_ansi(output);
+    let mut header = String::new();
+    let mut offset = 0;
+
+    for (idx, segment) in output.split_inclusive('\n').enumerate() {
+        let line = segment.trim_end_matches('\n');
+        let plain_line = super::super::style::strip_ansi(line);
+        if idx == 0 {
+            if !plain_line.starts_with("╭─ remem context")
+                && !plain_line.starts_with("┌─ remem context")
+            {
+                return None;
+            }
+            header.push_str(&super::super::style::context_delta_title_line_like(
+                line, use_colors,
+            ));
+            offset += segment.len();
+            continue;
+        }
+
+        header.push_str(segment);
+        offset += segment.len();
+        if plain_line.starts_with('╰') && plain_line.ends_with('╯') {
+            if output[offset..].starts_with('\n') {
+                header.push('\n');
+                offset += 1;
+            }
+            return Some((header, &output[offset..]));
+        }
+        if plain_line.starts_with("└─ ") {
+            return Some((header, &output[offset..]));
+        }
+    }
+
+    None
 }
 
 fn enforce_char_limit_preserving_footer(output: &mut String, char_limit: usize, footer: &str) {

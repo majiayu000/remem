@@ -58,7 +58,7 @@ impl HookStrategy {
 fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
     if subcommand == "context" {
         format!(
-            "REMEM_CONTEXT_HOST={} {} {}",
+            "REMEM_CONTEXT_HOST={} {} {} --color",
             strategy.context_host(),
             bin,
             subcommand
