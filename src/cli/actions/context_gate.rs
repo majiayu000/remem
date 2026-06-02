@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 
 use crate::db;
@@ -34,15 +34,8 @@ pub(in crate::cli) fn run_context_gate_status(
 
 fn open_context_gate_db_read_only() -> Result<Connection> {
     let db_path = db::db_path();
-    if !db_path.exists() {
-        anyhow::bail!("remem database not found at {}", db_path.display());
-    }
-    let key = db::require_cipher_key_or_plaintext_override()?;
-    let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .with_context(|| format!("open read-only remem database {}", db_path.display()))?;
-    db::configure_cipher(&conn, key.as_deref())
-        .with_context(|| format!("unlock read-only remem database {}", db_path.display()))?;
-    Ok(conn)
+    db::open_db_read_only()
+        .with_context(|| format!("open read-only remem database {}", db_path.display()))
 }
 
 fn load_recent_context_gate_rows(
@@ -80,11 +73,11 @@ fn load_recent_context_gate_rows(
                 last_emitted_at: String::new(),
                 emit_count: row.get(9)?,
                 suppress_count: row.get(10)?,
-                reason: String::new(),
+                inferred_reason: String::new(),
             };
             status.updated_at = format_context_gate_timestamp(status.updated_at_epoch);
             status.last_emitted_at = format_context_gate_timestamp(status.last_emitted_epoch);
-            status.reason = infer_context_gate_reason(&status).to_string();
+            status.inferred_reason = infer_context_gate_reason(&status).to_string();
             Ok(status)
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -111,12 +104,12 @@ fn print_context_gate_status(report: &ContextGateStatusReport) {
 
     for row in &report.rows {
         println!(
-            "  {} {} {} source={} reason={} project={} session={} emits={} suppressions={}",
+            "  {} {} {} source={} inferred_reason={} project={} session={} emits={} suppressions={}",
             row.updated_at,
             row.host,
             row.output_mode,
             row.hook_source.as_deref().unwrap_or("-"),
-            row.reason,
+            row.inferred_reason,
             row.project,
             row.session_id.as_deref().unwrap_or("-"),
             row.emit_count,
@@ -132,8 +125,8 @@ fn infer_context_gate_reason(row: &ContextGateStatusRow) -> &'static str {
             "suppressed_source"
         }
         "suppressed" => "same_hash_or_strict",
-        "full" if row.emit_count <= 1 => "first_or_forced",
         "full" if source_requires_restart(row.hook_source.as_deref()) => "restart_source",
+        "full" if row.emit_count <= 1 => "first_or_forced",
         "full" => "repeat_full_or_forced",
         _ => "unknown",
     }
@@ -188,7 +181,7 @@ struct ContextGateStatusRow {
     last_emitted_at: String,
     emit_count: i64,
     suppress_count: i64,
-    reason: String,
+    inferred_reason: String,
 }
 
 #[cfg(test)]
@@ -236,9 +229,65 @@ mod tests {
         assert_eq!(rows[0].host, "codex-cli");
         assert_eq!(rows[0].hook_source.as_deref(), Some("compact"));
         assert_eq!(rows[0].output_mode, "suppressed");
-        assert_eq!(rows[0].reason, "suppressed_source");
+        assert_eq!(rows[0].inferred_reason, "suppressed_source");
         assert_eq!(rows[0].emit_count, 1);
         assert_eq!(rows[0].suppress_count, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn context_gate_status_infers_clear_before_first_emit() {
+        let row = ContextGateStatusRow {
+            host: "codex-cli".to_string(),
+            project: "/tmp/remem".to_string(),
+            injection_key: "session:/tmp/remem:sess-1".to_string(),
+            session_id: Some("sess-1".to_string()),
+            hook_source: Some("clear".to_string()),
+            output_mode: "full".to_string(),
+            output_chars: 200,
+            updated_at_epoch: 100,
+            updated_at: String::new(),
+            last_emitted_epoch: 100,
+            last_emitted_at: String::new(),
+            emit_count: 1,
+            suppress_count: 0,
+            inferred_reason: String::new(),
+        };
+
+        assert_eq!(infer_context_gate_reason(&row), "restart_source");
+    }
+
+    #[test]
+    fn context_gate_status_json_uses_inferred_reason_field() -> Result<()> {
+        let report = ContextGateStatusReport {
+            database: "/tmp/remem/database".to_string(),
+            filters: ContextGateStatusFilters {
+                project: None,
+                session: None,
+                limit: 20,
+            },
+            rows: vec![ContextGateStatusRow {
+                host: "codex-cli".to_string(),
+                project: "/tmp/remem".to_string(),
+                injection_key: "session:/tmp/remem:sess-1".to_string(),
+                session_id: Some("sess-1".to_string()),
+                hook_source: Some("compact".to_string()),
+                output_mode: "suppressed".to_string(),
+                output_chars: 0,
+                updated_at_epoch: 100,
+                updated_at: "1970-01-01 00:01:40 UTC".to_string(),
+                last_emitted_epoch: 100,
+                last_emitted_at: "1970-01-01 00:01:40 UTC".to_string(),
+                emit_count: 1,
+                suppress_count: 2,
+                inferred_reason: "suppressed_source".to_string(),
+            }],
+        };
+
+        let value = serde_json::to_value(report)?;
+
+        assert_eq!(value["rows"][0]["inferred_reason"], "suppressed_source");
+        assert!(value["rows"][0].get("reason").is_none());
         Ok(())
     }
 

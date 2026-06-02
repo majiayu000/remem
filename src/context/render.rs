@@ -219,7 +219,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
     Ok(())
 }
 
-fn append_context_gate_debug_trace(
+pub(in crate::context) fn append_context_gate_debug_trace(
     output: &mut String,
     request: &ContextRequest,
     decision: &ContextGateDecision,
@@ -231,17 +231,15 @@ fn append_context_gate_debug_trace(
         output.push('\n');
     }
     output.push_str("## Debug Trace\n");
-    if output.trim_start().starts_with("## Debug Trace") {
-        output.push_str(&format!(
-            "- request host={} project={} cwd={} branch={} session={} source={}\n",
-            request.host.as_env_value(),
-            request.project,
-            request.cwd,
-            request.current_branch.as_deref().unwrap_or("-"),
-            request.session_id.as_deref().unwrap_or("-"),
-            request.hook_source.as_deref().unwrap_or("-")
-        ));
-    }
+    output.push_str(&format!(
+        "- request host={} project={} cwd={} branch={} session={} source={}\n",
+        request.host.as_env_value(),
+        request.project,
+        request.cwd,
+        request.current_branch.as_deref().unwrap_or("-"),
+        request.session_id.as_deref().unwrap_or("-"),
+        request.hook_source.as_deref().unwrap_or("-")
+    ));
     output.push_str(&format!(
         "- gate action={:?} reason={} output_mode={} key={} hash={}\n",
         decision.action,
