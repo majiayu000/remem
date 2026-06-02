@@ -196,6 +196,85 @@ fn test_hash_like_ascii_preference_uses_existing_state_memory() -> anyhow::Resul
 }
 
 #[test]
+fn test_hash_like_preference_upsert_clears_obsolete_state_keys() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory_full(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("preference-11111111"),
+        "Preference",
+        "Keep verification status separate from data and code changes.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    let id2 = insert_memory_full(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("preference-11111111"),
+        "Preference",
+        "Keep data and code changes separate in reports.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    assert_eq!(id1, id2);
+
+    let old_current: Option<i64> = conn.query_row(
+        "SELECT current_memory_id FROM memory_state_keys
+             WHERE state_key = 'verification-status-separation'",
+        [],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+    let new_current: Option<i64> = conn.query_row(
+        "SELECT current_memory_id FROM memory_state_keys
+             WHERE state_key = 'data-code-change-separation'",
+        [],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+    assert_eq!(old_current, None);
+    assert_eq!(new_current, Some(id1));
+
+    let id3 = insert_memory_full(
+        &conn,
+        Some("s3"),
+        "test/proj",
+        Some("preference-11111111"),
+        "Preference",
+        "Prefer concise progress updates.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    assert_eq!(id1, id3);
+
+    let state_key_id: Option<i64> = conn.query_row(
+        "SELECT state_key_id FROM memories WHERE id = ?1",
+        params![id1],
+        |row| row.get(0),
+    )?;
+    let current_slots: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_state_keys WHERE current_memory_id = ?1",
+        params![id1],
+        |row| row.get(0),
+    )?;
+    assert_eq!(state_key_id, None);
+    assert_eq!(current_slots, 0);
+    Ok(())
+}
+
+#[test]
 fn test_hash_like_cjk_preference_uses_existing_state_memory() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn);

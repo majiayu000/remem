@@ -213,13 +213,14 @@ fn update_existing_memory(
     now: i64,
 ) -> Result<()> {
     let state_key_id = attach_state_key(conn, id, memory_type, ownership, state_key, now)?;
+    clear_obsolete_state_key_links(conn, id, state_key_id, now)?;
     conn.execute(
         "UPDATE memories SET session_id = ?1, topic_key = ?2, title = ?3, content = ?4, \
          memory_type = ?5, files = ?6, updated_at_epoch = ?7, branch = ?8, \
          scope = ?9, search_context = ?10, \
          status = 'active', valid_to_epoch = NULL, \
          expires_at_epoch = ?11, valid_from_epoch = ?12, \
-         state_key_id = COALESCE(?13, state_key_id), \
+         state_key_id = ?13, \
          source_project = COALESCE(source_project, ?14), \
          target_project = COALESCE(target_project, ?15), \
          owner_scope = COALESCE(owner_scope, ?16), \
@@ -247,6 +248,22 @@ fn update_existing_memory(
             ownership.context_class,
             id
         ],
+    )?;
+    Ok(())
+}
+
+fn clear_obsolete_state_key_links(
+    conn: &Connection,
+    id: i64,
+    active_state_key_id: Option<i64>,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE memory_state_keys
+         SET current_memory_id = NULL, updated_at_epoch = ?3
+         WHERE current_memory_id = ?1
+           AND (?2 IS NULL OR id <> ?2)",
+        params![id, active_state_key_id, now],
     )?;
     Ok(())
 }
