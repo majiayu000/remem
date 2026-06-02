@@ -1,4 +1,6 @@
 pub mod claude_memory;
+mod debug;
+mod diagnostics;
 mod format;
 mod host;
 mod injection_gate;

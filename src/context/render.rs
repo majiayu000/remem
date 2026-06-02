@@ -20,6 +20,8 @@ use super::sections::{
 };
 use super::types::{ContextLoadError, ContextRequest};
 
+pub(in crate::context) use super::debug::build_context_debug_trace;
+
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
     pub(in crate::context) stats: ContextRenderStats,
@@ -42,7 +44,7 @@ pub(crate) fn governance_eval_snapshot(
     current_branch: Option<&str>,
 ) -> Result<ContextEvalSnapshot> {
     let policy = ContextPolicy::from_limits(ContextLimits::default());
-    let loaded = load_context_data_with_policy(conn, project, current_branch, &policy);
+    let loaded = load_context_data_with_policy(conn, project, current_branch, &policy, true);
     let rendered_output = render_loaded_context_for_eval(conn, project, &policy, &loaded)?;
     let rendered_memories = loaded
         .memories
@@ -287,8 +289,9 @@ pub(in crate::context) fn render_context_output(
         &request.project,
         request.current_branch.as_deref(),
         &policy,
+        debug,
     );
-    let (preference_output, preference_summary) =
+    let (preference_output, preference_details) =
         match render_preferences_to_buffer(&conn, &request.project, &request.cwd, &policy) {
             Ok(rendered) => rendered,
             Err(error) => {
@@ -302,10 +305,11 @@ pub(in crate::context) fn render_context_output(
                     .push(ContextLoadError::new("preferences", message));
                 (
                     String::new(),
-                    crate::memory::preference::PreferenceRenderSummary::default(),
+                    crate::memory::preference::PreferenceRenderDetails::default(),
                 )
             }
         };
+    let preference_summary = preference_details.summary;
 
     if preference_summary.rendered == 0
         && loaded.memories.is_empty()
@@ -426,6 +430,12 @@ pub(in crate::context) fn render_context_output(
     }
 
     if debug {
+        super::diagnostics::apply_preference_diagnostics(
+            &conn,
+            &request.project,
+            preference_details.rendered_ids,
+            &mut loaded.diagnostics,
+        );
         output.push_str(&build_context_debug_trace(
             request, &policy, &loaded, &stats,
         ));
@@ -519,10 +529,10 @@ fn render_preferences_to_buffer(
     project: &str,
     cwd: &str,
     policy: &ContextPolicy,
-) -> Result<(String, crate::memory::preference::PreferenceRenderSummary)> {
+) -> Result<(String, crate::memory::preference::PreferenceRenderDetails)> {
     let mut output = String::new();
     let limits = &policy.limits;
-    let summary = crate::memory::preference::render_preferences_with_limits_detailed(
+    let details = crate::memory::preference::render_preferences_with_context_details(
         &mut output,
         conn,
         project,
@@ -531,7 +541,7 @@ fn render_preferences_to_buffer(
         limits.preference_global_limit,
         limits.preference_char_limit,
     )?;
-    Ok((output, summary))
+    Ok((output, details))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -568,154 +578,6 @@ pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats)
 
 fn build_context_stats_footer_with_style(stats: &ContextRenderStats, use_colors: bool) -> String {
     super::style::context_stats_footer(stats, use_colors)
-}
-
-pub(in crate::context) fn build_context_debug_trace(
-    request: &ContextRequest,
-    policy: &ContextPolicy,
-    loaded: &super::types::LoadedContext,
-    stats: &ContextRenderStats,
-) -> String {
-    let mut trace = String::from("## Debug Trace\n");
-    trace.push_str(&format!(
-        "- request host={} project={} cwd={} branch={} session={} source={}\n",
-        request.host.as_env_value(),
-        request.project,
-        request.cwd,
-        request.current_branch.as_deref().unwrap_or("-"),
-        request.session_id.as_deref().unwrap_or("-"),
-        request.hook_source.as_deref().unwrap_or("-")
-    ));
-    trace.push_str(&format!(
-        "- limits total={} core_items={} core_chars={} lessons={} lesson_chars={} index_items={} index_chars={} sessions={} preferences(project={}, global={}, chars={})\n",
-        policy.limits.total_char_limit,
-        policy.limits.core_item_limit,
-        policy.limits.core_char_limit,
-        policy.limits.lesson_limit,
-        policy.limits.lesson_char_limit,
-        policy.limits.memory_index_limit,
-        policy.limits.memory_index_char_limit,
-        policy.limits.session_limit,
-        policy.limits.preference_project_limit,
-        policy.limits.preference_global_limit,
-        policy.limits.preference_char_limit
-    ));
-    trace.push_str(&format!(
-        "- rendered core={} lessons={} index={} preferences={} sessions={} workstreams={}\n",
-        stats.core.count,
-        stats.lessons.count,
-        stats.index.count,
-        stats.preferences.count,
-        stats.sessions.count,
-        stats.workstreams.count
-    ));
-    trace.push_str(&format!(
-        "- rendered_chars core={} lessons={} index={} preferences={} sessions={} workstreams={}\n",
-        stats.core.chars,
-        stats.lessons.chars,
-        stats.index.chars,
-        stats.preferences.chars,
-        stats.sessions.chars,
-        stats.workstreams.chars
-    ));
-    trace.push_str(&format!(
-        "- stats host={} branch={} source={}\n",
-        stats.host,
-        stats.branch.as_deref().unwrap_or("-"),
-        stats.hook_source.as_deref().unwrap_or("-")
-    ));
-    trace.push_str(&format!(
-        "- preferences project_rendered={} global_rendered={} reason=scope_limits_then_claude_md_dedup\n",
-        stats.project_preferences, stats.global_preferences
-    ));
-    trace.push_str(&format!(
-        "- owner counts repo={} user={} workspace={} tool={} domain={} workstream={} session={} legacy={} unknown={}\n",
-        stats.owner_counts.repo,
-        stats.owner_counts.user,
-        stats.owner_counts.workspace,
-        stats.owner_counts.tool,
-        stats.owner_counts.domain,
-        stats.owner_counts.workstream,
-        stats.owner_counts.session,
-        stats.owner_counts.legacy,
-        stats.owner_counts.unknown
-    ));
-    for trace_row in loaded.owner_traces.iter().take(60) {
-        trace.push_str(&format!(
-            "- owner {} id={} scope={} key={} source_project={} target_project={} domain={} context_class={} {} reason={} title={}\n",
-            trace_row.object_kind,
-            trace_row.id,
-            trace_row.owner_scope.as_deref().unwrap_or("-"),
-            trace_row.owner_key.as_deref().unwrap_or("-"),
-            trace_row.source_project.as_deref().unwrap_or("-"),
-            trace_row.target_project.as_deref().unwrap_or("-"),
-            trace_row.topic_domain.as_deref().unwrap_or("-"),
-            trace_row.context_class.as_deref().unwrap_or("-"),
-            if trace_row.included {
-                "included"
-            } else {
-                "excluded"
-            },
-            trace_row.reason,
-            truncate_chars_with_ellipsis(&trace_row.title, 120)
-        ));
-    }
-    if loaded.owner_traces.len() > 60 {
-        trace.push_str(&format!(
-            "- owner trace truncated: {} additional rows omitted\n",
-            loaded.owner_traces.len() - 60
-        ));
-    }
-    for (rank, lesson) in loaded.lessons.iter().enumerate() {
-        trace.push_str(&format!(
-            "- lesson rank={} id={} confidence={:.2} reinforced={} scope={} topic={} title={}\n",
-            rank + 1,
-            lesson.memory.id,
-            lesson.metadata.confidence,
-            lesson.metadata.reinforcement_count,
-            lesson.memory.scope,
-            lesson.memory.topic_key.as_deref().unwrap_or("-"),
-            truncate_chars_with_ellipsis(&lesson.memory.title, 120)
-        ));
-    }
-    for (rank, memory) in loaded.memories.iter().take(30).enumerate() {
-        let target = if stats.core_ids.contains(&memory.id) {
-            "core"
-        } else {
-            "index_candidate"
-        };
-        trace.push_str(&format!(
-            "- memory rank={} id={} type={} scope={} branch={} topic={} target={} reason=loaded_after_scope_branch_dedupe title={}\n",
-            rank + 1,
-            memory.id,
-            memory.memory_type,
-            memory.scope,
-            memory.branch.as_deref().unwrap_or("-"),
-            memory.topic_key.as_deref().unwrap_or("-"),
-            target,
-            truncate_chars_with_ellipsis(&memory.title, 120)
-        ));
-    }
-    if loaded.memories.len() > 30 {
-        trace.push_str(&format!(
-            "- memory trace truncated: {} additional candidates omitted\n",
-            loaded.memories.len() - 30
-        ));
-    }
-    for (rank, summary) in loaded
-        .summaries
-        .iter()
-        .take(policy.limits.session_limit)
-        .enumerate()
-    {
-        trace.push_str(&format!(
-            "- session rank={} reason=recent_after_cluster_filter request={}\n",
-            rank + 1,
-            truncate_chars_with_ellipsis(&summary.request, 120)
-        ));
-    }
-    trace.push('\n');
-    trace
 }
 
 fn context_source_note(source: Option<&str>) -> Option<&'static str> {

@@ -8,7 +8,7 @@ use crate::memory::{self, Memory};
 use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
-use super::types::{ContextLoadError, LoadedContext, SessionSummaryBrief};
+use super::types::{ContextLoadError, HiddenDuplicateGroup, LoadedContext, SessionSummaryBrief};
 
 const BASENAME_SEARCH_LIMIT: i64 = 20;
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
@@ -22,7 +22,7 @@ pub(super) fn load_context_data(
     current_branch: Option<&str>,
 ) -> LoadedContext {
     let policy = ContextPolicy::from_limits(super::policy::ContextLimits::default());
-    load_context_data_with_policy(conn, project, current_branch, &policy)
+    load_context_data_with_policy(conn, project, current_branch, &policy, true)
 }
 
 pub(super) fn load_context_data_with_policy(
@@ -30,9 +30,11 @@ pub(super) fn load_context_data_with_policy(
     project: &str,
     current_branch: Option<&str>,
     policy: &ContextPolicy,
+    collect_diagnostics: bool,
 ) -> LoadedContext {
     let mut errors = Vec::new();
-    let memory_selection = load_project_memories(conn, project, current_branch, policy);
+    let memory_selection =
+        load_project_memories(conn, project, current_branch, policy, collect_diagnostics);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
     let lessons = memory::lesson::list_lessons_for_context(
@@ -73,6 +75,7 @@ pub(super) fn load_context_data_with_policy(
         errors,
         owner_traces: memory_selection.owner_traces,
         owner_counts: memory_selection.owner_counts,
+        diagnostics: memory_selection.diagnostics,
     }
 }
 
@@ -80,6 +83,7 @@ struct ContextMemorySelection {
     memories: Vec<Memory>,
     owner_traces: Vec<OwnerTrace>,
     owner_counts: OwnerCounts,
+    diagnostics: super::types::ContextDiagnostics,
 }
 
 struct ContextMemoryRow {
@@ -92,6 +96,7 @@ fn load_project_memories(
     project: &str,
     current_branch: Option<&str>,
     policy: &ContextPolicy,
+    collect_diagnostics: bool,
 ) -> ContextMemorySelection {
     let mut memories = Vec::new();
     let mut traces = Vec::new();
@@ -144,11 +149,10 @@ fn load_project_memories(
 
     memories
         .retain(|memory| policy.allows_memory_type(SectionKind::MemoryIndex, &memory.memory_type));
-    let mut selected = limit_self_diagnostic_memories(
-        deduplicate_memory_clusters(memories, current_branch),
-        policy.limits.self_diagnostic_limit,
-    );
+    let (deduped, hidden_duplicate_groups) = deduplicate_memory_clusters(memories, current_branch);
+    let mut selected = limit_self_diagnostic_memories(deduped, policy.limits.self_diagnostic_limit);
     sort_memories_by_branch(&mut selected, current_branch);
+    let selected_id_list = selected.iter().map(|memory| memory.id).collect::<Vec<_>>();
 
     let selected_ids = selected
         .iter()
@@ -193,6 +197,17 @@ fn load_project_memories(
         memories: selected,
         owner_traces: traces,
         owner_counts,
+        diagnostics: if collect_diagnostics {
+            super::diagnostics::collect_context_diagnostics(
+                conn,
+                project,
+                excluded_types,
+                selected_id_list,
+                hidden_duplicate_groups,
+            )
+        } else {
+            super::types::ContextDiagnostics::default()
+        },
     }
 }
 
@@ -215,6 +230,9 @@ fn query_owner_included_memory_rows(
         "status",
         "expires_at_epoch",
         false,
+    ));
+    conditions.push(crate::memory::memory_state_key_current_filter_sql(
+        "memories",
     ));
 
     if let Some(query) = query {
@@ -334,7 +352,7 @@ fn map_context_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextMe
     })
 }
 
-fn push_owner_included_filter(
+pub(super) fn push_owner_included_filter(
     project: &str,
     idx: &mut usize,
     conditions: &mut Vec<String>,
@@ -404,7 +422,7 @@ fn push_context_related_filter(
     ));
 }
 
-fn push_excluded_type_filter(
+pub(super) fn push_excluded_type_filter(
     excluded_types: &[&str],
     idx: &mut usize,
     conditions: &mut Vec<String>,
@@ -446,10 +464,15 @@ fn branch_sort_score(memory: &Memory, current_branch: &str) -> u8 {
 
 struct ClusterRepresentative {
     first_index: usize,
+    cluster_key: String,
     memory: Memory,
+    hidden_ids: Vec<i64>,
 }
 
-fn deduplicate_memory_clusters(memories: Vec<Memory>, current_branch: Option<&str>) -> Vec<Memory> {
+fn deduplicate_memory_clusters(
+    memories: Vec<Memory>,
+    current_branch: Option<&str>,
+) -> (Vec<Memory>, Vec<HiddenDuplicateGroup>) {
     let mut representatives: HashMap<String, ClusterRepresentative> = HashMap::new();
 
     for (index, memory) in memories.into_iter().enumerate() {
@@ -458,15 +481,20 @@ fn deduplicate_memory_clusters(memories: Vec<Memory>, current_branch: Option<&st
             Some(representative) => {
                 if is_better_cluster_representative(&memory, &representative.memory, current_branch)
                 {
+                    representative.hidden_ids.push(representative.memory.id);
                     representative.memory = memory;
+                } else {
+                    representative.hidden_ids.push(memory.id);
                 }
             }
             None => {
                 representatives.insert(
-                    cluster_key,
+                    cluster_key.clone(),
                     ClusterRepresentative {
                         first_index: index,
+                        cluster_key,
                         memory,
+                        hidden_ids: Vec::new(),
                     },
                 );
             }
@@ -475,10 +503,20 @@ fn deduplicate_memory_clusters(memories: Vec<Memory>, current_branch: Option<&st
 
     let mut deduped: Vec<ClusterRepresentative> = representatives.into_values().collect();
     deduped.sort_by_key(|representative| representative.first_index);
-    deduped
+    let hidden_groups = deduped
+        .iter()
+        .filter(|representative| !representative.hidden_ids.is_empty())
+        .map(|representative| HiddenDuplicateGroup {
+            cluster_key: representative.cluster_key.clone(),
+            chosen_id: representative.memory.id,
+            hidden_ids: representative.hidden_ids.clone(),
+        })
+        .collect();
+    let memories = deduped
         .into_iter()
         .map(|representative| representative.memory)
-        .collect()
+        .collect();
+    (memories, hidden_groups)
 }
 
 fn is_better_cluster_representative(

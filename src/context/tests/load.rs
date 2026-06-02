@@ -17,7 +17,7 @@ fn load_context_data_logs_primary_memory_query_failures() {
     };
     let policy = ContextPolicy::from_limits(ContextLimits::default());
 
-    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy);
+    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy, true);
 
     assert!(loaded.memories.is_empty());
     let log_path = data_dir.path.join("remem.log");
@@ -36,7 +36,7 @@ fn load_context_data_records_lesson_query_failures() {
     conn.execute("DROP TABLE memory_lessons", []).unwrap();
     let policy = ContextPolicy::from_limits(ContextLimits::default());
 
-    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy);
+    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy, true);
 
     assert!(loaded.lessons.is_empty());
     assert_eq!(loaded.errors.len(), 1);
@@ -544,7 +544,7 @@ fn load_context_data_filters_lessons_before_candidate_limit_and_keeps_core_memor
         now - 1_000,
     );
 
-    let loaded = load_context_data_with_policy(&conn, project, None, &policy);
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy, true);
 
     assert!(loaded.lessons.is_empty());
     assert!(loaded
@@ -644,7 +644,7 @@ fn load_context_data_excludes_global_non_preferences_from_basename_search() {
         );
     }
 
-    let loaded = load_context_data_with_policy(&conn, project, None, &policy);
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy, true);
 
     assert!(!loaded
         .memories
@@ -729,7 +729,7 @@ fn load_context_data_keeps_core_candidates_when_index_limit_is_small() {
         );
     }
 
-    let loaded = load_context_data_with_policy(&conn, project, None, &policy);
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy, true);
 
     assert!(loaded.memories.len() > limits.memory_index_limit);
     assert!(loaded.memories.len() >= limits.core_item_limit);

@@ -94,6 +94,7 @@ fn startup_context_excludes_unrelated_tool_and_domain_memories() {
             core_item_limit: 10,
             ..ContextLimits::default()
         }),
+        true,
     );
     let titles = loaded
         .memories
@@ -157,6 +158,7 @@ fn debug_trace_reports_owner_reasons_and_counts() {
         stash,
         None,
         &ContextPolicy::from_limits(ContextLimits::default()),
+        true,
     );
     let stats = ContextRenderStats {
         host: "codex-cli".to_string(),

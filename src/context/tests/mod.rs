@@ -2,6 +2,7 @@ use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
+mod diagnostics;
 mod load;
 mod ownership;
 mod render;
