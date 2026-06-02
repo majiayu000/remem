@@ -2,6 +2,7 @@ use super::*;
 use crate::memory;
 use anyhow::Result;
 use rusqlite::{params, Connection};
+mod plan;
 
 const STASH: &str = "/Users/lifcc/Desktop/code/AI/tool/stash";
 const NOW: i64 = 1_780_000_000;
