@@ -1,6 +1,7 @@
 use super::cwd::resolve_cwd_arg;
 use super::types::{
-    Cli, Commands, CommitAction, MemoryGovernanceCliAction, PendingAction, ReviewAction,
+    Cli, Commands, CommitAction, MemoryGovernanceCliAction, PendingAction, RawAction, RawRole,
+    ReviewAction,
 };
 use clap::{CommandFactory, Parser};
 
@@ -117,6 +118,51 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             assert!(!json);
         }
         _ => panic!("expected search command"),
+    }
+}
+
+#[test]
+fn cli_parses_raw_search_filters() {
+    let cli = Cli::parse_from([
+        "remem",
+        "raw",
+        "search",
+        "literal phrase",
+        "--project",
+        "/repo",
+        "--branch",
+        "main",
+        "--role",
+        "user",
+        "--limit",
+        "20",
+        "--offset",
+        "40",
+        "--json",
+    ]);
+
+    match cli.command {
+        Commands::Raw {
+            action:
+                RawAction::Search {
+                    query,
+                    project,
+                    branch,
+                    role,
+                    limit,
+                    offset,
+                    json,
+                },
+        } => {
+            assert_eq!(query, "literal phrase");
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(branch.as_deref(), Some("main"));
+            assert_eq!(role, Some(RawRole::User));
+            assert_eq!(limit, 20);
+            assert_eq!(offset, 40);
+            assert!(json);
+        }
+        _ => panic!("expected raw search command"),
     }
 }
 
