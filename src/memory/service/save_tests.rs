@@ -119,6 +119,80 @@ fn direct_save_same_text_metadata_change_updates_row() -> anyhow::Result<()> {
 }
 
 #[test]
+fn direct_save_updates_active_duplicate_topic_row() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-active-topic-duplicate-target");
+    let conn = db::open_db()?;
+    let req = SaveMemoryRequest {
+        text: "Use the current active duplicate row for planner-aligned writes.".to_string(),
+        title: Some("Planner target".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: Some("planner-target".to_string()),
+        memory_type: Some("discovery".to_string()),
+        scope: Some("project".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+    let stale = save_memory(&conn, &req)?;
+    conn.execute(
+        "UPDATE memories
+         SET status = 'stale', updated_at_epoch = ?1
+         WHERE id = ?2",
+        rusqlite::params![10_i64, stale.id],
+    )?;
+    conn.execute(
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, status, branch, scope,
+          source_project, target_project, owner_scope, owner_key, context_class)
+         VALUES (?1, 'proj', 'planner-target', 'Current active row',
+                 'Existing active duplicate content.', 'discovery', NULL,
+                 'Existing active duplicate content.', ?2, ?3, 'active', NULL, 'project',
+                 'proj', 'proj', 'repo', 'proj', 'startup_core')",
+        rusqlite::params!["legacy-active-session", 20_i64, 20_i64],
+    )?;
+    let active = conn.last_insert_rowid();
+    let update_req = SaveMemoryRequest {
+        text: "Updated planner-aligned content.".to_string(),
+        title: Some("Planner target updated".to_string()),
+        ..req
+    };
+
+    let saved = save_memory(&conn, &update_req)?;
+
+    assert_eq!(saved.id, active);
+    assert_eq!(saved.operation, "update");
+    let stale_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [stale.id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stale_status, "stale");
+    let active_content: String = conn.query_row(
+        "SELECT content FROM memories WHERE id = ?1",
+        [active],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_content, "Updated planner-aligned content.");
+    let active_topic_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE project = 'proj'
+           AND topic_key = 'planner-target'
+           AND scope = 'project'
+           AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_topic_rows, 1);
+    let logged_result: i64 = conn.query_row(
+        "SELECT result_memory_id FROM memory_operation_log ORDER BY id DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(logged_result, active);
+    Ok(())
+}
+
+#[test]
 fn save_memory_creates_manual_claim_after_successful_memory_write() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("save-memory-claim-success");
     let conn = db::open_db()?;

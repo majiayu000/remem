@@ -88,6 +88,9 @@ pub fn insert_memory_full(
                 .query_row(
                     "SELECT id FROM memories
                      WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+                     ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
+                              updated_at_epoch DESC,
+                              id DESC
                      LIMIT 1",
                     params![project, topic_key, scope],
                     |row| row.get(0),
