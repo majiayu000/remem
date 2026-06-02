@@ -27,9 +27,6 @@ CREATE TABLE IF NOT EXISTS topic_segments (
     updated_at_epoch INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_topic_segments_trace
-    ON topic_segments(project_id, topic_key, covered_from_event_id);
-
 CREATE INDEX IF NOT EXISTS idx_topic_segments_project_trace
     ON topic_segments(project, topic_key, covered_from_event_id);
 
