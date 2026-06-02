@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -129,7 +131,9 @@ where
     F: FnMut(&Path) -> Option<String>,
 {
     let configured_path = configured_path.map(Path::to_path_buf);
-    let configured_resolved_path = configured_path.as_deref().map(canonical_or_original);
+    let configured_resolved_path = configured_path
+        .as_deref()
+        .map(|path| resolve_configured_path(path, &dirs, candidate_names));
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
 
@@ -169,6 +173,49 @@ where
 
 fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn resolve_configured_path(path: &Path, dirs: &[PathBuf], candidate_names: &[&str]) -> PathBuf {
+    resolve_bare_command_path(path, dirs, candidate_names)
+        .unwrap_or_else(|| canonical_or_original(path))
+}
+
+fn resolve_bare_command_path(
+    path: &Path,
+    dirs: &[PathBuf],
+    candidate_names: &[&str],
+) -> Option<PathBuf> {
+    let command = bare_command_name(path)?;
+    for dir in dirs {
+        let exact = dir.join(path);
+        if is_candidate_file(&exact) {
+            return Some(canonical_or_original(&exact));
+        }
+
+        for name in candidate_names {
+            let candidate = Path::new(name);
+            if candidate.file_stem() != Some(command) {
+                continue;
+            }
+
+            let candidate_path = dir.join(candidate);
+            if is_candidate_file(&candidate_path) {
+                return Some(canonical_or_original(&candidate_path));
+            }
+        }
+    }
+    None
+}
+
+fn bare_command_name(path: &Path) -> Option<&OsStr> {
+    let mut components = path.components();
+    let Some(Component::Normal(name)) = components.next() else {
+        return None;
+    };
+    if components.next().is_some() {
+        return None;
+    }
+    Some(name)
 }
 
 fn default_candidate_names() -> &'static [&'static str] {
@@ -341,6 +388,52 @@ mod tests {
         let lines = format_warning_lines(&report).join("\n");
         assert!(lines.contains("active ->"));
         assert!(lines.contains("stale  ->"));
+    }
+
+    #[test]
+    fn configured_command_name_resolves_through_path() {
+        let bin_dir = temp_dir("command");
+        let configured = PathBuf::from("remem");
+        let expected = write_candidate(&bin_dir, "remem", "remem 0.4.5");
+
+        let report = collect_install_paths(vec![bin_dir], Some(&configured), &["remem"], |path| {
+            match std::fs::read_to_string(path) {
+                Ok(version) => Some(version),
+                Err(error) => panic!("candidate version {}: {error}", path.display()),
+            }
+        });
+
+        assert!(!report.has_warning());
+        assert_eq!(report.configured_path, Some(configured));
+        assert_eq!(
+            report.configured_resolved_path,
+            Some(canonical_or_original(&expected))
+        );
+        assert!(report.candidates[0].configured);
+    }
+
+    #[test]
+    fn configured_command_name_resolves_platform_wrapper() {
+        let bin_dir = temp_dir("wrapper");
+        let configured = PathBuf::from("remem");
+        let expected = write_candidate(&bin_dir, "remem.exe", "remem 0.4.5");
+
+        let report = collect_install_paths(
+            vec![bin_dir],
+            Some(&configured),
+            &["remem.exe", "remem.cmd", "remem.bat"],
+            |path| match std::fs::read_to_string(path) {
+                Ok(version) => Some(version),
+                Err(error) => panic!("candidate version {}: {error}", path.display()),
+            },
+        );
+
+        assert!(!report.has_warning());
+        assert_eq!(
+            report.configured_resolved_path,
+            Some(canonical_or_original(&expected))
+        );
+        assert!(report.candidates[0].configured);
     }
 
     #[test]
