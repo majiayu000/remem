@@ -67,6 +67,12 @@ remem install --dry-run         # 预览配置改动
 
 安装后重启对应的 AI 编程工具。
 
+PATH 上建议只保留一个 canonical `remem` 命令。Standalone 和源码安装通常放在
+`~/.local/bin/remem`；Windows standalone 安装建议放在
+`%USERPROFILE%\.local\bin\remem.exe`。如果使用 Homebrew 或 Cargo 这类包管理器，
+后续也通过同一个渠道升级，避免 PATH 前后同时残留第二份手动安装的二进制。
+`remem doctor` 和 `remem install --dry-run` 会在检测到多个 `remem` 可执行文件时警告。
+
 ## 在 Codex 中使用
 
 只配置 Codex：
