@@ -59,6 +59,8 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
                 effective_topic_key.as_deref(),
                 title,
                 &req.text,
+                files_json.as_deref(),
+                req.branch.as_deref(),
                 None,
                 None,
             )?;
@@ -107,6 +109,8 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
                 effective_topic_key.as_deref(),
                 title,
                 &req.text,
+                files_json.as_deref(),
+                req.branch.as_deref(),
                 None,
                 None,
             )?;

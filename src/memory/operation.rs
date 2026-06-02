@@ -91,9 +91,12 @@ pub fn plan_direct_save(
     topic_key: Option<&str>,
     title: &str,
     content: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
     source_candidate_id: Option<i64>,
     confidence: Option<f64>,
 ) -> Result<(MemoryOperationInput, MemoryOperationPlan)> {
+    let now = chrono::Utc::now().timestamp();
     let (owner_scope, owner_key) = owner_for_scope(project, scope);
     let state_key =
         crate::memory::state_key::derive_state_key(memory_type, topic_key, title, content)
@@ -119,9 +122,7 @@ pub fn plan_direct_save(
         confidence,
     };
     let plan = match existing {
-        Some(existing)
-            if existing.status == "active" && same_memory_text(&existing.content, content) =>
-        {
+        Some(existing) if existing.matches_noop_write(title, content, files, branch, now) => {
             MemoryOperationPlan::new(
                 MemoryLifecycleOp::Noop,
                 state_key,
@@ -231,8 +232,37 @@ pub fn with_operation_savepoint<T>(conn: &Connection, f: impl FnOnce() -> Result
 #[derive(Debug)]
 struct ExistingMemory {
     id: i64,
+    title: String,
     content: String,
     status: String,
+    files: Option<String>,
+    branch: Option<String>,
+    expires_at_epoch: Option<i64>,
+}
+
+impl ExistingMemory {
+    fn matches_noop_write(
+        &self,
+        title: &str,
+        content: &str,
+        files: Option<&str>,
+        branch: Option<&str>,
+        now_epoch: i64,
+    ) -> bool {
+        self.status == "active"
+            && self.is_current(now_epoch)
+            && self.title == title
+            && same_memory_text(&self.content, content)
+            && self.files.as_deref() == files
+            && self.branch.as_deref() == branch
+    }
+
+    fn is_current(&self, now_epoch: i64) -> bool {
+        match self.expires_at_epoch {
+            Some(expires_at_epoch) => expires_at_epoch > now_epoch,
+            None => true,
+        }
+    }
 }
 
 fn existing_memory_for_direct_save(
@@ -246,7 +276,7 @@ fn existing_memory_for_direct_save(
     if let Some(topic_key) = topic_key.filter(|topic_key| !topic_key.is_empty()) {
         let existing_id = conn
             .query_row(
-                "SELECT id, content, status FROM memories
+                "SELECT id, title, content, status, files, branch, expires_at_epoch FROM memories
                  WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
                  ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
                           updated_at_epoch DESC,
@@ -277,7 +307,8 @@ fn existing_memory_for_direct_save(
         return Ok(None);
     };
     conn.query_row(
-        "SELECT id, content, status FROM memories WHERE id = ?1",
+        "SELECT id, title, content, status, files, branch, expires_at_epoch
+         FROM memories WHERE id = ?1",
         [id],
         map_existing_memory,
     )
@@ -288,8 +319,12 @@ fn existing_memory_for_direct_save(
 fn map_existing_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExistingMemory> {
     Ok(ExistingMemory {
         id: row.get(0)?,
-        content: row.get(1)?,
-        status: row.get(2)?,
+        title: row.get(1)?,
+        content: row.get(2)?,
+        status: row.get(3)?,
+        files: row.get(4)?,
+        branch: row.get(5)?,
+        expires_at_epoch: row.get(6)?,
     })
 }
 
