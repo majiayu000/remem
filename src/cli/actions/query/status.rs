@@ -2,6 +2,9 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::db;
+use crate::doctor::health_action::{
+    queue_actions, render_action_block, worker_once_fallback_human,
+};
 
 pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
     let report = load_status_report()?;
@@ -15,7 +18,7 @@ pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
 }
 
 fn load_status_report() -> Result<StatusReport> {
-    let conn = db::open_db()?;
+    let conn = db::open_db_read_only()?;
     let db_path = db::db_path();
     let db_size = std::fs::metadata(&db_path)
         .with_context(|| format!("failed to stat database path {}", db_path.display()))?
@@ -154,6 +157,9 @@ fn print_status_report(report: &StatusReport) {
     if let Some(owner) = &report.worker_daemon.owner {
         println!("  Owner:        {}", owner);
     }
+    if report.worker_daemon.health == "missing" || report.worker_daemon.health == "stale" {
+        println!("  Fallback:     {}", worker_once_fallback_human());
+    }
     println!();
     println!("Today:");
     println!("  New memories:      {:>4}", report.today.new_memories);
@@ -166,6 +172,13 @@ fn print_status_report(report: &StatusReport) {
             println!("  {:>4}  {}", project.count, project.project);
         }
     }
+
+    let actions = status_health_actions(report);
+    let action_block = render_action_block(&actions);
+    if !action_block.is_empty() {
+        println!();
+        print!("{action_block}");
+    }
 }
 
 fn worker_health_tag(healthy: bool, heartbeat_age_secs: Option<i64>) -> &'static str {
@@ -176,6 +189,15 @@ fn worker_health_tag(healthy: bool, heartbeat_age_secs: Option<i64>) -> &'static
     } else {
         "missing"
     }
+}
+
+fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_action::HealthAction> {
+    queue_actions(
+        report.pending_observations.failed,
+        report.pending_observations.expired,
+        report.jobs.failed,
+        report.jobs.stuck,
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -261,9 +283,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
-        let report = StatusReport {
+    fn status_report_fixture() -> StatusReport {
+        StatusReport {
             version: "0.4.5".to_string(),
             database: StatusDatabase {
                 path: "/tmp/remem-test".to_string(),
@@ -289,16 +310,16 @@ mod tests {
                 ready: 12,
                 delayed: 13,
                 processing: 14,
-                expired: 15,
-                failed: 16,
+                expired: 0,
+                failed: 0,
                 oldest_ready_epoch: Some(17),
                 oldest_ready_age_secs: Some(18),
             },
             jobs: JobStatus {
                 pending: 19,
                 processing: 20,
-                failed: 21,
-                stuck: 22,
+                failed: 0,
+                stuck: 0,
             },
             worker_daemon: WorkerDaemonStatus {
                 health: "healthy".to_string(),
@@ -313,7 +334,16 @@ mod tests {
                 project: "proj".to_string(),
                 count: 26,
             }],
-        };
+        }
+    }
+
+    #[test]
+    fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
+        let mut report = status_report_fixture();
+        report.pending_observations.expired = 15;
+        report.pending_observations.failed = 16;
+        report.jobs.failed = 21;
+        report.jobs.stuck = 22;
 
         let text = serde_json::to_string(&report)?;
         let parsed: Value = serde_json::from_str(&text)?;
@@ -326,5 +356,35 @@ mod tests {
         assert_eq!(parsed["worker_daemon"]["health"], "healthy");
         assert_eq!(parsed["top_projects"][0]["project"], "proj");
         Ok(())
+    }
+
+    #[test]
+    fn cli_status_has_no_action_block_when_runtime_is_clear() {
+        let report = status_report_fixture();
+        let actions = status_health_actions(&report);
+
+        assert!(render_action_block(&actions).is_empty());
+    }
+
+    #[test]
+    fn cli_status_renders_action_block_for_runtime_failures() {
+        let mut report = status_report_fixture();
+        report.pending_observations.failed = 43;
+        report.pending_observations.expired = 1;
+        report.jobs.failed = 2;
+        report.jobs.stuck = 3;
+
+        let actions = status_health_actions(&report);
+        let text = render_action_block(&actions);
+
+        assert!(text.contains("Needs attention:"));
+        assert!(text.contains("43 failed pending observations"));
+        assert!(text.contains("inspect: remem pending list-failed --limit 20"));
+        assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
+        assert!(text.contains("1 expired processing pending observation"));
+        assert!(text.contains("2 failed jobs"));
+        assert!(text.contains("3 stuck jobs"));
+        assert!(text.contains("inspect counts: remem status --json"));
+        assert!(text.contains("recover: remem worker --once"));
     }
 }
