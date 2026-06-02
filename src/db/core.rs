@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 thread_local! {
     static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -86,6 +86,16 @@ pub fn open_db() -> Result<Connection> {
     Ok(conn)
 }
 
+pub fn open_db_read_only() -> Result<Connection> {
+    let path = db_path();
+    let key = super::crypto::require_cipher_key_or_plaintext_override()?;
+    if !path.exists() {
+        anyhow::bail!("database not found: {}", path.display());
+    }
+
+    open_configured_read_only_connection(&path, key.as_deref())
+}
+
 pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Result<Connection> {
     let conn = Connection::open(path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
@@ -95,6 +105,19 @@ pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Resu
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
     )?;
+    Ok(conn)
+}
+
+pub(crate) fn open_configured_read_only_connection(
+    path: &Path,
+    key: Option<&str>,
+) -> Result<Connection> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("Failed to open database read-only: {}", path.display()))?;
+
+    super::crypto::configure_cipher(&conn, key)?;
+
+    conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
     Ok(conn)
 }
 
@@ -153,5 +176,58 @@ pub fn detect_git_commit(cwd: &str) -> Option<String> {
         None
     } else {
         Some(sha)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+
+    #[test]
+    fn open_db_read_only_does_not_create_missing_database() {
+        let test_dir = ScopedTestDataDir::new("readonly-missing");
+        test_dir.remove_db_files();
+
+        let err = open_db_read_only().expect_err("missing database should fail");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("database not found"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !test_dir.path.exists(),
+            "read-only open must not create data dir"
+        );
+        assert!(
+            !test_dir.db_path().exists(),
+            "read-only open must not create database file"
+        );
+    }
+
+    #[test]
+    fn open_db_read_only_opens_existing_database_without_write_access() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("readonly-existing");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = Connection::open(test_dir.db_path())?;
+        setup.execute_batch(
+            "CREATE TABLE readonly_probe(id INTEGER PRIMARY KEY);
+             INSERT INTO readonly_probe(id) VALUES (1);",
+        )?;
+        drop(setup);
+
+        let conn = open_db_read_only()?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM readonly_probe", [], |row| row.get(0))?;
+        assert_eq!(count, 1);
+
+        let err = conn
+            .execute("INSERT INTO readonly_probe(id) VALUES (2)", [])
+            .expect_err("read-only connection must reject writes");
+        assert_eq!(err.sqlite_error_code(), Some(rusqlite::ErrorCode::ReadOnly));
+        Ok(())
     }
 }
