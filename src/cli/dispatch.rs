@@ -10,7 +10,11 @@ use super::actions::{
     GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands};
+use super::types::{Cli, Commands, ContextGateAction};
+
+#[path = "actions/context_gate.rs"]
+mod context_gate;
+use context_gate::run_context_gate_status;
 
 pub(super) async fn run_cli(cli: Cli) -> Result<()> {
     match cli.command {
@@ -28,6 +32,14 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             }
             context::generate_context_from_cli(cwd, session_id, color, host, debug, force, gate)?;
         }
+        Commands::ContextGate { action } => match action {
+            ContextGateAction::Status {
+                project,
+                session,
+                limit,
+                json,
+            } => run_context_gate_status(project.as_deref(), session.as_deref(), limit, json)?,
+        },
         Commands::SessionInit => {
             if remem_hooks_disabled() {
                 return Ok(());

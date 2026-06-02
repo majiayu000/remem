@@ -116,7 +116,6 @@ pub(crate) fn open_configured_read_only_connection(
         .with_context(|| format!("Failed to open database read-only: {}", path.display()))?;
 
     super::crypto::configure_cipher(&conn, key)?;
-
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
     Ok(conn)
 }
@@ -184,6 +183,7 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
+    use crate::db::crypto::ALLOW_PLAINTEXT_ENV;
     use crate::db::test_support::ScopedTestDataDir;
 
     #[test]
@@ -206,6 +206,51 @@ mod tests {
             !test_dir.db_path().exists(),
             "read-only open must not create database file"
         );
+    }
+
+    #[test]
+    fn open_db_read_only_refuses_plaintext_without_explicit_override() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("readonly-cipher-fail-closed");
+        let conn = crate::db::open_db()?;
+        drop(conn);
+        std::env::remove_var(ALLOW_PLAINTEXT_ENV);
+
+        let err = crate::db::open_db_read_only()
+            .expect_err("read-only open must enforce the plaintext guard");
+
+        let message = err.to_string();
+        assert!(message.contains("SQLCipher key"), "got: {message}");
+        assert!(
+            test_dir.db_path().exists(),
+            "read-only guard must not remove the existing database"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_read_only_does_not_run_migrations() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("readonly-no-migration");
+        let path = crate::db::db_path();
+        std::fs::create_dir_all(crate::db::data_dir())?;
+        let conn = Connection::open(&path)?;
+        conn.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(conn);
+
+        let readonly = crate::db::open_db_read_only()?;
+        let marker_exists: i64 = readonly.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'marker'",
+            [],
+            |row| row.get(0),
+        )?;
+        let migrations_exists: i64 = readonly.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(marker_exists, 1);
+        assert_eq!(migrations_exists, 0);
+        Ok(())
     }
 
     #[test]

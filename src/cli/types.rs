@@ -17,6 +17,9 @@ pub(super) struct Cli {
 #[derive(Subcommand)]
 pub(super) enum Commands {
     /// Render SessionStart memory context for the current project.
+    #[command(
+        after_help = "Environment variables:\n  REMEM_CONTEXT_HOST: default host when --host is omitted.\n  REMEM_CONTEXT_GATE: default --gate mode.\n  REMEM_CONTEXT_GATE_HOSTS: comma-separated hosts that use duplicate-injection gating.\n  REMEM_CONTEXT_SUPPRESS_SOURCES: hook sources suppressed when the context hash is unchanged.\n  REMEM_CONTEXT_DEBUG=1: include context rendering and gate diagnostics."
+    )]
     Context {
         /// Project working directory to render context for.
         #[arg(long)]
@@ -24,7 +27,7 @@ pub(super) enum Commands {
         /// Host session ID used by duplicate-injection gating.
         #[arg(long)]
         session_id: Option<String>,
-        /// Host profile: claude-code, codex-cli, or unknown.
+        /// Host profile: claude-code, codex-cli, or unknown. Overrides REMEM_CONTEXT_HOST.
         #[arg(long)]
         host: Option<String>,
         /// Preserve ANSI colors in rendered context.
@@ -36,9 +39,14 @@ pub(super) enum Commands {
         /// Force full context emission and update gate state.
         #[arg(long)]
         force: bool,
-        /// Duplicate-injection gate mode: off, auto, strict, or delta.
+        /// Duplicate-injection gate mode: off, auto, strict, or delta. Overrides REMEM_CONTEXT_GATE.
         #[arg(long, value_name = "off|auto|strict|delta")]
         gate: Option<String>,
+    },
+    /// Inspect recent context duplicate-injection gate decisions.
+    ContextGate {
+        #[command(subcommand)]
+        action: ContextGateAction,
     },
     /// Hook entrypoint for starting a memory capture session.
     SessionInit,
@@ -382,6 +390,25 @@ pub(super) enum Commands {
     Import {
         #[command(subcommand)]
         action: ImportAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ContextGateAction {
+    /// Show recent read-only context injection rows.
+    Status {
+        /// Restrict rows to one project path.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Restrict rows to one host session ID.
+        #[arg(long)]
+        session: Option<String>,
+        /// Maximum recent rows to show.
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
     },
 }
 

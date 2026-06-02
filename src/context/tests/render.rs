@@ -2,10 +2,11 @@ use crate::memory::lesson::{LessonMemory, LessonMetadata};
 use crate::workstream::{WorkStream, WorkStreamStatus};
 
 use super::super::host::HostKind;
+use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::super::policy::ContextLimits;
 use super::super::render::{
-    build_context_header, build_context_stats_footer, empty_context_output, render_context_output,
-    ContextRenderStats, SectionRenderStats,
+    append_context_gate_debug_trace, build_context_header, build_context_stats_footer,
+    empty_context_output, render_context_output, ContextRenderStats, SectionRenderStats,
 };
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
@@ -31,6 +32,35 @@ fn render_recent_sessions_truncates_completed_line() {
     assert!(output.contains("=> "));
     assert!(output.contains("..."));
     assert!(!output.contains("ignored"));
+}
+
+#[test]
+fn post_gate_debug_trace_preserves_request_source_for_delta_output() {
+    let request = ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: Some("sess-1".to_string()),
+        hook_source: Some("compact".to_string()),
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: false,
+    };
+    let decision = ContextGateDecision {
+        output: String::new(),
+        action: ContextGateAction::EmittedDelta,
+        reason: "changed_hash",
+        key: Some("session:/tmp/remem:sess-1".to_string()),
+        context_hash: Some("hash-a".to_string()),
+        output_mode: Some("delta"),
+    };
+    let mut output = "[remem context delta truncated]\n".to_string();
+
+    append_context_gate_debug_trace(&mut output, &request, &decision);
+
+    assert!(output.contains(
+        "- request host=codex-cli project=/tmp/remem cwd=/tmp/remem branch=main session=sess-1 source=compact"
+    ));
+    assert!(output.contains("- gate action=EmittedDelta reason=changed_hash output_mode=delta"));
 }
 
 #[test]
@@ -449,6 +479,24 @@ fn empty_context_marks_compact_reload_visibly() {
     assert!(output.starts_with("remem context"));
     assert!(output.contains("├─ source: compact"));
     assert!(output.contains("Codex compacted the chat, so remem refreshed memory context."));
+    assert!(output.contains("No previous sessions found."));
+}
+
+#[test]
+fn empty_context_marks_clear_reload_visibly() {
+    let output = empty_context_output(&ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: None,
+        hook_source: Some("clear".to_string()),
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: false,
+    });
+
+    assert!(output.starts_with("remem context"));
+    assert!(output.contains("├─ source: clear"));
+    assert!(output.contains("Context was reloaded after an explicit clear."));
     assert!(output.contains("No previous sessions found."));
 }
 
