@@ -37,9 +37,10 @@ fn open_context_gate_db_read_only() -> Result<Connection> {
     if !db_path.exists() {
         anyhow::bail!("remem database not found at {}", db_path.display());
     }
+    let key = db::require_cipher_key_or_plaintext_override()?;
     let conn = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("open read-only remem database {}", db_path.display()))?;
-    db::apply_cipher_key_if_available(&conn)
+    db::configure_cipher(&conn, key.as_deref())
         .with_context(|| format!("unlock read-only remem database {}", db_path.display()))?;
     Ok(conn)
 }
@@ -248,6 +249,27 @@ mod tests {
         let rows = load_recent_context_gate_rows(&conn, None, None, 20)?;
 
         assert!(rows.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn context_gate_status_refuses_plaintext_without_explicit_override() -> Result<()> {
+        let test_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-status-fail-closed");
+        let conn = crate::db::open_db()?;
+        drop(conn);
+        std::env::remove_var(db::ALLOW_PLAINTEXT_ENV);
+
+        let err = open_context_gate_db_read_only()
+            .expect_err("status must fail closed without a cipher key or plaintext override");
+        let message = format!("{err:#}");
+
+        assert!(test_dir.db_path().exists());
+        assert!(message.contains("SQLCipher key"), "got: {message}");
+        assert!(
+            message.contains(db::ALLOW_PLAINTEXT_ENV),
+            "override must be explicit: {message}"
+        );
         Ok(())
     }
 }
