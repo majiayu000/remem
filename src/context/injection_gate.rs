@@ -494,12 +494,7 @@ fn normalize_context_for_hash(output: &str) -> String {
             }
         }
         let line_for_match = line.trim_start();
-        if line_for_match.starts_with("- updated: ")
-            || line_for_match.starts_with("│ updated: ")
-            || line_for_match.starts_with("└─ updated: ")
-            || line_for_match.starts_with("- source: ")
-            || line_for_match.starts_with("│ source: ")
-            || line_for_match.starts_with("├─ source: ")
+        if is_visual_context_metadata_line(line_for_match)
             || is_context_source_note_line(line_for_match)
             || line_for_match.starts_with("remem context source: ")
             || line_for_match.starts_with("REMEM_CONTEXT_SOURCE=")
@@ -519,6 +514,11 @@ fn normalize_context_for_hash(output: &str) -> String {
             continue;
         }
         if line_for_match.starts_with('╰') && line_for_match.ends_with('╯') {
+            continue;
+        }
+        if let Some(row) = normalize_rail_row_for_hash(line_for_match) {
+            normalized.push_str(&normalize_stats_footer_totals(row));
+            normalized.push('\n');
             continue;
         }
         normalized.push_str(&normalize_stats_footer_totals(line));
@@ -541,11 +541,21 @@ fn strip_panel_right_border(line: &mut String) {
         while line.ends_with(' ') {
             line.pop();
         }
-    } else if let Some(stripped) = line.strip_prefix("├─ ") {
-        *line = format!("│ {stripped}");
-    } else if let Some(stripped) = line.strip_prefix("└─ ") {
-        *line = format!("│ {stripped}");
     }
+}
+
+fn is_visual_context_metadata_line(line: &str) -> bool {
+    let row = normalize_rail_row_for_hash(line).unwrap_or(line);
+    row.starts_with("- updated: ")
+        || row.starts_with("- source: ")
+        || row.starts_with("updated: ")
+        || row.starts_with("source: ")
+}
+
+fn normalize_rail_row_for_hash(line: &str) -> Option<&str> {
+    line.strip_prefix("├─ ")
+        .or_else(|| line.strip_prefix("└─ "))
+        .or_else(|| line.strip_prefix("│ "))
 }
 
 fn normalize_stats_footer_totals(line: &str) -> String {
@@ -602,6 +612,8 @@ fn normalize_budget_footer_line(line: &str) -> Option<String> {
         "- Budget: "
     } else if line.starts_with("│ Budget: ") {
         "│ Budget: "
+    } else if line.starts_with("Budget: ") {
+        "Budget: "
     } else {
         return None;
     };
