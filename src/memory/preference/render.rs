@@ -12,6 +12,12 @@ pub struct PreferenceRenderSummary {
     pub global_rendered: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PreferenceRenderDetails {
+    pub summary: PreferenceRenderSummary,
+    pub rendered_ids: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreferenceSource {
     Project,
@@ -56,7 +62,7 @@ pub fn render_preferences_with_limits(
     global_limit: usize,
     char_limit: usize,
 ) -> Result<usize> {
-    render_preferences_with_limits_detailed(
+    render_preferences_with_context_details(
         output,
         conn,
         project,
@@ -65,7 +71,7 @@ pub fn render_preferences_with_limits(
         global_limit,
         char_limit,
     )
-    .map(|summary| summary.rendered)
+    .map(|details| details.summary.rendered)
 }
 
 pub fn render_preferences_with_limits_detailed(
@@ -77,8 +83,29 @@ pub fn render_preferences_with_limits_detailed(
     global_limit: usize,
     char_limit: usize,
 ) -> Result<PreferenceRenderSummary> {
+    render_preferences_with_context_details(
+        output,
+        conn,
+        project,
+        cwd,
+        project_limit,
+        global_limit,
+        char_limit,
+    )
+    .map(|details| details.summary)
+}
+
+pub(crate) fn render_preferences_with_context_details(
+    output: &mut String,
+    conn: &Connection,
+    project: &str,
+    cwd: &str,
+    project_limit: usize,
+    global_limit: usize,
+    char_limit: usize,
+) -> Result<PreferenceRenderDetails> {
     let project_prefs = query_project_preferences(conn, project, project_limit)?;
-    let global_prefs = query_global_preferences(conn, global_limit).unwrap_or_default();
+    let global_prefs = query_global_preferences(conn, global_limit)?;
 
     let mut all_prefs: Vec<(Memory, PreferenceSource)> = project_prefs
         .into_iter()
@@ -97,7 +124,7 @@ pub fn render_preferences_with_limits_detailed(
     }
 
     if all_prefs.is_empty() {
-        return Ok(PreferenceRenderSummary::default());
+        return Ok(PreferenceRenderDetails::default());
     }
 
     let memories = all_prefs
@@ -106,12 +133,13 @@ pub fn render_preferences_with_limits_detailed(
         .collect::<Vec<_>>();
     let keep_indices = dedup_with_claude_md(&memories, cwd);
     if keep_indices.is_empty() {
-        return Ok(PreferenceRenderSummary::default());
+        return Ok(PreferenceRenderDetails::default());
     }
 
     output.push_str("## Your Preferences (always apply these)\n");
     let mut total_chars = 0usize;
     let mut summary = PreferenceRenderSummary::default();
+    let mut rendered_ids = Vec::new();
 
     for &idx in &keep_indices {
         let (pref, source) = &all_prefs[idx];
@@ -129,6 +157,7 @@ pub fn render_preferences_with_limits_detailed(
         output.push_str(&line);
         total_chars += line_chars;
         summary.rendered += 1;
+        rendered_ids.push(pref.id);
         match source {
             PreferenceSource::Project => summary.project_rendered += 1,
             PreferenceSource::Global => summary.global_rendered += 1,
@@ -136,5 +165,8 @@ pub fn render_preferences_with_limits_detailed(
     }
     output.push('\n');
 
-    Ok(summary)
+    Ok(PreferenceRenderDetails {
+        summary,
+        rendered_ids,
+    })
 }

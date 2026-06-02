@@ -10,3 +10,4 @@ pub use render::{
     dedup_with_claude_md, render_preferences, render_preferences_with_limits,
     render_preferences_with_limits_detailed, PreferenceRenderSummary,
 };
+pub(crate) use render::{render_preferences_with_context_details, PreferenceRenderDetails};

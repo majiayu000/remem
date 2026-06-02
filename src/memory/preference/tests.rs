@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use crate::memory::{self, Memory};
 
@@ -153,6 +153,109 @@ fn test_user_owner_preferences_are_global_core_preferences() -> Result<()> {
     let prefs = query_global_preferences(&conn, 10)?;
     assert_eq!(prefs.len(), 1);
     assert_eq!(prefs[0].text, "Keep answers concise");
+    Ok(())
+}
+
+#[test]
+fn test_global_preferences_keep_same_topic_across_owner_groups() -> Result<()> {
+    let conn = setup_test_db();
+    insert_preference_row(
+        &conn,
+        1,
+        "legacy/proj",
+        Some("shared-style"),
+        "Preference: Shared style",
+        "Legacy global style preference",
+        "global",
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET owner_scope = NULL, owner_key = NULL
+         WHERE id = ?1",
+        [1],
+    )?;
+    insert_preference_row(
+        &conn,
+        2,
+        "user/proj",
+        Some("shared-style"),
+        "Preference: Shared style",
+        "User-owned style preference",
+        "global",
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET owner_scope = 'user', owner_key = 'user:default'
+         WHERE id = ?1",
+        [2],
+    )?;
+
+    let global = query_global_preferences(&conn, 10)?;
+    let ids = global.iter().map(|memory| memory.id).collect::<Vec<_>>();
+    assert!(ids.contains(&1));
+    assert!(ids.contains(&2));
+    assert_eq!(global.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn test_preferences_use_state_key_current_view_per_owner() -> Result<()> {
+    let conn = setup_test_db();
+    insert_preference_row(
+        &conn,
+        1,
+        "test/proj",
+        Some("pref-cn"),
+        "Preference: 验证状态隔离",
+        "验证状态必须和代码数据改动分开。",
+        "project",
+    )?;
+    insert_preference_row(
+        &conn,
+        2,
+        "test/proj",
+        Some("pref-en"),
+        "Preference: Verification status separation",
+        "Keep verification status separate from code and data changes.",
+        "project",
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET owner_scope = 'repo', owner_key = 'test/proj', target_project = 'test/proj'
+         WHERE id IN (1, 2)",
+        [],
+    )?;
+    attach_preference_state_key(&conn, 10, "repo", "test/proj", 2, &[1, 2])?;
+
+    insert_preference_row(
+        &conn,
+        3,
+        "other/proj",
+        Some("pref-user"),
+        "Preference: Verification status separation",
+        "User-level verification status preference remains separate.",
+        "global",
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET owner_scope = 'user', owner_key = 'user:default'
+         WHERE id = 3",
+        [],
+    )?;
+    attach_preference_state_key(&conn, 11, "user", "user:default", 3, &[3])?;
+
+    let project = query_project_preferences(&conn, "test/proj", 20)?;
+    assert_eq!(
+        project.iter().map(|memory| memory.id).collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert!(project[0].text.contains("separate from code"));
+
+    let global = query_global_preferences(&conn, 10)?;
+    assert_eq!(
+        global.iter().map(|memory| memory.id).collect::<Vec<_>>(),
+        vec![3]
+    );
     Ok(())
 }
 
@@ -368,5 +471,57 @@ fn test_add_and_remove_preference() -> Result<()> {
 
     let prefs = memory::get_memories_by_type(&conn, "test/proj", "preference", 10)?;
     assert!(prefs.is_empty());
+    Ok(())
+}
+
+fn insert_preference_row(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    scope: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'preference', NULL, ?6, ?6, 'active', NULL, ?7)",
+        params![
+            id,
+            project,
+            topic_key,
+            title,
+            content,
+            1_710_000_000 + id,
+            scope
+        ],
+    )?;
+    Ok(())
+}
+
+fn attach_preference_state_key(
+    conn: &Connection,
+    state_key_id: i64,
+    owner_scope: &str,
+    owner_key: &str,
+    current_memory_id: i64,
+    memory_ids: &[i64],
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, state_status,
+          current_memory_id, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, 'preference', 'verification-status-separation',
+                 'active', ?4, 100, 100)",
+        params![state_key_id, owner_scope, owner_key, current_memory_id],
+    )?;
+    for memory_id in memory_ids {
+        conn.execute(
+            "UPDATE memories SET state_key_id = ?1 WHERE id = ?2",
+            params![state_key_id, memory_id],
+        )?;
+    }
     Ok(())
 }

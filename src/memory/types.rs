@@ -212,6 +212,23 @@ pub fn memory_current_filter_sql(
     }
 }
 
+pub fn memory_state_key_current_filter_sql(table_alias: &str) -> String {
+    let table_alias = table_alias.trim();
+    let qualifier = if table_alias.is_empty() {
+        String::new()
+    } else {
+        format!("{table_alias}.")
+    };
+    format!(
+        "({qualifier}state_key_id IS NULL OR NOT EXISTS (
+             SELECT 1 FROM memory_state_keys sk
+             WHERE sk.id = {qualifier}state_key_id
+               AND sk.current_memory_id IS NOT NULL
+               AND sk.current_memory_id <> {qualifier}id
+         ))"
+    )
+}
+
 pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     map_memory_row(row)
 }
