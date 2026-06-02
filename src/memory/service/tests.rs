@@ -79,6 +79,127 @@ fn save_memory_preference_defaults_to_project_scope() {
 }
 
 #[test]
+fn save_memory_insert_reports_durable_details() {
+    let _dir = ScopedTestDataDir::new("save-insert-feedback");
+    let conn = db::open_db().expect("db should open");
+    let req = SaveMemoryRequest {
+        text: "Remember the durable feedback shape.".to_string(),
+        title: Some("Durable feedback".to_string()),
+        project: Some("proj".to_string()),
+        memory_type: Some("decision".to_string()),
+        branch: Some("main".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("save should succeed");
+
+    assert_eq!(saved.status, "saved");
+    assert_eq!(saved.operation, "inserted");
+    assert!(!saved.upserted);
+    assert_eq!(saved.project, "proj");
+    assert_eq!(saved.scope, "project");
+    assert_eq!(saved.topic_key, None);
+    assert_eq!(saved.branch.as_deref(), Some("main"));
+    assert_eq!(saved.local_copy.status, "disabled");
+    assert_eq!(saved.local_status, "disabled");
+    assert_eq!(saved.local_path, None);
+    assert_eq!(saved.next_step.tool, "get_observations");
+    assert_eq!(saved.next_step.ids, vec![saved.id]);
+    assert_eq!(saved.next_step.source, "memory");
+    assert!(saved.created_at_epoch > 0);
+    assert!(saved.updated_at_epoch > 0);
+}
+
+#[test]
+fn save_memory_topic_key_update_reports_updated_operation() {
+    let _dir = ScopedTestDataDir::new("save-topic-update-feedback");
+    let conn = db::open_db().expect("db should open");
+    let first_req = SaveMemoryRequest {
+        text: "First body".to_string(),
+        title: Some("Topic feedback".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: Some("durable-feedback".to_string()),
+        memory_type: Some("discovery".to_string()),
+        scope: Some("project".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+    let first = save_memory(&conn, &first_req).expect("first save should succeed");
+    assert_eq!(first.operation, "inserted");
+    assert!(first.upserted);
+
+    let second_req = SaveMemoryRequest {
+        text: "Updated body".to_string(),
+        title: Some("Topic feedback updated".to_string()),
+        ..first_req
+    };
+    let second = save_memory(&conn, &second_req).expect("second save should succeed");
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.operation, "updated");
+    assert!(second.upserted);
+    assert_eq!(second.topic_key.as_deref(), Some("durable-feedback"));
+}
+
+#[test]
+fn save_memory_disabled_local_copy_reports_structured_reason() {
+    let _dir = ScopedTestDataDir::new("save-disabled-local-copy-feedback");
+    let conn = db::open_db().expect("db should open");
+    let req = SaveMemoryRequest {
+        text: "No local copy for this save.".to_string(),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("save should succeed");
+
+    assert_eq!(saved.local_copy.status, "disabled");
+    assert_eq!(saved.local_copy.path, None);
+    assert!(saved
+        .local_copy
+        .reason
+        .as_deref()
+        .is_some_and(|reason| { reason.contains("disabled") }));
+    assert_eq!(saved.local_status, saved.local_copy.status);
+    assert_eq!(saved.local_path, saved.local_copy.path);
+}
+
+#[test]
+fn save_memory_local_path_override_reports_structured_path() {
+    let test_dir = ScopedTestDataDir::new("save-local-path-feedback");
+    let conn = db::open_db().expect("db should open");
+    let local_path = test_dir
+        .path
+        .join("manual-notes")
+        .join("proj")
+        .join("custom-note.md");
+    let req = SaveMemoryRequest {
+        text: "Local path override body".to_string(),
+        title: Some("Local path override".to_string()),
+        project: Some("proj".to_string()),
+        local_path: Some(local_path.display().to_string()),
+        local_copy_enabled: Some(true),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req).expect("save should succeed");
+
+    assert_eq!(saved.local_copy.status, "saved");
+    let canonical_local_path = local_path
+        .canonicalize()
+        .expect("saved local path should canonicalize");
+    assert_eq!(
+        saved.local_copy.path.as_deref(),
+        Some(canonical_local_path.to_str().expect("utf8 local path"))
+    );
+    assert_eq!(saved.local_copy.reason, None);
+    assert_eq!(saved.local_status, "saved");
+    assert_eq!(saved.local_path, saved.local_copy.path);
+    assert!(local_path.exists());
+}
+
+#[test]
 fn save_memory_lesson_creates_lesson_metadata() {
     let _dir = ScopedTestDataDir::new("lesson-save-metadata");
     let conn = db::open_db().expect("db should open");

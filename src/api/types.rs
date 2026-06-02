@@ -113,10 +113,35 @@ pub(super) struct SaveMemoryResponse {
     pub id: i64,
     pub status: String,
     pub memory_type: String,
+    pub project: String,
+    pub scope: String,
+    pub topic_key: Option<String>,
+    pub branch: Option<String>,
+    pub operation: String,
+    pub created_at_epoch: i64,
+    pub updated_at_epoch: i64,
     pub upserted: bool,
+    pub local_copy: LocalCopyResponse,
     pub local_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
+    pub next_step: SaveMemoryNextStepResponse,
+}
+
+#[derive(Serialize)]
+pub(super) struct LocalCopyResponse {
+    pub status: String,
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(super) struct SaveMemoryNextStepResponse {
+    pub tool: String,
+    pub ids: Vec<i64>,
+    pub source: String,
+    pub reason: String,
 }
 
 #[derive(Deserialize)]

@@ -134,6 +134,64 @@ async fn router_rejects_missing_and_invalid_api_token() {
 }
 
 #[tokio::test]
+async fn save_memory_response_reports_durable_feedback_shape() {
+    let _test_dir = ScopedTestDataDir::new("api-save-feedback");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/memories")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{
+                        "text":"API durable feedback body",
+                        "title":"API feedback",
+                        "project":"proj",
+                        "topic_key":"api-feedback",
+                        "memory_type":"decision",
+                        "scope":"project",
+                        "branch":"main",
+                        "local_copy_enabled":false
+                    }"#,
+                ))
+                .expect("request should build"),
+        )
+        .await
+        .expect("request should complete");
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let payload: Value = serde_json::from_slice(&body).expect("save response should be valid json");
+
+    assert_eq!(payload["status"], "saved");
+    assert_eq!(payload["operation"], "inserted");
+    assert_eq!(payload["upserted"], true);
+    assert_eq!(payload["project"], "proj");
+    assert_eq!(payload["scope"], "project");
+    assert_eq!(payload["topic_key"], "api-feedback");
+    assert_eq!(payload["branch"], "main");
+    assert_eq!(payload["local_copy"]["status"], "disabled");
+    assert_eq!(payload["local_status"], "disabled");
+    assert!(payload["local_path"].is_null());
+    assert_eq!(payload["next_step"]["tool"], "get_observations");
+    assert_eq!(payload["next_step"]["source"], "memory");
+    assert_eq!(payload["next_step"]["ids"][0], payload["id"]);
+    assert!(payload["created_at_epoch"]
+        .as_i64()
+        .is_some_and(|ts| ts > 0));
+    assert!(payload["updated_at_epoch"]
+        .as_i64()
+        .is_some_and(|ts| ts > 0));
+}
+
+#[tokio::test]
 async fn router_does_not_emit_cors_allow_origin_for_localhost_origin() {
     let _test_dir = ScopedTestDataDir::new("api-no-cors");
     crate::api::ensure_api_token().expect("API token should be created");

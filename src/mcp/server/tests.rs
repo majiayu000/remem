@@ -262,6 +262,45 @@ fn save_memory_local_copy_failures_are_invalid_request() {
 }
 
 #[test]
+fn save_memory_response_reports_durable_feedback_shape() {
+    let _dir = ScopedTestDataDir::new("mcp-save-feedback-shape");
+    let server = MemoryServer::new().expect("memory server should initialize");
+
+    let response = server
+        .save_memory(Parameters(SaveMemoryParams {
+            text: "MCP durable feedback body".to_string(),
+            title: Some("MCP feedback".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("mcp-feedback".to_string()),
+            memory_type: Some("decision".to_string()),
+            files: None,
+            local_path: None,
+            scope: None,
+            branch: Some("main".to_string()),
+            created_at_epoch: None,
+            local_copy_enabled: Some(false),
+        }))
+        .expect("save_memory should succeed");
+    let json: Value = serde_json::from_str(&response).expect("response should be json");
+
+    assert_eq!(json["status"], "saved");
+    assert_eq!(json["operation"], "inserted");
+    assert_eq!(json["upserted"], true);
+    assert_eq!(json["project"], "proj");
+    assert_eq!(json["scope"], "project");
+    assert_eq!(json["topic_key"], "mcp-feedback");
+    assert_eq!(json["branch"], "main");
+    assert_eq!(json["local_copy"]["status"], "disabled");
+    assert_eq!(json["local_status"], "disabled");
+    assert!(json["local_path"].is_null());
+    assert_eq!(json["next_step"]["tool"], "get_observations");
+    assert_eq!(json["next_step"]["source"], "memory");
+    assert_eq!(json["next_step"]["ids"][0], json["id"]);
+    assert!(json["created_at_epoch"].as_i64().is_some_and(|ts| ts > 0));
+    assert!(json["updated_at_epoch"].as_i64().is_some_and(|ts| ts > 0));
+}
+
+#[test]
 fn govern_memory_validation_failures_are_invalid_request() {
     let _dir = ScopedTestDataDir::new("mcp-govern-validation");
     let server = match MemoryServer::new() {
