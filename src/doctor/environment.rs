@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use toml_edit::DocumentMut;
 
 use super::types::{Check, Status};
@@ -16,10 +16,16 @@ pub(super) fn check_binary() -> Check {
 }
 
 pub(super) fn check_install_paths() -> Check {
-    let configured = std::env::var_os("REMEM_INSTALL_BINARY")
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok());
-    let report = crate::install::duplicates::inspect_install_paths(configured.as_deref());
+    let mut configured = configured_remem_paths_for(active_hosts());
+    if configured.is_empty() {
+        configured.extend(
+            std::env::var_os("REMEM_INSTALL_BINARY")
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_exe().ok()),
+        );
+    }
+    let report =
+        crate::install::duplicates::inspect_install_paths_with_configured_paths(&configured);
     Check {
         name: "Install paths",
         status: if report.has_warning() {
@@ -29,6 +35,15 @@ pub(super) fn check_install_paths() -> Check {
         },
         detail: crate::install::duplicates::format_doctor_detail(&report),
     }
+}
+
+fn configured_remem_paths_for(hosts: Vec<HostProbe>) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for probe in hosts {
+        paths.extend(configured_hook_paths(&probe.hooks_path));
+        paths.extend(configured_mcp_paths(&probe));
+    }
+    dedupe_paths(paths)
 }
 
 /// A single host we know how to validate. The strings are leaked static
@@ -298,6 +313,101 @@ fn probe_mcp_path<'a>(
     }
 }
 
+fn configured_mcp_paths(probe: &HostProbe) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for path in probe.mcp_paths.iter().filter(|path| path.exists()) {
+        let Some(content) = std::fs::read_to_string(path).ok() else {
+            continue;
+        };
+        match probe.name {
+            "claude" => {
+                if let Ok(doc) = serde_json::from_str::<Value>(&content) {
+                    paths.extend(claude_remem_mcp_command(&doc).map(PathBuf::from));
+                }
+            }
+            "codex" => {
+                if let Ok(doc) = content.parse::<DocumentMut>() {
+                    paths.extend(codex_remem_mcp_command(&doc).map(PathBuf::from));
+                }
+            }
+            _ => {}
+        }
+    }
+    paths
+}
+
+fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
+    let Some(content) = std::fs::read_to_string(path).ok() else {
+        return Vec::new();
+    };
+    let Ok(doc) = serde_json::from_str::<Value>(&content) else {
+        return Vec::new();
+    };
+    hook_command_strings(&doc)
+        .filter_map(extract_remem_command_path)
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn claude_remem_mcp_command(doc: &Value) -> Option<&str> {
+    doc.get("mcpServers")
+        .and_then(|servers| servers.get("remem"))
+        .and_then(|server| server.get("command"))
+        .and_then(|command| command.as_str())
+}
+
+fn codex_remem_mcp_command(doc: &DocumentMut) -> Option<&str> {
+    doc.get("mcp_servers")
+        .and_then(|servers| servers.as_table())
+        .and_then(|servers| servers.get("remem"))
+        .and_then(|server| server.as_table())
+        .and_then(|server| server.get("command"))
+        .and_then(|command| command.as_str())
+}
+
+fn hook_command_strings(doc: &Value) -> impl Iterator<Item = &str> {
+    doc.get("hooks")
+        .and_then(|hooks| hooks.as_object())
+        .into_iter()
+        .flat_map(|hooks| hooks.values())
+        .filter_map(|entries| entries.as_array())
+        .flatten()
+        .filter_map(|entry| entry.get("hooks").and_then(|hooks| hooks.as_array()))
+        .flatten()
+        .filter_map(|hook| hook.get("command").and_then(|command| command.as_str()))
+}
+
+fn extract_remem_command_path(command: &str) -> Option<&str> {
+    command
+        .split_whitespace()
+        .map(trim_shell_quotes)
+        .find(|token| is_remem_command_token(token))
+}
+
+fn trim_shell_quotes(token: &str) -> &str {
+    token.trim_matches(|c| c == '"' || c == '\'')
+}
+
+fn is_remem_command_token(token: &str) -> bool {
+    if token.contains('=') && !token.contains('/') && !token.contains('\\') {
+        return false;
+    }
+    Path::new(token)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem == "remem")
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    unique
+}
+
 fn event_has_remem_hook(doc: &Value, event: &str) -> bool {
     doc.get("hooks")
         .and_then(|hooks| hooks.get(event))
@@ -472,6 +582,69 @@ note = "remem"
 
         assert!(matches!(check.status, Status::Fail));
         assert!(check.detail.contains("not registered"), "{}", check.detail);
+    }
+
+    #[test]
+    fn configured_paths_read_codex_hooks_and_mcp_command() {
+        let dir = temp_path("doctor-configured-codex-paths");
+        let hooks_path = dir.join("hooks.json");
+        let mcp_path = dir.join("config.toml");
+        std::fs::write(
+            &hooks_path,
+            r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "REMEM_CONTEXT_HOST=codex-cli /hooks/bin/remem context --color" }] }],
+    "Stop": [{ "hooks": [{ "command": "REMEM_SUMMARY_EXECUTOR=codex-cli /hooks/bin/remem summarize" }] }]
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &mcp_path,
+            r#"[mcp_servers.remem]
+command = "/mcp/bin/remem"
+"#,
+        )
+        .unwrap();
+
+        let paths = configured_remem_paths_for(vec![HostProbe {
+            name: "codex",
+            hooks_path,
+            mcp_paths: vec![mcp_path],
+        }]);
+
+        assert!(paths.contains(&PathBuf::from("/hooks/bin/remem")));
+        assert!(paths.contains(&PathBuf::from("/mcp/bin/remem")));
+    }
+
+    #[test]
+    fn configured_paths_read_claude_mcp_command() {
+        let dir = temp_path("doctor-configured-claude-paths");
+        let mcp_path = dir.join("claude.json");
+        std::fs::write(
+            &mcp_path,
+            r#"{ "mcpServers": { "remem": { "command": "/claude/bin/remem" } } }"#,
+        )
+        .unwrap();
+
+        let paths = configured_remem_paths_for(vec![HostProbe {
+            name: "claude",
+            hooks_path: dir.join("settings.json"),
+            mcp_paths: vec![mcp_path],
+        }]);
+
+        assert_eq!(paths, vec![PathBuf::from("/claude/bin/remem")]);
+    }
+
+    #[test]
+    fn extract_remem_command_path_ignores_env_assignments() {
+        assert_eq!(
+            extract_remem_command_path(
+                "REMEM_CONTEXT_HOST=codex-cli '/opt/remem/bin/remem' context --color"
+            ),
+            Some("/opt/remem/bin/remem")
+        );
+        assert_eq!(extract_remem_command_path("NOTE=remem echo ok"), None);
     }
 
     #[test]

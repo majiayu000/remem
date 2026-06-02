@@ -16,14 +16,16 @@ pub(crate) struct InstallPathCandidate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InstallPathReport {
-    pub(crate) configured_path: Option<PathBuf>,
-    pub(crate) configured_resolved_path: Option<PathBuf>,
+    pub(crate) configured_paths: Vec<PathBuf>,
+    pub(crate) configured_resolved_paths: Vec<PathBuf>,
     pub(crate) candidates: Vec<InstallPathCandidate>,
 }
 
 impl InstallPathReport {
     pub(crate) fn has_warning(&self) -> bool {
-        self.has_duplicates() || self.first_path_differs_from_configured()
+        self.has_duplicates()
+            || self.configured_paths_disagree()
+            || self.first_path_differs_from_configured()
     }
 
     fn has_duplicates(&self) -> bool {
@@ -31,32 +33,43 @@ impl InstallPathReport {
     }
 
     fn first_path_differs_from_configured(&self) -> bool {
-        let Some(configured) = self.configured_resolved_path.as_ref() else {
+        if self.configured_resolved_paths.is_empty() {
             return false;
-        };
-        self.candidates
-            .first()
-            .is_some_and(|candidate| &candidate.resolved_path != configured)
+        }
+        self.candidates.first().is_some_and(|candidate| {
+            !self
+                .configured_resolved_paths
+                .contains(&candidate.resolved_path)
+        })
+    }
+
+    fn configured_paths_disagree(&self) -> bool {
+        unique_paths(&self.configured_resolved_paths).len() > 1
     }
 }
 
 pub(crate) fn inspect_install_paths(configured_path: Option<&Path>) -> InstallPathReport {
+    let configured_paths = configured_path
+        .map(|path| vec![path.to_path_buf()])
+        .unwrap_or_default();
+    inspect_install_paths_with_configured_paths(&configured_paths)
+}
+
+pub(crate) fn inspect_install_paths_with_configured_paths(
+    configured_paths: &[PathBuf],
+) -> InstallPathReport {
     let path_env = std::env::var_os("PATH").unwrap_or_default();
     let dirs: Vec<PathBuf> = std::env::split_paths(&path_env).collect();
     collect_install_paths(
         dirs,
-        configured_path,
+        configured_paths,
         default_candidate_names(),
         probe_version,
     )
 }
 
 pub(crate) fn format_doctor_detail(report: &InstallPathReport) -> String {
-    let configured = report
-        .configured_path
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let configured = format_configured_paths(&report.configured_paths);
 
     if report.candidates.is_empty() {
         return format!("no remem executable found on PATH; configured {configured}");
@@ -90,7 +103,7 @@ pub(crate) fn format_warning_lines(report: &InstallPathReport) -> Vec<String> {
     }
 
     let mut lines = vec!["Install paths: multiple or mismatched remem commands found".to_string()];
-    if let Some(configured) = report.configured_path.as_ref() {
+    for configured in &report.configured_paths {
         lines.push(format!("  config -> {}", configured.display()));
     }
     for candidate in &report.candidates {
@@ -123,17 +136,18 @@ fn format_candidate(candidate: &InstallPathCandidate) -> String {
 
 fn collect_install_paths<F>(
     dirs: Vec<PathBuf>,
-    configured_path: Option<&Path>,
+    configured_paths: &[PathBuf],
     candidate_names: &[&str],
     mut version_probe: F,
 ) -> InstallPathReport
 where
     F: FnMut(&Path) -> Option<String>,
 {
-    let configured_path = configured_path.map(Path::to_path_buf);
-    let configured_resolved_path = configured_path
-        .as_deref()
-        .map(|path| resolve_configured_path(path, &dirs, candidate_names));
+    let configured_paths = configured_paths.to_vec();
+    let configured_resolved_paths = configured_paths
+        .iter()
+        .map(|path| resolve_configured_path(path, &dirs, candidate_names))
+        .collect::<Vec<_>>();
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
 
@@ -149,9 +163,7 @@ where
                 continue;
             }
 
-            let configured = configured_resolved_path
-                .as_ref()
-                .is_some_and(|path| path == &resolved_path);
+            let configured = configured_resolved_paths.contains(&resolved_path);
             let first_on_path = candidates.is_empty();
             let version = version_probe(&candidate_path);
             candidates.push(InstallPathCandidate {
@@ -165,14 +177,35 @@ where
     }
 
     InstallPathReport {
-        configured_path,
-        configured_resolved_path,
+        configured_paths,
+        configured_resolved_paths,
         candidates,
     }
 }
 
 fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn unique_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.contains(path) {
+            unique.push(path.clone());
+        }
+    }
+    unique
+}
+
+fn format_configured_paths(paths: &[PathBuf]) -> String {
+    if paths.is_empty() {
+        return "unknown".to_string();
+    }
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn resolve_configured_path(path: &Path, dirs: &[PathBuf], candidate_names: &[&str]) -> PathBuf {
@@ -338,10 +371,12 @@ mod tests {
         let first_path = write_candidate(&first, "remem", "remem 0.4.5");
         let second_path = write_candidate(&second, "remem", "remem 0.4.1");
 
-        let report =
-            collect_install_paths(vec![first, second], Some(&first_path), &["remem"], |path| {
-                Some(std::fs::read_to_string(path).expect("candidate version"))
-            });
+        let report = collect_install_paths(
+            vec![first, second],
+            std::slice::from_ref(&first_path),
+            &["remem"],
+            |path| Some(std::fs::read_to_string(path).expect("candidate version")),
+        );
 
         assert!(report.has_warning());
         assert_eq!(report.candidates.len(), 2);
@@ -360,10 +395,14 @@ mod tests {
         let link = link_dir.join("remem");
         create_symlink(&real, &link).expect("create symlink");
 
-        let report =
-            collect_install_paths(vec![real_dir, link_dir], Some(&real), &["remem"], |path| {
+        let report = collect_install_paths(
+            vec![real_dir, link_dir],
+            std::slice::from_ref(&real),
+            &["remem"],
+            |path| {
                 Some(std::fs::read_to_string(path).unwrap_or_else(|_| path.display().to_string()))
-            });
+            },
+        );
 
         assert!(!report.has_warning());
         assert_eq!(report.candidates.len(), 1);
@@ -378,7 +417,7 @@ mod tests {
 
         let report = collect_install_paths(
             vec![stale_dir, configured_dir],
-            Some(&configured),
+            std::slice::from_ref(&configured),
             &["remem"],
             |path| Some(std::fs::read_to_string(path).expect("candidate version")),
         );
@@ -396,18 +435,21 @@ mod tests {
         let configured = PathBuf::from("remem");
         let expected = write_candidate(&bin_dir, "remem", "remem 0.4.5");
 
-        let report = collect_install_paths(vec![bin_dir], Some(&configured), &["remem"], |path| {
-            match std::fs::read_to_string(path) {
+        let report = collect_install_paths(
+            vec![bin_dir],
+            std::slice::from_ref(&configured),
+            &["remem"],
+            |path| match std::fs::read_to_string(path) {
                 Ok(version) => Some(version),
                 Err(error) => panic!("candidate version {}: {error}", path.display()),
-            }
-        });
+            },
+        );
 
         assert!(!report.has_warning());
-        assert_eq!(report.configured_path, Some(configured));
+        assert_eq!(report.configured_paths, vec![configured]);
         assert_eq!(
-            report.configured_resolved_path,
-            Some(canonical_or_original(&expected))
+            report.configured_resolved_paths,
+            vec![canonical_or_original(&expected)]
         );
         assert!(report.candidates[0].configured);
     }
@@ -420,7 +462,7 @@ mod tests {
 
         let report = collect_install_paths(
             vec![bin_dir],
-            Some(&configured),
+            std::slice::from_ref(&configured),
             &["remem.exe", "remem.cmd", "remem.bat"],
             |path| match std::fs::read_to_string(path) {
                 Ok(version) => Some(version),
@@ -430,10 +472,28 @@ mod tests {
 
         assert!(!report.has_warning());
         assert_eq!(
-            report.configured_resolved_path,
-            Some(canonical_or_original(&expected))
+            report.configured_resolved_paths,
+            vec![canonical_or_original(&expected)]
         );
         assert!(report.candidates[0].configured);
+    }
+
+    #[test]
+    fn warns_for_multiple_configured_paths() {
+        let first = temp_dir("configured-a");
+        let second = temp_dir("configured-b");
+        let first_path = write_candidate(&first, "remem", "remem 0.4.5");
+        let second_path = write_candidate(&second, "remem", "remem 0.4.5");
+
+        let report = collect_install_paths(
+            vec![first, second],
+            &[first_path, second_path],
+            &["remem"],
+            |path| Some(std::fs::read_to_string(path).expect("candidate version")),
+        );
+
+        assert!(report.has_warning());
+        assert!(report.configured_paths_disagree());
     }
 
     #[test]
