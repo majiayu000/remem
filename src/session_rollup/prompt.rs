@@ -20,15 +20,17 @@ pub(super) fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange
         "Return exactly this XML shape:\n\
          <summary>overall session summary</summary>\n\
          <segments>\n\
-         <segment topic_key=\"stable-kebab-case\" status=\"open\" confidence=\"0.75\">\n\
-         <title>short title</title>\n\
-         <summary>topic segment summary</summary>\n\
-         <evidence_event_ids>1,2,3</evidence_event_ids>\n\
-         <from_event_id>1</from_event_id>\n\
-         <to_event_id>3</to_event_id>\n\
-         <files>src/lib.rs,src/main.rs</files>\n\
+         <segment topic_key=\"REPLACE_WITH_TOPIC_KEY\" status=\"open\" confidence=\"0.75\">\n\
+         <title>REPLACE_WITH_TITLE</title>\n\
+         <summary>REPLACE_WITH_TOPIC_SUMMARY</summary>\n\
+         <evidence_event_ids>REPLACE_WITH_EVENT_IDS</evidence_event_ids>\n\
+         <from_event_id>REPLACE_WITH_MIN_EVENT_ID</from_event_id>\n\
+         <to_event_id>REPLACE_WITH_MAX_EVENT_ID</to_event_id>\n\
+         <files>REPLACE_WITH_FILES_OR_EMPTY</files>\n\
          </segment>\n\
          </segments>\n\n\
+         Do not copy REPLACE_WITH placeholders; replace every placeholder with facts from the loaded events below.\n\
+         topic_key must be stable kebab-case or snake_case.\n\
          status must be one of open, resolved, or superseded.\n\
          evidence_event_ids is authoritative. from_event_id/to_event_id must be min/max evidence IDs.\n\
          If there are no coherent topic segments, return an empty <segments></segments>.\n\n",
@@ -126,6 +128,7 @@ fn looks_like_file_path(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::ExtractionTaskKind;
 
     #[test]
     fn files_touched_uses_structured_json_fields() {
@@ -133,5 +136,46 @@ mod tests {
             r#"{"command":"cat src/lib.rs","file_path":"src/lib.rs","url":"https://example.test"}"#,
         );
         assert_eq!(files, vec!["src/lib.rs"]);
+    }
+
+    #[test]
+    fn rollup_prompt_placeholders_are_not_parseable_literals() {
+        let task = db::ExtractionTask {
+            id: 1,
+            task_kind: ExtractionTaskKind::SessionRollup,
+            host_id: 1,
+            workspace_id: 1,
+            project_id: 1,
+            session_row_id: Some(1),
+            host: "codex-cli".to_string(),
+            project: "/repo".to_string(),
+            session_id: Some("session-1".to_string()),
+            priority: 0,
+            cursor_event_id: Some(0),
+            high_watermark_event_id: Some(3),
+            attempts: 0,
+        };
+        let range = RollupRange {
+            from_event_id: 1,
+            to_event_id: 3,
+            events: vec![super::super::RollupEvent {
+                id: 1,
+                event_type: "tool_result".to_string(),
+                role: None,
+                tool_name: None,
+                content: "first event".to_string(),
+                token_estimate: 1,
+                created_at_epoch: 100,
+                turn_id: None,
+            }],
+        };
+
+        let prompt = build_rollup_prompt(&task, &range);
+
+        assert!(prompt.contains("topic_key=\"REPLACE_WITH_TOPIC_KEY\""));
+        assert!(prompt.contains("<evidence_event_ids>REPLACE_WITH_EVENT_IDS</evidence_event_ids>"));
+        assert!(prompt.contains("Do not copy REPLACE_WITH placeholders"));
+        assert!(!prompt.contains("topic_key=\"stable-kebab-case\""));
+        assert!(!prompt.contains("<evidence_event_ids>1,2,3</evidence_event_ids>"));
     }
 }
