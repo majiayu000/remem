@@ -110,6 +110,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_messages_session_dedup",
         sql: include_str!("../migrations/v021_raw_messages_session_dedup.sql"),
     },
+    Migration {
+        version: 22,
+        name: "topic_segments",
+        sql: include_str!("../migrations/v022_topic_segments.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
