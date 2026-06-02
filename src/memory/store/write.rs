@@ -3,6 +3,12 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::search_context::build_search_context;
 use crate::memory::state_key::{self, StateKeyDecision};
+use crate::memory::{
+    lifecycle::MemoryLifecycleOp,
+    operation::{
+        insert_operation_log, with_operation_savepoint, MemoryOperationInput, MemoryOperationPlan,
+    },
+};
 
 pub fn insert_memory(
     conn: &Connection,
@@ -162,6 +168,43 @@ pub fn insert_memory_full(
         attach_state_key(conn, id, memory_type, &ownership, state_key.as_ref(), now)?;
         refresh_memory_entities(conn, id, title, content, "entity link failed");
         Ok(id)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_memory_full_with_operation_log(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+    created_at_override: Option<i64>,
+    operation_input: &MemoryOperationInput,
+    operation_plan: &MemoryOperationPlan,
+) -> Result<(i64, MemoryLifecycleOp)> {
+    with_operation_savepoint(conn, || {
+        let id = insert_memory_full(
+            conn,
+            session_id,
+            project,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            files,
+            branch,
+            scope,
+            created_at_override,
+        )?;
+        let mut logged_plan = operation_plan.clone();
+        logged_plan.target_memory_id = Some(id);
+        insert_operation_log(conn, operation_input, &logged_plan, Some(id))?;
+        Ok((id, logged_plan.op))
     })
 }
 

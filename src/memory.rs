@@ -5,6 +5,7 @@ pub mod format;
 pub mod governance;
 pub mod lesson;
 pub mod lifecycle;
+pub mod operation;
 pub mod preference;
 pub mod procedure;
 pub mod promote;
