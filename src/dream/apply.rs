@@ -68,8 +68,18 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
     };
     let plan = MemoryOperationPlan::new(op, state_key, "dream consolidation applied")
         .with_target_memory_id(Some(merged_id))
-        .with_superseded_ids(actual_superseded_ids);
-    insert_operation_log(&tx, &operation_input, &plan, Some(merged_id))?;
+        .with_superseded_ids(actual_superseded_ids.clone());
+    let operation_id = insert_operation_log(&tx, &operation_input, &plan, Some(merged_id))?;
+    crate::memory::edge::insert_merged_into_edges(
+        &tx,
+        &actual_superseded_ids,
+        merged_id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            source_operation_id: Some(operation_id),
+            reason: Some("dream consolidation merged memories"),
+            ..Default::default()
+        },
+    )?;
 
     tx.commit()?;
     Ok(())
@@ -219,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_handles_duplicate_superseded_ids() {
+    fn test_apply_handles_duplicate_superseded_ids() -> Result<()> {
         // Codex review: a hallucinated duplicate id from the LLM must not
         // re-fire the memories_au trigger on a row that has already been
         // removed from memories_fts (which can surface as "database disk
@@ -234,8 +244,7 @@ mod tests {
             "duplicate content",
             "decision",
             None,
-        )
-        .expect("insert");
+        )?;
 
         let result = MergeResult {
             topic_key: "dup-merged".to_owned(),
@@ -244,14 +253,20 @@ mod tests {
             content: "Merged content".to_owned(),
             superseded_ids: vec![old_id, old_id, old_id],
         };
-        apply(&mut conn, &project, &result)
-            .expect("apply must succeed even with duplicate superseded ids");
+        apply(&mut conn, &project, &result)?;
 
         assert_eq!(status_for_id(&conn, old_id), "stale");
         assert!(
             !fts_indexed(&conn, old_id, "duplicateterm"),
             "duplicated supersede must still leave the row out of memories_fts"
         );
+        let edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE from_memory_id = ?1",
+            params![old_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(edge_count, 1);
+        Ok(())
     }
 
     #[test]
@@ -427,13 +442,18 @@ mod tests {
         };
         apply(&mut conn, &project, &result)?;
 
-        let (operation, result_memory_id, superseded_ids): (String, i64, String) = conn.query_row(
-            "SELECT operation, result_memory_id, superseded_ids
+        let (operation_id, operation, result_memory_id, superseded_ids): (
+            i64,
+            String,
+            i64,
+            String,
+        ) = conn.query_row(
+            "SELECT id, operation, result_memory_id, superseded_ids
              FROM memory_operation_log
              ORDER BY id DESC
              LIMIT 1",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(operation, "update");
         assert_ne!(result_memory_id, old_id);
@@ -441,6 +461,71 @@ mod tests {
             serde_json::from_str::<Vec<i64>>(&superseded_ids)?,
             vec![old_id]
         );
+        let edge: (String, i64, i64, Option<i64>) = conn.query_row(
+            "SELECT edge_type, from_memory_id, to_memory_id, source_operation_id
+             FROM memory_edges
+             WHERE from_memory_id = ?1 AND to_memory_id = ?2",
+            params![old_id, result_memory_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(
+            edge,
+            (
+                "merged_into".to_string(),
+                old_id,
+                result_memory_id,
+                Some(operation_id)
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rolls_back_when_memory_edge_insert_fails() -> Result<()> {
+        let (mut conn, project) = setup();
+        let old_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            &project,
+            Some("old-topic"),
+            "old title",
+            "old content",
+            "decision",
+            None,
+        )?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_memory_edge_insert
+             BEFORE INSERT ON memory_edges
+             BEGIN
+                 SELECT RAISE(FAIL, 'forced memory edge failure');
+             END;",
+        )?;
+
+        let result = MergeResult {
+            topic_key: "merged-topic".to_owned(),
+            memory_type: "decision".to_owned(),
+            title: "Merged title".to_owned(),
+            content: "Merged content".to_owned(),
+            superseded_ids: vec![old_id],
+        };
+
+        let error = apply(&mut conn, &project, &result).expect_err("apply should fail");
+        let error_chain = format!("{error:?}");
+        assert!(
+            error_chain.contains("forced memory edge failure"),
+            "expected memory edge trigger failure, got: {error_chain}"
+        );
+
+        let log_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_operation_log", [], |row| {
+                row.get(0)
+            })?;
+        let edge_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| row.get(0))?;
+        assert_eq!(active_count(&conn, &project, "merged-topic"), 0);
+        assert_eq!(status_for_id(&conn, old_id), "active");
+        assert_eq!(log_count, 0);
+        assert_eq!(edge_count, 0);
         Ok(())
     }
 

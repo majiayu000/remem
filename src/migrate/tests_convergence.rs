@@ -40,6 +40,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "memory_state_keys",
     "topic_segments",
     "memory_operation_log",
+    "memory_edges",
 ];
 
 fn make_upgraded_v10_db() -> Result<Connection> {

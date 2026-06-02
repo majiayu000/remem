@@ -684,6 +684,28 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
         |row| row.get(0),
     )?;
     assert_eq!(event_count, 3);
+    let duplicate_edges = conn
+        .prepare(
+            "SELECT from_memory_id, to_memory_id, edge_type
+             FROM memory_edges
+             WHERE edge_type = 'duplicates'
+             ORDER BY from_memory_id ASC",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(
+        duplicate_edges,
+        vec![
+            (1031, 1030, "duplicates".to_string()),
+            (1032, 1030, "duplicates".to_string())
+        ]
+    );
     Ok(())
 }
 

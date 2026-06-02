@@ -124,6 +124,16 @@ pub fn merge_preferences(
                 Some("duplicate preference superseded by canonical row"),
                 now,
             )?;
+            crate::memory::edge::insert_replacement_edges(
+                &tx,
+                crate::memory::edge::MemoryEdgeType::Duplicates,
+                &[object_ref.id],
+                canonical_ref.id,
+                crate::memory::edge::MemoryEdgeWriteContext {
+                    reason: Some("duplicate preference merged into canonical row"),
+                    ..Default::default()
+                },
+            )?;
         }
     }
     tx.commit()?;

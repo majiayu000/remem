@@ -1,4 +1,5 @@
 use crate::memory::{
+    edge::{MemoryEdgeReference, MemoryEdgeSummary},
     raw_archive::{insert_raw_message, RawMessage, ROLE_ASSISTANT, ROLE_USER, SOURCE_HOOK},
     service::{MultiHopMeta, SearchResultSet},
     Memory,
@@ -393,6 +394,7 @@ fn cli_show_json_report_is_machine_parseable() -> std::result::Result<(), serde_
         found: true,
         id: 1,
         memory: Some(sample_memory()),
+        relations: None,
     };
 
     let text = serde_json::to_string(&output)?;
@@ -401,6 +403,49 @@ fn cli_show_json_report_is_machine_parseable() -> std::result::Result<(), serde_
     assert_eq!(parsed["found"], true);
     assert_eq!(parsed["id"], 1);
     assert_eq!(parsed["memory"]["title"], "Title");
+    Ok(())
+}
+
+#[test]
+fn cli_show_json_can_expose_memory_relations() -> std::result::Result<(), serde_json::Error> {
+    let output = ShowJson {
+        found: true,
+        id: 2,
+        memory: Some(sample_memory()),
+        relations: Some(MemoryEdgeSummary {
+            incoming_count: 1,
+            outgoing_count: 0,
+            incoming: vec![MemoryEdgeReference {
+                id: 7,
+                edge_type: "supersedes".to_string(),
+                from_memory_id: Some(1),
+                to_memory_id: Some(2),
+                state_key_id: None,
+                source_candidate_id: Some(5),
+                evidence_event_ids: vec![10, 11],
+                source_operation_id: Some(9),
+                confidence: Some(0.92),
+                reason: Some("candidate replaces active state/topic memories".to_string()),
+                created_at_epoch: 100,
+            }],
+            outgoing: Vec::new(),
+        }),
+    };
+
+    let text = serde_json::to_string(&output)?;
+    let parsed: Value = serde_json::from_str(&text)?;
+
+    assert_eq!(parsed["relations"]["incoming_count"], 1);
+    assert_eq!(
+        parsed["relations"]["incoming"][0]["edge_type"],
+        "supersedes"
+    );
+    assert_eq!(parsed["relations"]["incoming"][0]["from_memory_id"], 1);
+    assert_eq!(parsed["relations"]["incoming"][0]["source_candidate_id"], 5);
+    assert_eq!(
+        parsed["relations"]["incoming"][0]["evidence_event_ids"][1],
+        11
+    );
     Ok(())
 }
 

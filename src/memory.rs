@@ -1,4 +1,5 @@
 pub mod dedup;
+pub mod edge;
 pub mod events;
 pub mod facts;
 pub mod format;
