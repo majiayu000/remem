@@ -4,6 +4,7 @@ use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
 use super::database::{check_database, check_pending_queue, check_worker_daemon};
+use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
 use super::schema::check_schema_migration;
 
@@ -50,7 +51,30 @@ fn check_database_reports_shared_active_memory_count() {
 }
 
 #[test]
-fn check_pending_queue_reports_shared_counts() {
+fn health_action_queue_actions_are_empty_when_runtime_is_clear() {
+    let actions = queue_actions(0, 0, 0, 0);
+    assert!(actions.is_empty());
+    assert!(render_action_block(&actions).is_empty());
+}
+
+#[test]
+fn health_action_queue_actions_render_copy_paste_commands() {
+    let actions = queue_actions(43, 1, 2, 3);
+    let text = render_action_block(&actions);
+
+    assert!(text.contains("Needs attention:"));
+    assert!(text.contains("43 failed pending observations"));
+    assert!(text.contains("inspect: remem pending list-failed --limit 20"));
+    assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
+    assert!(text.contains("1 expired processing pending observation"));
+    assert!(text.contains("2 failed jobs"));
+    assert!(text.contains("3 stuck jobs"));
+    assert!(text.contains("inspect counts: remem status --json"));
+    assert!(text.contains("recover: remem worker --once"));
+}
+
+#[test]
+fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-pending");
     let conn = db::open_db().expect("db should open");
     db::enqueue_pending(
@@ -96,27 +120,70 @@ fn check_pending_queue_reports_shared_counts() {
         params![job_id, chrono::Utc::now().timestamp() - 1],
     )
     .expect("job update should succeed");
+    let failed_job_id = db::enqueue_job(
+        &conn,
+        "codex-cli",
+        db::JobType::Summary,
+        "proj-a",
+        Some("session-4"),
+        "{}",
+        1,
+    )?;
+    conn.execute(
+        "UPDATE jobs SET state = 'failed' WHERE id = ?1",
+        params![failed_job_id],
+    )?;
 
     let stats = db::query_system_stats(&conn).expect("system stats should load");
     drop(conn);
 
     let check = check_pending_queue();
     assert_eq!(check.icon(), "WARN");
-    assert_eq!(
-        check.detail,
-        format!(
-            "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} jobs pending, {} processing, {} failed, {} stuck (will auto-recover)",
-            stats.ready_pending_observations,
-            stats.delayed_pending_observations,
-            stats.processing_pending_observations,
-            stats.expired_processing_pending_observations,
-            stats.failed_pending_observations,
-            stats.pending_jobs,
-            stats.processing_jobs,
-            stats.failed_jobs,
-            stats.stuck_jobs,
-        )
+    let expected_counts = format!(
+        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} jobs pending, {} processing, {} failed, {} stuck",
+        stats.ready_pending_observations,
+        stats.delayed_pending_observations,
+        stats.processing_pending_observations,
+        stats.expired_processing_pending_observations,
+        stats.failed_pending_observations,
+        stats.pending_jobs,
+        stats.processing_jobs,
+        stats.failed_jobs,
+        stats.stuck_jobs,
     );
+    assert!(check.detail.contains(&expected_counts), "{}", check.detail);
+    assert!(
+        check.detail.contains("will auto-recover"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("inspect: `remem pending list-failed --limit 20`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("preview retry: `remem pending retry-failed --dry-run`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("inspect counts: `remem status --json`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains("recover: `remem worker --once`"),
+        "{}",
+        check.detail
+    );
+    Ok(())
 }
 
 #[test]
@@ -233,6 +300,6 @@ fn check_worker_daemon_reports_missing_as_fallback_ok() {
     assert_eq!(check.icon(), "ok");
     assert_eq!(
         check.detail,
-        "not running; Stop hooks will use worker --once"
+        "not running; safe fallback: Stop hooks run `remem worker --once`"
     );
 }

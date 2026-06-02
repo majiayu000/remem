@@ -1,5 +1,6 @@
 mod database;
 mod environment;
+pub(crate) mod health_action;
 mod native_memory;
 mod report;
 mod schema;
