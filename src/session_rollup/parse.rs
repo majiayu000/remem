@@ -25,7 +25,7 @@ pub(super) struct ParsedTopicSegment {
 }
 
 pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<RollupOutput> {
-    let summary_text = extract_tag(text, "summary")
+    let summary_text = extract_top_level_summary(text)
         .map(|summary| summary.trim().to_string())
         .filter(|summary| !summary.is_empty())
         .ok_or_else(|| anyhow!("session_rollup response missing non-empty <summary>"))?;
@@ -81,6 +81,11 @@ fn iter_segment_blocks(text: &str) -> Vec<String> {
         rest = &rest[close_end..];
     }
     blocks
+}
+
+fn extract_top_level_summary(text: &str) -> Option<String> {
+    let segments_start = text.find("<segments").unwrap_or(text.len());
+    extract_tag(&text[..segments_start], "summary")
 }
 
 fn parse_segment(
@@ -328,6 +333,24 @@ mod tests {
     fn missing_summary_fails_entire_rollup_parse() {
         let err = parse_rollup_response("<segments></segments>", &range())
             .expect_err("missing summary should fail");
+        assert!(err.to_string().contains("missing non-empty <summary>"));
+    }
+
+    #[test]
+    fn segment_summary_does_not_replace_top_level_summary() {
+        let err = parse_rollup_response(
+            r#"<segments>
+            <segment topic_key="nested-summary" status="open">
+              <title>Nested summary</title>
+              <summary>This is not the session summary.</summary>
+              <evidence_event_ids>10,11</evidence_event_ids>
+              <from_event_id>10</from_event_id>
+              <to_event_id>11</to_event_id>
+            </segment>
+            </segments>"#,
+            &range(),
+        )
+        .expect_err("nested segment summary must not satisfy top-level summary");
         assert!(err.to_string().contains("missing non-empty <summary>"));
     }
 }

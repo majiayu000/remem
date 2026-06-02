@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS topic_segments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_topic_segments_trace
-    ON topic_segments(project_id, topic_key, covered_from_event_id);
+    ON topic_segments(project, topic_key, covered_from_event_id);
 
 CREATE INDEX IF NOT EXISTS idx_topic_segments_session
     ON topic_segments(session_row_id, topic_key);

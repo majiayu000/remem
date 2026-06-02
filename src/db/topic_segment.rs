@@ -268,4 +268,17 @@ mod tests {
         assert!(event_ids.windows(2).all(|pair| pair[0] < pair[1]));
         Ok(())
     }
+
+    #[test]
+    fn trace_index_matches_project_topic_lookup() -> Result<()> {
+        let conn = conn();
+        let index_sql: String = conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_topic_segments_trace'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert!(index_sql.contains("topic_segments(project, topic_key, covered_from_event_id)"));
+        Ok(())
+    }
 }

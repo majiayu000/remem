@@ -20,7 +20,7 @@ pub(super) fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange
         "Return exactly this XML shape:\n\
          <summary>overall session summary</summary>\n\
          <segments>\n\
-         <segment topic_key=\"stable-kebab-case\" status=\"open|resolved|superseded\" confidence=\"0.75\">\n\
+         <segment topic_key=\"stable-kebab-case\" status=\"open\" confidence=\"0.75\">\n\
          <title>short title</title>\n\
          <summary>topic segment summary</summary>\n\
          <evidence_event_ids>1,2,3</evidence_event_ids>\n\
@@ -29,6 +29,7 @@ pub(super) fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange
          <files>src/lib.rs,src/main.rs</files>\n\
          </segment>\n\
          </segments>\n\n\
+         status must be one of open, resolved, or superseded.\n\
          evidence_event_ids is authoritative. from_event_id/to_event_id must be min/max evidence IDs.\n\
          If there are no coherent topic segments, return an empty <segments></segments>.\n\n",
     );
