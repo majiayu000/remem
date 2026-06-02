@@ -46,10 +46,20 @@ fn fingerprint_ignores_context_source_note() {
     let normal =
         "# [/tmp/remem] context now\nUse `search`/`get_observations` for details.\n\nBody\n";
     let post_compact = "# [/tmp/remem] context now [REMEM POST-COMPACT RELOAD]\nUse `search`/`get_observations` for details.\nREMEM_CONTEXT_SOURCE=compact: Codex compact triggered this memory context reload.\n\nBody\n";
+    let current_compact = "# [/tmp/remem] context now\nUse `search`/`get_observations` for details.\n\nCodex compacted the chat, so remem refreshed memory context.\n\nBody\n";
+    let current_clear = "# [/tmp/remem] context now\nUse `search`/`get_observations` for details.\n\nContext was reloaded after an explicit clear.\n\nBody\n";
 
     assert_eq!(
         context_fingerprint(normal),
         context_fingerprint(post_compact)
+    );
+    assert_eq!(
+        context_fingerprint(normal),
+        context_fingerprint(current_compact)
+    );
+    assert_eq!(
+        context_fingerprint(normal),
+        context_fingerprint(current_clear)
     );
 }
 
@@ -197,6 +207,12 @@ fn compact_source_emits_first_context() {
     assert_eq!(decision.action, ContextGateAction::EmittedFull);
     assert_eq!(decision.reason, "first_or_forced");
     assert_eq!(decision.output, output);
+    assert_eq!(decision.output_mode, Some("full"));
+    assert!(decision
+        .key
+        .as_deref()
+        .is_some_and(|key| key.contains("sess-compact-first")));
+    assert!(decision.context_hash.is_some());
 }
 
 #[test]
