@@ -115,6 +115,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_state_keys",
         sql: include_str!("../migrations/v022_memory_state_keys.sql"),
     },
+    Migration {
+        version: 23,
+        name: "topic_segments",
+        sql: include_str!("../migrations/v023_topic_segments.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

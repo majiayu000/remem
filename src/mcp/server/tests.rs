@@ -414,6 +414,88 @@ fn search_returns_stable_compact_envelope_with_expansion_hint() {
 }
 
 #[test]
+fn get_observations_attaches_topic_trace_for_memory_topic_key() {
+    let _dir = ScopedTestDataDir::new("mcp-topic-trace");
+    let conn = crate::db::open_db().expect("db opens");
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")
+        .expect("disable foreign keys for isolated topic segment fixture");
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-1"),
+        "/repo",
+        Some("aurora-contract"),
+        "Aurora contract decision",
+        "The aurora recall contract keeps search compact before expansion.",
+        "decision",
+        None,
+    )
+    .expect("memory insert succeeds");
+    crate::db::insert_topic_segment(
+        &conn,
+        &crate::db::TopicSegmentInput {
+            host_id: 1,
+            project_id: 1,
+            session_row_id: 1,
+            project: "/repo",
+            topic_key: "aurora-contract",
+            title: "Aurora setup",
+            summary: "Initial contract work.",
+            status: "resolved",
+            segment_index: 0,
+            covered_from_event_id: 10,
+            covered_to_event_id: 12,
+            evidence_event_ids: "[10,12]",
+            files: Some(r#"["src/mcp/server/context_tools.rs"]"#),
+            confidence: 0.8,
+        },
+    )
+    .expect("topic segment insert succeeds");
+    crate::db::insert_topic_segment(
+        &conn,
+        &crate::db::TopicSegmentInput {
+            host_id: 1,
+            project_id: 1,
+            session_row_id: 2,
+            project: "/repo",
+            topic_key: "aurora-contract",
+            title: "Aurora follow-up",
+            summary: "Expansion returns trace.",
+            status: "open",
+            segment_index: 0,
+            covered_from_event_id: 20,
+            covered_to_event_id: 21,
+            evidence_event_ids: "[20,21]",
+            files: None,
+            confidence: 0.75,
+        },
+    )
+    .expect("topic segment insert succeeds");
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let expanded = server
+        .get_observations(Parameters(GetObservationsParams {
+            ids: vec![memory_id],
+            project: Some("/repo".to_string()),
+            source: Some("memory".to_string()),
+        }))
+        .expect("expansion succeeds");
+    let json: Value = serde_json::from_str(&expanded).expect("expanded json");
+
+    assert_eq!(json[0]["id"], memory_id);
+    assert_eq!(
+        json[0]["topic_trace"]
+            .as_array()
+            .expect("trace array")
+            .len(),
+        2
+    );
+    assert_eq!(json[0]["topic_trace"][0]["title"], "Aurora setup");
+    assert_eq!(json[0]["topic_trace"][1]["title"], "Aurora follow-up");
+    assert_eq!(json[0]["topic_trace"][0]["evidence_event_ids"][0], 10);
+}
+
+#[test]
 fn search_labels_sparse_result_raw_fallback_as_raw_archive() {
     let _dir = ScopedTestDataDir::new("mcp-search-raw-fallback");
     let conn = crate::db::open_db().expect("db opens");

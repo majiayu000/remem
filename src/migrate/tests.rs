@@ -104,6 +104,8 @@ fn full_migration_on_empty_db() -> Result<()> {
         "rule_candidates",
         "git_commits",
         "git_commit_sessions",
+        "memory_state_keys",
+        "topic_segments",
     ] {
         let exists: bool = conn
             .query_row(
@@ -360,7 +362,11 @@ fn dry_run_pending_reports_no_pending_for_current_schema() -> Result<()> {
     let result = dry_run_pending(&conn)?;
 
     assert_eq!(result.pending_count, 0);
-    assert!(result.error.is_none());
+    assert!(
+        result.error.is_none(),
+        "unexpected dry-run error: {:?}",
+        result.error
+    );
     Ok(())
 }
 

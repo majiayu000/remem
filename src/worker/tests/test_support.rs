@@ -79,6 +79,14 @@ EOF
 rm -f "$stdin_path"
 exit 0
 fi
+if grep -q "REPLACE_WITH_TOPIC_KEY" "$stdin_path"; then
+cat <<'EOF' > "$output_path"
+<summary>Codex worker flush completed.</summary>
+<segments></segments>
+EOF
+rm -f "$stdin_path"
+exit 0
+fi
 cat <<'EOF' > "$output_path"
 <observation>
   <type>decision</type>

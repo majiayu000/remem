@@ -38,6 +38,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "git_commits",
     "git_commit_sessions",
     "memory_state_keys",
+    "topic_segments",
 ];
 
 fn make_upgraded_v10_db() -> Result<Connection> {

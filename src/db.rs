@@ -10,6 +10,7 @@ pub mod query;
 pub mod summarize;
 #[cfg(test)]
 pub mod test_support;
+pub mod topic_segment;
 pub mod usage;
 pub mod worker;
 
@@ -23,5 +24,6 @@ pub use observation::*;
 pub use pending::*;
 pub use query::*;
 pub use summarize::*;
+pub use topic_segment::*;
 pub(crate) use usage::*;
 pub use worker::*;
