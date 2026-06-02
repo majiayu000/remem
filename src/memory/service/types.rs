@@ -51,11 +51,37 @@ pub struct SaveMemoryRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct LocalCopyResult {
+    pub status: String,
+    pub path: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SaveMemoryNextStep {
+    pub tool: String,
+    pub ids: Vec<i64>,
+    pub source: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct SaveMemoryResult {
     pub id: i64,
     pub status: String,
     pub memory_type: String,
+    pub project: String,
+    pub scope: String,
+    pub topic_key: Option<String>,
+    pub branch: Option<String>,
+    pub operation: String,
+    pub created_at_epoch: i64,
+    pub updated_at_epoch: i64,
+    /// Compatibility alias: true when the request supplied `topic_key`.
+    /// It does not mean the durable row was updated; use `operation` for that.
     pub upserted: bool,
+    pub local_copy: LocalCopyResult,
     pub local_status: String,
     pub local_path: Option<String>,
+    pub next_step: SaveMemoryNextStep,
 }

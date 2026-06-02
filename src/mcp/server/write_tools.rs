@@ -108,9 +108,10 @@ impl MemoryServer {
             crate::log::info(
                 "mcp",
                 &format!(
-                    "save_memory done id={} type={} upserted={} local_status={} local_path={:?}",
+                    "save_memory done id={} type={} operation={} upserted={} local_status={} local_path={:?}",
                     saved.id,
                     saved.memory_type,
+                    saved.operation,
                     saved.upserted,
                     saved.local_status,
                     saved.local_path
@@ -122,9 +123,27 @@ impl MemoryServer {
                     "id": saved.id,
                     "status": saved.status,
                     "memory_type": saved.memory_type,
+                    "project": saved.project,
+                    "scope": saved.scope,
+                    "topic_key": saved.topic_key,
+                    "branch": saved.branch,
+                    "operation": saved.operation,
+                    "created_at_epoch": saved.created_at_epoch,
+                    "updated_at_epoch": saved.updated_at_epoch,
                     "upserted": saved.upserted,
+                    "local_copy": {
+                        "status": saved.local_copy.status,
+                        "path": saved.local_copy.path,
+                        "reason": saved.local_copy.reason,
+                    },
                     "local_status": saved.local_status,
                     "local_path": saved.local_path,
+                    "next_step": {
+                        "tool": saved.next_step.tool,
+                        "ids": saved.next_step.ids,
+                        "source": saved.next_step.source,
+                        "reason": saved.next_step.reason,
+                    },
                 }),
             )
         })

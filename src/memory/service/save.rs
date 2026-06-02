@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7,7 +7,7 @@ use super::local_copy::{
     build_local_note_content, local_copy_enabled_override, resolve_local_note_path,
     write_local_note,
 };
-use super::types::{SaveMemoryRequest, SaveMemoryResult};
+use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveMemoryResult};
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 
 #[derive(Debug)]
@@ -41,6 +41,9 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         .and_then(|files| serde_json::to_string(files).ok());
 
     let scope = req.scope.as_deref().unwrap_or("project");
+    let effective_topic_key = effective_topic_key(req, memory_type);
+    let operation = durable_operation(conn, project, effective_topic_key.as_deref(), scope)?;
+
     let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
     write_local_copy(&mut local_copy).map_err(LocalCopyError::from)?;
 
@@ -91,25 +94,52 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
     };
 
     discard_local_copy_backup(&local_copy);
+    let durable = load_durable_write_details(conn, id)?;
+    let local_copy_result = local_copy.result();
 
     Ok(SaveMemoryResult {
         id,
         status: "saved".to_string(),
-        memory_type: memory_type.to_string(),
+        memory_type: durable.memory_type,
+        project: durable.project,
+        scope: durable.scope,
+        topic_key: durable.topic_key,
+        branch: durable.branch,
+        operation: operation.to_string(),
+        created_at_epoch: durable.created_at_epoch,
+        updated_at_epoch: durable.updated_at_epoch,
         upserted: req.topic_key.is_some(),
-        local_status: local_copy.status.clone(),
-        local_path: local_copy
-            .path
-            .as_ref()
-            .map(|path| path.display().to_string()),
+        local_status: local_copy_result.status.clone(),
+        local_path: local_copy_result.path.clone(),
+        local_copy: local_copy_result,
+        next_step: SaveMemoryNextStep {
+            tool: "get_observations".to_string(),
+            ids: vec![id],
+            source: "memory".to_string(),
+            reason: format!(
+                "Verify the durable memory with get_observations(ids=[{id}], source='memory') or search(project='{}').",
+                durable_project_hint(project)
+            ),
+        },
     })
 }
 
 struct LocalCopyPlan {
     status: String,
     path: Option<PathBuf>,
+    reason: Option<String>,
     content: Option<String>,
     backup: Option<LocalCopyBackup>,
+}
+
+impl LocalCopyPlan {
+    fn result(&self) -> LocalCopyResult {
+        LocalCopyResult {
+            status: self.status.clone(),
+            path: self.path.as_ref().map(|path| path.display().to_string()),
+            reason: self.reason.clone(),
+        }
+    }
 }
 
 struct LocalCopyBackup {
@@ -126,6 +156,7 @@ fn prepare_local_copy(
         return Ok(LocalCopyPlan {
             status: "disabled".to_string(),
             path: None,
+            reason: Some("local copy disabled by request or configuration".to_string()),
             content: None,
             backup: None,
         });
@@ -137,9 +168,84 @@ fn prepare_local_copy(
     Ok(LocalCopyPlan {
         status: "saved".to_string(),
         path: Some(local_path),
+        reason: None,
         content: Some(content),
         backup: None,
     })
+}
+
+fn effective_topic_key(req: &SaveMemoryRequest, memory_type: &str) -> Option<String> {
+    if memory_type == "lesson" {
+        return req.topic_key.clone().or_else(|| {
+            Some(format!(
+                "lesson-{}",
+                crate::memory::slugify_for_topic(&req.text, 64)
+            ))
+        });
+    }
+    req.topic_key.clone()
+}
+
+fn durable_operation(
+    conn: &Connection,
+    project: &str,
+    topic_key: Option<&str>,
+    scope: &str,
+) -> Result<&'static str> {
+    let Some(topic_key) = topic_key.filter(|topic_key| !topic_key.is_empty()) else {
+        return Ok("inserted");
+    };
+    let existing_id = conn
+        .query_row(
+            "SELECT id FROM memories
+             WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+             LIMIT 1",
+            params![project, topic_key, scope],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("check existing durable memory for topic_key upsert")?;
+    Ok(if existing_id.is_some() {
+        "updated"
+    } else {
+        "inserted"
+    })
+}
+
+struct DurableWriteDetails {
+    project: String,
+    scope: String,
+    topic_key: Option<String>,
+    branch: Option<String>,
+    memory_type: String,
+    created_at_epoch: i64,
+    updated_at_epoch: i64,
+}
+
+fn load_durable_write_details(conn: &Connection, id: i64) -> Result<DurableWriteDetails> {
+    conn.query_row(
+        "SELECT project, COALESCE(scope, 'project'), topic_key, branch, memory_type,
+                created_at_epoch, updated_at_epoch
+         FROM memories
+         WHERE id = ?1",
+        [id],
+        |row| {
+            Ok(DurableWriteDetails {
+                project: row.get(0)?,
+                scope: row.get(1)?,
+                topic_key: row.get(2)?,
+                branch: row.get(3)?,
+                memory_type: row.get(4)?,
+                created_at_epoch: row.get(5)?,
+                updated_at_epoch: row.get(6)?,
+            })
+        },
+    )
+    .with_context(|| format!("load durable write details for memory {id}"))
+}
+
+fn durable_project_hint(project: &str) -> String {
+    project.replace('\'', "\\'")
 }
 
 fn write_local_copy(local_copy: &mut LocalCopyPlan) -> Result<()> {
