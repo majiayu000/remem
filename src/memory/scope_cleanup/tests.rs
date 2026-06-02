@@ -2,6 +2,7 @@ use super::*;
 use crate::memory;
 use anyhow::Result;
 use rusqlite::{params, Connection};
+mod plan;
 
 const STASH: &str = "/Users/lifcc/Desktop/code/AI/tool/stash";
 const NOW: i64 = 1_780_000_000;
@@ -301,7 +302,7 @@ fn stash_pollution_audit_classifies_cleanup_buckets() -> Result<()> {
         .duplicate_preferences
         .iter()
         .any(|cluster| cluster.cluster_key == "ui-critique"
-            && cluster.canonical_ref == "memory:1030"
+            && cluster.canonical_ref == "memory:1032"
             && cluster.refs.contains(&"memory:1030".to_string())
             && cluster.refs.contains(&"memory:1032".to_string())
             && !cluster.refs.contains(&"memory:1033".to_string())));
@@ -601,7 +602,7 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     )?;
     assert!(preview.dry_run);
     assert_eq!(preview.clusters.len(), 1);
-    assert_eq!(preview.clusters[0].canonical_ref, "memory:1030");
+    assert_eq!(preview.clusters[0].canonical_ref, "memory:1032");
     let merged = preview.clusters[0].merged_content.as_deref().unwrap();
     assert!(merged.contains("direct UI critique"));
     assert!(merged.contains("avoid decorative fluff"));
@@ -626,7 +627,7 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     let canonical_mutation = applied
         .affected
         .iter()
-        .find(|mutation| mutation.object_ref == "memory:1030")
+        .find(|mutation| mutation.object_ref == "memory:1032")
         .expect("canonical mutation should be reported");
     assert_eq!(
         canonical_mutation.new_owner.owner_scope.as_deref(),
@@ -634,7 +635,7 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     );
     let canonical: (String, String, String, String, String) = conn.query_row(
         "SELECT status, content, owner_scope, owner_key, target_project
-         FROM memories WHERE id = 1030",
+         FROM memories WHERE id = 1032",
         [],
         |row| {
             Ok((
@@ -653,7 +654,7 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     assert_eq!(canonical.2, "repo");
     assert_eq!(canonical.3, STASH);
     assert_eq!(canonical.4, STASH);
-    for id in [1031, 1032] {
+    for id in [1030, 1031] {
         assert_eq!(
             conn.query_row(
                 "SELECT status, source_project FROM memories WHERE id = ?1",
@@ -702,8 +703,8 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
     assert_eq!(
         duplicate_edges,
         vec![
-            (1031, 1030, "duplicates".to_string()),
-            (1032, 1030, "duplicates".to_string())
+            (1030, 1032, "duplicates".to_string()),
+            (1031, 1032, "duplicates".to_string())
         ]
     );
     Ok(())

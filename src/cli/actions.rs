@@ -23,6 +23,7 @@ pub(super) use query::{
 };
 pub(super) use review::run_review;
 pub(super) use scope_cleanup::{
-    run_archive, run_audit_scope, run_merge_preferences, run_reroute, RerouteCliRequest,
+    run_archive, run_audit_scope, run_memory_cleanup, run_merge_preferences, run_reroute,
+    RerouteCliRequest,
 };
 pub(super) use usage::run_usage;

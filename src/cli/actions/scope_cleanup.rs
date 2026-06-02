@@ -1,11 +1,16 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use std::path::Path;
 
 use crate::memory::scope_cleanup::{
-    archive_objects, audit_scope, memory_refs_from_ids, merge_preferences, parse_object_refs,
-    reroute_objects, ArchiveRequest, MergePreferencesRequest, ObjectMutation, ObjectRef,
-    RerouteRequest, ScopeAuditReport, ScopeAuditRequest, ScopeMutationResult, TargetProjectUpdate,
+    apply_memory_cleanup_plan, archive_objects, audit_scope, build_preference_cleanup_plan,
+    memory_refs_from_ids, merge_preferences, parse_object_refs, reroute_objects, ArchiveRequest,
+    MemoryCleanupApplyResult, MemoryCleanupPlan, MergePreferencesRequest, ObjectMutation,
+    ObjectRef, RerouteRequest, ScopeAuditReport, ScopeAuditRequest, ScopeMutationResult,
+    TargetProjectUpdate,
 };
 use crate::{db, memory};
+
+use super::super::types::MemoryCleanupType;
 
 pub(in crate::cli) fn run_audit_scope(project: Option<&str>, limit: i64, json: bool) -> Result<()> {
     let project = resolve_project(project);
@@ -91,6 +96,66 @@ pub(in crate::cli) fn run_archive(
     print_mutation_result("scope archive", &result, json)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(in crate::cli) fn run_memory_cleanup(
+    cwd: Option<&str>,
+    cleanup_type: Option<MemoryCleanupType>,
+    all_types: bool,
+    dry_run: bool,
+    plan_out: Option<&Path>,
+    apply: bool,
+    plan: Option<&Path>,
+    json: bool,
+) -> Result<()> {
+    if apply {
+        if dry_run || plan_out.is_some() || cleanup_type.is_some() || all_types || cwd.is_some() {
+            bail!("--apply only accepts --plan and optional --json");
+        }
+        let plan_path = plan.ok_or_else(|| anyhow::anyhow!("--apply requires --plan"))?;
+        let raw = std::fs::read_to_string(plan_path)
+            .with_context(|| format!("read cleanup plan {}", plan_path.display()))?;
+        let cleanup_plan: MemoryCleanupPlan = serde_json::from_str(&raw)
+            .with_context(|| format!("parse cleanup plan {}", plan_path.display()))?;
+        let conn = db::open_db()?;
+        let result = apply_memory_cleanup_plan(&conn, &cleanup_plan)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        } else {
+            print_cleanup_apply_result(&result);
+        }
+        return Ok(());
+    }
+
+    if plan.is_some() {
+        bail!("--plan is only valid with --apply");
+    }
+    if !dry_run && plan_out.is_none() && !json {
+        bail!("memory cleanup is dry-run-first; use --dry-run, --plan-out, or --json");
+    }
+    let cleanup_type = cleanup_type
+        .or_else(|| all_types.then_some(MemoryCleanupType::Preference))
+        .unwrap_or(MemoryCleanupType::Preference);
+    if cleanup_type != MemoryCleanupType::Preference {
+        bail!("unsupported cleanup type: {}", cleanup_type.as_str());
+    }
+
+    let cwd = crate::cli::cwd::resolve_cwd_arg(cwd.map(str::to_string));
+    let project = db::project_from_cwd(&cwd);
+    let conn = db::open_db()?;
+    let cleanup_plan = build_preference_cleanup_plan(&conn, &project)?;
+    if let Some(path) = plan_out {
+        let json = serde_json::to_string_pretty(&cleanup_plan)?;
+        std::fs::write(path, format!("{json}\n"))
+            .with_context(|| format!("write cleanup plan {}", path.display()))?;
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&cleanup_plan)?);
+    } else {
+        print_cleanup_plan(&cleanup_plan, plan_out, all_types);
+    }
+    Ok(())
+}
+
 pub(in crate::cli) fn run_merge_preferences(
     project: Option<&str>,
     dry_run: bool,
@@ -134,6 +199,80 @@ pub(in crate::cli) fn run_merge_preferences(
         print_mutation(&mutation);
     }
     Ok(())
+}
+
+fn print_cleanup_plan(plan: &MemoryCleanupPlan, plan_out: Option<&Path>, all_types: bool) {
+    let detector = if all_types {
+        "preference (all supported detectors)"
+    } else {
+        "preference"
+    };
+    println!(
+        "memory cleanup dry-run project={} detector={} groups={}",
+        plan.project,
+        detector,
+        plan.groups.len()
+    );
+    for group in &plan.groups {
+        println!(
+            "  group={} owner={} type={} current=memory:{} stale=[{}] confidence={:.2}",
+            group.cluster_key,
+            owner_label(&group.owner_scope, &group.owner_key),
+            group.memory_type,
+            group.current_id,
+            group
+                .stale_ids
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+            group.confidence
+        );
+        if let Some(state_key) = &group.state_key {
+            println!("    state_key={state_key}");
+        }
+        println!("    reason={}", group.reason);
+        if let Some(content) = &group.merged_content {
+            println!("    preview={}", db::truncate_str(content, 180));
+        }
+    }
+    if let Some(path) = plan_out {
+        println!("plan written: {}", path.display());
+        println!(
+            "apply with: remem memory cleanup --apply --plan {}",
+            path.display()
+        );
+    }
+}
+
+fn print_cleanup_apply_result(result: &MemoryCleanupApplyResult) {
+    println!(
+        "memory cleanup applied project={} groups={} current=[{}] stale=[{}] operations=[{}] edges={}",
+        result.project,
+        result.groups_applied,
+        result
+            .current_ids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        result
+            .stale_ids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        result
+            .operation_ids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+        result.edge_count
+    );
+    for mutation in &result.affected {
+        print_mutation(mutation);
+    }
 }
 
 fn resolve_project(project: Option<&str>) -> String {

@@ -264,21 +264,25 @@ fn take_limit<T>(mut values: Vec<T>, limit: i64) -> Vec<T> {
 
 #[derive(Debug, Clone)]
 pub(super) struct MemoryAuditRow {
-    id: i64,
-    project: String,
-    title: String,
-    content: String,
-    memory_type: String,
-    status: String,
-    scope: Option<String>,
-    source_project: Option<String>,
-    target_project: Option<String>,
-    owner_scope: Option<String>,
-    owner_key: Option<String>,
-    topic_domain: Option<String>,
-    routing_confidence: Option<f64>,
-    context_class: Option<String>,
-    expires_at_epoch: Option<i64>,
+    pub(super) id: i64,
+    pub(super) project: String,
+    pub(super) topic_key: Option<String>,
+    pub(super) title: String,
+    pub(super) content: String,
+    pub(super) memory_type: String,
+    pub(super) status: String,
+    pub(super) scope: Option<String>,
+    pub(super) source_project: Option<String>,
+    pub(super) target_project: Option<String>,
+    pub(super) owner_scope: Option<String>,
+    pub(super) owner_key: Option<String>,
+    pub(super) topic_domain: Option<String>,
+    pub(super) routing_confidence: Option<f64>,
+    pub(super) context_class: Option<String>,
+    pub(super) expires_at_epoch: Option<i64>,
+    pub(super) updated_at_epoch: i64,
+    pub(super) state_key: Option<String>,
+    pub(super) current_memory_id: Option<i64>,
 }
 
 impl MemoryAuditRow {
@@ -332,33 +336,39 @@ pub(super) fn load_memory_audit_rows(
     project: &str,
 ) -> Result<Vec<MemoryAuditRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, project, title, content, memory_type, status, scope,
-                source_project, target_project, owner_scope, owner_key, topic_domain,
-                routing_confidence, context_class, expires_at_epoch
-         FROM memories
-         WHERE project = ?1
-            OR source_project = ?1
-            OR target_project = ?1
-            OR (owner_scope = 'repo' AND owner_key = ?1)
-         ORDER BY updated_at_epoch DESC, id DESC",
+        "SELECT m.id, m.project, m.topic_key, m.title, m.content, m.memory_type,
+                m.status, m.scope, m.source_project, m.target_project, m.owner_scope,
+                m.owner_key, m.topic_domain, m.routing_confidence, m.context_class,
+                m.expires_at_epoch, m.updated_at_epoch, sk.state_key, sk.current_memory_id
+         FROM memories m
+         LEFT JOIN memory_state_keys sk ON sk.id = m.state_key_id
+         WHERE m.project = ?1
+            OR m.source_project = ?1
+            OR m.target_project = ?1
+            OR (m.owner_scope = 'repo' AND m.owner_key = ?1)
+         ORDER BY m.updated_at_epoch DESC, m.id DESC",
     )?;
     let rows = stmt.query_map(params![project], |row| {
         Ok(MemoryAuditRow {
             id: row.get(0)?,
             project: row.get(1)?,
-            title: row.get(2)?,
-            content: row.get(3)?,
-            memory_type: row.get(4)?,
-            status: row.get(5)?,
-            scope: row.get(6)?,
-            source_project: row.get(7)?,
-            target_project: row.get(8)?,
-            owner_scope: row.get(9)?,
-            owner_key: row.get(10)?,
-            topic_domain: row.get(11)?,
-            routing_confidence: row.get(12)?,
-            context_class: row.get(13)?,
-            expires_at_epoch: row.get(14)?,
+            topic_key: row.get(2)?,
+            title: row.get(3)?,
+            content: row.get(4)?,
+            memory_type: row.get(5)?,
+            status: row.get(6)?,
+            scope: row.get(7)?,
+            source_project: row.get(8)?,
+            target_project: row.get(9)?,
+            owner_scope: row.get(10)?,
+            owner_key: row.get(11)?,
+            topic_domain: row.get(12)?,
+            routing_confidence: row.get(13)?,
+            context_class: row.get(14)?,
+            expires_at_epoch: row.get(15)?,
+            updated_at_epoch: row.get(16)?,
+            state_key: row.get(17)?,
+            current_memory_id: row.get(18)?,
         })
     })?;
     crate::db::query::collect_rows(rows)
@@ -482,17 +492,28 @@ pub(super) fn preference_clusters(rows: &[MemoryAuditRow], project: &str) -> Vec
         ) {
             continue;
         }
-        let key = preference_cluster_key(&row.title, &row.content);
-        let namespace = format!(
-            "{}:{}:{}:{}",
-            row.owner_scope.as_deref().unwrap_or("legacy"),
-            row.owner_key.as_deref().unwrap_or(row.project.as_str()),
-            row.target_project.as_deref().unwrap_or(""),
-            key
-        );
-        groups.entry(namespace).or_default().push(row);
+        for key in preference_cluster_keys(row) {
+            let namespace = format!(
+                "{}:{}:{}:{}",
+                row.owner_scope.as_deref().unwrap_or("legacy"),
+                row.owner_key.as_deref().unwrap_or(row.project.as_str()),
+                row.target_project.as_deref().unwrap_or(""),
+                key
+            );
+            groups.entry(namespace).or_default().push(row);
+        }
     }
-    groups
+    let mut seen_member_sets = HashSet::new();
+    let mut grouped = groups.into_iter().collect::<Vec<_>>();
+    grouped.sort_by(|left, right| {
+        right
+            .1
+            .len()
+            .cmp(&left.1.len())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    let mut emitted_sets: Vec<HashSet<i64>> = Vec::new();
+    grouped
         .into_iter()
         .filter_map(|(namespace, mut members)| {
             let key = namespace.rsplit(':').next().unwrap_or("unique").to_string();
@@ -500,7 +521,25 @@ pub(super) fn preference_clusters(rows: &[MemoryAuditRow], project: &str) -> Vec
                 return None;
             }
             members.sort_by_key(|row| row.id);
-            let canonical = members.first().copied()?;
+            let member_key = members
+                .iter()
+                .map(|row| row.id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !seen_member_sets.insert(member_key) {
+                return None;
+            }
+            let member_set = members.iter().map(|row| row.id).collect::<HashSet<_>>();
+            if emitted_sets
+                .iter()
+                .any(|emitted| member_set.is_subset(emitted))
+            {
+                return None;
+            }
+            emitted_sets.push(member_set);
+            let canonical = current_member(&members)
+                .or_else(|| latest_member(&members))
+                .or_else(|| members.first().copied())?;
             let refs = members
                 .iter()
                 .map(|row| row.object_ref().to_string())
@@ -521,15 +560,47 @@ pub(super) fn preference_clusters(rows: &[MemoryAuditRow], project: &str) -> Vec
         .collect()
 }
 
-fn preference_cluster_key(title: &str, content: &str) -> String {
-    let text = normalize_text(&format!("{title} {content}"));
+fn preference_cluster_keys(row: &MemoryAuditRow) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Some(state_key) = non_empty(row.state_key.as_deref()) {
+        keys.push(format!("state:{state_key}"));
+    }
+    let text = normalize_text(&format!("{} {}", row.title, row.content));
     if text.contains("ui") && text.contains("critique") {
-        return "ui-critique".to_string();
+        keys.push("ui-critique".to_string());
     }
     if text.contains("direct") && text.contains("review") {
-        return "direct-review".to_string();
+        keys.push("direct-review".to_string());
     }
-    "unique".to_string()
+    let content_key = normalize_text(&row.content);
+    if !content_key.is_empty() {
+        keys.push(format!("text:{content_key}"));
+    }
+    if let Some(topic_key) = non_empty(row.topic_key.as_deref()) {
+        keys.push(format!("topic:{topic_key}"));
+    }
+    if keys.is_empty() {
+        keys.push("unique".to_string());
+    }
+    keys
+}
+
+fn current_member<'a>(members: &[&'a MemoryAuditRow]) -> Option<&'a MemoryAuditRow> {
+    members
+        .iter()
+        .copied()
+        .find(|row| row.current_memory_id == Some(row.id))
+}
+
+fn latest_member<'a>(members: &[&'a MemoryAuditRow]) -> Option<&'a MemoryAuditRow> {
+    members
+        .iter()
+        .copied()
+        .max_by_key(|row| (row.updated_at_epoch, row.id))
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn merge_preference_texts(texts: &[&str]) -> String {
@@ -597,6 +668,8 @@ fn normalize_text(value: &str) -> String {
         .map(|ch| {
             if ch.is_ascii_alphanumeric() {
                 ch.to_ascii_lowercase()
+            } else if ch.is_alphanumeric() {
+                ch
             } else {
                 ' '
             }

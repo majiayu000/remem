@@ -1,7 +1,7 @@
 use super::cwd::resolve_cwd_arg;
 use super::types::{
-    Cli, Commands, CommitAction, ContextGateAction, MemoryGovernanceCliAction, PendingAction,
-    RawAction, RawRole, ReviewAction,
+    Cli, Commands, CommitAction, ContextGateAction, MemoryAction, MemoryCleanupType,
+    MemoryGovernanceCliAction, PendingAction, RawAction, RawRole, ReviewAction,
 };
 use clap::{CommandFactory, Parser};
 
@@ -506,6 +506,72 @@ fn cli_parses_scope_cleanup_commands() {
             assert!(!json);
         }
         _ => panic!("expected merge-preferences command"),
+    }
+
+    let cleanup = Cli::parse_from([
+        "remem",
+        "memory",
+        "cleanup",
+        "--cwd",
+        "/tmp/stash",
+        "--type",
+        "preference",
+        "--dry-run",
+        "--plan-out",
+        "/tmp/remem-cleanup.json",
+    ]);
+    match cleanup.command {
+        Commands::Memory {
+            action:
+                MemoryAction::Cleanup {
+                    cwd,
+                    cleanup_type,
+                    all_types,
+                    dry_run,
+                    plan_out,
+                    apply,
+                    plan,
+                    json,
+                },
+        } => {
+            assert_eq!(cwd.as_deref(), Some("/tmp/stash"));
+            assert_eq!(cleanup_type, Some(MemoryCleanupType::Preference));
+            assert!(!all_types);
+            assert!(dry_run);
+            assert_eq!(
+                plan_out.as_deref(),
+                Some(std::path::Path::new("/tmp/remem-cleanup.json"))
+            );
+            assert!(!apply);
+            assert!(plan.is_none());
+            assert!(!json);
+        }
+        _ => panic!("expected memory cleanup command"),
+    }
+
+    let apply_cleanup = Cli::parse_from([
+        "remem",
+        "memory",
+        "cleanup",
+        "--apply",
+        "--plan",
+        "/tmp/remem-cleanup.json",
+        "--json",
+    ]);
+    match apply_cleanup.command {
+        Commands::Memory {
+            action: MemoryAction::Cleanup {
+                apply, plan, json, ..
+            },
+        } => {
+            assert!(apply);
+            assert_eq!(
+                plan.as_deref(),
+                Some(std::path::Path::new("/tmp/remem-cleanup.json"))
+            );
+            assert!(json);
+        }
+        _ => panic!("expected memory cleanup apply command"),
     }
 }
 
