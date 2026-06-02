@@ -32,6 +32,14 @@ pub(super) fn load_clusters(conn: &Connection, project: &str) -> Result<Vec<Clus
          WHERE project = ?1
            AND status = 'active'
            AND updated_at_epoch < ?2
+           AND COALESCE(
+                owner_scope,
+                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+           ) = 'repo'
+           AND COALESCE(
+                owner_key,
+                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
+           ) = ?1
          ORDER BY memory_type, topic_key, updated_at_epoch DESC",
     )?;
 
@@ -181,6 +189,9 @@ mod tests {
                  id,
                  project      TEXT,
                  status       TEXT,
+                 scope        TEXT DEFAULT 'project',
+                 owner_scope  TEXT,
+                 owner_key    TEXT,
                  topic_key    TEXT,
                  title        TEXT,
                  content      TEXT,
@@ -203,7 +214,9 @@ mod tests {
         // Insert a row with TEXT in `id` (not coercible to i64) and
         // updated_at_epoch=0 so it passes the recency-guard filter.
         conn.execute(
-            "INSERT INTO memories VALUES (?1, ?2, 'active', NULL, 'title', 'content', 'preference', 0)",
+            "INSERT INTO memories
+             (id, project, status, topic_key, title, content, memory_type, updated_at_epoch)
+             VALUES (?1, ?2, 'active', NULL, 'title', 'content', 'preference', 0)",
             rusqlite::params!["not-an-integer", "test-project"],
         )
         .unwrap();
@@ -224,7 +237,9 @@ mod tests {
         setup_memories_table(&conn);
         // NULL title — updated_at_epoch=0 passes the recency guard.
         conn.execute(
-            "INSERT INTO memories VALUES (1, 'test-project', 'active', NULL, NULL, 'content', 'preference', 0)",
+            "INSERT INTO memories
+             (id, project, status, topic_key, title, content, memory_type, updated_at_epoch)
+             VALUES (1, 'test-project', 'active', NULL, NULL, 'content', 'preference', 0)",
             [],
         )
         .unwrap();
@@ -234,5 +249,33 @@ mod tests {
             result.is_err(),
             "load_clusters must propagate NULL title as an error, not silently replace it with \"\""
         );
+    }
+
+    #[test]
+    fn test_load_clusters_excludes_global_user_owned_memories() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_memories_table(&conn);
+        for id in 1..=2 {
+            conn.execute(
+                "INSERT INTO memories
+                 (id, project, status, scope, owner_scope, owner_key, topic_key, title, content,
+                  memory_type, updated_at_epoch)
+                 VALUES (?1, 'test-project', 'active', 'global', 'user', 'user:default',
+                         'global-topic-shared', ?2, ?3, 'preference', 0)",
+                rusqlite::params![
+                    id,
+                    format!("global title {id}"),
+                    format!("global content {id}")
+                ],
+            )?;
+        }
+
+        let clusters = load_clusters(&conn, "test-project")?;
+
+        assert!(
+            clusters.is_empty(),
+            "dream should not create repo merge clusters from global/user-owned memories"
+        );
+        Ok(())
     }
 }
