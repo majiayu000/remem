@@ -8,6 +8,7 @@ use super::local_copy::{
     write_local_note,
 };
 use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveMemoryResult};
+use crate::memory::claims::{claims_enabled, insert_memory_claim, ClaimWriteRequest};
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 use crate::memory::lifecycle::MemoryLifecycleOp;
 
@@ -67,7 +68,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             let id = save_lesson(
                 conn,
                 &SaveLessonRequest {
-                    session_id: None,
+                    session_id: req.session_id.as_deref(),
                     project,
                     topic_key: req.topic_key.as_deref(),
                     title,
@@ -128,7 +129,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             }
             crate::memory::insert_memory_full_with_operation_log(
                 conn,
-                None,
+                req.session_id.as_deref(),
                 project,
                 req.topic_key.as_deref(),
                 title,
@@ -159,6 +160,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
     discard_local_copy_backup(&local_copy);
     let durable = load_durable_write_details(conn, id)?;
     let local_copy_result = local_copy.result();
+    let claim_result = write_claim_after_durable_save(conn, id, req);
 
     Ok(SaveMemoryResult {
         id,
@@ -175,6 +177,9 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         local_status: local_copy_result.status.clone(),
         local_path: local_copy_result.path.clone(),
         local_copy: local_copy_result,
+        claim_status: claim_result.status,
+        claim_id: claim_result.id,
+        claim_error: claim_result.error,
         next_step: SaveMemoryNextStep {
             tool: "get_observations".to_string(),
             ids: vec![id],
@@ -185,6 +190,55 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
             ),
         },
     })
+}
+
+struct ClaimSaveResult {
+    status: String,
+    id: Option<i64>,
+    error: Option<String>,
+}
+
+fn write_claim_after_durable_save(
+    conn: &Connection,
+    memory_id: i64,
+    req: &SaveMemoryRequest,
+) -> ClaimSaveResult {
+    if !claims_enabled(req.claim_enabled) {
+        return ClaimSaveResult {
+            status: "disabled".to_string(),
+            id: None,
+            error: None,
+        };
+    }
+
+    let claim_source = req.claim_source.as_deref().unwrap_or("manual_save");
+    match insert_memory_claim(
+        conn,
+        &ClaimWriteRequest {
+            memory_id,
+            session_id: req.session_id.as_deref(),
+            host: req.host.as_deref(),
+            claim_source,
+        },
+    ) {
+        Ok(claim_id) => ClaimSaveResult {
+            status: "saved".to_string(),
+            id: Some(claim_id),
+            error: None,
+        },
+        Err(err) => {
+            let error = format!("{err:#}");
+            crate::log::error(
+                "memory-claim",
+                &format!("claim write failed memory_id={} error={}", memory_id, error),
+            );
+            ClaimSaveResult {
+                status: "failed".to_string(),
+                id: None,
+                error: Some(error),
+            }
+        }
+    }
 }
 
 struct LocalCopyPlan {

@@ -180,6 +180,9 @@ async fn save_memory_response_reports_durable_feedback_shape() {
     assert_eq!(payload["local_copy"]["status"], "disabled");
     assert_eq!(payload["local_status"], "disabled");
     assert!(payload["local_path"].is_null());
+    assert_eq!(payload["claim_status"], "saved");
+    assert!(payload["claim_id"].as_i64().is_some_and(|id| id > 0));
+    assert!(payload["claim_error"].is_null());
     assert_eq!(payload["next_step"]["tool"], "get_observations");
     assert_eq!(payload["next_step"]["source"], "memory");
     assert_eq!(payload["next_step"]["ids"][0], payload["id"]);

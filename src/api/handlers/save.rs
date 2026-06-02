@@ -20,6 +20,8 @@ pub(in crate::api) async fn handle_save_memory(
         text: req.text,
         title: req.title,
         project: req.project,
+        session_id: req.session_id,
+        host: req.host.or_else(|| Some("api".to_string())),
         topic_key: req.topic_key,
         memory_type: req.memory_type,
         files: req.files,
@@ -28,6 +30,8 @@ pub(in crate::api) async fn handle_save_memory(
         branch: req.branch,
         local_path: req.local_path,
         local_copy_enabled: req.local_copy_enabled,
+        claim_enabled: req.claim_enabled,
+        claim_source: req.claim_source.or_else(|| Some("api_save".to_string())),
     };
 
     match service::save_memory(&conn, &save_req) {
@@ -52,6 +56,9 @@ pub(in crate::api) async fn handle_save_memory(
                 },
                 local_status: saved.local_status,
                 local_path: saved.local_path,
+                claim_status: saved.claim_status,
+                claim_id: saved.claim_id,
+                claim_error: saved.claim_error,
                 next_step: SaveMemoryNextStepResponse {
                     tool: saved.next_step.tool,
                     ids: saved.next_step.ids,

@@ -91,6 +91,10 @@ pub(super) struct SaveMemoryRequest {
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
     pub topic_key: Option<String>,
     #[serde(default)]
     pub memory_type: Option<String>,
@@ -106,6 +110,10 @@ pub(super) struct SaveMemoryRequest {
     pub local_path: Option<String>,
     #[serde(default)]
     pub local_copy_enabled: Option<bool>,
+    #[serde(default)]
+    pub claim_enabled: Option<bool>,
+    #[serde(default)]
+    pub claim_source: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -125,6 +133,9 @@ pub(super) struct SaveMemoryResponse {
     pub local_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
+    pub claim_status: String,
+    pub claim_id: Option<i64>,
+    pub claim_error: Option<String>,
     pub next_step: SaveMemoryNextStepResponse,
 }
 

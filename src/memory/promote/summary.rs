@@ -25,6 +25,15 @@ pub fn promote_summary_to_memory_candidates(
     if candidates.is_empty() {
         return Ok(0);
     }
+    let candidates = crate::memory::claims::filter_summary_candidates_by_claims(
+        conn,
+        session_id,
+        project,
+        &candidates,
+    );
+    if candidates.is_empty() {
+        return Ok(0);
+    }
 
     let source = summary_candidate_source(conn, session_id, project)?;
     let summary = persist_summary_candidates(

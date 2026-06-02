@@ -1,3 +1,4 @@
+pub mod claims;
 pub mod dedup;
 pub mod edge;
 pub mod events;

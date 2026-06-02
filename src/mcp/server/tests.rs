@@ -205,6 +205,8 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         text: "body".to_string(),
         title: Some("Memory".to_string()),
         project: Some("proj".to_string()),
+        session_id: None,
+        host: None,
         topic_key: None,
         memory_type: None,
         files: None,
@@ -213,6 +215,8 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         branch: None,
         created_at_epoch: None,
         local_copy_enabled: Some(true),
+        claim_enabled: None,
+        claim_source: None,
     }));
 
     let err = match outside {
@@ -241,6 +245,8 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         text: "body".to_string(),
         title: Some("Memory".to_string()),
         project: Some("proj".to_string()),
+        session_id: None,
+        host: None,
         topic_key: None,
         memory_type: None,
         files: None,
@@ -249,6 +255,8 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         branch: None,
         created_at_epoch: None,
         local_copy_enabled: Some(true),
+        claim_enabled: None,
+        claim_source: None,
     }));
 
     let err = match write_failure {
@@ -271,6 +279,8 @@ fn save_memory_response_reports_durable_feedback_shape() {
             text: "MCP durable feedback body".to_string(),
             title: Some("MCP feedback".to_string()),
             project: Some("proj".to_string()),
+            session_id: Some("mcp-session-claim".to_string()),
+            host: None,
             topic_key: Some("mcp-feedback".to_string()),
             memory_type: Some("decision".to_string()),
             files: None,
@@ -279,6 +289,8 @@ fn save_memory_response_reports_durable_feedback_shape() {
             branch: Some("main".to_string()),
             created_at_epoch: None,
             local_copy_enabled: Some(false),
+            claim_enabled: None,
+            claim_source: None,
         }))
         .expect("save_memory should succeed");
     let json: Value = serde_json::from_str(&response).expect("response should be json");
@@ -293,6 +305,9 @@ fn save_memory_response_reports_durable_feedback_shape() {
     assert_eq!(json["local_copy"]["status"], "disabled");
     assert_eq!(json["local_status"], "disabled");
     assert!(json["local_path"].is_null());
+    assert_eq!(json["claim_status"], "saved");
+    assert!(json["claim_id"].as_i64().is_some_and(|id| id > 0));
+    assert!(json["claim_error"].is_null());
     assert_eq!(json["next_step"]["tool"], "get_observations");
     assert_eq!(json["next_step"]["source"], "memory");
     assert_eq!(json["next_step"]["ids"][0], json["id"]);

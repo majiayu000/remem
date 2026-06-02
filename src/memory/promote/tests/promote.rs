@@ -4,6 +4,7 @@ use rusqlite::Connection;
 use super::super::promote_summary_to_memory_candidates;
 use super::super::slug::content_hash;
 use crate::db;
+use crate::memory::service::{save_memory, SaveMemoryRequest};
 
 fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
@@ -12,10 +13,19 @@ fn setup_conn() -> Result<Connection> {
 }
 
 fn record_summary_evidence(conn: &Connection, session_id: &str, project: &str) -> Result<i64> {
+    record_summary_evidence_with_host(conn, "codex-cli", session_id, project)
+}
+
+fn record_summary_evidence_with_host(
+    conn: &Connection,
+    host: &str,
+    session_id: &str,
+    project: &str,
+) -> Result<i64> {
     let outcome = db::record_captured_event(
         conn,
         &db::CaptureEventInput {
-            host: "codex-cli",
+            host,
             session_id,
             project,
             cwd: Some(project),
@@ -241,6 +251,413 @@ fn test_summary_candidate_content_keeps_compact_context() -> Result<()> {
         text.contains("[Context:"),
         "content should have compact context: {text}"
     );
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_skips_candidate_covered_by_exact_session_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-claim-suppress";
+    let project = "test/proj";
+    let decision = "Use exact session memory claims to suppress duplicate summary candidates";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: decision.to_string(),
+            title: Some("Session claim suppression".to_string()),
+            project: Some(project.to_string()),
+            session_id: Some(session_id.to_string()),
+            host: Some("codex-cli".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("save_memory should return claim_id"))?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        Some(decision),
+        None,
+        None,
+    )?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let noop: (i64, i64, String, String) = conn.query_row(
+        "SELECT memory_claim_id, memory_id, reason, memory_type
+         FROM memory_candidate_noops",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    let consumed: (Option<i64>, Option<String>, Option<String>) = conn.query_row(
+        "SELECT consumed_at_epoch, consumed_by_session_id, consumed_reason
+         FROM memory_claims
+         WHERE id = ?1",
+        [claim_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+
+    assert_eq!(count, 0);
+    assert_eq!(candidate_count, 0);
+    assert_eq!(noop.0, claim_id);
+    assert_eq!(noop.1, saved.id);
+    assert_eq!(noop.2, "covered_by_manual_save");
+    assert_eq!(noop.3, "decision");
+    assert!(consumed.0.is_some());
+    assert_eq!(consumed.1.as_deref(), Some(session_id));
+    assert_eq!(consumed.2.as_deref(), Some("covered_by_manual_save"));
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_skips_candidate_covered_by_recent_project_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-claim-recent-fallback";
+    let project = "test/proj";
+    let decision = "Use recent project memory claims when exact session id is unavailable";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: decision.to_string(),
+            title: Some("Recent claim fallback".to_string()),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("save_memory should return claim_id"))?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        Some(decision),
+        None,
+        None,
+    )?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let noop_session: String = conn.query_row(
+        "SELECT session_id FROM memory_candidate_noops WHERE memory_claim_id = ?1",
+        [claim_id],
+        |row| row.get(0),
+    )?;
+    let consumed_by: Option<String> = conn.query_row(
+        "SELECT consumed_by_session_id FROM memory_claims WHERE id = ?1",
+        [claim_id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 0);
+    assert_eq!(candidate_count, 0);
+    assert_eq!(noop_session, session_id);
+    assert_eq!(consumed_by.as_deref(), Some(session_id));
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_skips_high_similarity_recent_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-claim-near-match";
+    let project = "test/proj";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Use session memory claims to suppress duplicate Stop summary candidates."
+                .to_string(),
+            title: Some("Near duplicate claim".to_string()),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("save_memory should return claim_id"))?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        Some("Use session memory claims to suppress duplicate summary candidates"),
+        None,
+        None,
+    )?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let noop_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidate_noops WHERE memory_claim_id = ?1",
+        [claim_id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 0);
+    assert_eq!(candidate_count, 0);
+    assert_eq!(noop_count, 1);
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_does_not_skip_different_session_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let project = "test/proj";
+    let decision = "Session-specific claims must not suppress another session candidate";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: decision.to_string(),
+            title: Some("Different session claim".to_string()),
+            project: Some(project.to_string()),
+            session_id: Some("session-a".to_string()),
+            host: Some("codex-cli".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    record_summary_evidence(&conn, "session-b", project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-b",
+        project,
+        Some("Finish issue 287"),
+        Some(decision),
+        None,
+        None,
+    )?;
+
+    let noop_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidate_noops", [], |row| {
+            row.get(0)
+        })?;
+    let consumed_at: Option<i64> = conn.query_row(
+        "SELECT consumed_at_epoch FROM memory_claims WHERE memory_id = ?1",
+        [saved.id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 1);
+    assert_eq!(noop_count, 0);
+    assert_eq!(consumed_at, None);
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_does_not_skip_different_host_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "shared-session-id";
+    let project = "test/proj";
+    let decision = "Host identity is part of exact session claim matching";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: decision.to_string(),
+            title: Some("Different host claim".to_string()),
+            project: Some(project.to_string()),
+            session_id: Some(session_id.to_string()),
+            host: Some("api".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    record_summary_evidence_with_host(&conn, "codex-cli", session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        Some(decision),
+        None,
+        None,
+    )?;
+
+    let noop_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidate_noops", [], |row| {
+            row.get(0)
+        })?;
+    let consumed_at: Option<i64> = conn.query_row(
+        "SELECT consumed_at_epoch FROM memory_claims WHERE memory_id = ?1",
+        [saved.id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 1);
+    assert_eq!(noop_count, 0);
+    assert_eq!(consumed_at, None);
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_does_not_skip_different_owner_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-claim-owner-boundary";
+    let project = "test/proj";
+    let decision = "Claim matching respects memory owner boundaries";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: decision.to_string(),
+            title: Some("Owner boundary claim".to_string()),
+            project: Some(project.to_string()),
+            session_id: Some(session_id.to_string()),
+            host: Some("codex-cli".to_string()),
+            memory_type: Some("decision".to_string()),
+            scope: Some("global".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        Some(decision),
+        None,
+        None,
+    )?;
+
+    let noop_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidate_noops", [], |row| {
+            row.get(0)
+        })?;
+    let consumed_at: Option<i64> = conn.query_row(
+        "SELECT consumed_at_epoch FROM memory_claims WHERE memory_id = ?1",
+        [saved.id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 1);
+    assert_eq!(noop_count, 0);
+    assert_eq!(consumed_at, None);
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_does_not_skip_different_memory_type_claim() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-claim-type-boundary";
+    let project = "test/proj";
+    let fact = "Claim matching respects memory type boundaries";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: fact.to_string(),
+            title: Some("Type boundary claim".to_string()),
+            project: Some(project.to_string()),
+            session_id: Some(session_id.to_string()),
+            host: Some("codex-cli".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        None,
+        Some(fact),
+        None,
+    )?;
+
+    let noop_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidate_noops", [], |row| {
+            row.get(0)
+        })?;
+    let consumed_at: Option<i64> = conn.query_row(
+        "SELECT consumed_at_epoch FROM memory_claims WHERE memory_id = ?1",
+        [saved.id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 1);
+    assert_eq!(noop_count, 0);
+    assert_eq!(consumed_at, None);
+    Ok(())
+}
+
+#[test]
+fn summary_candidate_promotion_does_not_skip_low_similarity_candidate() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-claim-low-similarity";
+    let project = "test/proj";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Use exact session memory claims only for identical saved facts".to_string(),
+            title: Some("Exact claims".to_string()),
+            project: Some(project.to_string()),
+            session_id: Some(session_id.to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("save_memory should return claim_id"))?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Finish issue 287"),
+        Some("Switch summary extraction to keep unrelated facts in pending review"),
+        None,
+        None,
+    )?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let noop_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidate_noops", [], |row| {
+            row.get(0)
+        })?;
+    let consumed_at: Option<i64> = conn.query_row(
+        "SELECT consumed_at_epoch FROM memory_claims WHERE id = ?1",
+        [claim_id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 1);
+    assert_eq!(candidate_count, 1);
+    assert_eq!(noop_count, 0);
+    assert_eq!(consumed_at, None);
     Ok(())
 }
 

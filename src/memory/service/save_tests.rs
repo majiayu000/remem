@@ -117,3 +117,111 @@ fn direct_save_same_text_metadata_change_updates_row() -> anyhow::Result<()> {
     assert_eq!(branch.as_deref(), Some("feature"));
     Ok(())
 }
+
+#[test]
+fn save_memory_creates_manual_claim_after_successful_memory_write() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-memory-claim-success");
+    let conn = db::open_db()?;
+    let req = SaveMemoryRequest {
+        text: "Use exact session memory claims to suppress duplicate summary candidates."
+            .to_string(),
+        title: Some("Session claims".to_string()),
+        project: Some("proj".to_string()),
+        session_id: Some("session-claim-success".to_string()),
+        host: Some("codex-cli".to_string()),
+        memory_type: Some("decision".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req)?;
+
+    assert_eq!(saved.claim_status, "saved");
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("claim id should be returned"))?;
+    assert_eq!(saved.claim_error, None);
+    let claim: (i64, String, String, String, String, String) = conn.query_row(
+        "SELECT memory_id, project, session_id, host, claim_source, memory_type
+         FROM memory_claims
+         WHERE id = ?1",
+        [claim_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        },
+    )?;
+    assert_eq!(claim.0, saved.id);
+    assert_eq!(claim.1, "proj");
+    assert_eq!(claim.2, "session-claim-success");
+    assert_eq!(claim.3, "codex-cli");
+    assert_eq!(claim.4, "manual_save");
+    assert_eq!(claim.5, "decision");
+    Ok(())
+}
+
+#[test]
+fn save_memory_claim_disabled_preserves_existing_behavior() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-memory-claim-disabled");
+    let conn = db::open_db()?;
+    let req = SaveMemoryRequest {
+        text: "Claim disabled should still save durable memory.".to_string(),
+        title: Some("Claim disabled".to_string()),
+        project: Some("proj".to_string()),
+        session_id: Some("session-claim-disabled".to_string()),
+        memory_type: Some("discovery".to_string()),
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req)?;
+
+    assert_eq!(saved.status, "saved");
+    assert_eq!(saved.claim_status, "disabled");
+    assert_eq!(saved.claim_id, None);
+    assert_eq!(saved.claim_error, None);
+    let claim_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_claims", [], |row| row.get(0))?;
+    assert_eq!(claim_count, 0);
+    Ok(())
+}
+
+#[test]
+fn save_memory_claim_write_failure_is_reported_not_silent() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-memory-claim-failure");
+    let conn = db::open_db()?;
+    conn.execute("DROP TABLE memory_claims", [])?;
+    let req = SaveMemoryRequest {
+        text: "Durable memory should survive a claim write failure.".to_string(),
+        title: Some("Claim failure".to_string()),
+        project: Some("proj".to_string()),
+        session_id: Some("session-claim-failure".to_string()),
+        memory_type: Some("discovery".to_string()),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req)?;
+
+    assert_eq!(saved.status, "saved");
+    assert_eq!(saved.claim_status, "failed");
+    assert_eq!(saved.claim_id, None);
+    assert!(saved
+        .claim_error
+        .as_deref()
+        .is_some_and(|error| error.contains("memory_claims")));
+    let memory_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE id = ?1",
+        [saved.id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(memory_count, 1);
+    Ok(())
+}
