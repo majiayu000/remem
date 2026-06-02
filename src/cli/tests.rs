@@ -1,7 +1,7 @@
 use super::cwd::resolve_cwd_arg;
 use super::types::{
-    Cli, Commands, CommitAction, MemoryGovernanceCliAction, PendingAction, RawAction, RawRole,
-    ReviewAction,
+    Cli, Commands, CommitAction, ContextGateAction, MemoryGovernanceCliAction, PendingAction,
+    RawAction, RawRole, ReviewAction,
 };
 use clap::{CommandFactory, Parser};
 
@@ -663,6 +663,11 @@ fn cli_help_mentions_context_gate_modes_and_command_descriptions() {
     let context_help = context.render_long_help().to_string();
     assert!(context_help.contains("off|auto|strict|delta"));
     assert!(context_help.contains("Host profile"));
+    assert!(context_help.contains("REMEM_CONTEXT_HOST"));
+    assert!(context_help.contains("REMEM_CONTEXT_GATE"));
+    assert!(context_help.contains("REMEM_CONTEXT_GATE_HOSTS"));
+    assert!(context_help.contains("REMEM_CONTEXT_SUPPRESS_SOURCES"));
+    assert!(context_help.contains("REMEM_CONTEXT_DEBUG"));
 }
 
 #[test]
@@ -686,5 +691,39 @@ fn cli_parses_context_debug_option() {
             assert!(debug);
         }
         _ => panic!("expected context command"),
+    }
+}
+
+#[test]
+fn cli_parses_context_gate_status_filters() {
+    let cli = Cli::parse_from([
+        "remem",
+        "context-gate",
+        "status",
+        "--project",
+        "/tmp/remem",
+        "--session",
+        "sess-1",
+        "--limit",
+        "7",
+        "--json",
+    ]);
+
+    match cli.command {
+        Commands::ContextGate {
+            action:
+                ContextGateAction::Status {
+                    project,
+                    session,
+                    limit,
+                    json,
+                },
+        } => {
+            assert_eq!(project.as_deref(), Some("/tmp/remem"));
+            assert_eq!(session.as_deref(), Some("sess-1"));
+            assert_eq!(limit, 7);
+            assert!(json);
+        }
+        _ => panic!("expected context-gate status command"),
     }
 }

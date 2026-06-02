@@ -164,6 +164,7 @@ pub fn generate_context_from_cli(
 
 fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
     let timer = crate::log::Timer::start("context", &format!("cwd={}", invocation.cwd));
+    let debug_enabled = invocation.debug || context_debug_enabled();
     let request = ContextRequest {
         cwd: invocation.cwd.clone(),
         project: invocation.project.clone(),
@@ -173,16 +174,23 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         host: invocation.host,
         use_colors: invocation.use_colors,
     };
-    let rendered = render_context_output(&request, invocation.debug || context_debug_enabled())?;
-    let decision = if use_gate {
+    let rendered = render_context_output(&request, debug_enabled)?;
+    let mut decision = if use_gate {
         apply_context_gate(&invocation, rendered.output)
     } else {
         ContextGateDecision {
             output: rendered.output,
             action: ContextGateAction::Bypassed,
             reason: "legacy_direct",
+            key: None,
+            context_hash: None,
+            output_mode: None,
         }
     };
+    if debug_enabled {
+        let decision_for_debug = decision.clone();
+        append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
+    }
     print!("{}", decision.output);
 
     let capabilities = resolve_profile(request.host).capabilities();
@@ -209,6 +217,39 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         rendered.stats.workstreams.count,
     ));
     Ok(())
+}
+
+fn append_context_gate_debug_trace(
+    output: &mut String,
+    request: &ContextRequest,
+    decision: &ContextGateDecision,
+) {
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output.push_str("## Debug Trace\n");
+    if output.trim_start().starts_with("## Debug Trace") {
+        output.push_str(&format!(
+            "- request host={} project={} cwd={} branch={} session={} source={}\n",
+            request.host.as_env_value(),
+            request.project,
+            request.cwd,
+            request.current_branch.as_deref().unwrap_or("-"),
+            request.session_id.as_deref().unwrap_or("-"),
+            request.hook_source.as_deref().unwrap_or("-")
+        ));
+    }
+    output.push_str(&format!(
+        "- gate action={:?} reason={} output_mode={} key={} hash={}\n",
+        decision.action,
+        decision.reason,
+        decision.output_mode.unwrap_or("-"),
+        decision.key.as_deref().unwrap_or("-"),
+        decision.context_hash.as_deref().unwrap_or("-")
+    ));
 }
 
 pub(in crate::context) fn render_context_output(

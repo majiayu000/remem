@@ -453,6 +453,24 @@ fn empty_context_marks_compact_reload_visibly() {
 }
 
 #[test]
+fn empty_context_marks_clear_reload_visibly() {
+    let output = empty_context_output(&ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: None,
+        hook_source: Some("clear".to_string()),
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: false,
+    });
+
+    assert!(output.starts_with("remem context"));
+    assert!(output.contains("├─ source: clear"));
+    assert!(output.contains("Context was reloaded after an explicit clear."));
+    assert!(output.contains("No previous sessions found."));
+}
+
+#[test]
 fn empty_context_uses_ansi_when_color_enabled() {
     let output = empty_context_output(&ContextRequest {
         cwd: "/tmp/remem".to_string(),
