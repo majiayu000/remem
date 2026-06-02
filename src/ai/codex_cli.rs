@@ -168,6 +168,12 @@ mod tests {
             .collect();
 
         assert_eq!(&rendered[..3], ["--ask-for-approval", "never", "exec"]);
+        for isolation_arg in ["--ephemeral", "--ignore-user-config", "--ignore-rules"] {
+            assert!(
+                rendered.iter().any(|arg| arg == isolation_arg),
+                "{rendered:?}"
+            );
+        }
         assert!(rendered.iter().any(|arg| arg == "--json"), "{rendered:?}");
         assert!(
             rendered
