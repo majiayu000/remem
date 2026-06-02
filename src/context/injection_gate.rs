@@ -35,6 +35,9 @@ pub(super) struct ContextGateDecision {
     pub output: String,
     pub action: ContextGateAction,
     pub reason: &'static str,
+    pub key: Option<String>,
+    pub context_hash: Option<String>,
+    pub output_mode: Option<&'static str>,
 }
 
 #[derive(Debug)]
@@ -113,7 +116,14 @@ pub(super) fn apply_context_gate(
         ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "full", &hash);
-                decision(output, ContextGateAction::EmittedFull, "first_or_forced")
+                gate_decision(
+                    output,
+                    ContextGateAction::EmittedFull,
+                    "first_or_forced",
+                    &key,
+                    &hash,
+                    "full",
+                )
             }
             Err(error) => fail_open(output, "gate_write", error),
         };
@@ -131,7 +141,14 @@ pub(super) fn apply_context_gate(
         ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "full", &hash);
-                decision(output, ContextGateAction::EmittedFull, "first_or_forced")
+                gate_decision(
+                    output,
+                    ContextGateAction::EmittedFull,
+                    "first_or_forced",
+                    &key,
+                    &hash,
+                    "full",
+                )
             }
             Err(error) => fail_open(output, "gate_write", error),
         };
@@ -148,7 +165,14 @@ pub(super) fn apply_context_gate(
         ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "restart_source", &hash);
-                decision(output, ContextGateAction::EmittedFull, "restart_source")
+                gate_decision(
+                    output,
+                    ContextGateAction::EmittedFull,
+                    "restart_source",
+                    &key,
+                    &hash,
+                    "full",
+                )
             }
             Err(error) => fail_open(output, "gate_write", error),
         };
@@ -164,7 +188,14 @@ pub(super) fn apply_context_gate(
             return match record_suppression(&conn, invocation, &key, now) {
                 Ok(()) => {
                     log_gate("suppress", invocation, &key, reason, &hash);
-                    decision(String::new(), ContextGateAction::Suppressed, reason)
+                    gate_decision(
+                        String::new(),
+                        ContextGateAction::Suppressed,
+                        reason,
+                        &key,
+                        &hash,
+                        "suppressed",
+                    )
                 }
                 Err(error) => fail_open(output, "gate_write", error),
             };
@@ -180,10 +211,13 @@ pub(super) fn apply_context_gate(
         ) {
             Ok(()) => {
                 log_gate("emit", invocation, &key, "fallback_cooldown_expired", &hash);
-                decision(
+                gate_decision(
                     output,
                     ContextGateAction::EmittedFull,
                     "fallback_cooldown_expired",
+                    &key,
+                    &hash,
+                    "full",
                 )
             }
             Err(error) => fail_open(output, "gate_write", error),
@@ -194,7 +228,14 @@ pub(super) fn apply_context_gate(
         return match record_suppression(&conn, invocation, &key, now) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "strict", &hash);
-                decision(String::new(), ContextGateAction::Suppressed, "strict")
+                gate_decision(
+                    String::new(),
+                    ContextGateAction::Suppressed,
+                    "strict",
+                    &key,
+                    &hash,
+                    "suppressed",
+                )
             }
             Err(error) => fail_open(output, "gate_write", error),
         };
@@ -222,7 +263,7 @@ pub(super) fn apply_context_gate(
     ) {
         Ok(()) => {
             log_gate("emit", invocation, &key, output_mode, &hash);
-            decision(output, action, "changed_hash")
+            gate_decision(output, action, "changed_hash", &key, &hash, output_mode)
         }
         Err(error) => fail_open(output, "gate_write", error),
     }
@@ -237,6 +278,27 @@ fn decision(
         output,
         action,
         reason,
+        key: None,
+        context_hash: None,
+        output_mode: None,
+    }
+}
+
+fn gate_decision(
+    output: String,
+    action: ContextGateAction,
+    reason: &'static str,
+    key: &str,
+    context_hash: &str,
+    output_mode: &'static str,
+) -> ContextGateDecision {
+    ContextGateDecision {
+        output,
+        action,
+        reason,
+        key: Some(key.to_string()),
+        context_hash: Some(context_hash.to_string()),
+        output_mode: Some(output_mode),
     }
 }
 
@@ -469,6 +531,7 @@ fn normalize_context_for_hash(output: &str) -> String {
         .map(|idx| &output[..idx])
         .unwrap_or(output);
     let mut normalized = String::new();
+    let mut skip_blank_after_source_note = false;
     for line in without_debug.lines() {
         let mut line = super::style::strip_ansi(line);
         strip_panel_right_border(&mut line);
@@ -494,8 +557,16 @@ fn normalize_context_for_hash(output: &str) -> String {
             }
         }
         let line_for_match = line.trim_start();
+        if skip_blank_after_source_note && line_for_match.trim().is_empty() {
+            skip_blank_after_source_note = false;
+            continue;
+        }
+        skip_blank_after_source_note = false;
+        if is_context_source_note_line(line_for_match) {
+            skip_blank_after_source_note = normalized.ends_with("\n\n");
+            continue;
+        }
         if is_visual_context_metadata_line(line_for_match)
-            || is_context_source_note_line(line_for_match)
             || line_for_match.starts_with("remem context source: ")
             || line_for_match.starts_with("REMEM_CONTEXT_SOURCE=")
         {

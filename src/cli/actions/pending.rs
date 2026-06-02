@@ -5,14 +5,13 @@ use crate::cli::types::PendingAction;
 use crate::db::{self, pending::admin::FailedPendingRow};
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
-    let conn = db::open_db()?;
-
     match action {
         PendingAction::ListFailed {
             project,
             limit,
             json,
         } => {
+            let conn = db::open_db_read_only()?;
             let rows = db::pending::admin::list_failed(&conn, project.as_deref(), limit)?;
             if json {
                 let output = PendingListFailedJson {
@@ -53,6 +52,7 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             dry_run,
         } => {
             if dry_run {
+                let conn = db::open_db_read_only()?;
                 let count = db::pending::admin::count_failed_retry_candidates(
                     &conn,
                     project.as_deref(),
@@ -60,6 +60,7 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                 )?;
                 println!("Would move {} failed rows back to pending.", count);
             } else {
+                let conn = db::open_db()?;
                 let count = db::pending::admin::retry_failed(&conn, project.as_deref(), limit)?;
                 println!("Moved {} failed rows back to pending.", count);
             }
@@ -70,6 +71,7 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             dry_run,
         } => {
             if dry_run {
+                let conn = db::open_db_read_only()?;
                 let count = db::pending::admin::count_failed_purge_candidates(
                     &conn,
                     project.as_deref(),
@@ -80,6 +82,7 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                     count, older_than_days
                 );
             } else {
+                let conn = db::open_db()?;
                 let count =
                     db::pending::admin::purge_failed(&conn, project.as_deref(), older_than_days)?;
                 println!(
