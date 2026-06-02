@@ -6,7 +6,7 @@ use rusqlite::{
 };
 use std::{
     fs::{self, OpenOptions},
-    io::ErrorKind,
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
     process,
     sync::atomic::{AtomicU64, Ordering},
@@ -45,7 +45,17 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
             });
         }
     };
-    if let Some(key) = crate::db::load_cipher_key() {
+    let clone_key = match clone_cipher_key_for_source(real_conn) {
+        Ok(key) => key,
+        Err(error) => {
+            return Ok(DryRunResult {
+                current_version,
+                pending_count: applied_pending_count(&applied),
+                error: Some(format!("database clone: {}", error)),
+            });
+        }
+    };
+    if let Some(key) = clone_key {
         if let Err(error) = crate::db::configure_cipher(&test_conn, Some(&key)) {
             return Ok(DryRunResult {
                 current_version,
@@ -153,6 +163,51 @@ fn clone_database(src: &Connection, dst: &mut Connection) -> Result<()> {
     let backup = Backup::new(src, dst)?;
     backup.run_to_completion(100, Duration::from_millis(1), None)?;
     Ok(())
+}
+
+fn clone_cipher_key_for_source(src: &Connection) -> Result<Option<String>> {
+    if source_database_looks_encrypted(src)? {
+        return Ok(crate::db::load_cipher_key());
+    }
+    Ok(None)
+}
+
+fn source_database_looks_encrypted(conn: &Connection) -> Result<bool> {
+    let mut stmt = conn.prepare("PRAGMA database_list")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+    for row in rows {
+        let (name, file) = row?;
+        if name != "main" {
+            continue;
+        }
+        let file = file.trim();
+        if file.is_empty() {
+            return Ok(false);
+        }
+        return sqlite_file_looks_encrypted(Path::new(file));
+    }
+    Ok(false)
+}
+
+fn sqlite_file_looks_encrypted(path: &Path) -> Result<bool> {
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect source database {}", path.display()));
+        }
+    };
+    let mut header = [0_u8; 16];
+    let read = file
+        .read(&mut header)
+        .with_context(|| format!("read source database header {}", path.display()))?;
+    if read < header.len() {
+        return Ok(false);
+    }
+    Ok(&header != b"SQLite format 3\0")
 }
 
 fn query_page_size(conn: &Connection) -> Result<i64> {
@@ -300,6 +355,24 @@ mod tests {
         );
         assert!(!sqlite_sidecar_path(&dry_run_path, "-wal").exists());
         assert!(!sqlite_sidecar_path(&dry_run_path, "-shm").exists());
+
+        cleanup_temp_db_files(&source_path);
+        Ok(())
+    }
+
+    #[test]
+    fn plaintext_source_database_does_not_request_cipher_clone() -> Result<()> {
+        let source_path = unique_temp_db_path("dry-run-plaintext-source");
+        {
+            let source = Connection::open(&source_path)?;
+            source.execute_batch(
+                "CREATE TABLE items (id INTEGER PRIMARY KEY);
+                 INSERT INTO items DEFAULT VALUES;",
+            )?;
+
+            assert!(!source_database_looks_encrypted(&source)?);
+            assert_eq!(clone_cipher_key_for_source(&source)?, None);
+        }
 
         cleanup_temp_db_files(&source_path);
         Ok(())

@@ -91,6 +91,12 @@ impl MemoryServer {
                 text: params.text.clone(),
                 title: params.title.clone(),
                 project: params.project.clone(),
+                session_id: params.session_id.clone(),
+                host: params
+                    .host
+                    .clone()
+                    .filter(|host| !host.trim().is_empty())
+                    .or_else(|| Some("codex-cli".to_string())),
                 topic_key: params.topic_key.clone(),
                 memory_type: params.memory_type.clone(),
                 files: params.files.clone(),
@@ -99,6 +105,12 @@ impl MemoryServer {
                 branch,
                 local_path: params.local_path.clone(),
                 local_copy_enabled: params.local_copy_enabled,
+                claim_enabled: params.claim_enabled,
+                claim_source: params
+                    .claim_source
+                    .clone()
+                    .filter(|source| !source.trim().is_empty())
+                    .or_else(|| Some("manual_save".to_string())),
             };
             let saved = service::save_memory(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
@@ -138,6 +150,9 @@ impl MemoryServer {
                     },
                     "local_status": saved.local_status,
                     "local_path": saved.local_path,
+                    "claim_status": saved.claim_status,
+                    "claim_id": saved.claim_id,
+                    "claim_error": saved.claim_error,
                     "next_step": {
                         "tool": saved.next_step.tool,
                         "ids": saved.next_step.ids,

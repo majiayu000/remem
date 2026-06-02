@@ -76,6 +76,12 @@ pub(super) struct SaveMemoryParams {
     #[schemars(description = "Project name")]
     pub project: Option<String>,
     #[schemars(
+        description = "Optional host session id. When provided, Stop summary promotion can suppress exact duplicate candidates from the same session."
+    )]
+    pub session_id: Option<String>,
+    #[schemars(description = "Optional host identifier, e.g. codex-cli, claude-code, api, cli.")]
+    pub host: Option<String>,
+    #[schemars(
         description = "Stable topic identifier for cross-session dedup. Same project+topic_key updates existing memory instead of creating new one. Format: kebab-case descriptive key, e.g. 'fts5-search-strategy', 'auth-middleware-design'."
     )]
     pub topic_key: Option<String>,
@@ -105,6 +111,14 @@ pub(super) struct SaveMemoryParams {
         description = "Override the local markdown backup toggle. Default behavior (when omitted) is controlled by the server config."
     )]
     pub local_copy_enabled: Option<bool>,
+    #[schemars(
+        description = "Override the session claim toggle. Defaults to true; set false to preserve legacy save behavior without claim rows."
+    )]
+    pub claim_enabled: Option<bool>,
+    #[schemars(
+        description = "Optional claim source label. Defaults to manual_save for MCP calls."
+    )]
+    pub claim_source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

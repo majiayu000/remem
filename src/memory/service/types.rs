@@ -40,6 +40,8 @@ pub struct SaveMemoryRequest {
     pub text: String,
     pub title: Option<String>,
     pub project: Option<String>,
+    pub session_id: Option<String>,
+    pub host: Option<String>,
     pub topic_key: Option<String>,
     pub memory_type: Option<String>,
     pub files: Option<Vec<String>>,
@@ -48,6 +50,8 @@ pub struct SaveMemoryRequest {
     pub branch: Option<String>,
     pub local_path: Option<String>,
     pub local_copy_enabled: Option<bool>,
+    pub claim_enabled: Option<bool>,
+    pub claim_source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,5 +87,8 @@ pub struct SaveMemoryResult {
     pub local_copy: LocalCopyResult,
     pub local_status: String,
     pub local_path: Option<String>,
+    pub claim_status: String,
+    pub claim_id: Option<i64>,
+    pub claim_error: Option<String>,
     pub next_step: SaveMemoryNextStep,
 }
