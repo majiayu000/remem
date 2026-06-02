@@ -162,46 +162,18 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
             pending_review: 0
         }
     );
-    let (candidate_id, review_status, owner_scope, owner_key, target_project, context_class): (
-        i64,
-        String,
-        String,
-        String,
-        String,
-        String,
-    ) = conn.query_row(
-        "SELECT id, review_status, owner_scope, owner_key, target_project, context_class
+    let (
+        candidate_id,
+        review_status,
+        owner_scope,
+        owner_key,
+        target_project,
+        context_class,
+        candidate_state_key,
+    ): (i64, String, String, String, String, String, String) = conn.query_row(
+        "SELECT id, review_status, owner_scope, owner_key, target_project, context_class, state_key
          FROM memory_candidates",
         [],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-            ))
-        },
-    )?;
-    assert_eq!(review_status, "auto_promoted");
-    assert_eq!(owner_scope, "repo");
-    assert_eq!(owner_key, "/tmp/remem");
-    assert_eq!(target_project, "/tmp/remem");
-    assert_eq!(context_class, "startup_core");
-    let (
-        memory_type,
-        topic_key,
-        evidence,
-        source_candidate_id,
-        confidence,
-        memory_owner_scope,
-        memory_owner_key,
-    ): (String, String, String, i64, f64, String, String) = conn.query_row(
-        "SELECT memory_type, topic_key, evidence_event_ids, source_candidate_id, confidence,
-                owner_scope, owner_key
-         FROM memories WHERE source_candidate_id = ?1",
-        params![candidate_id],
         |row| {
             Ok((
                 row.get(0)?,
@@ -214,6 +186,56 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
             ))
         },
     )?;
+    assert_eq!(review_status, "auto_promoted");
+    assert_eq!(owner_scope, "repo");
+    assert_eq!(owner_key, "/tmp/remem");
+    assert_eq!(target_project, "/tmp/remem");
+    assert_eq!(context_class, "startup_core");
+    assert_eq!(candidate_state_key, "decision-worker-loop");
+    let (
+        memory_id,
+        memory_type,
+        topic_key,
+        evidence,
+        source_candidate_id,
+        confidence,
+        memory_owner_scope,
+        memory_owner_key,
+        memory_state_key,
+        current_memory_id,
+    ): (
+        i64,
+        String,
+        String,
+        String,
+        i64,
+        f64,
+        String,
+        String,
+        String,
+        i64,
+    ) = conn.query_row(
+        "SELECT m.id, m.memory_type, m.topic_key, m.evidence_event_ids, m.source_candidate_id,
+                m.confidence, m.owner_scope, m.owner_key, sk.state_key, sk.current_memory_id
+         FROM memories m
+         JOIN memory_state_keys sk ON sk.id = m.state_key_id
+         WHERE m.source_candidate_id = ?1",
+        params![candidate_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+            ))
+        },
+    )?;
     assert_eq!(memory_type, "decision");
     assert_eq!(topic_key, "decision-worker-loop");
     assert_eq!(source_candidate_id, candidate_id);
@@ -221,6 +243,8 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
     assert_eq!(confidence, 0.92);
     assert_eq!(memory_owner_scope, "repo");
     assert_eq!(memory_owner_key, "/tmp/remem");
+    assert_eq!(memory_state_key, "decision-worker-loop");
+    assert_eq!(current_memory_id, memory_id);
     Ok(())
 }
 

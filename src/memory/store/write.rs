@@ -1,7 +1,8 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::search_context::build_search_context;
+use crate::memory::state_key::{self, StateKeyDecision};
 
 pub fn insert_memory(
     conn: &Connection,
@@ -72,10 +73,12 @@ pub fn insert_memory_full(
         crate::memory::lifecycle::ttl_metadata(memory_type, topic_key, content, now);
     let search_context = build_search_context(memory_type, topic_key, content, files);
     let ownership = default_ownership(project, scope);
+    let state_key = state_key::derive_state_key(memory_type, topic_key, title, content);
 
+    let mut existing_id = None;
     if let Some(topic_key) = topic_key {
         if !topic_key.is_empty() {
-            let existing_id: Option<i64> = conn
+            existing_id = conn
                 .query_row(
                     "SELECT id FROM memories
                      WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
@@ -83,80 +86,83 @@ pub fn insert_memory_full(
                     params![project, topic_key, scope],
                     |row| row.get(0),
                 )
-                .ok();
-
-            if let Some(id) = existing_id {
-                conn.execute(
-                    "UPDATE memories SET session_id = ?1, title = ?2, content = ?3, \
-                     memory_type = ?4, files = ?5, updated_at_epoch = ?6, branch = ?7, \
-                     scope = ?8, search_context = ?9, \
-                     status = 'active', valid_to_epoch = NULL, \
-                     expires_at_epoch = ?10, valid_from_epoch = ?11, \
-                     source_project = COALESCE(source_project, ?12), \
-                     target_project = COALESCE(target_project, ?13), \
-                     owner_scope = COALESCE(owner_scope, ?14), \
-                     owner_key = COALESCE(owner_key, ?15), \
-                     context_class = COALESCE(context_class, ?16) \
-                     WHERE id = ?17",
-                    params![
-                        session_id,
-                        title,
-                        content,
-                        memory_type,
-                        files,
-                        now,
-                        branch,
-                        scope,
-                        search_context,
-                        expires_at_epoch,
-                        valid_from_epoch,
-                        ownership.source_project,
-                        ownership.target_project,
-                        ownership.owner_scope,
-                        ownership.owner_key,
-                        ownership.context_class,
-                        id
-                    ],
-                )?;
-                refresh_memory_entities(conn, id, title, content, "entity link refresh failed");
-                return Ok(id);
-            }
+                .optional()?;
         }
     }
 
-    conn.execute(
-        "INSERT INTO memories \
-         (session_id, project, topic_key, title, content, memory_type, files, search_context, \
-          created_at_epoch, updated_at_epoch, status, branch, scope, \
-          source_project, target_project, owner_scope, owner_key, context_class, \
-          expires_at_epoch, valid_from_epoch) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, \
-                 ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-        params![
-            session_id,
-            project,
-            topic_key,
-            title,
-            content,
-            memory_type,
-            files,
-            search_context,
-            created_at,
-            now,
-            branch,
-            scope,
-            ownership.source_project,
-            ownership.target_project,
-            ownership.owner_scope,
-            ownership.owner_key,
-            ownership.context_class,
-            expires_at_epoch,
-            valid_from_epoch
-        ],
-    )?;
-    let id = conn.last_insert_rowid();
-    refresh_memory_entities(conn, id, title, content, "entity link failed");
-    Ok(id)
+    if existing_id.is_none() {
+        if let Some(decision) = &state_key {
+            existing_id = state_key::current_memory_id(
+                conn,
+                ownership.owner_scope,
+                ownership.owner_key,
+                memory_type,
+                &decision.state_key,
+            )?;
+        }
+    }
+
+    if let Some(id) = existing_id {
+        return with_memory_savepoint(conn, || {
+            update_existing_memory(
+                conn,
+                id,
+                session_id,
+                topic_key,
+                title,
+                content,
+                memory_type,
+                files,
+                branch,
+                scope,
+                &search_context,
+                expires_at_epoch,
+                valid_from_epoch,
+                &ownership,
+                state_key.as_ref(),
+                now,
+            )?;
+            refresh_memory_entities(conn, id, title, content, "entity link refresh failed");
+            Ok(id)
+        });
+    }
+
+    with_memory_savepoint(conn, || {
+        conn.execute(
+            "INSERT INTO memories \
+             (session_id, project, topic_key, title, content, memory_type, files, search_context, \
+              created_at_epoch, updated_at_epoch, status, branch, scope, \
+              source_project, target_project, owner_scope, owner_key, context_class, \
+              expires_at_epoch, valid_from_epoch) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, \
+                     ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                session_id,
+                project,
+                topic_key,
+                title,
+                content,
+                memory_type,
+                files,
+                search_context,
+                created_at,
+                now,
+                branch,
+                scope,
+                ownership.source_project,
+                ownership.target_project,
+                ownership.owner_scope,
+                ownership.owner_key,
+                ownership.context_class,
+                expires_at_epoch,
+                valid_from_epoch
+            ],
+        )?;
+        let id = conn.last_insert_rowid();
+        attach_state_key(conn, id, memory_type, &ownership, state_key.as_ref(), now)?;
+        refresh_memory_entities(conn, id, title, content, "entity link failed");
+        Ok(id)
+    })
 }
 
 struct DefaultOwnership<'a> {
@@ -183,6 +189,109 @@ fn default_ownership<'a>(project: &'a str, scope: &str) -> DefaultOwnership<'a> 
             owner_scope: "repo",
             owner_key: project,
             context_class: "startup_core",
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_existing_memory(
+    conn: &Connection,
+    id: i64,
+    session_id: Option<&str>,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+    search_context: &str,
+    expires_at_epoch: Option<i64>,
+    valid_from_epoch: Option<i64>,
+    ownership: &DefaultOwnership<'_>,
+    state_key: Option<&StateKeyDecision>,
+    now: i64,
+) -> Result<()> {
+    let state_key_id = attach_state_key(conn, id, memory_type, ownership, state_key, now)?;
+    conn.execute(
+        "UPDATE memories SET session_id = ?1, topic_key = ?2, title = ?3, content = ?4, \
+         memory_type = ?5, files = ?6, updated_at_epoch = ?7, branch = ?8, \
+         scope = ?9, search_context = ?10, \
+         status = 'active', valid_to_epoch = NULL, \
+         expires_at_epoch = ?11, valid_from_epoch = ?12, \
+         state_key_id = COALESCE(?13, state_key_id), \
+         source_project = COALESCE(source_project, ?14), \
+         target_project = COALESCE(target_project, ?15), \
+         owner_scope = COALESCE(owner_scope, ?16), \
+         owner_key = COALESCE(owner_key, ?17), \
+         context_class = COALESCE(context_class, ?18) \
+         WHERE id = ?19",
+        params![
+            session_id,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            files,
+            now,
+            branch,
+            scope,
+            search_context,
+            expires_at_epoch,
+            valid_from_epoch,
+            state_key_id,
+            ownership.source_project,
+            ownership.target_project,
+            ownership.owner_scope,
+            ownership.owner_key,
+            ownership.context_class,
+            id
+        ],
+    )?;
+    Ok(())
+}
+
+fn attach_state_key(
+    conn: &Connection,
+    id: i64,
+    memory_type: &str,
+    ownership: &DefaultOwnership<'_>,
+    state_key: Option<&StateKeyDecision>,
+    now: i64,
+) -> Result<Option<i64>> {
+    state_key
+        .map(|decision| {
+            state_key::attach_current_memory(
+                conn,
+                id,
+                ownership.owner_scope,
+                ownership.owner_key,
+                memory_type,
+                decision,
+                now,
+            )
+        })
+        .transpose()
+}
+
+fn with_memory_savepoint<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    conn.execute_batch("SAVEPOINT remem_memory_state_write")?;
+    match f() {
+        Ok(value) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_memory_state_write")?;
+            Ok(value)
+        }
+        Err(error) => {
+            let rollback = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_memory_state_write;
+                 RELEASE SAVEPOINT remem_memory_state_write;",
+            );
+            if let Err(rollback_error) = rollback {
+                return Err(error.context(format!(
+                    "memory state-key rollback also failed: {rollback_error}"
+                )));
+            }
+            Err(error)
         }
     }
 }

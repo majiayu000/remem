@@ -12,6 +12,7 @@ pub mod raw_archive;
 pub mod scope_cleanup;
 pub mod search_context;
 pub mod service;
+pub mod state_key;
 pub mod store;
 pub mod types;
 

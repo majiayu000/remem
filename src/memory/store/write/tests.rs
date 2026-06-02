@@ -142,6 +142,149 @@ fn test_topic_key_upsert_reactivates_archived_row() {
 }
 
 #[test]
+fn test_hash_like_ascii_preference_uses_existing_state_memory() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory_full(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("preference-11111111"),
+        "Preference",
+        "Keep verification status separate from data and code changes.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    let id2 = insert_memory_full(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("preference-22222222"),
+        "Preference",
+        "Report data and code changes separately from verification status.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    assert_eq!(id1, id2);
+    let (topic_key, state_key, current_memory_id): (String, String, i64) = conn.query_row(
+        "SELECT m.topic_key, sk.state_key, sk.current_memory_id
+             FROM memories m
+             JOIN memory_state_keys sk ON sk.id = m.state_key_id
+             WHERE m.id = ?1",
+        params![id1],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(topic_key, "preference-22222222");
+    assert_eq!(state_key, "verification-status-separation");
+    assert_eq!(current_memory_id, id1);
+
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 1);
+    Ok(())
+}
+
+#[test]
+fn test_hash_like_cjk_preference_uses_existing_state_memory() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory_full(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("preference-aaaaaaaa"),
+        "Preference",
+        "验证状态必须和数据、代码变更分开说明。",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    let id2 = insert_memory_full(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("preference-bbbbbbbb"),
+        "Preference",
+        "用户要求数据和代码变更要与验证状态分离报告。",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    assert_eq!(id1, id2);
+    let state_key: String = conn.query_row(
+        "SELECT sk.state_key
+             FROM memories m
+             JOIN memory_state_keys sk ON sk.id = m.state_key_id
+             WHERE m.id = ?1",
+        params![id1],
+        |row| row.get(0),
+    )?;
+    assert_eq!(state_key, "verification-status-separation");
+    Ok(())
+}
+
+#[test]
+fn test_same_state_key_text_keeps_distinct_owner_rows() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let content = "Keep verification status separate from data and code changes.";
+
+    let user_id = insert_memory_full(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("preference-11111111"),
+        "Preference",
+        content,
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    let repo_id = insert_memory_full(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("preference-22222222"),
+        "Preference",
+        content,
+        "preference",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+
+    assert_ne!(user_id, repo_id);
+    let state_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_state_keys
+             WHERE state_key = 'verification-status-separation'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(state_rows, 2);
+    Ok(())
+}
+
+#[test]
 fn test_created_at_override() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
