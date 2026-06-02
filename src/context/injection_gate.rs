@@ -469,15 +469,56 @@ fn normalize_context_for_hash(output: &str) -> String {
         .map(|idx| &output[..idx])
         .unwrap_or(output);
     let mut normalized = String::new();
-    for (idx, line) in without_debug.lines().enumerate() {
-        if idx == 0 {
+    for line in without_debug.lines() {
+        let mut line = super::style::strip_ansi(line);
+        strip_panel_right_border(&mut line);
+        let line = line.as_str();
+        if normalized.is_empty() && line.trim().is_empty() {
+            continue;
+        }
+        if normalized.is_empty() {
+            if matches!(line, "# remem context" | "# remem context delta")
+                || matches!(line, "remem context" | "remem context delta")
+                || line.starts_with("╭─ remem context")
+                || line.starts_with("╭─ remem context delta")
+                || line.starts_with("┌─ remem context")
+                || line.starts_with("┌─ remem context delta")
+            {
+                normalized.push_str("# remem context\n");
+                continue;
+            }
             if let Some(prefix_end) = line.find("] context ") {
                 normalized.push_str(&line[..prefix_end + "] context ".len()]);
                 normalized.push_str("<timestamp>\n");
                 continue;
             }
         }
-        if line.starts_with("remem context source: ") || line.starts_with("REMEM_CONTEXT_SOURCE=") {
+        let line_for_match = line.trim_start();
+        if line_for_match.starts_with("- updated: ")
+            || line_for_match.starts_with("│ updated: ")
+            || line_for_match.starts_with("└─ updated: ")
+            || line_for_match.starts_with("- source: ")
+            || line_for_match.starts_with("│ source: ")
+            || line_for_match.starts_with("├─ source: ")
+            || is_context_source_note_line(line_for_match)
+            || line_for_match.starts_with("remem context source: ")
+            || line_for_match.starts_with("REMEM_CONTEXT_SOURCE=")
+        {
+            continue;
+        }
+        if line_for_match.starts_with("╭─ Loaded") {
+            normalized.push_str("## Loaded\n");
+            continue;
+        }
+        if line_for_match.starts_with("┌─ Loaded") {
+            normalized.push_str("## Loaded\n");
+            continue;
+        }
+        if line_for_match == "Loaded" {
+            normalized.push_str("## Loaded\n");
+            continue;
+        }
+        if line_for_match.starts_with('╰') && line_for_match.ends_with('╯') {
             continue;
         }
         normalized.push_str(&normalize_stats_footer_totals(line));
@@ -486,12 +527,37 @@ fn normalize_context_for_hash(output: &str) -> String {
     normalized
 }
 
+fn is_context_source_note_line(line: &str) -> bool {
+    matches!(
+        line,
+        "Codex compacted the chat, so remem refreshed memory context."
+            | "Context was reloaded after an explicit clear."
+    )
+}
+
+fn strip_panel_right_border(line: &mut String) {
+    if line.starts_with("│ ") && line.ends_with('│') {
+        line.pop();
+        while line.ends_with(' ') {
+            line.pop();
+        }
+    } else if let Some(stripped) = line.strip_prefix("├─ ") {
+        *line = format!("│ {stripped}");
+    } else if let Some(stripped) = line.strip_prefix("└─ ") {
+        *line = format!("│ {stripped}");
+    }
+}
+
 fn normalize_stats_footer_totals(line: &str) -> String {
+    if let Some(normalized) = normalize_budget_footer_line(line) {
+        return normalized;
+    }
+
     const TOTAL_PREFIX: &str = " total=";
     const CHARS_TOKEN: &str = " chars/~";
     const TOKENS_SUFFIX: &str = " tokens";
 
-    if !is_context_stats_footer(line) {
+    if !is_legacy_context_stats_footer_line(line) {
         return line.to_string();
     }
 
@@ -531,12 +597,72 @@ fn normalize_stats_footer_totals(line: &str) -> String {
     normalized
 }
 
-fn is_context_stats_footer(line: &str) -> bool {
+fn normalize_budget_footer_line(line: &str) -> Option<String> {
+    let prefix = if line.starts_with("- Budget: ") {
+        "- Budget: "
+    } else if line.starts_with("│ Budget: ") {
+        "│ Budget: "
+    } else {
+        return None;
+    };
+    const CHARS_TOKEN: &str = " chars (~";
+    const TOKENS_SUFFIX: &str = " tokens)";
+
+    let char_value_start = prefix.len();
+    let chars_offset = line.strip_prefix(prefix)?.find(CHARS_TOKEN)?;
+    let char_value_end = char_value_start + chars_offset;
+    if !line[char_value_start..char_value_end]
+        .chars()
+        .all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let token_value_start = char_value_end + CHARS_TOKEN.len();
+    let tokens_offset = line[token_value_start..].find(TOKENS_SUFFIX)?;
+    let token_value_end = token_value_start + tokens_offset;
+    if !line[token_value_start..token_value_end]
+        .chars()
+        .all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let mut normalized = String::with_capacity(line.len());
+    normalized.push_str(&line[..char_value_start]);
+    normalized.push_str("<total>");
+    normalized.push_str(CHARS_TOKEN);
+    normalized.push_str("<tokens>");
+    normalized.push_str(&line[token_value_end..]);
+    Some(normalized)
+}
+
+fn is_legacy_context_stats_footer_line(line: &str) -> bool {
     line.contains(" context memories loaded. ")
         && line.contains(" host=")
         && line.contains(" branch=")
         && line.contains(" total=")
         && line.contains(" truncated=")
+}
+
+fn is_context_stats_footer(text: &str) -> bool {
+    let text = super::style::strip_ansi(text);
+    (text.starts_with("## Loaded\n")
+        && text.contains("\n- Memories: ")
+        && text.contains("\n- Preferences: ")
+        && text.contains("\n- Budget: "))
+        || (text.starts_with("╭─ Loaded")
+            && text.contains("\n│ Memories: ")
+            && text.contains("\n│ Preferences: ")
+            && text.contains("\n│ Budget: "))
+        || (text.starts_with("┌─ Loaded")
+            && text.contains("\n├─ Memories: ")
+            && text.contains("\n├─ Preferences: ")
+            && text.contains("\n└─ Budget: "))
+        || (text.starts_with("Loaded\n")
+            && text.contains("\n├─ Memories: ")
+            && text.contains("\n├─ Preferences: ")
+            && text.contains("\n└─ Budget: "))
 }
 
 fn sha256_hex(value: &str) -> String {

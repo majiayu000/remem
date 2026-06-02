@@ -410,23 +410,28 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
         truncated: true,
     });
 
-    assert!(footer.contains("7 context memories loaded"));
-    assert!(footer.contains("2 core (430 chars)"));
-    assert!(footer.contains("1 lessons (180 chars)"));
-    assert!(footer.contains("3 preferences (project:2 global:1"));
-    assert!(footer.contains("host=codex-cli"));
-    assert!(footer.contains("source=compact"));
-    assert!(footer.contains("branch=fix/context"));
-    assert!(footer.contains("total=3200 chars/~800 tokens"));
-    assert!(footer.contains("truncated=yes"));
+    assert!(footer.starts_with("\nLoaded"));
+    assert!(footer.contains("├─ Memories: 7 total, 2 core, 1 lessons, 5 indexed"));
+    assert!(footer.contains("├─ Preferences: 3 total, 2 project, 1 global"));
+    assert!(footer.contains("├─ Sessions: 4"));
+    assert!(footer.contains("├─ Workstreams: 1"));
+    assert!(footer.contains("└─ Budget: 3200 chars (~800 tokens) / 12000, truncated: yes"));
+    assert!(!footer.contains('╮'));
+    assert!(!footer.contains('╯'));
+    assert!(!footer.contains("owners repo="));
 }
 
 #[test]
 fn context_header_marks_compact_reload_visibly() {
     let header = build_context_header("/tmp/remem", Some("main"), Some("compact"));
 
-    assert!(header.starts_with("# [/tmp/remem @main] context "));
-    assert!(header.contains("[REMEM POST-COMPACT RELOAD]"));
+    assert!(header.starts_with("remem context"));
+    assert!(header.contains("├─ project: /tmp/remem"));
+    assert!(header.contains("├─ branch: main"));
+    assert!(header.contains("├─ source: compact"));
+    assert!(header.contains("└─ updated: "));
+    assert!(!header.contains('╮'));
+    assert!(!header.contains('╯'));
 }
 
 #[test]
@@ -441,10 +446,48 @@ fn empty_context_marks_compact_reload_visibly() {
         use_colors: false,
     });
 
-    assert!(output.starts_with("# [/tmp/remem @main] context "));
-    assert!(output.contains("[REMEM POST-COMPACT RELOAD]"));
-    assert!(output.contains("REMEM_CONTEXT_SOURCE=compact"));
+    assert!(output.starts_with("remem context"));
+    assert!(output.contains("├─ source: compact"));
+    assert!(output.contains("Codex compacted the chat, so remem refreshed memory context."));
     assert!(output.contains("No previous sessions found."));
+}
+
+#[test]
+fn empty_context_uses_ansi_when_color_enabled() {
+    let output = empty_context_output(&ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: None,
+        hook_source: Some("compact".to_string()),
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: true,
+    });
+
+    assert!(output.starts_with("\x1b[1;36mremem context\x1b[0m"));
+    assert!(output.contains("\x1b[1;36mremem context\x1b[0m"));
+    assert!(output.contains("├─ \x1b[1mproject\x1b[0m: /tmp/remem"));
+}
+
+#[test]
+fn codex_colored_header_aligns_rows_under_hook_context_value() {
+    let output = empty_context_output(&ContextRequest {
+        cwd: "/tmp/remem".to_string(),
+        project: "/tmp/remem".to_string(),
+        session_id: None,
+        hook_source: None,
+        current_branch: Some("main".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: true,
+    });
+    let plain = super::super::style::strip_ansi(&output);
+    let mut lines = plain.lines();
+
+    assert_eq!(lines.next(), Some("remem context"));
+    let project_line = lines.next().unwrap_or_default();
+    assert!(project_line.ends_with("├─ project: /tmp/remem"));
+    let row_indent = project_line.chars().take_while(|ch| *ch == ' ').count();
+    assert_eq!(row_indent, "hook context: ".chars().count());
 }
 
 #[test]

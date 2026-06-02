@@ -9,6 +9,7 @@ mod policy;
 mod query;
 mod render;
 mod sections;
+mod style;
 
 #[cfg(test)]
 mod tests;

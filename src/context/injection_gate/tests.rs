@@ -54,6 +54,14 @@ fn fingerprint_ignores_context_source_note() {
 }
 
 #[test]
+fn fingerprint_ignores_indented_terminal_header_source_and_timestamp() {
+    let a = "remem context\n              ├─ project: /tmp/remem\n              ├─ source: compact\n              └─ updated: 2026-06-02 6:44pm +08:00\nBody\n";
+    let b = "remem context\n              ├─ project: /tmp/remem\n              ├─ source: compact\n              └─ updated: 2026-06-02 6:45pm +08:00\nBody\n";
+
+    assert_eq!(context_fingerprint(a), context_fingerprint(b));
+}
+
+#[test]
 fn fingerprint_keeps_non_footer_total_text() {
     let a = "# [/tmp/remem] context now\nBody total=100 chars/~25 tokens\n";
     let b = "# [/tmp/remem] context now\nBody total=101 chars/~26 tokens\n";
