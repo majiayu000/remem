@@ -91,10 +91,16 @@ pub fn load_trace_by_topic_key(
         "SELECT id, topic_key, title, summary, status, segment_index,
                 covered_from_event_id, covered_to_event_id, evidence_event_ids,
                 files, created_at_epoch, updated_at_epoch
-         FROM topic_segments
-         WHERE project = ?1 AND topic_key = ?2
-         ORDER BY covered_from_event_id ASC, segment_index ASC, id ASC
-         LIMIT ?3",
+         FROM (
+             SELECT id, topic_key, title, summary, status, segment_index,
+                    covered_from_event_id, covered_to_event_id, evidence_event_ids,
+                    files, created_at_epoch, updated_at_epoch
+             FROM topic_segments
+             WHERE project = ?1 AND topic_key = ?2
+             ORDER BY covered_from_event_id DESC, segment_index DESC, id DESC
+             LIMIT ?3
+         )
+         ORDER BY covered_from_event_id ASC, segment_index ASC, id ASC",
     )?;
     let rows = stmt.query_map(params![project, topic_key, limit.max(1)], |row| {
         let evidence_json: String = row.get(8)?;
@@ -236,6 +242,30 @@ mod tests {
         assert_eq!(trace[0].covered_from_event_id, 100);
         assert_eq!(trace[1].covered_from_event_id, 3056);
         assert_eq!(trace[1].evidence_event_ids, vec![3056, 3466]);
+        Ok(())
+    }
+
+    #[test]
+    fn trace_limit_keeps_recent_segments_and_returns_chronologically() -> Result<()> {
+        let conn = conn();
+        for offset in 0..15 {
+            let event_id = 100 + offset;
+            let evidence = format!("[{event_id}]");
+            insert_topic_segment(
+                &conn,
+                &seg(offset, "release-plan", event_id, event_id, &evidence),
+            )?;
+        }
+
+        let trace = load_trace_by_topic_key(&conn, "/tmp/remem", "release-plan", 12)?;
+        let event_ids = trace
+            .iter()
+            .map(|entry| entry.covered_from_event_id)
+            .collect::<Vec<_>>();
+        assert_eq!(trace.len(), 12);
+        assert_eq!(event_ids[0], 103);
+        assert_eq!(event_ids[11], 114);
+        assert!(event_ids.windows(2).all(|pair| pair[0] < pair[1]));
         Ok(())
     }
 }

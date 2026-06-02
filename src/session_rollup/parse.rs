@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{anyhow, Context, Result};
 
 use super::RollupRange;
@@ -126,14 +128,20 @@ fn parse_segment(
     if evidence_event_ids.is_empty() {
         return Err(anyhow!("segment has empty evidence_event_ids"));
     }
-    if evidence_event_ids
+    let loaded_event_ids = range
+        .events
         .iter()
-        .any(|event_id| *event_id < range.from_event_id || *event_id > range.to_event_id)
-    {
+        .map(|event| event.id)
+        .collect::<HashSet<_>>();
+    let missing_event_ids = evidence_event_ids
+        .iter()
+        .copied()
+        .filter(|event_id| !loaded_event_ids.contains(event_id))
+        .collect::<Vec<_>>();
+    if !missing_event_ids.is_empty() {
         return Err(anyhow!(
-            "evidence_event_ids outside covered range {}..{}",
-            range.from_event_id,
-            range.to_event_id
+            "evidence_event_ids absent from loaded rollup events: {:?}",
+            missing_event_ids
         ));
     }
     let covered_from_event_id = evidence_event_ids[0];
@@ -243,20 +251,24 @@ mod tests {
     use super::*;
     use crate::session_rollup::{RollupEvent, RollupRange};
 
+    fn event(id: i64) -> RollupEvent {
+        RollupEvent {
+            id,
+            event_type: "tool_result".to_string(),
+            role: None,
+            tool_name: None,
+            content: format!("content {id}"),
+            token_estimate: 1,
+            created_at_epoch: 100 + id,
+            turn_id: None,
+        }
+    }
+
     fn range() -> RollupRange {
         RollupRange {
             from_event_id: 10,
             to_event_id: 20,
-            events: vec![RollupEvent {
-                id: 10,
-                event_type: "tool_result".to_string(),
-                role: None,
-                tool_name: None,
-                content: "content".to_string(),
-                token_estimate: 1,
-                created_at_epoch: 100,
-                turn_id: None,
-            }],
+            events: vec![event(10), event(11), event(14), event(20)],
         }
     }
 
@@ -289,6 +301,26 @@ mod tests {
         assert_eq!(parsed.segments[0].covered_from_event_id, 10);
         assert_eq!(parsed.segments[0].covered_to_event_id, 20);
         assert_eq!(parsed.segments[1].evidence_event_ids, vec![11, 14]);
+        Ok(())
+    }
+
+    #[test]
+    fn drops_segment_with_evidence_event_absent_from_loaded_events() -> Result<()> {
+        let parsed = parse_rollup_response(
+            r#"<summary>done</summary>
+            <segments>
+            <segment topic_key="interleaved-session" status="open">
+              <title>Interleaved session</title>
+              <summary>Should not attach unrelated evidence.</summary>
+              <evidence_event_ids>10,15,20</evidence_event_ids>
+              <from_event_id>10</from_event_id>
+              <to_event_id>20</to_event_id>
+            </segment>
+            </segments>"#,
+            &range(),
+        )?;
+
+        assert!(parsed.segments.is_empty());
         Ok(())
     }
 

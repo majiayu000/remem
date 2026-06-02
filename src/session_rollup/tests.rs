@@ -162,6 +162,84 @@ async fn session_rollup_persists_topic_segments() -> Result<()> {
 }
 
 #[tokio::test]
+async fn session_rollup_persists_later_same_topic_segments_in_session() -> Result<()> {
+    let mut conn = setup_conn();
+    capture(&conn, "sess-continuing-topic", "tool_result", "first range")?;
+    let first_task = claim_rollup_task(&mut conn)?;
+    let first_event_id = first_task.high_watermark_event_id.unwrap_or_default();
+
+    let first = process_with_summarizer(&mut conn, &first_task, move |_prompt| async move {
+        Ok(xml_response(
+            "first summary",
+            &format!(
+                r#"<segment topic_key="topic-continuity" status="open">
+                   <title>Topic continuity</title>
+                   <summary>Initial progress.</summary>
+                   <evidence_event_ids>{first_event_id}</evidence_event_ids>
+                   <from_event_id>{first_event_id}</from_event_id>
+                   <to_event_id>{first_event_id}</to_event_id>
+                   </segment>"#
+            ),
+        ))
+    })
+    .await?;
+    assert_eq!(first, SessionRollupResult::Written);
+    db::mark_extraction_task_done(
+        &conn,
+        first_task.id,
+        "worker-a",
+        first_task.high_watermark_event_id,
+    )?;
+
+    capture(
+        &conn,
+        "sess-continuing-topic",
+        "tool_result",
+        "second range same topic",
+    )?;
+    let second_task = claim_rollup_task(&mut conn)?;
+    let second_event_id = second_task.high_watermark_event_id.unwrap_or_default();
+    assert_eq!(second_task.cursor_event_id, Some(first_event_id));
+
+    let second = process_with_summarizer(&mut conn, &second_task, move |_prompt| async move {
+        Ok(xml_response(
+            "second summary",
+            &format!(
+                r#"<segment topic_key="topic-continuity" status="open">
+                   <title>Topic continuity</title>
+                   <summary>Follow-up progress.</summary>
+                   <evidence_event_ids>{second_event_id}</evidence_event_ids>
+                   <from_event_id>{second_event_id}</from_event_id>
+                   <to_event_id>{second_event_id}</to_event_id>
+                   </segment>"#
+            ),
+        ))
+    })
+    .await?;
+    assert_eq!(second, SessionRollupResult::Written);
+
+    let mut stmt = conn.prepare(
+        "SELECT covered_from_event_id, summary
+         FROM topic_segments
+         WHERE topic_key = 'topic-continuity'
+         ORDER BY covered_from_event_id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(
+        rows,
+        vec![
+            (first_event_id, "Initial progress.".to_string()),
+            (second_event_id, "Follow-up progress.".to_string())
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_rollup_drops_out_of_range_segment_but_keeps_summary() -> Result<()> {
     let mut conn = setup_conn();
     capture(&conn, "sess-invalid-segment", "tool_result", "one")?;

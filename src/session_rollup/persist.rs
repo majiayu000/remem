@@ -49,9 +49,6 @@ pub(super) fn persist_session_rollup(
     )?;
 
     for segment in &output.segments {
-        if db::topic_segment_exists(&tx, session_row_id, &segment.topic_key)? {
-            continue;
-        }
         let evidence_json = serde_json::to_string(&segment.evidence_event_ids)?;
         let files_json = if segment.files.is_empty() {
             None
