@@ -30,6 +30,7 @@ pub mod observe;
 pub mod project_id;
 pub mod retrieval;
 mod session_rollup;
+mod session_rollup_segments;
 pub mod summarize;
 pub mod timeline;
 pub mod worker;

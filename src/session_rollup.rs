@@ -9,7 +9,25 @@ use crate::memory::format::xml_escape_text;
 const SESSION_ROLLUP_SYSTEM: &str = "\
 You summarize captured development-session events for a memory system.
 Use only the provided events. Preserve concrete facts, decisions, commands,
-files, errors, and outcomes. Do not invent missing details.";
+files, errors, and outcomes. Do not invent missing details.
+ALSO split the events into coherent topic segments. A topic segment is a
+continuous stretch of work on one goal/problem/file set. Use the gap_before
+(seconds since the previous event), type, and tool hints to find boundaries,
+but you decide the real topic boundary. topic_key must be stable kebab-case,
+consistent across sessions; from/to_event_id must stay within the covered range.
+Output EXACTLY this and nothing else:
+<summary>overall session summary</summary>
+<segments>
+  <segment>
+    <topic_key>stable-kebab-case</topic_key>
+    <status>open|resolved|superseded</status>
+    <title>short title</title>
+    <summary>what happened in this segment</summary>
+    <from_event_id>N</from_event_id>
+    <to_event_id>M</to_event_id>
+    <files>a.rs, b.rs</files>
+  </segment>
+</segments>";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionRollupResult {
@@ -72,9 +90,53 @@ where
     }
 
     let prompt = build_rollup_prompt(task, &range);
-    let summary_text = summarize(prompt).await?;
+    let response = summarize(prompt).await?;
+    // Back-compat: if the model omits <summary>, treat the whole response as
+    // the summary (old behavior before segments were introduced).
+    let summary_text = crate::memory::format::extract_field(&response, "summary")
+        .unwrap_or_else(|| response.clone());
     persist_session_rollup(conn, task, &range, &summary_text)?;
+    persist_rollup_segments(conn, task, &range, &response);
     Ok(SessionRollupResult::Written)
+}
+
+/// Parse and persist Topic Loom segments (Phase 1.3). Segment failures are
+/// warned, not propagated — the summary is the primary output and must not be
+/// lost because a segment could not be parsed or stored.
+fn persist_rollup_segments(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+    response: &str,
+) {
+    let Some(session_row_id) = task.session_row_id else {
+        return;
+    };
+    let segments = crate::session_rollup_segments::parse_segments(
+        response,
+        range.from_event_id,
+        range.to_event_id,
+    );
+    if segments.is_empty() {
+        return;
+    }
+    match crate::session_rollup_segments::persist_segments(
+        conn,
+        task.host_id,
+        task.project_id,
+        session_row_id,
+        &task.project,
+        &segments,
+    ) {
+        Ok(count) => crate::log::info(
+            "topic-segments",
+            &format!("session={session_row_id} persisted_segments={count}"),
+        ),
+        Err(error) => crate::log::warn(
+            "topic-segments",
+            &format!("session={session_row_id} persist failed: {error}"),
+        ),
+    }
 }
 
 fn load_rollup_range(conn: &Connection, task: &db::ExtractionTask) -> Result<Option<RollupRange>> {
@@ -220,10 +282,14 @@ fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange) -> String
         range.from_event_id,
         range.to_event_id
     );
+    let mut prev_epoch: Option<i64> = None;
     for event in &range.events {
+        // A辅信号：与上一个事件的时间间隔（秒），帮 LLM 找话题边界（Phase 0 验证有效）。
+        let gap_before = prev_epoch.map_or(0, |prev| (event.created_at_epoch - prev).max(0));
+        prev_epoch = Some(event.created_at_epoch);
         prompt.push_str(&format!(
-            "<event id=\"{}\" type=\"{}\" created_at_epoch=\"{}\" tokens=\"{}\"",
-            event.id, event.event_type, event.created_at_epoch, event.token_estimate
+            "<event id=\"{}\" type=\"{}\" created_at_epoch=\"{}\" gap_before=\"{}\" tokens=\"{}\"",
+            event.id, event.event_type, event.created_at_epoch, gap_before, event.token_estimate
         ));
         if let Some(role) = event.role.as_deref() {
             prompt.push_str(&format!(" role=\"{}\"", xml_attr(role)));
@@ -428,6 +494,45 @@ mod tests {
         })
         .await?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_rollup_persists_topic_segments() -> Result<()> {
+        let mut conn = setup_conn();
+        capture(&conn, "sess-seg", "tool_result", "worked on fts5 tokenizer")?;
+        let task = claim_rollup_task(&mut conn)?;
+        let (from, to): (i64, i64) = conn.query_row(
+            "SELECT MIN(id), MAX(id) FROM captured_events",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let response = format!(
+            "<summary>overall</summary>\n<segments>\n<segment>\n\
+             <topic_key>fts5-tokenizer</topic_key>\n<status>resolved</status>\n\
+             <title>t</title>\n<summary>s</summary>\n\
+             <from_event_id>{from}</from_event_id>\n<to_event_id>{to}</to_event_id>\n\
+             </segment>\n</segments>"
+        );
+        let result =
+            process_with_summarizer(&mut conn, &task, move |_prompt| async move { Ok(response) })
+                .await?;
+        assert_eq!(result, SessionRollupResult::Written);
+
+        // <summary> is extracted as the session summary, not the whole response.
+        let summary: String =
+            conn.query_row("SELECT summary_text FROM session_summaries", [], |r| r.get(0))?;
+        assert_eq!(summary, "overall");
+
+        // The topic segment was persisted to topic_segments.
+        let session_row_id = task.session_row_id.expect("session row id");
+        let (count, topic_key): (i64, String) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(topic_key), '') FROM topic_segments WHERE session_row_id = ?1",
+            params![session_row_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(count, 1);
+        assert_eq!(topic_key, "fts5-tokenizer");
         Ok(())
     }
 }
