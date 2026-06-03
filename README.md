@@ -98,7 +98,10 @@ tools exposed by `remem mcp`, including `search`, `get_observations`,
 
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.
-It does not install high-frequency Bash observation by default.
+The installed Codex `SessionStart` hook uses strict duplicate-injection gating,
+so a mid-chat `SessionStart` repeat stays silent after the first injection for
+the same session. It does not install high-frequency Bash observation by
+default.
 
 ## Distribution Channels
 

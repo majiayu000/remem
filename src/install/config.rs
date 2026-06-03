@@ -57,11 +57,16 @@ impl HookStrategy {
 
 fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
     if subcommand == "context" {
+        let gate_arg = match strategy {
+            HookStrategy::Codex => " --gate strict",
+            HookStrategy::ClaudeCode => "",
+        };
         format!(
-            "REMEM_CONTEXT_HOST={} {} {} --color",
+            "REMEM_CONTEXT_HOST={} {} {} --color{}",
             strategy.context_host(),
             bin,
-            subcommand
+            subcommand,
+            gate_arg
         )
     } else if subcommand == "summarize" {
         format!(

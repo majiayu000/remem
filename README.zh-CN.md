@@ -94,7 +94,9 @@ remem status
 `search`、`get_observations`、`save_memory`、`workstreams` 和 `timeline`。
 
 默认 Codex 集成刻意保持低噪音：用 `SessionStart` 注入上下文，用 `Stop`
-做后台总结；默认不安装高频 Bash observe hook。
+做后台总结。安装后的 Codex `SessionStart` hook 使用 strict duplicate-injection
+gate，所以同一 session 里中途重复触发的 `SessionStart` 会在首次注入后保持静默；
+默认不安装高频 Bash observe hook。
 
 ## 发布渠道
 

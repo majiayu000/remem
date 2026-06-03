@@ -285,6 +285,27 @@ fn compact_source_changed_hash_emits_delta() {
 }
 
 #[test]
+fn strict_mode_suppresses_changed_hash_after_first_context() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-strict-changed");
+    let mut invocation = gate_invocation(Some("sess-strict-changed"));
+    invocation.gate_mode = Some("strict".to_string());
+
+    let first = apply_context_gate(
+        &invocation,
+        "# [/tmp/remem] context now\nBody A\n".to_string(),
+    );
+    assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+    let second = apply_context_gate(
+        &invocation,
+        "# [/tmp/remem] context now\nBody B\n".to_string(),
+    );
+    assert_eq!(second.action, ContextGateAction::Suppressed);
+    assert_eq!(second.reason, "strict");
+    assert!(second.output.is_empty());
+}
+
+#[test]
 fn restart_source_reemits_same_hash_context() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-restart");
     let mut invocation = gate_invocation(Some("sess-restart"));
