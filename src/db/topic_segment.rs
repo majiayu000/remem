@@ -72,6 +72,52 @@ pub fn topic_segment_exists(
     Ok(found.is_some())
 }
 
+/// One segment row in a topic trace (Trace Weaver, read side).
+#[derive(Debug, Clone)]
+pub struct TopicSegmentRow {
+    pub id: i64,
+    pub session_row_id: i64,
+    pub topic_key: String,
+    pub title: String,
+    pub summary: String,
+    pub status: String,
+    pub covered_from_event_id: i64,
+    pub covered_to_event_id: i64,
+    pub created_at_epoch: i64,
+}
+
+/// Load every segment for a topic in one project, time-ordered into a trace.
+/// Dynamic aggregation — no materialized table (SPEC §4.2 Trace Weaver).
+pub fn load_trace_by_topic_key(
+    conn: &Connection,
+    project: &str,
+    topic_key: &str,
+) -> Result<Vec<TopicSegmentRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, session_row_id, topic_key, title, summary, status, \
+                covered_from_event_id, covered_to_event_id, created_at_epoch \
+         FROM topic_segments \
+         WHERE project = ?1 AND topic_key = ?2 \
+         ORDER BY covered_from_event_id ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![project, topic_key], |row| {
+            Ok(TopicSegmentRow {
+                id: row.get(0)?,
+                session_row_id: row.get(1)?,
+                topic_key: row.get(2)?,
+                title: row.get(3)?,
+                summary: row.get(4)?,
+                status: row.get(5)?,
+                covered_from_event_id: row.get(6)?,
+                covered_to_event_id: row.get(7)?,
+                created_at_epoch: row.get(8)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +184,41 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 2, "overlapping segments must coexist");
+        Ok(())
+    }
+
+    /// Trace Weaver: same topic_key across sessions, inserted out of order,
+    /// is returned time-ordered; other topics are excluded.
+    #[test]
+    fn load_trace_orders_segments_across_sessions() -> Result<()> {
+        let conn = conn();
+        let mk = |session: i64, from: i64, to: i64| TopicSegmentInput {
+            host_id: 1,
+            project_id: 1,
+            session_row_id: session,
+            project: "/tmp/remem",
+            topic_key: "fts5-tokenizer",
+            title: "t",
+            summary: "s",
+            status: "open",
+            segment_index: 0,
+            covered_from_event_id: from,
+            covered_to_event_id: to,
+            evidence_event_ids: "[]",
+            files: None,
+            confidence: 0.75,
+        };
+        insert_topic_segment(&conn, &mk(9, 300, 310))?;
+        insert_topic_segment(&conn, &mk(7, 100, 110))?;
+        insert_topic_segment(&conn, &mk(8, 200, 210))?;
+        let mut other = mk(7, 50, 60);
+        other.topic_key = "unrelated";
+        insert_topic_segment(&conn, &other)?;
+
+        let trace = load_trace_by_topic_key(&conn, "/tmp/remem", "fts5-tokenizer")?;
+        let froms: Vec<i64> = trace.iter().map(|s| s.covered_from_event_id).collect();
+        assert_eq!(froms, vec![100, 200, 300], "trace ordered by event id across sessions");
+        assert!(trace.iter().all(|s| s.topic_key == "fts5-tokenizer"));
         Ok(())
     }
 }
