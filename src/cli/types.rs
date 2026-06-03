@@ -317,6 +317,14 @@ pub(super) enum Commands {
         #[arg(long)]
         branch: Option<String>,
     },
+    /// Show the time-ordered trace of one topic across sessions.
+    Trace {
+        /// Topic key to trace.
+        topic_key: String,
+        /// Restrict to one project path (defaults to current).
+        #[arg(long, short)]
+        project: Option<String>,
+    },
     /// Run the golden retrieval evaluation dataset.
     Eval {
         /// Golden dataset path.

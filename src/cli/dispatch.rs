@@ -6,7 +6,8 @@ use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_entities, run_cleanup, run_commit,
     run_dream, run_encrypt, run_eval, run_eval_e2e, run_eval_governance, run_eval_local,
     run_governance, run_import, run_merge_preferences, run_pending, run_preferences, run_reroute,
-    run_review, run_search, run_show, run_status, run_usage, run_why, GovernanceCliRequest,
+    run_review, run_search, run_show, run_status, run_trace, run_usage, run_why,
+    GovernanceCliRequest,
     RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
@@ -183,6 +184,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             project,
             branch,
         } => run_why(id, project.as_deref(), branch.as_deref())?,
+        Commands::Trace { topic_key, project } => run_trace(&topic_key, project.as_deref())?,
         Commands::Eval { dataset, k } => run_eval(&dataset, k)?,
         Commands::EvalE2e {
             k,

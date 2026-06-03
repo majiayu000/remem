@@ -55,7 +55,7 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
     Ok(())
 }
 
-fn resolve_current_project(explicit: Option<&str>) -> Result<Option<String>> {
+pub(in crate::cli) fn resolve_current_project(explicit: Option<&str>) -> Result<Option<String>> {
     if let Some(project) = explicit {
         return Ok(Some(project.to_string()));
     }
