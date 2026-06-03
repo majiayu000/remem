@@ -24,6 +24,14 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         .unwrap_or(0);
     let applied = infer_applied_versions(real_conn, raw_current_version)?;
     let current_version = logical_current_version(raw_current_version, &applied);
+    let invariant_errors = super::validate_schema_invariants(real_conn)?;
+    if !invariant_errors.is_empty() {
+        return Ok(DryRunResult {
+            current_version,
+            pending_count: applied_pending_count(&applied),
+            error: Some(format!("schema drift: {}", invariant_errors.join("; "))),
+        });
+    }
 
     let temp_path = match DryRunTempPath::create() {
         Ok(temp_path) => temp_path,

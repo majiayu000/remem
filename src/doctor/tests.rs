@@ -201,6 +201,39 @@ fn check_schema_migration_reads_encrypted_database() -> anyhow::Result<()> {
 }
 
 #[test]
+fn check_schema_migration_reports_v022_schema_drift() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-schema-drift");
+    let conn = db::open_db()?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         DROP TABLE memory_state_keys;
+         PRAGMA foreign_keys=ON;",
+    )?;
+    drop(conn);
+
+    let check = check_schema_migration();
+    assert_eq!(check.icon(), "FAIL");
+    assert!(
+        check.detail.contains("schema drift"),
+        "got: {}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("v022_memory_state_keys marked applied"),
+        "got: {}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains("table memory_state_keys"),
+        "got: {}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
 fn run_doctor_with_writer_returns_outcome_and_emits_human_lines() {
     let _test_dir = ScopedTestDataDir::new("doctor-run-human");
     // Ensure DB exists so the database probe doesn't FAIL the run.

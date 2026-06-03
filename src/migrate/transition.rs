@@ -180,7 +180,7 @@ pub(super) fn backfill_to_baseline(conn: &Connection) -> Result<()> {
 }
 
 /// Try to add a column; ignore only duplicate-column cases.
-fn add_column_if_missing(
+pub(super) fn add_column_if_missing(
     conn: &Connection,
     table: &str,
     column: &str,
