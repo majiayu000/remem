@@ -217,3 +217,37 @@ CREATE INDEX IF NOT EXISTS idx_topic_segments_session
 1. Phase 0 Gate 是否现在执行？需要 `.env` 的 `OPENAI_API_KEY` + 读取真实 `~/.remem` 数据 + 一次真实 LLM 调用。
 2. `topic_key` 跨 session 一致性：是否复用 `memory_candidate` 现有的 topic_key 生成规则？（建议是）
 3. Phase 1 是否作为独立 PR 先发（不含检索衔接）？
+
+---
+
+## 12. 进度（截至 2026-06-03）
+
+PR #294（branch `feat/topic-continuity-segments`），全量 694 lib 测试绿。
+- [x] Phase 1.1 v022 迁移（`1cc7111`）
+- [x] Phase 1.2 db 层 insert + 幂等（`0137f96`）
+- [x] Phase 1.3 rollup 接入（`de84d0e`，闭合 U-26）
+- [x] Phase 2 读层 `load_trace_by_topic_key`（`0bc2c70`）
+- [x] Phase 2 暴露 `remem trace <topic_key>`（`2d1add4`）
+- [ ] Phase 3 检索/注入衔接 + LoCoMo
+
+---
+
+## 13. Phase 3 落点（下一会话直接执行）
+
+在 worktree `remem-topic-continuity` / 分支 `feat/topic-continuity-segments` 继续。
+
+1. **新建 `src/context/sections/topic_timeline.rs`**：
+   - `load_recent_topic_traces(conn, project, topic_limit)`：取该 project 最近活跃的 N 个 topic_key
+     （`SELECT topic_key, MAX(covered_to_event_id) m FROM topic_segments WHERE project=?1 GROUP BY topic_key ORDER BY m DESC LIMIT ?2`），
+     每个调 `db::load_trace_by_topic_key`。
+   - `render_topic_timeline_with_limit(traces, item_limit, char_limit) -> String`：仿 `sections/lessons.rs` 的预算渲染。
+2. **`src/context/sections.rs`**：加 `mod topic_timeline;` + 必要 re-export。
+3. **`src/context/policy.rs`**：加 `topic_timeline_char_limit` / `topic_timeline_item_limit`
+   （默认值 + `REMEM_CONTEXT_TOPIC_TIMELINE_*` env override，仿现有字段）。
+4. **`src/context/render.rs`**：在组装 sections 处（参照 lessons section 调用点）插入 timeline section，受预算。
+5. **injection_gate**：section 文本自然进入 output hash，delta/suppress 无需改；确认不破坏 `injection_gate/tests.rs`。
+6. **测试**：`render_topic_timeline_with_limit` 预算截断单测 + 一个 context load 集成测试
+   （插入 topic_segments → load context → 断言含 timeline 段）。
+7. **验证**：`cargo test --lib`（隔离 `REMEM_DATA_DIR`）；可选 LoCoMo before/after 看 Temporal/Multi-hop。
+
+注意：`src/context/*` 在主树是别人在途改动密集区——务必在 worktree（cfadc85 干净 context）上做，勿动主树。
