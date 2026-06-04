@@ -6,8 +6,8 @@ use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_entities, run_cleanup, run_commit,
     run_config, run_dream, run_encrypt, run_eval, run_eval_e2e, run_eval_governance,
     run_eval_local, run_governance, run_import, run_memory_cleanup, run_merge_preferences,
-    run_pending, run_preferences, run_raw, run_reroute, run_review, run_search, run_show,
-    run_status, run_usage, run_why, GovernanceCliRequest, RerouteCliRequest,
+    run_model, run_pending, run_preferences, run_raw, run_reroute, run_review, run_search,
+    run_show, run_status, run_usage, run_why, GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction, MemoryAction};
@@ -41,6 +41,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             } => run_context_gate_status(project.as_deref(), session.as_deref(), limit, json)?,
         },
         Commands::Config { action } => run_config(action)?,
+        Commands::Model { action } => run_model(action).await?,
         Commands::SessionInit { host } => {
             if remem_hooks_disabled() {
                 return Ok(());

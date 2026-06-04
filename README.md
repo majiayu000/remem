@@ -296,6 +296,24 @@ remem config show
 remem config set memory_ai.profiles.codex.model gpt-5.4-mini
 ```
 
+For normal model switching, prefer the higher-level `remem model` commands:
+
+```bash
+remem model current
+remem model list
+remem model use cheap
+remem model use balanced --dry-run
+remem model use gpt-5.2 --reasoning medium
+remem model use haiku --host claude-code
+remem model test
+remem model test --live
+remem model rollback
+```
+
+`remem model test` only validates the selected config unless `--live` is set.
+`remem model use` saves a rollback backup before writing the config. Built-in
+presets are Codex-focused; use explicit model names for Claude Code profiles.
+
 Default Codex profile:
 
 ```toml
@@ -333,6 +351,13 @@ remem status
 remem status --json
 remem config show
 remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem model current
+remem model list
+remem model use balanced --dry-run
+remem model use gpt-5.2 --reasoning medium
+remem model use haiku --host claude-code
+remem model test [--live]
+remem model rollback
 remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending list-failed --json

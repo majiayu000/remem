@@ -53,6 +53,14 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Inspect or switch the memory AI model profile.
+    #[command(
+        after_help = "Examples:\n  remem model current\n  remem model list\n  remem model use cheap\n  remem model use balanced --dry-run\n  remem model use gpt-5.2 --reasoning medium\n  remem model use haiku --host claude-code\n  remem model test\n  remem model test --live\n  remem model rollback\n\nNotes:\n  Presets currently target Codex profiles. For Claude Code, pass an explicit model name.\n  `test` is a config check by default and only calls AI when --live is set.\n  `use` writes ~/.remem/config.toml and saves a rollback backup first."
+    )]
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
     /// Hook entrypoint for starting a memory capture session.
     SessionInit {
         /// Host profile for this hook: claude-code, codex-cli, or unknown.
@@ -450,6 +458,52 @@ pub(in crate::cli) enum ConfigAction {
     Init,
     /// Set one scalar config key, for example memory_ai.profiles.codex.model.
     Set { key: String, value: String },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ModelAction {
+    /// Show the currently effective memory AI model configuration.
+    Current {
+        /// Host to inspect, such as codex-cli or claude-code. Omit to show installed hosts.
+        #[arg(long)]
+        host: Option<String>,
+        /// Inspect a named memory AI profile directly.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// List built-in Codex model presets and examples.
+    List,
+    /// Switch a host/profile to a preset or explicit model name.
+    Use {
+        /// Preset or model name: cheap, balanced, quality, auto, or an explicit model.
+        target: String,
+        /// Host to update. Defaults to [memory_ai].default_host.
+        #[arg(long)]
+        host: Option<String>,
+        /// Update a named memory AI profile directly instead of resolving a host.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Codex reasoning effort: low, medium, or high.
+        #[arg(long, value_name = "low|medium|high")]
+        reasoning: Option<String>,
+        /// Print the config diff without writing files.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Check the selected model profile; pass --live to make a tiny AI call.
+    Test {
+        /// Host to test. Defaults to [memory_ai].default_host.
+        #[arg(long)]
+        host: Option<String>,
+        /// Test a named memory AI profile directly.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Actually call the configured AI model. Without this, only config is checked.
+        #[arg(long)]
+        live: bool,
+    },
+    /// Restore the config backup saved by the last `remem model use`.
+    Rollback,
 }
 
 #[derive(Subcommand)]

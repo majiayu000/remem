@@ -84,10 +84,24 @@ remem config path
 remem config show
 remem config init
 remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem model current
+remem model list
+remem model use cheap
+remem model use balanced --dry-run
+remem model use gpt-5.2 --reasoning medium
+remem model use haiku --host claude-code
+remem model test
+remem model test --live
+remem model rollback
 remem summarize --host codex-cli
 remem summarize --profile codex
 remem dream --profile codex
 ```
+
+`remem model` is the user-facing model switcher. `config set` remains the
+low-level escape hatch. `model test` is config-only by default and calls AI only
+with `--live`; `model use` saves a rollback backup before writing
+`~/.remem/config.toml`.
 
 ## Breaking Changes
 

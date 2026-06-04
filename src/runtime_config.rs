@@ -3,6 +3,12 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use toml_edit::{value, DocumentMut, Item, Table};
 
+mod model;
+pub use model::{
+    model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
+    ModelStatus, MODEL_PRESETS,
+};
+
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.4-mini";
