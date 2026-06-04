@@ -186,8 +186,8 @@ fn effective_gate_mode(
     config_mode: Option<String>,
 ) -> Option<String> {
     clean_optional(cli_mode)
-        .or_else(|| clean_optional(env_mode))
         .or_else(|| clean_optional(config_mode))
+        .or_else(|| clean_optional(env_mode))
 }
 
 #[cfg(test)]
@@ -279,11 +279,11 @@ mod tests {
     }
 
     #[test]
-    fn env_gate_overrides_host_config_gate() {
+    fn host_config_gate_overrides_legacy_env_gate() {
         assert_eq!(
             effective_gate_mode(None, Some("off".to_string()), Some("strict".to_string()))
                 .as_deref(),
-            Some("off")
+            Some("strict")
         );
     }
 

@@ -141,11 +141,14 @@ pub fn default_host() -> Result<String> {
 
 pub fn resolve_host_runtime_config(host: Option<&str>) -> Result<HostRuntimeConfig> {
     let mut doc = read_config_doc_or_default()?;
-    ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
-    let host = host
+    let selected_host = host
         .map(normalize_host)
-        .filter(|host| !host.trim().is_empty())
-        .unwrap_or_else(|| configured_default_host(&doc));
+        .filter(|host| !host.trim().is_empty());
+    match selected_host.as_deref() {
+        Some(host) => ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST, host])?,
+        None => ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?,
+    }
+    let host = selected_host.unwrap_or_else(|| configured_default_host(&doc));
     host_runtime_config_from_doc(&doc, &host)
 }
 
@@ -157,15 +160,18 @@ pub fn resolve_memory_ai_profile(
     }
 
     let mut doc = read_config_doc_or_default()?;
-    ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
+    let selected_host = selection
+        .host
+        .map(normalize_host)
+        .filter(|host| !host.trim().is_empty());
+    match selected_host.as_deref() {
+        Some(host) => ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST, host])?,
+        None => ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?,
+    }
     let profile_name = match selection.profile {
         Some(profile) if !profile.trim().is_empty() => profile.trim().to_string(),
         _ => {
-            let host = selection
-                .host
-                .map(normalize_host)
-                .filter(|host| !host.trim().is_empty())
-                .unwrap_or_else(|| configured_default_host(&doc));
+            let host = selected_host.unwrap_or_else(|| configured_default_host(&doc));
             host_runtime_config_from_doc(&doc, &host)?.memory_profile
         }
     };
@@ -199,6 +205,12 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);
+    let default_host = memory_ai
+        .get("default_host")
+        .and_then(Item::as_str)
+        .map(normalize_host)
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| CODEX_HOST.to_string());
 
     {
         let profiles = child_table_mut(memory_ai, "profiles")?;
@@ -209,8 +221,12 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
 
     {
         let hosts_table = child_table_mut(memory_ai, "hosts")?;
+        ensure_host_config(hosts_table, &default_host)?;
         for host in hosts {
-            ensure_host_config(hosts_table, &normalize_host(host))?;
+            let host = normalize_host(host);
+            if !host.is_empty() && host != default_host {
+                ensure_host_config(hosts_table, &host)?;
+            }
         }
     }
 
@@ -536,5 +552,45 @@ mod tests {
             assert_eq!(host.capture_adapter, CODEX_HOST);
         });
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn partial_install_still_materializes_configured_default_host() -> Result<()> {
+        let path = temp_config_path("runtime-partial-default-host");
+        with_config_path(&path, || -> Result<()> {
+            ensure_config_for_hosts(&[CLAUDE_HOST])?;
+            let text = std::fs::read_to_string(&path)?;
+
+            assert!(text.contains("[memory_ai.hosts.claude-code]"), "{text}");
+            assert!(text.contains("[memory_ai.hosts.codex-cli]"), "{text}");
+
+            let host = resolve_host_runtime_config(None)?;
+            assert_eq!(host.host, CODEX_HOST);
+            assert_eq!(host.memory_profile, "codex");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_unknown_host_materializes_fallback_config() -> Result<()> {
+        let path = temp_config_path("runtime-unknown-host");
+        with_config_path(&path, || -> Result<()> {
+            init_config()?;
+            let host = resolve_host_runtime_config(Some("unknown"))?;
+            let profile = resolve_memory_ai_profile(MemoryAiSelection {
+                host: Some("unknown"),
+                profile: None,
+            })?;
+
+            assert_eq!(host.host, "unknown");
+            assert_eq!(host.memory_profile, "codex");
+            assert_eq!(host.context_gate.as_deref(), Some("off"));
+            assert_eq!(profile.profile_name, "codex");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 }
