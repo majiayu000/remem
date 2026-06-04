@@ -94,11 +94,12 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.claude/settings.json
 jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 ```
 
-Expected commands include:
+Expected command prefixes include; additional flags such as `--color` or
+`--gate strict` may follow:
 
 ```text
-REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context
-REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context
+REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context ...
+REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context ...
 ```
 
 ## Use With Codex

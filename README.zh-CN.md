@@ -92,11 +92,12 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.claude/settings.json
 jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 ```
 
-期望包含：
+期望看到这些 command prefix；后面可能继续带 `--color`、`--gate strict`
+等参数：
 
 ```text
-REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context
-REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context
+REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context ...
+REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context ...
 ```
 
 ## 在 Codex 中使用
