@@ -286,14 +286,12 @@ fn backup_path_for_config(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     fn with_config_path<T>(path: &Path, f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+        let _guard = super::super::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
         let old = std::env::var("REMEM_CONFIG").ok();
         unsafe { std::env::set_var("REMEM_CONFIG", path) };
         let result = f();
