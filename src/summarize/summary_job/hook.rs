@@ -6,8 +6,6 @@ use crate::hook_stdin::read_stdin_with_timeout;
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 
-const REMEM_AI_PROFILE_FIELD: &str = "remem_ai_profile";
-
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     if host.is_some() && profile.is_some() {
         anyhow::bail!("--host and --profile are mutually exclusive");
@@ -80,7 +78,7 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
     }
     if let Some(profile) = clean_optional(profile) {
         obj.insert(
-            REMEM_AI_PROFILE_FIELD.to_string(),
+            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
             serde_json::Value::String(profile),
         );
     }
@@ -91,7 +89,7 @@ fn compress_payload(profile: Option<&str>) -> Result<String> {
     let mut payload = serde_json::Map::new();
     if let Some(profile) = clean_optional(profile) {
         payload.insert(
-            REMEM_AI_PROFILE_FIELD.to_string(),
+            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
             serde_json::Value::String(profile),
         );
     }

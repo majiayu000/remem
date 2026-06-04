@@ -16,6 +16,7 @@ pub struct ExtractionTask {
     pub host: String,
     pub project: String,
     pub session_id: Option<String>,
+    pub ai_profile: Option<String>,
     pub priority: i64,
     pub cursor_event_id: Option<i64>,
     pub high_watermark_event_id: Option<i64>,
@@ -335,6 +336,7 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
         },
     )?;
 
+    let ai_profile = load_task_ai_profile(conn, row.2, row.4, row.5, row.11)?;
     Ok(ExtractionTask {
         id: row.0,
         task_kind: ExtractionTaskKind::from_db(&row.1)?,
@@ -345,11 +347,42 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
         host: row.6,
         project: row.7,
         session_id: row.8,
+        ai_profile,
         priority: row.9,
         cursor_event_id: row.10,
         high_watermark_event_id: row.11,
         attempts: row.12,
     })
+}
+
+fn load_task_ai_profile(
+    conn: &Connection,
+    host_id: i64,
+    project_id: i64,
+    session_row_id: Option<i64>,
+    high_watermark_event_id: Option<i64>,
+) -> Result<Option<String>> {
+    let Some(session_row_id) = session_row_id else {
+        return Ok(None);
+    };
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(content_text, '')
+         FROM captured_events
+         WHERE host_id = ?1
+           AND project_id = ?2
+           AND session_row_id = ?3
+           AND (?4 IS NULL OR id <= ?4)
+         ORDER BY id DESC",
+    )?;
+    let contents = stmt
+        .query_map(
+            params![host_id, project_id, session_row_id, high_watermark_event_id],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(contents
+        .iter()
+        .find_map(|content| crate::runtime_config::profile_from_payload_text(content)))
 }
 
 fn ensure_task_updated(updated: usize, task_id: i64) -> Result<()> {
@@ -430,6 +463,31 @@ mod tests {
 
         let status = task_status(&conn, observation_id).0;
         assert_eq!(status, "pending");
+    }
+
+    #[test]
+    fn claim_next_extraction_task_preserves_ai_profile_from_capture_payload() -> Result<()> {
+        let mut conn = setup_conn();
+        record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-profile",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: r#"{"session_id":"sess-profile","remem_ai_profile":"custom"}"#,
+                task_kind: Some(ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+
+        let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)?
+            .ok_or_else(|| anyhow::anyhow!("task should exist"))?;
+
+        assert_eq!(claimed.ai_profile.as_deref(), Some("custom"));
+        Ok(())
     }
 
     #[test]

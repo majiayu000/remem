@@ -7,6 +7,7 @@ pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.4-mini";
 pub const DEFAULT_CODEX_REASONING_EFFORT: &str = "low";
+pub const MEMORY_AI_PROFILE_FIELD: &str = "remem_ai_profile";
 
 const DEFAULT_CLAUDE_MODEL: &str = "haiku";
 const ANTHROPIC_DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -112,6 +113,17 @@ pub fn normalize_host(raw: &str) -> String {
         "unknown" => "unknown".to_string(),
         _ => raw.trim().to_string(),
     }
+}
+
+pub(crate) fn profile_from_payload_text(input: &str) -> Option<String> {
+    let payload: serde_json::Value = serde_json::from_str(input).ok()?;
+    payload
+        .as_object()?
+        .get(MEMORY_AI_PROFILE_FIELD)?
+        .as_str()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .map(str::to_string)
 }
 
 pub fn default_host() -> Result<String> {

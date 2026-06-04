@@ -58,6 +58,7 @@ fn production_task_does_not_rescan_unstored_prior_bash_events() -> Result<()> {
         host: "codex-cli".to_string(),
         project: "/tmp/remem".to_string(),
         session_id: Some(session_id.to_string()),
+        ai_profile: None,
         priority: crate::db::ExtractionTaskKind::ObservationExtract.priority(),
         cursor_event_id: Some(old_high_watermark),
         high_watermark_event_id: Some(current_event_id),
