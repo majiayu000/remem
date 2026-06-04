@@ -7,9 +7,6 @@ use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
-    if host.is_some() && profile.is_some() {
-        anyhow::bail!("--host and --profile are mutually exclusive");
-    }
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
     };
@@ -405,6 +402,21 @@ mod tests {
 
         assert_eq!(summary["remem_ai_profile"].as_str(), Some("custom"));
         assert_eq!(compress["remem_ai_profile"].as_str(), Some("custom"));
+    }
+
+    #[test]
+    fn hosted_summary_hook_can_preserve_profile_override() -> anyhow::Result<()> {
+        let host = resolve_hook_host(Some("codex"))?;
+        let summary = summary_payload_with_cwd(
+            r#"{"session_id":"sess-hosted-profile"}"#,
+            "/tmp/project",
+            Some("custom"),
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&summary)?;
+
+        assert_eq!(host, "codex-cli");
+        assert_eq!(parsed["remem_ai_profile"].as_str(), Some("custom"));
+        Ok(())
     }
 
     #[test]

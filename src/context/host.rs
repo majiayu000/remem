@@ -115,13 +115,20 @@ impl ContextHostProfile for UnknownContextProfile {
 }
 
 pub(super) fn resolve_host_kind(host_arg: Option<&str>) -> HostKind {
+    let env_host = std::env::var("REMEM_CONTEXT_HOST").ok();
+    let default_host = crate::runtime_config::default_host().ok();
+    resolve_host_kind_from_sources(host_arg, env_host.as_deref(), default_host.as_deref())
+}
+
+fn resolve_host_kind_from_sources(
+    host_arg: Option<&str>,
+    env_host: Option<&str>,
+    default_host: Option<&str>,
+) -> HostKind {
     host_arg
         .and_then(HostKind::parse)
-        .or_else(|| {
-            std::env::var("REMEM_CONTEXT_HOST")
-                .ok()
-                .and_then(|value| HostKind::parse(&value))
-        })
+        .or_else(|| env_host.and_then(HostKind::parse))
+        .or_else(|| default_host.and_then(HostKind::parse))
         .unwrap_or(HostKind::Unknown)
 }
 
@@ -156,5 +163,29 @@ mod tests {
             .retrieval_hints()
             .line
             .contains("Stop/context-focused"));
+    }
+
+    #[test]
+    fn missing_host_uses_configured_default_source() {
+        assert_eq!(
+            resolve_host_kind_from_sources(None, None, Some("codex-cli")),
+            HostKind::CodexCli
+        );
+    }
+
+    #[test]
+    fn legacy_env_host_overrides_configured_default_source() {
+        assert_eq!(
+            resolve_host_kind_from_sources(None, Some("claude-code"), Some("codex-cli")),
+            HostKind::ClaudeCode
+        );
+    }
+
+    #[test]
+    fn explicit_unknown_host_does_not_fall_back_to_default_source() {
+        assert_eq!(
+            resolve_host_kind_from_sources(Some("unknown"), None, Some("codex-cli")),
+            HostKind::Unknown
+        );
     }
 }
