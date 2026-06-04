@@ -18,7 +18,7 @@ pub(super) struct Cli {
 pub(super) enum Commands {
     /// Render SessionStart memory context for the current project.
     #[command(
-        after_help = "Environment variables:\n  REMEM_CONTEXT_HOST: default host when --host is omitted.\n  REMEM_CONTEXT_GATE: default --gate mode.\n  REMEM_CONTEXT_GATE_HOSTS: comma-separated hosts that use duplicate-injection gating.\n  REMEM_CONTEXT_SUPPRESS_SOURCES: hook sources suppressed when the context hash is unchanged.\n  REMEM_CONTEXT_DEBUG=1: include context rendering and gate diagnostics."
+        after_help = "Environment variables:\n  REMEM_CONTEXT_HOST: legacy host fallback when --host is omitted.\n  REMEM_CONTEXT_GATE: legacy gate fallback when neither --gate nor host config sets context_gate.\n  REMEM_CONTEXT_GATE_HOSTS: comma-separated hosts that use duplicate-injection gating.\n  REMEM_CONTEXT_SUPPRESS_SOURCES: hook sources suppressed when the context hash is unchanged.\n  REMEM_CONTEXT_DEBUG=1: include context rendering and gate diagnostics."
     )]
     Context {
         /// Project working directory to render context for.
@@ -39,7 +39,7 @@ pub(super) enum Commands {
         /// Force full context emission and update gate state.
         #[arg(long)]
         force: bool,
-        /// Duplicate-injection gate mode: off, auto, strict, or delta. Overrides REMEM_CONTEXT_GATE.
+        /// Duplicate-injection gate mode: off, auto, strict, or delta. Overrides host config and REMEM_CONTEXT_GATE.
         #[arg(long, value_name = "off|auto|strict|delta")]
         gate: Option<String>,
     },
