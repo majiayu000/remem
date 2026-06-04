@@ -33,7 +33,7 @@ Language: **English** | [简体中文](README.zh-CN.md)
 # Option 1: Homebrew
 brew install majiayu000/tap/remem
 
-# Option 2: Quick install (prebuilt GitHub Release binary)
+# Option 2: Quick install (prebuilt GitHub Release binary, then auto-configures hooks)
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # Pin a specific release or install into a custom bin directory
@@ -57,7 +57,7 @@ cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
 
-# Configure detected Claude Code/Codex hooks + MCP
+# If you used Cargo or source install, configure detected Claude Code/Codex hooks + MCP
 remem install
 
 # Optional: target one host explicitly
@@ -74,6 +74,33 @@ package manager such as Homebrew or Cargo, update through that same channel
 and avoid keeping a second manual copy earlier or later on PATH. `remem doctor`
 and `remem install --dry-run` warn when multiple `remem` executables are
 visible.
+
+### Updating an Existing Install
+
+When you replace the binary manually, rerun `remem install` so existing Claude Code
+and Codex hook commands pick up the current host-aware settings:
+
+```bash
+cargo build --release
+cp target/release/remem ~/.local/bin/
+codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
+remem install --target all
+```
+
+Verify the installed hooks include host-specific context commands:
+
+```bash
+jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.claude/settings.json
+jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
+```
+
+Expected command prefixes include; additional flags such as `--color` or
+`--gate strict` may follow:
+
+```text
+REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context ...
+REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context ...
+```
 
 ## Use With Codex
 
