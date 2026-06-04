@@ -117,11 +117,13 @@ pub(super) fn resolve_context_invocation_from_parts(
     let host = resolve_host_kind(options.host.as_deref());
     let host_config =
         crate::runtime_config::resolve_host_runtime_config(Some(host.as_env_value())).ok();
-    let gate_mode = clean_optional(options.gate_mode).or_else(|| {
+    let gate_mode = effective_gate_mode(
+        options.gate_mode,
+        std::env::var("REMEM_CONTEXT_GATE").ok(),
         host_config
             .as_ref()
-            .and_then(|config| config.context_gate.clone())
-    });
+            .and_then(|config| config.context_gate.clone()),
+    );
     let use_colors = options.use_colors
         || host_config
             .as_ref()
@@ -176,6 +178,16 @@ fn clean_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn effective_gate_mode(
+    cli_mode: Option<String>,
+    env_mode: Option<String>,
+    config_mode: Option<String>,
+) -> Option<String> {
+    clean_optional(cli_mode)
+        .or_else(|| clean_optional(env_mode))
+        .or_else(|| clean_optional(config_mode))
 }
 
 #[cfg(test)]
@@ -264,5 +276,27 @@ mod tests {
 
         assert_eq!(invocation.cwd, "/tmp/cli");
         assert_eq!(invocation.session_id, None);
+    }
+
+    #[test]
+    fn env_gate_overrides_host_config_gate() {
+        assert_eq!(
+            effective_gate_mode(None, Some("off".to_string()), Some("strict".to_string()))
+                .as_deref(),
+            Some("off")
+        );
+    }
+
+    #[test]
+    fn cli_gate_overrides_env_and_host_config_gate() {
+        assert_eq!(
+            effective_gate_mode(
+                Some("delta".to_string()),
+                Some("off".to_string()),
+                Some("strict".to_string())
+            )
+            .as_deref(),
+            Some("delta")
+        );
     }
 }

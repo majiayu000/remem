@@ -44,19 +44,19 @@ pub struct ModelChange {
 pub const MODEL_PRESETS: &[ModelPreset] = &[
     ModelPreset {
         name: "cheap",
-        model: DEFAULT_CODEX_MODEL,
+        model: "gpt-5.4-mini",
         reasoning_effort: Some("low"),
-        description: "lowest default Codex cost; current install default",
+        description: "lower-cost Codex mini profile with low reasoning",
     },
     ModelPreset {
         name: "balanced",
-        model: DEFAULT_CODEX_MODEL,
+        model: "gpt-5.4-mini",
         reasoning_effort: Some("medium"),
-        description: "same Codex model with more reasoning for extraction quality",
+        description: "Codex mini profile with more reasoning for extraction quality",
     },
     ModelPreset {
         name: "quality",
-        model: "gpt-5.2",
+        model: DEFAULT_CODEX_MODEL,
         reasoning_effort: Some("medium"),
         description: "higher-quality Codex profile; higher cost",
     },
@@ -252,7 +252,7 @@ fn resolve_model_target(
 
 fn canonical_model_name(model: &str) -> String {
     match model.trim().to_ascii_lowercase().as_str() {
-        "5.4-mini" | "gpt5-4.mini" | "gpt-5-4-mini" => DEFAULT_CODEX_MODEL.to_string(),
+        "5.4-mini" | "gpt5-4.mini" | "gpt-5-4-mini" => "gpt-5.4-mini".to_string(),
         "5.2" | "gpt5.2" | "gpt-5-2" => "gpt-5.2".to_string(),
         other => other.to_string(),
     }
@@ -317,7 +317,7 @@ mod tests {
             super::super::init_config().unwrap();
             let change = set_model(Some(CODEX_HOST), None, "balanced", None, false).unwrap();
             assert_eq!(change.old_model, DEFAULT_CODEX_MODEL);
-            assert_eq!(change.new_model, DEFAULT_CODEX_MODEL);
+            assert_eq!(change.new_model, "gpt-5.4-mini");
             assert_eq!(change.new_reasoning_effort.as_deref(), Some("medium"));
             assert!(change.backup_path.as_ref().unwrap().exists());
 
@@ -353,9 +353,16 @@ mod tests {
 
             let status = model_status(Some(CODEX_HOST), None).unwrap();
             assert_eq!(status.model, DEFAULT_CODEX_MODEL);
-            assert_eq!(status.reasoning_effort.as_deref(), Some("low"));
+            assert_eq!(status.reasoning_effort.as_deref(), None);
         });
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(backup_path_for_config(&path));
+    }
+
+    #[test]
+    fn mini_model_aliases_do_not_follow_default_model() {
+        assert_eq!(canonical_model_name("5.4-mini"), "gpt-5.4-mini");
+        assert_eq!(canonical_model_name("gpt-5-4-mini"), "gpt-5.4-mini");
+        assert_eq!(canonical_model_name("5.2"), DEFAULT_CODEX_MODEL);
     }
 }

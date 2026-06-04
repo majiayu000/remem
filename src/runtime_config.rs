@@ -11,8 +11,7 @@ pub use model::{
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.4-mini";
-pub const DEFAULT_CODEX_REASONING_EFFORT: &str = "low";
+pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.2";
 pub const MEMORY_AI_PROFILE_FIELD: &str = "remem_ai_profile";
 
 const DEFAULT_CLAUDE_MODEL: &str = "haiku";
@@ -222,7 +221,6 @@ fn ensure_codex_profile(profiles: &mut Table) -> Result<()> {
     let profile = child_table_mut(profiles, "codex")?;
     set_str_if_missing(profile, "executor", "codex-cli");
     set_str_if_missing(profile, "model", DEFAULT_CODEX_MODEL);
-    set_str_if_missing(profile, "reasoning_effort", DEFAULT_CODEX_REASONING_EFFORT);
     set_str_if_missing(profile, "path", "codex");
     Ok(())
 }
@@ -456,11 +454,12 @@ mod tests {
     }
 
     #[test]
-    fn default_config_contains_codex_mini_profile() {
+    fn default_config_contains_codex_quality_profile() {
         let text = default_config_text();
         assert!(text.contains("default_host = \"codex-cli\""), "{text}");
-        assert!(text.contains("model = \"gpt-5.4-mini\""), "{text}");
-        assert!(text.contains("reasoning_effort = \"low\""), "{text}");
+        assert!(text.contains("model = \"gpt-5.2\""), "{text}");
+        assert!(!text.contains("gpt-5.4-mini"), "{text}");
+        assert!(!text.contains("reasoning_effort = \"low\""), "{text}");
     }
 
     #[test]

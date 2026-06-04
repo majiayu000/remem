@@ -264,7 +264,7 @@ UsageContext { host/profile }
 ```
 
 - **Config path**: `~/.remem/config.toml`, override with `REMEM_CONFIG`
-- **Default Codex profile**: executor `codex-cli`, model `gpt-5.4-mini`, reasoning effort `low`
+- **Default Codex profile**: executor `codex-cli`, model `gpt-5.2`
 - **Model mapping**: profile model `haiku` maps to `claude-haiku-4-5-20251001` for Anthropic HTTP; CLI executors receive the configured model string directly
 - **Codex model `auto`**: omit `--model` and use the Codex CLI default
 - **Timeouts**: Single AI call 90s, entire worker 180s
@@ -294,8 +294,7 @@ capture_adapter = "claude-code"
 
 [memory_ai.profiles.codex]
 executor = "codex-cli"
-model = "gpt-5.4-mini"
-reasoning_effort = "low"
+model = "gpt-5.2"
 path = "codex"
 
 [memory_ai.profiles.claude]

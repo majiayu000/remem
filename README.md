@@ -293,7 +293,7 @@ profile used by summarize, flush/extract, compress, and dream.
 ```bash
 remem config path
 remem config show
-remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem config set memory_ai.profiles.codex.model gpt-5.2
 ```
 
 For normal model switching, prefer the higher-level `remem model` commands:
@@ -325,8 +325,7 @@ capture_adapter = "codex-cli"
 
 [memory_ai.profiles.codex]
 executor = "codex-cli"
-model = "gpt-5.4-mini"
-reasoning_effort = "low"
+model = "gpt-5.2"
 path = "codex"
 ```
 
@@ -350,7 +349,7 @@ remem api --port 5567
 remem status
 remem status --json
 remem config show
-remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem config set memory_ai.profiles.codex.model gpt-5.2
 remem model current
 remem model list
 remem model use balanced --dry-run

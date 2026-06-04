@@ -197,7 +197,7 @@ fn legacy_hook_host_from_env() -> Option<String> {
     }
     for key in ["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"] {
         if let Ok(executor) = std::env::var(key) {
-            match executor.trim() {
+            match executor.trim().to_ascii_lowercase().as_str() {
                 "codex-cli" | "codex" => return Some("codex-cli".to_string()),
                 "claude-cli" | "claude" | "cli" => return Some("claude-code".to_string()),
                 _ => {}

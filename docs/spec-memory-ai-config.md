@@ -35,8 +35,7 @@ capture_adapter = "claude-code"
 
 [memory_ai.profiles.codex]
 executor = "codex-cli"
-model = "gpt-5.4-mini"
-reasoning_effort = "low"
+model = "gpt-5.2"
 path = "codex"
 
 [memory_ai.profiles.claude]
@@ -83,7 +82,7 @@ when hooks still contain legacy memory-AI policy strings.
 remem config path
 remem config show
 remem config init
-remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem config set memory_ai.profiles.codex.model gpt-5.2
 remem model current
 remem model list
 remem model use cheap
@@ -123,6 +122,6 @@ HTTP authentication remains environment-based through `ANTHROPIC_API_KEY` or
 ## Acceptance
 
 - Hooks contain only `--host`, not model/executor env vars.
-- Codex defaults to `gpt-5.4-mini` with `low` reasoning effort.
+- Codex defaults to `gpt-5.2`.
 - Claude Code can be configured independently through its host profile.
 - `cargo check`, `cargo test`, and `cargo build --release` pass.
