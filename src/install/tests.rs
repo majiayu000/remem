@@ -32,7 +32,7 @@ fn build_hooks_contains_expected_codex_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::Codex);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
-        "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context --color"
+        "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context --color --gate strict"
     );
     assert!(hooks.get("UserPromptSubmit").is_none());
     assert!(hooks.get("PostToolUse").is_none());
