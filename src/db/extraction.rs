@@ -366,13 +366,21 @@ fn load_task_ai_profile(
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(content_text, '')
-         FROM captured_events
-         WHERE host_id = ?1
-           AND project_id = ?2
-           AND session_row_id = ?3
-           AND (?4 IS NULL OR id <= ?4)
-         ORDER BY id DESC",
+        "SELECT COALESCE(
+                    CASE
+                        WHEN b.content_encoding = 'plain' THEN CAST(b.content_bytes AS TEXT)
+                        ELSE NULL
+                    END,
+                    e.content_text,
+                    ''
+                ) AS content
+         FROM captured_events e
+         LEFT JOIN event_blobs b ON b.id = e.content_blob_id
+         WHERE e.host_id = ?1
+           AND e.project_id = ?2
+           AND e.session_row_id = ?3
+           AND (?4 IS NULL OR e.id <= ?4)
+         ORDER BY e.id DESC",
     )?;
     let contents = stmt
         .query_map(
@@ -487,6 +495,36 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("task should exist"))?;
 
         assert_eq!(claimed.ai_profile.as_deref(), Some("custom"));
+        Ok(())
+    }
+
+    #[test]
+    fn claim_next_extraction_task_reads_ai_profile_from_large_capture_blob() -> Result<()> {
+        let mut conn = setup_conn();
+        let content = format!(
+            r#"{{"session_id":"sess-large-profile","prefix":"{}","remem_ai_profile":"large-custom","suffix":"{}"}}"#,
+            "a".repeat(10 * 1024),
+            "b".repeat(10 * 1024)
+        );
+        record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "codex-cli",
+                session_id: "sess-large-profile",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: &content,
+                task_kind: Some(ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+
+        let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)?
+            .ok_or_else(|| anyhow::anyhow!("task should exist"))?;
+
+        assert_eq!(claimed.ai_profile.as_deref(), Some("large-custom"));
         Ok(())
     }
 
