@@ -181,7 +181,30 @@ fn resolve_hook_host(host: Option<&str>) -> Result<String> {
     if let Some(host) = clean_optional(host) {
         return Ok(crate::runtime_config::normalize_host(&host));
     }
+    if let Some(host) = legacy_hook_host_from_env() {
+        return Ok(host);
+    }
     crate::runtime_config::default_host()
+}
+
+fn legacy_hook_host_from_env() -> Option<String> {
+    for key in ["REMEM_HOOK_HOST", "REMEM_CONTEXT_HOST"] {
+        if let Ok(host) = std::env::var(key) {
+            if let Some(host) = clean_optional(Some(&host)) {
+                return Some(crate::runtime_config::normalize_host(&host));
+            }
+        }
+    }
+    for key in ["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"] {
+        if let Ok(executor) = std::env::var(key) {
+            match executor.trim() {
+                "codex-cli" | "codex" => return Some("codex-cli".to_string()),
+                "claude-cli" | "claude" | "cli" => return Some("claude-code".to_string()),
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
@@ -234,6 +257,8 @@ fn clean_optional(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
@@ -241,16 +266,101 @@ mod tests {
         should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
     };
 
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        old_values: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn set(vars: &[(&str, Option<&str>)]) -> Self {
+            let old_values = vars
+                .iter()
+                .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+
+            for (key, value) in vars {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(key, value) },
+                    None => unsafe { std::env::remove_var(key) },
+                }
+            }
+
+            Self { old_values }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.old_values.drain(..) {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(&key, value) },
+                    None => unsafe { std::env::remove_var(&key) },
+                }
+            }
+        }
+    }
+
+    fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let Ok(_guard) = ENV_LOCK.lock() else {
+            panic!("env lock should acquire");
+        };
+        let _env = EnvGuard::set(vars);
+        f()
+    }
+
     #[test]
     fn hook_host_normalizes_explicit_host() {
-        assert_eq!(resolve_hook_host(Some("codex")).unwrap(), "codex-cli");
+        with_env_vars(
+            &[
+                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
+                ("REMEM_EXECUTOR", Some("claude-cli")),
+            ],
+            || {
+                assert!(matches!(
+                    resolve_hook_host(Some("codex")).as_deref(),
+                    Ok("codex-cli")
+                ));
+            },
+        );
     }
 
     #[test]
     fn hook_host_uses_runtime_config_default() {
         let _test_dir = ScopedTestDataDir::new("summary-default-host");
 
-        assert_eq!(resolve_hook_host(None).unwrap(), "codex-cli");
+        with_env_vars(
+            &[
+                ("REMEM_HOOK_HOST", None),
+                ("REMEM_CONTEXT_HOST", None),
+                ("REMEM_SUMMARY_EXECUTOR", None),
+                ("REMEM_EXECUTOR", None),
+            ],
+            || {
+                assert!(matches!(
+                    resolve_hook_host(None).as_deref(),
+                    Ok("codex-cli")
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn hook_host_preserves_legacy_summary_executor() {
+        with_env_vars(
+            &[
+                ("REMEM_HOOK_HOST", None),
+                ("REMEM_CONTEXT_HOST", None),
+                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
+                ("REMEM_EXECUTOR", Some("codex-cli")),
+            ],
+            || {
+                assert!(matches!(
+                    resolve_hook_host(None).as_deref(),
+                    Ok("claude-code")
+                ));
+            },
+        );
     }
 
     #[test]
