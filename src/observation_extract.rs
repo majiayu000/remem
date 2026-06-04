@@ -51,6 +51,8 @@ pub(crate) async fn process(task: &db::ExtractionTask) -> Result<ObservationExtr
                 crate::ai::UsageContext {
                     project: Some(project.as_str()),
                     operation: "observation_extract",
+                    host: Some(task.host.as_str()),
+                    profile: None,
                 },
             )
             .await

@@ -48,12 +48,32 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ContextGateAction,
     },
+    /// Inspect or edit remem runtime configuration.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     /// Hook entrypoint for starting a memory capture session.
-    SessionInit,
+    SessionInit {
+        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Hook entrypoint for recording a tool or prompt observation.
-    Observe,
+    Observe {
+        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Hook entrypoint for summarizing captured session activity.
-    Summarize,
+    Summarize {
+        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        #[arg(long)]
+        host: Option<String>,
+        /// Memory AI profile name from [memory_ai.profiles].
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Run the background worker loop or one drain pass.
     Worker {
         /// Process ready work once and exit.
@@ -382,6 +402,9 @@ pub(super) enum Commands {
         /// Restrict dream processing to one project path.
         #[arg(long, short)]
         project: Option<String>,
+        /// Memory AI profile name from [memory_ai.profiles].
+        #[arg(long)]
+        profile: Option<String>,
         /// Print what would be merged without writing to DB
         #[arg(long)]
         dry_run: bool,
@@ -415,6 +438,18 @@ pub(in crate::cli) enum ContextGateAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ConfigAction {
+    /// Print the active config file path.
+    Path,
+    /// Print the resolved config text, including built-in defaults.
+    Show,
+    /// Create or update the config file with default sections.
+    Init,
+    /// Set one scalar config key, for example memory_ai.profiles.codex.model.
+    Set { key: String, value: String },
 }
 
 #[derive(Subcommand)]

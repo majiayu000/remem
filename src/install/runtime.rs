@@ -23,12 +23,22 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
                 eprintln!("{line}");
             }
         }
+        eprintln!(
+            "  config -> {} (memory_ai host/profile defaults)",
+            crate::runtime_config::config_path().display()
+        );
         eprintln!("  data   -> {}", remem_data_dir().display());
         print_install_path_warnings(&bin);
         return Ok(());
     }
 
     eprintln!("remem install:");
+    let runtime_hosts = hosts
+        .iter()
+        .map(|host| runtime_host_name(host.name()))
+        .collect::<Vec<_>>();
+    let config_path = crate::runtime_config::ensure_config_for_hosts(&runtime_hosts)?;
+    eprintln!("  config -> {}", config_path.display());
     for host in &hosts {
         eprintln!("→ {}", host.name());
         host.install_mcp(&bin)?;
@@ -77,6 +87,14 @@ fn print_install_path_warnings(bin: &str) {
     eprintln!("Install path warning:");
     for line in lines {
         eprintln!("{line}");
+    }
+}
+
+fn runtime_host_name(install_host: &str) -> &'static str {
+    match install_host {
+        "claude" => crate::runtime_config::CLAUDE_HOST,
+        "codex" => crate::runtime_config::CODEX_HOST,
+        _ => "unknown",
     }
 }
 

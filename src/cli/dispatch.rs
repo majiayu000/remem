@@ -4,10 +4,10 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_entities, run_cleanup, run_commit,
-    run_dream, run_encrypt, run_eval, run_eval_e2e, run_eval_governance, run_eval_local,
-    run_governance, run_import, run_memory_cleanup, run_merge_preferences, run_pending,
-    run_preferences, run_raw, run_reroute, run_review, run_search, run_show, run_status, run_usage,
-    run_why, GovernanceCliRequest, RerouteCliRequest,
+    run_config, run_dream, run_encrypt, run_eval, run_eval_e2e, run_eval_governance,
+    run_eval_local, run_governance, run_import, run_memory_cleanup, run_merge_preferences,
+    run_pending, run_preferences, run_raw, run_reroute, run_review, run_search, run_show,
+    run_status, run_usage, run_why, GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction, MemoryAction};
@@ -40,23 +40,24 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
                 json,
             } => run_context_gate_status(project.as_deref(), session.as_deref(), limit, json)?,
         },
-        Commands::SessionInit => {
+        Commands::Config { action } => run_config(action)?,
+        Commands::SessionInit { host } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            observe::session_init().await?;
+            observe::session_init(host.as_deref()).await?;
         }
-        Commands::Observe => {
+        Commands::Observe { host } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            observe::observe().await?;
+            observe::observe(host.as_deref()).await?;
         }
-        Commands::Summarize => {
+        Commands::Summarize { host, profile } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            summarize::summarize().await?;
+            summarize::summarize(host.as_deref(), profile.as_deref()).await?;
         }
         Commands::Worker { once } => worker::run(once, 2000).await?,
         Commands::Mcp => mcp::run_mcp_server().await?,
@@ -228,8 +229,12 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::BackfillEntities => run_backfill_entities()?,
         Commands::Encrypt => run_encrypt()?,
         Commands::Api { port } => api::run_api_server(port).await?,
-        Commands::Dream { project, dry_run } => {
-            run_dream(project.as_deref(), dry_run).await?;
+        Commands::Dream {
+            project,
+            profile,
+            dry_run,
+        } => {
+            run_dream(project.as_deref(), profile.as_deref(), dry_run).await?;
         }
         Commands::Admin { action } => run_admin(action)?,
         Commands::Import { action } => run_import(action)?,

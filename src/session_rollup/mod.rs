@@ -59,6 +59,8 @@ pub(crate) async fn process(task: &db::ExtractionTask) -> Result<SessionRollupRe
                 crate::ai::UsageContext {
                     project: Some(project.as_str()),
                     operation: "session_rollup",
+                    host: Some(task.host.as_str()),
+                    profile: None,
                 },
             )
             .await

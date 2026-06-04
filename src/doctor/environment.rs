@@ -171,8 +171,19 @@ fn probe_hooks(probe: HostProbe) -> Check {
         .count();
     let deprecated_codex_observe =
         probe.name == "codex" && event_has_remem_observe_hook(&doc, "PostToolUse");
+    let legacy_policy = has_legacy_hook_policy(&doc);
 
     if found == events.len() {
+        if legacy_policy {
+            return Check {
+                name,
+                status: Status::Warn,
+                detail: format!(
+                    "{}/{} registered in {}; legacy memory-AI hook policy remains (run `remem install --target {}`)",
+                    found, events.len(), probe.hooks_path.display(), probe.name
+                ),
+            };
+        }
         if deprecated_codex_observe {
             return Check {
                 name,
@@ -452,6 +463,24 @@ fn entry_has_remem_observe_hook(entry: &Value) -> bool {
         })
 }
 
+fn has_legacy_hook_policy(doc: &Value) -> bool {
+    const LEGACY: &[&str] = &[
+        "REMEM_EXECUTOR",
+        "REMEM_SUMMARY_EXECUTOR",
+        "REMEM_COMPRESS_EXECUTOR",
+        "REMEM_DREAM_EXECUTOR",
+        "REMEM_MODEL",
+        "REMEM_CODEX_MODEL",
+        "REMEM_CLAUDE_PATH",
+        "REMEM_CODEX_PATH",
+        "REMEM_HOOK_ADAPTER",
+        "REMEM_CONTEXT_HOST",
+        "--gate strict",
+        " --color",
+    ];
+    hook_command_strings(doc).any(|command| LEGACY.iter().any(|needle| command.contains(needle)))
+}
+
 fn claude_has_remem_mcp(doc: &Value) -> bool {
     doc.get("mcpServers")
         .and_then(|servers| servers.as_object())
@@ -513,8 +542,8 @@ mod tests {
             &hooks_path,
             r#"{
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
-    "Stop": [{ "hooks": [{ "command": "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize" }] }]
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
         )
@@ -538,9 +567,9 @@ mod tests {
             &hooks_path,
             r#"{
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
-    "PostToolUse": [{ "hooks": [{ "command": "REMEM_HOOK_ADAPTER=codex-cli /tmp/remem observe" }] }],
-    "Stop": [{ "hooks": [{ "command": "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize" }] }]
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
+    "PostToolUse": [{ "hooks": [{ "command": "/tmp/remem observe --host codex-cli" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
         )

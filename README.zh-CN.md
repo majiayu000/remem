@@ -92,12 +92,12 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.claude/settings.json
 jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 ```
 
-期望看到这些 command prefix；后面可能继续带 `--color`、`--gate strict`
-等参数：
+期望看到 host-only command；模型、executor、上下文策略都在
+`~/.remem/config.toml`：
 
 ```text
-REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context ...
-REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context ...
+/Users/you/.local/bin/remem context --host claude-code
+/Users/you/.local/bin/remem context --host codex-cli
 ```
 
 ## 在 Codex 中使用
@@ -115,15 +115,16 @@ remem status
 - 在 `~/.codex/config.toml` 中启用 `[features].hooks = true`
 - 在 `~/.codex/config.toml` 中注册 `remem` MCP server
 - 在 `~/.codex/hooks.json` 中写入 Codex hook 命令
+- 创建或更新 `~/.remem/config.toml` memory-AI profiles
 
 重启 Codex 后，remem 会在 session start 自动注入相关项目记忆，并在 stop
 时后台总结本次会话。Codex 也可以调用 `remem mcp` 暴露的 MCP 工具，包括
 `search`、`get_observations`、`save_memory`、`workstreams` 和 `timeline`。
 
 默认 Codex 集成刻意保持低噪音：用 `SessionStart` 注入上下文，用 `Stop`
-做后台总结。安装后的 Codex `SessionStart` hook 使用 strict duplicate-injection
-gate，所以同一 session 里中途重复触发的 `SessionStart` 会在首次注入后保持静默；
-默认不安装高频 Bash observe hook。
+做后台总结。Codex 通过 `[memory_ai.hosts."codex-cli"].context_gate = "strict"`
+启用 strict duplicate-injection gate，所以同一 session 里中途重复触发的
+`SessionStart` 会在首次注入后保持静默；默认不安装高频 Bash observe hook。
 
 ## 发布渠道
 
@@ -252,8 +253,35 @@ remem usage --project /path/to/project --days 30 --weeks 12
 - `text_estimate`：拿不到真实 usage 时，用 prompt/response 文本长度估算
 
 费用是估算，不是账单。历史数据可能是文本估算，也可能从旧的无精确模型记录
-重估过。Codex 后台总结默认使用 `gpt-5.2`；如果要让 Codex 自己选择默认模型，
-设置 `REMEM_CODEX_MODEL=auto`，也可以设置成任意明确的 Codex 模型名。
+重估过。
+
+## Memory AI 配置
+
+Memory AI 执行策略配置在 `~/.remem/config.toml`（可用 `REMEM_CONFIG`
+覆盖路径）。hooks 只传 `--host`；config 负责把每个 host 映射到一个 profile，
+统一用于 summarize、flush/extract、compress 和 dream。
+
+```bash
+remem config path
+remem config show
+remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+```
+
+默认 Codex profile：
+
+```toml
+[memory_ai.hosts."codex-cli"]
+memory_profile = "codex"
+context_gate = "strict"
+context_color = true
+capture_adapter = "codex-cli"
+
+[memory_ai.profiles.codex]
+executor = "codex-cli"
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+path = "codex"
+```
 
 ## 常用命令
 
@@ -270,6 +298,8 @@ remem backfill-entities
 remem encrypt
 remem api --port 5567
 remem status
+remem config show
+remem config set memory_ai.profiles.codex.model gpt-5.4-mini
 remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending retry-failed --dry-run
@@ -283,7 +313,7 @@ remem preferences add "text"
 remem preferences remove 42
 remem context --cwd .
 remem cleanup
-remem dream [--project X] [--dry-run]
+remem dream [--project X] [--profile NAME] [--dry-run]
 remem install --target codex
 remem mcp
 remem sync-memory --cwd .

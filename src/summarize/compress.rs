@@ -5,11 +5,11 @@ use crate::memory::format;
 
 use super::constants::{COMPRESS_BATCH, COMPRESS_PROMPT, COMPRESS_THRESHOLD, KEEP_RECENT};
 
-pub async fn process_compress_job(project: &str) -> Result<()> {
-    maybe_compress(project).await
+pub async fn process_compress_job(host: &str, project: &str, profile: Option<&str>) -> Result<()> {
+    maybe_compress(host, project, profile).await
 }
 
-async fn maybe_compress(project: &str) -> Result<()> {
+async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Result<()> {
     let conn = db::open_db()?;
     let total = db::count_active_observations(&conn, project)?;
     if total <= COMPRESS_THRESHOLD {
@@ -37,6 +37,8 @@ async fn maybe_compress(project: &str) -> Result<()> {
         crate::ai::UsageContext {
             project: Some(project),
             operation: "compress",
+            host: profile.is_none().then_some(host),
+            profile,
         },
     )
     .await

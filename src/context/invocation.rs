@@ -115,6 +115,18 @@ pub(super) fn resolve_context_invocation_from_parts(
         .and_then(|hook| clean_optional(hook.transcript_path.clone()));
     let source = hook.as_ref().and_then(hook_source);
     let host = resolve_host_kind(options.host.as_deref());
+    let host_config =
+        crate::runtime_config::resolve_host_runtime_config(Some(host.as_env_value())).ok();
+    let gate_mode = clean_optional(options.gate_mode).or_else(|| {
+        host_config
+            .as_ref()
+            .and_then(|config| config.context_gate.clone())
+    });
+    let use_colors = options.use_colors
+        || host_config
+            .as_ref()
+            .map(|config| config.context_color)
+            .unwrap_or(false);
     ContextInvocation {
         cwd,
         project,
@@ -122,10 +134,10 @@ pub(super) fn resolve_context_invocation_from_parts(
         transcript_path,
         source,
         host,
-        use_colors: options.use_colors,
+        use_colors,
         debug: options.debug,
         force: options.force,
-        gate_mode: clean_optional(options.gate_mode),
+        gate_mode,
     }
 }
 

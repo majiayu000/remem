@@ -249,29 +249,65 @@ Short-lived process model (each hook = independent process) cannot dedup via in-
 ## AI Calls
 
 ```
-                  ┌─ executor = codex-cli?
-                  │
-             Yes ─┤──→ codex exec --model REMEM_CODEX_MODEL (default gpt-5.2)
-                  │         │
-                  │         └── usage from codex exec --json turn.completed.usage
-                  │
-             No ──┴─ ANTHROPIC_API_KEY exists?
-                        │
-                   Yes ─┤──→ HTTP API direct (2-5s)
-                        │         │
-                        │         └── usage from Anthropic response.usage
-                        │
-                   No ──┴──→ claude -p CLI (30-60s)
-                                  │
-                                  └── usage fallback = text estimate
+UsageContext { host/profile }
+        │
+        ├─ profile set? ───────────→ [memory_ai.profiles.<profile>]
+        │
+        └─ host/default_host ──────→ [memory_ai.hosts."<host>"].memory_profile
+                                      │
+                                      ▼
+                             [memory_ai.profiles.<name>]
+                                      │
+           ┌──────────────┬──────────┴──────────┬──────────────┐
+           ▼              ▼                     ▼              ▼
+      executor=http  executor=claude-cli  executor=codex-cli  usage ledger
 ```
 
-- **Model mapping**: `REMEM_MODEL=haiku` → `claude-haiku-4-5-20251001` (HTTP uses full ID, CLI uses short name)
-- **Codex model**: `REMEM_CODEX_MODEL` defaults to `gpt-5.2`; set `auto` to omit `--model` and use the Codex CLI default
+- **Config path**: `~/.remem/config.toml`, override with `REMEM_CONFIG`
+- **Default Codex profile**: executor `codex-cli`, model `gpt-5.4-mini`, reasoning effort `low`
+- **Model mapping**: profile model `haiku` maps to `claude-haiku-4-5-20251001` for Anthropic HTTP; CLI executors receive the configured model string directly
+- **Codex model `auto`**: omit `--model` and use the Codex CLI default
 - **Timeouts**: Single AI call 90s, entire worker 180s
-- **4 prompts**: observation (capture), summary (session summary), compress (long-term compression), candidate extraction (summary→reviewable memory candidates)
+- **Unified prompts**: summarize, session rollup, observation extract, memory candidate, compress, and dream all resolve through the same host/profile config
 - **Usage ledger**: `ai_usage_events` stores model, operation, token breakdown, usage source, pricing source, and estimated USD cost
 - **Precision levels**: provider/log usage (`anthropic_usage`, `codex_log`) is preferred; `text_estimate` is kept only as a fallback and marked in reports
+
+Default generated config:
+
+```toml
+version = 1
+
+[memory_ai]
+default_host = "codex-cli"
+
+[memory_ai.hosts."codex-cli"]
+memory_profile = "codex"
+context_gate = "strict"
+context_color = true
+capture_adapter = "codex-cli"
+
+[memory_ai.hosts."claude-code"]
+memory_profile = "claude"
+context_gate = "off"
+context_color = true
+capture_adapter = "claude-code"
+
+[memory_ai.profiles.codex]
+executor = "codex-cli"
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+path = "codex"
+
+[memory_ai.profiles.claude]
+executor = "claude-cli"
+model = "haiku"
+path = "claude"
+
+[memory_ai.profiles.anthropic_http]
+executor = "http"
+model = "haiku"
+base_url = "https://api.anthropic.com"
+```
 
 ## MCP Server
 
@@ -329,16 +365,9 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REMEM_DATA_DIR` | `~/.remem` | Data directory (DB + logs) |
-| `REMEM_MODEL` | `haiku` | AI model (haiku/sonnet/opus or full model ID) |
-| `REMEM_EXECUTOR` | `auto` | Legacy/general AI executor fallback for summaries and unspecified operations: `auto` / `http` / `claude-cli` / `codex-cli` |
-| `REMEM_SUMMARY_EXECUTOR` | `REMEM_EXECUTOR` | Summary executor override, used by Stop hooks (`claude-cli` for Claude Code, `codex-cli` for Codex) |
-| `REMEM_FLUSH_EXECUTOR` | `auto` | Flush/background observation executor override. If unset, `flush` / `flush-task` reuse `REMEM_SUMMARY_EXECUTOR` only when it resolves to Codex, so older Codex installs keep working without broadening Claude behavior |
-| `REMEM_COMPRESS_EXECUTOR` | `auto` | Memory compression executor override |
-| `REMEM_DREAM_EXECUTOR` | `auto` | Dream executor override |
+| `REMEM_CONFIG` | `~/.remem/config.toml` | Runtime config file for memory-AI host/profile policy |
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Custom API endpoint |
 | `REMEM_DEBUG` | - | Enable debug logging |
-| `REMEM_CONTEXT_HOST` | `auto` | Context host profile override: `claude-code`, `codex-cli`, or `unknown` |
 | `REMEM_CONTEXT_TOTAL_CHAR_LIMIT` | `12000` | Soft character cap for rendered context |
 | `REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT` | `120` | Candidate memories fetched before section selection |
 | `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` | `50` | Non-preference memories shown in the main memory index |
@@ -351,9 +380,6 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
 | `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | Preference section character budget |
-| `REMEM_CLAUDE_PATH` | `claude` | Claude CLI path |
-| `REMEM_CODEX_PATH` | `codex` | Codex CLI path |
-| `REMEM_CODEX_MODEL` | `gpt-5.2` | Codex CLI model. Set `auto` to omit `--model` and use the Codex CLI default |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
 | `REMEM_SAVE_MEMORY_LOCAL_COPY` | `true` | Enable local Markdown backup for save_memory |
 | `REMEM_SAVE_MEMORY_LOCAL_DIR` | `~/.remem/manual-notes` | Local backup directory |
