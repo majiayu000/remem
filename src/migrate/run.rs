@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
 
+use super::schema_drift::repair_known_schema_drift;
 use super::state::{applied_versions, ensure_migration_table, mark_applied};
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
@@ -49,6 +50,9 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
             "database is at schema v{db_latest} but this binary ({}) only knows up to v{binary_latest}; please upgrade remem and verify `remem --version` reports schema v{db_latest} or newer",
             crate::build_info::version_label()
         ));
+    }
+    for repair in repair_known_schema_drift(conn, &applied)? {
+        crate::log::info("migrate", &format!("repaired schema drift: {repair}"));
     }
     for migration in MIGRATIONS {
         if applied.contains(&migration.version) {
