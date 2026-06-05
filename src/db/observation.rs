@@ -112,7 +112,9 @@ pub fn mark_observations_compressed(conn: &Connection, ids: &[i64]) -> Result<us
     }
     let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
     let sql = format!(
-        "UPDATE observations SET status = 'compressed' WHERE id IN ({})",
+        "UPDATE observations
+         SET status = 'compressed'
+         WHERE status IN ('active', 'stale') AND id IN ({})",
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
