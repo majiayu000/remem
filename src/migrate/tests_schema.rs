@@ -236,6 +236,94 @@ fn memories_fts_indexes_all_statuses_after_v020() -> Result<()> {
 }
 
 #[test]
+fn graph_edges_reject_self_edges_at_schema_boundary() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    run_migrations(&conn)?;
+
+    let now = 1_700_000_000_i64;
+    let host_id: i64 =
+        conn.query_row("SELECT id FROM hosts WHERE name = 'codex-cli'", [], |row| {
+            row.get(0)
+        })?;
+    conn.execute(
+        "INSERT INTO workspaces(root_path, git_remote, git_branch, created_at_epoch, updated_at_epoch)
+         VALUES ('/tmp/remem-graph-schema', 'origin', 'main', ?1, ?1)",
+        [now],
+    )?;
+    let workspace_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO projects(workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+         VALUES (?1, '/tmp/remem-graph-schema', 'tmp-remem-graph-schema', ?2, ?2)",
+        params![workspace_id, now],
+    )?;
+    let project_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO sessions(host_id, workspace_id, project_id, session_id, started_at_epoch,
+                              last_seen_at_epoch, status)
+         VALUES (?1, ?2, ?3, 'session-a', ?4, ?4, 'active')",
+        params![host_id, workspace_id, project_id, now],
+    )?;
+    let session_row_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO captured_events(host_id, workspace_id, project_id, session_row_id,
+                                     session_id, event_id, event_type, content_hash,
+                                     retention_class, created_at_epoch, inserted_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, 'session-a', 'event-a', 'message',
+                 'hash-a', 'default', ?5, ?5)",
+        params![host_id, workspace_id, project_id, session_row_id, now],
+    )?;
+    let episode_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memories(project, topic_key, title, content, memory_type,
+                              created_at_epoch, updated_at_epoch, status)
+         VALUES ('/tmp/remem-graph-schema', 'graph-schema', 'Graph schema',
+                 'Schema rejects graph self-edges.', 'decision', ?1, ?1, 'active')",
+        [now],
+    )?;
+    let memory_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
+                                       evidence_event_ids, confidence, risk_class,
+                                       review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', 'graph-schema', 'Graph schema.',
+                 ?2, 0.9, 'low', 'accepted', ?3, ?3)",
+        params![project_id, format!("[{episode_id}]"), now],
+    )?;
+    let candidate_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memory_operation_log(operation, planner_version, actor, source,
+                                         source_candidate_id, result_memory_id,
+                                         confidence, reason, created_at_epoch)
+         VALUES ('add', 'graph-schema-test', 'test', 'memory_candidate',
+                 ?1, ?2, 0.9, 'test provenance', ?3)",
+        params![candidate_id, memory_id, now],
+    )?;
+    let operation_id = conn.last_insert_rowid();
+
+    let err = conn
+        .execute(
+            "INSERT INTO graph_edges
+             (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+              source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+              created_at_epoch)
+             VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?1,
+                     ?2, ?3, ?4, 0.9, 'self edge', ?5)",
+            params![
+                memory_id,
+                format!("[{episode_id}]"),
+                candidate_id,
+                operation_id,
+                now
+            ],
+        )
+        .expect_err("raw SQL graph self-edge must fail");
+    assert!(err.to_string().contains("CHECK constraint failed"));
+
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     run_migrations(&conn)?;

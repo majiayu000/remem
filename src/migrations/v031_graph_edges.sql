@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS graph_edges (
         OR valid_from_epoch IS NULL
         OR valid_to_epoch >= valid_from_epoch
     ),
+    CHECK (from_node_kind != to_node_kind OR from_node_id != to_node_id),
     CHECK (
         (
             edge_type IN (
