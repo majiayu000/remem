@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::memory::Memory;
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct GoldenDataset {
     pub version: Option<String>,
     pub description: Option<String>,
@@ -10,7 +10,7 @@ pub struct GoldenDataset {
     pub queries: Vec<GoldenQuery>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct GoldenQuery {
     pub id: String,
     pub query: String,
@@ -46,7 +46,7 @@ impl GoldenQuery {
     }
 }
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct EvidenceRef {
     pub memory_id: Option<i64>,
     pub topic_key: Option<String>,
@@ -122,8 +122,9 @@ fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
     haystack.to_lowercase().contains(&needle.to_lowercase())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct GoldenEvalReport {
+    pub evaluation_layers: EvaluationLayers,
     pub version: Option<String>,
     pub description: Option<String>,
     pub k: usize,
@@ -138,7 +139,7 @@ pub struct GoldenEvalReport {
     pub queries: Vec<QueryEvaluation>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CategoryEvaluation {
     pub total_queries: usize,
     pub scored_queries: usize,
@@ -147,24 +148,33 @@ pub struct CategoryEvaluation {
     pub metrics: Option<MetricAverages>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct QueryEvaluation {
     pub id: String,
     pub query: String,
     pub category: String,
     pub status: QueryStatus,
     pub result_count: usize,
+    pub retrieved_ids: Vec<i64>,
+    pub expected_relevant_ids: Vec<i64>,
+    pub missing_relevant_ids: Vec<i64>,
+    pub missing_evidence_refs: Vec<EvidenceRef>,
     pub matched_refs: usize,
     pub expected_refs: usize,
     pub metrics: Option<QueryMetrics>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum QueryStatus {
+    #[serde(rename = "HIT")]
     Hit,
+    #[serde(rename = "MISS")]
     Miss,
+    #[serde(rename = "PASS")]
     Pass,
+    #[serde(rename = "FAIL")]
     Fail,
+    #[serde(rename = "SKIP")]
     Skip,
 }
 
@@ -180,7 +190,41 @@ impl QueryStatus {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EvaluationLayers {
+    pub retrieval: LayerStatus,
+    pub answer_generation: LayerStatus,
+    pub llm_judge: LayerStatus,
+}
+
+impl EvaluationLayers {
+    pub fn deterministic_retrieval_only() -> Self {
+        Self {
+            retrieval: LayerStatus {
+                status: "deterministic",
+                description:
+                    "fixed golden retrieval metrics: Hit@K, Recall@K, MRR, nDCG, evidence recall",
+            },
+            answer_generation: LayerStatus {
+                status: "not_run",
+                description:
+                    "answer generation is intentionally excluded from golden retrieval eval",
+            },
+            llm_judge: LayerStatus {
+                status: "not_run",
+                description: "LLM judging is intentionally excluded from deterministic golden eval",
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LayerStatus {
+    pub status: &'static str,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct QueryMetrics {
     pub hit_at_k: f64,
     pub mrr_at_10: f64,
@@ -190,7 +234,7 @@ pub struct QueryMetrics {
     pub evidence_recall_at_k: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct MetricAverages {
     pub count: usize,
     pub hit_at_k: f64,

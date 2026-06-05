@@ -371,6 +371,9 @@ pub(super) enum Commands {
         /// Number of results to evaluate per query.
         #[arg(long, short = 'k', default_value = "5")]
         k: usize,
+        /// Emit the deterministic retrieval report as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Run end-to-end local API evaluation.
     EvalE2e {

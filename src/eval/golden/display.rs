@@ -6,7 +6,7 @@ impl Display for GoldenEvalReport {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         writeln!(
             f,
-            "remem eval — {} queries, k={}, rank_k={}",
+            "remem eval — deterministic retrieval layer, {} queries, k={}, rank_k={}",
             self.total_queries, self.k, self.rank_k
         )?;
         if let Some(version) = self.version.as_deref() {
@@ -15,6 +15,23 @@ impl Display for GoldenEvalReport {
         if let Some(description) = self.description.as_deref() {
             writeln!(f, "{description}")?;
         }
+        writeln!(f)?;
+        writeln!(f, "--- Evaluation Layers ---")?;
+        writeln!(
+            f,
+            "  retrieval: {}",
+            self.evaluation_layers.retrieval.status
+        )?;
+        writeln!(
+            f,
+            "  answer_generation: {}",
+            self.evaluation_layers.answer_generation.status
+        )?;
+        writeln!(
+            f,
+            "  llm_judge: {}",
+            self.evaluation_layers.llm_judge.status
+        )?;
         writeln!(f)?;
 
         for query in &self.queries {
@@ -37,6 +54,14 @@ impl Display for GoldenEvalReport {
                     query.category,
                     query.query
                 )?;
+                write_failure_details(
+                    f,
+                    query.status,
+                    &query.retrieved_ids,
+                    &query.expected_relevant_ids,
+                    &query.missing_relevant_ids,
+                    query.missing_evidence_refs.len(),
+                )?;
             } else {
                 writeln!(
                     f,
@@ -49,13 +74,21 @@ impl Display for GoldenEvalReport {
                     query.category,
                     query.query
                 )?;
+                write_failure_details(
+                    f,
+                    query.status,
+                    &query.retrieved_ids,
+                    &query.expected_relevant_ids,
+                    &query.missing_relevant_ids,
+                    query.missing_evidence_refs.len(),
+                )?;
             }
         }
 
         writeln!(f)?;
         writeln!(
             f,
-            "--- Overall ({} scored, {} abstention, {} skipped) ---",
+            "--- Retrieval Overall ({} scored, {} abstention, {} skipped) ---",
             self.scored_queries, self.abstention_queries, self.skipped_queries
         )?;
         if let Some(metrics) = self.overall.as_ref() {
@@ -68,6 +101,10 @@ impl Display for GoldenEvalReport {
                 self.abstention_passed, self.abstention_queries
             )?;
         }
+
+        writeln!(f)?;
+        writeln!(f, "--- Answer/Judge Layer ---")?;
+        writeln!(f, "  not run in deterministic golden retrieval eval")?;
 
         if !self.by_category.is_empty() {
             writeln!(f)?;
@@ -89,6 +126,27 @@ impl Display for GoldenEvalReport {
         }
         Ok(())
     }
+}
+
+fn write_failure_details(
+    f: &mut Formatter<'_>,
+    status: super::types::QueryStatus,
+    retrieved_ids: &[i64],
+    expected_relevant_ids: &[i64],
+    missing_relevant_ids: &[i64],
+    missing_evidence_ref_count: usize,
+) -> FmtResult {
+    if !matches!(
+        status,
+        super::types::QueryStatus::Miss | super::types::QueryStatus::Fail
+    ) {
+        return Ok(());
+    }
+    writeln!(
+        f,
+        "       retrieved_ids={:?} expected_relevant_ids={:?} missing_relevant_ids={:?} missing_evidence_refs={}",
+        retrieved_ids, expected_relevant_ids, missing_relevant_ids, missing_evidence_ref_count
+    )
 }
 
 fn write_metrics(

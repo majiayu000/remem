@@ -235,7 +235,7 @@ Full [LoCoMo](https://github.com/snap-research/locomo) benchmark (10 conversatio
 ### Local QA Eval
 
 ```bash
-python3 eval/local/run_local_eval.py --n 20
+python3 eval/local/run_local_eval.py --db ~/.remem/remem.db --n 20
 ```
 
 | Metric | Score |
@@ -246,7 +246,7 @@ python3 eval/local/run_local_eval.py --n 20
 | Preference | 100% |
 | Source in top-20 | 90.0% |
 
-Requires `.env` with `OPENAI_API_KEY` (optional `OPENAI_BASE_URL`, `OPENAI_MODEL`).
+Requires explicit `--db` plus `.env` with `OPENAI_API_KEY` (optional `OPENAI_BASE_URL`, `OPENAI_MODEL`).
 
 ### Sandboxed E2E Eval
 

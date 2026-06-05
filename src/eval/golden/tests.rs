@@ -292,6 +292,74 @@ fn golden_eval_rejects_empty_evidence_refs() -> Result<()> {
 }
 
 #[test]
+fn golden_eval_miss_records_retrieved_and_missing_ids() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    insert_memory(
+        &conn,
+        &TestMemory {
+            id: 1,
+            project: "/repo-a",
+            topic_key: "wrong-eval-result",
+            title: "Wrong eval result",
+            content: "wrong eval needle is retrievable but irrelevant",
+            memory_type: "discovery",
+            branch: Some("main"),
+            status: "active",
+            updated_at_epoch: now,
+        },
+    )?;
+
+    let dataset = GoldenDataset {
+        version: Some("1.2-test".to_string()),
+        description: None,
+        queries: vec![GoldenQuery {
+            id: "miss".to_string(),
+            query: "wrong eval needle".to_string(),
+            category: "single_hop".to_string(),
+            project: Some("/repo-a".to_string()),
+            branch: Some("main".to_string()),
+            memory_type: None,
+            relevant_ids: vec![42],
+            evidence_refs: vec![],
+            expect_abstain: false,
+            false_premise: false,
+            notes: None,
+        }],
+    };
+
+    let report = evaluate_dataset(&conn, &dataset, 5)?;
+    let query = &report.queries[0];
+
+    assert_eq!(query.status, QueryStatus::Miss);
+    assert_eq!(query.retrieved_ids, vec![1]);
+    assert_eq!(query.expected_relevant_ids, vec![42]);
+    assert_eq!(query.missing_relevant_ids, vec![42]);
+    assert_eq!(query.missing_evidence_refs.len(), 1);
+
+    let rendered = report.to_string();
+    assert!(rendered.contains("--- Evaluation Layers ---"));
+    assert!(rendered.contains("--- Retrieval Overall"));
+    assert!(rendered.contains("--- Answer/Judge Layer ---"));
+    assert!(rendered.contains("retrieved_ids=[1]"));
+    assert!(rendered.contains("missing_relevant_ids=[42]"));
+
+    let json = serde_json::to_value(&report)?;
+    assert_eq!(
+        json["evaluation_layers"]["retrieval"]["status"],
+        "deterministic"
+    );
+    assert_eq!(
+        json["evaluation_layers"]["answer_generation"]["status"],
+        "not_run"
+    );
+    assert_eq!(json["queries"][0]["status"], "MISS");
+    assert_eq!(json["queries"][0]["retrieved_ids"][0], 1);
+    assert_eq!(json["queries"][0]["missing_relevant_ids"][0], 42);
+    Ok(())
+}
+
+#[test]
 fn golden_eval_ndcg_counts_each_expected_ref_once() -> Result<()> {
     let conn = setup_conn()?;
     let now = chrono::Utc::now().timestamp();
