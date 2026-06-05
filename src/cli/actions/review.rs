@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 
-use crate::cli::types::ReviewAction;
+use crate::cli::types::{GraphReviewAction, ReviewAction};
 use crate::db;
+use crate::graph_candidate::review as graph_review;
 use crate::memory_candidate::review::{self, CandidateEdit};
 
 pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
@@ -68,4 +69,77 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub(in crate::cli) fn run_graph_review(action: GraphReviewAction) -> Result<()> {
+    let mut conn = db::open_db()?;
+
+    match action {
+        GraphReviewAction::List { project, limit } => {
+            let rows = graph_review::list_pending(&conn, project.as_deref(), limit)?;
+            if rows.is_empty() {
+                println!("No pending graph candidates.");
+                return Ok(());
+            }
+            println!("Pending graph candidates ({}):", rows.len());
+            for row in rows {
+                print_graph_candidate(&row);
+            }
+        }
+        GraphReviewAction::Inspect { id } => {
+            let Some(row) = graph_review::inspect_candidate(&conn, id)? else {
+                bail!("graph candidate {} not found", id);
+            };
+            print_graph_candidate(&row);
+        }
+        GraphReviewAction::Approve { id } => {
+            let Some(edge_id) = graph_review::approve_candidate(&mut conn, id)? else {
+                bail!("graph candidate {} not found", id);
+            };
+            println!(
+                "Approved graph candidate {}; promoted graph edge {}.",
+                id, edge_id
+            );
+        }
+        GraphReviewAction::Reject { id, reason } => {
+            if graph_review::reject_candidate(&conn, id, &reason)? {
+                println!("Rejected graph candidate {}.", id);
+            } else {
+                bail!("graph candidate {} not found or not pending_review", id);
+            }
+        }
+        GraphReviewAction::Defer { id, reason } => {
+            if graph_review::defer_candidate(&conn, id, &reason)? {
+                println!("Deferred graph candidate {}.", id);
+            } else {
+                bail!("graph candidate {} not found or not pending_review", id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_graph_candidate(row: &graph_review::ReviewGraphCandidate) {
+    let project = row.project.as_deref().unwrap_or("<unknown project>");
+    println!(
+        "  [{}] {} {} {} -> {} confidence={:.2} risk={} status={} project={}",
+        row.id,
+        row.candidate_type,
+        row.edge_type,
+        row.from_ref,
+        row.to_ref,
+        row.confidence,
+        row.risk_class,
+        row.review_status,
+        project
+    );
+    println!("      evidence: {:?}", row.evidence_event_ids);
+    println!("      reason: {}", db::truncate_str(&row.reason, 180));
+    if let Some(edge_id) = row.promoted_edge_id {
+        println!("      promoted_edge: {}", edge_id);
+    }
+    for evidence in &row.evidence_preview {
+        println!("        {}", evidence);
+    }
 }

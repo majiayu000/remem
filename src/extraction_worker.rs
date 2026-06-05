@@ -103,6 +103,10 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
             let result = crate::memory_candidate::process(task).await?;
             Ok(memory_candidate_task_outcome(result))
         }
+        db::ExtractionTaskKind::GraphCandidate => {
+            let result = crate::graph_candidate::process_graph_candidate_task(task).await?;
+            Ok(graph_candidate_task_outcome(result))
+        }
         _ => Ok(ExtractionTaskOutcome::Deferred(format!(
             "extraction task kind '{}' is not implemented",
             task.task_kind.as_str()
@@ -117,6 +121,24 @@ fn memory_candidate_task_outcome(result: MemoryCandidateResult) -> ExtractionTas
                 "worker",
                 &format!(
                     "memory candidate extraction deferred by model: {}",
+                    crate::db::truncate_str(&reason, 300)
+                ),
+            );
+            ExtractionTaskOutcome::Deferred(reason)
+        }
+        _ => ExtractionTaskOutcome::Done,
+    }
+}
+
+fn graph_candidate_task_outcome(
+    result: crate::graph_candidate::GraphCandidateResult,
+) -> ExtractionTaskOutcome {
+    match result {
+        crate::graph_candidate::GraphCandidateResult::Deferred { reason } => {
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "graph candidate extraction deferred by model: {}",
                     crate::db::truncate_str(&reason, 300)
                 ),
             );
@@ -150,6 +172,19 @@ mod tests {
         assert_eq!(
             outcome,
             ExtractionTaskOutcome::Deferred("ambiguous conflict".to_string())
+        );
+    }
+
+    #[test]
+    fn graph_candidate_defer_preserves_range_for_reprocessing() {
+        let outcome =
+            graph_candidate_task_outcome(crate::graph_candidate::GraphCandidateResult::Deferred {
+                reason: "ambiguous graph conflict".to_string(),
+            });
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Deferred("ambiguous graph conflict".to_string())
         );
     }
 }

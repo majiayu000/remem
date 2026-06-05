@@ -96,6 +96,12 @@ where
         db::ExtractionTaskKind::MemoryCandidate,
         range.to_event_id,
     )?;
+    db::enqueue_followup_extraction_task(
+        conn,
+        task,
+        db::ExtractionTaskKind::GraphCandidate,
+        range.to_event_id,
+    )?;
     Ok(ObservationExtractResult::Written(inserted))
 }
 

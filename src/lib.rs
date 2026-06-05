@@ -17,6 +17,7 @@ pub mod eval;
 mod extraction_worker;
 pub mod git_trace;
 pub mod git_util;
+mod graph_candidate;
 mod hook_stdin;
 pub mod identity;
 pub mod install;
