@@ -4,10 +4,13 @@ use tokio::time::Duration;
 use crate::db;
 use crate::memory_candidate::MemoryCandidateResult;
 
+const DEPENDENCY_WAIT_RETRY_SECS: i64 = 300;
+
 #[derive(Debug, PartialEq, Eq)]
 enum ExtractionTaskOutcome {
     Deferred(String),
     Done,
+    Waiting(String),
 }
 
 pub(crate) async fn run_next(
@@ -58,6 +61,24 @@ pub(crate) async fn run_next(
                     task.id,
                     crate::db::truncate_str(&msg, 300),
                     backoff
+                ),
+            );
+        }
+        Ok(Ok(ExtractionTaskOutcome::Waiting(msg))) => {
+            db::wait_extraction_task(
+                &conn,
+                task.id,
+                lease_owner,
+                &msg,
+                DEPENDENCY_WAIT_RETRY_SECS,
+            )?;
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "extraction id={} waiting: {} (recheck in {}s)",
+                    task.id,
+                    crate::db::truncate_str(&msg, 300),
+                    DEPENDENCY_WAIT_RETRY_SECS
                 ),
             );
         }
@@ -144,6 +165,16 @@ fn graph_candidate_task_outcome(
             );
             ExtractionTaskOutcome::Deferred(reason)
         }
+        crate::graph_candidate::GraphCandidateResult::Waiting { reason } => {
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "graph candidate extraction waiting for dependency: {}",
+                    crate::db::truncate_str(&reason, 300)
+                ),
+            );
+            ExtractionTaskOutcome::Waiting(reason)
+        }
         _ => ExtractionTaskOutcome::Done,
     }
 }
@@ -185,6 +216,19 @@ mod tests {
         assert_eq!(
             outcome,
             ExtractionTaskOutcome::Deferred("ambiguous graph conflict".to_string())
+        );
+    }
+
+    #[test]
+    fn graph_candidate_waiting_preserves_dependency_reason() {
+        let outcome =
+            graph_candidate_task_outcome(crate::graph_candidate::GraphCandidateResult::Waiting {
+                reason: "memory review pending".to_string(),
+            });
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Waiting("memory review pending".to_string())
         );
     }
 }

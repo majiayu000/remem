@@ -78,10 +78,10 @@ pub(in crate::cli) fn run_graph_review(action: GraphReviewAction) -> Result<()> 
         GraphReviewAction::List { project, limit } => {
             let rows = graph_review::list_pending(&conn, project.as_deref(), limit)?;
             if rows.is_empty() {
-                println!("No pending graph candidates.");
+                println!("No reviewable graph candidates.");
                 return Ok(());
             }
-            println!("Pending graph candidates ({}):", rows.len());
+            println!("Reviewable graph candidates ({}):", rows.len());
             for row in rows {
                 print_graph_candidate(&row);
             }
@@ -105,14 +105,14 @@ pub(in crate::cli) fn run_graph_review(action: GraphReviewAction) -> Result<()> 
             if graph_review::reject_candidate(&conn, id, &reason)? {
                 println!("Rejected graph candidate {}.", id);
             } else {
-                bail!("graph candidate {} not found or not pending_review", id);
+                bail!("graph candidate {} not found or not reviewable", id);
             }
         }
         GraphReviewAction::Defer { id, reason } => {
             if graph_review::defer_candidate(&conn, id, &reason)? {
                 println!("Deferred graph candidate {}.", id);
             } else {
-                bail!("graph candidate {} not found or not pending_review", id);
+                bail!("graph candidate {} not found or not reviewable", id);
             }
         }
     }

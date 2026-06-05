@@ -40,6 +40,9 @@ pub(crate) enum GraphCandidateResult {
     Deferred {
         reason: String,
     },
+    Waiting {
+        reason: String,
+    },
     Written {
         candidates: usize,
         promoted: usize,
@@ -112,7 +115,7 @@ where
         return Ok(GraphCandidateResult::EmptyRange);
     };
     if let Some(reason) = graph_candidate_blocked_by_memory_candidates(conn, task, &batch)? {
-        return Ok(GraphCandidateResult::Deferred { reason });
+        return Ok(GraphCandidateResult::Waiting { reason });
     }
 
     let prompt = build_graph_candidate_prompt(task, &batch);
@@ -336,7 +339,7 @@ pub(crate) fn mark_candidate_promoted(
              source_operation_id = ?3,
              updated_at_epoch = ?4
          WHERE id = ?5
-           AND review_status = 'pending_review'",
+           AND review_status IN ('pending_review', 'deferred')",
         params![
             status,
             outcome.edge_id,
@@ -347,7 +350,7 @@ pub(crate) fn mark_candidate_promoted(
     )?;
     if updated == 0 {
         bail!(
-            "graph candidate {candidate_id} is no longer pending_review, expected pending_review"
+            "graph candidate {candidate_id} is no longer reviewable, expected pending_review or deferred"
         );
     }
     Ok(())

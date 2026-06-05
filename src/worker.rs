@@ -426,8 +426,8 @@ mod tests {
                 "expected graph task pending after memory review gate, got {graph_status}"
             );
             anyhow::ensure!(
-                graph_attempts == 1,
-                "expected graph task to defer once, got {graph_attempts}"
+                graph_attempts == 0,
+                "expected graph task to wait without consuming attempts, got {graph_attempts}"
             );
             anyhow::ensure!(
                 graph_error

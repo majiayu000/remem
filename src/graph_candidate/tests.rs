@@ -428,7 +428,7 @@ async fn graph_candidate_defers_until_memory_task_completes() -> Result<()> {
     .await?;
 
     assert!(
-        matches!(result, GraphCandidateResult::Deferred { ref reason } if reason.contains("memory_candidate task")),
+        matches!(result, GraphCandidateResult::Waiting { ref reason } if reason.contains("memory_candidate task")),
         "unexpected result: {result:?}"
     );
     let candidate_count: i64 =
@@ -461,7 +461,53 @@ async fn graph_candidate_defers_while_memory_candidates_need_review() -> Result<
     .await?;
 
     assert!(
-        matches!(result, GraphCandidateResult::Deferred { ref reason } if reason.contains("pending review")),
+        matches!(result, GraphCandidateResult::Waiting { ref reason } if reason.contains("pending review")),
+        "unexpected result: {result:?}"
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_waits_on_pending_memory_review_for_overlapping_evidence() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-waits-overlap-review",
+        &[
+            "Memory 1 mentions the Worker entity.",
+            "Memory 1 touches src/worker.rs.",
+        ],
+    )?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_source_observation_with_evidence(
+        &conn,
+        &task,
+        "Memory 1 mentions the Worker entity and touches src/worker.rs.",
+        &event_ids,
+    )?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', 'decision-worker', 'Memory 1 mentions Worker',
+                 ?2, 0.91, 'low', 'pending_review', 1, 1)",
+        params![task.project_id, serde_json::to_string(&vec![event_ids[0]])?],
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async {
+        Err(anyhow::anyhow!(
+            "graph generator should not run while overlapping memory review is pending"
+        ))
+    })
+    .await?;
+
+    assert!(
+        matches!(result, GraphCandidateResult::Waiting { ref reason } if reason.contains("pending review")),
         "unexpected result: {result:?}"
     );
     let candidate_count: i64 =
@@ -590,7 +636,8 @@ fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
     let err = mark_candidate_promoted(&tx, 1, "approved", &outcome)
         .expect_err("stale candidate promotion must fail");
     assert!(
-        err.to_string().contains("expected pending_review"),
+        err.to_string()
+            .contains("expected pending_review or deferred"),
         "unexpected error: {err}"
     );
     drop(tx);
@@ -643,6 +690,8 @@ async fn graph_review_approve_reject_and_defer() -> Result<()> {
     let task = graph_test_task(&mut conn, "sess-graph-review")?;
     insert_graph_memory(&conn, &task.project, 1)?;
     insert_graph_memory(&conn, &task.project, 2)?;
+    insert_graph_memory(&conn, &task.project, 3)?;
+    insert_graph_memory(&conn, &task.project, 4)?;
     let event_id = insert_graph_source_observation(
         &conn,
         &task,
@@ -680,8 +729,21 @@ async fn graph_review_approve_reject_and_defer() -> Result<()> {
         .query_map([], |row| row.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(statuses, vec!["approved", "rejected", "deferred"]);
+    let reviewable = review::list_pending(&conn, None, 10)?;
+    assert_eq!(reviewable.len(), 1);
+    assert_eq!(reviewable[0].id, pending[2].id);
+    assert_eq!(reviewable[0].review_status, "deferred");
+
+    let deferred_edge_id = review::approve_candidate(&mut conn, pending[2].id)?
+        .ok_or_else(|| anyhow::anyhow!("deferred candidate should approve"))?;
+    assert!(deferred_edge_id > 0);
+    let statuses = conn
+        .prepare("SELECT review_status FROM graph_candidates ORDER BY id ASC")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(statuses, vec!["approved", "rejected", "approved"]);
     let edge_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
-    assert_eq!(edge_count, 1);
+    assert_eq!(edge_count, 2);
     Ok(())
 }

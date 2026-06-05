@@ -3,6 +3,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{insert_trusted_graph_edge, mark_candidate_promoted, ParsedGraphCandidate};
 
+const REVIEWABLE_STATUS_SQL: &str = "c.review_status IN ('pending_review', 'deferred')";
+const REVIEWABLE_STATUS_LABEL: &str = "pending_review or deferred";
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReviewGraphCandidate {
     pub id: i64,
@@ -44,7 +47,7 @@ pub(crate) fn list_pending(
     project: Option<&str>,
     limit: i64,
 ) -> Result<Vec<ReviewGraphCandidate>> {
-    load_rows(conn, project, Some("pending_review"), limit)
+    load_reviewable_rows(conn, project, limit)
 }
 
 pub(crate) fn inspect_candidate(
@@ -61,7 +64,7 @@ pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option
     let Some(row) = load_row(&tx, id)? else {
         return Ok(None);
     };
-    ensure_pending(&row)?;
+    ensure_reviewable(&row)?;
     let candidate = row.as_candidate()?;
     let outcome =
         insert_trusted_graph_edge(&tx, &row.source_project, row.id, &candidate, "graph_review")?;
@@ -76,56 +79,6 @@ pub(crate) fn reject_candidate(conn: &Connection, id: i64, reason: &str) -> Resu
 
 pub(crate) fn defer_candidate(conn: &Connection, id: i64, reason: &str) -> Result<bool> {
     update_review_status(conn, id, "deferred", reason)
-}
-
-fn load_rows(
-    conn: &Connection,
-    project: Option<&str>,
-    review_status: Option<&str>,
-    limit: i64,
-) -> Result<Vec<ReviewGraphCandidate>> {
-    let limit = limit.clamp(1, 200);
-    let mut sql = String::from(
-        "SELECT c.id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
-                c.from_ref, c.to_ref, c.evidence_event_ids, c.confidence, c.risk_class,
-                c.reason, c.review_status, c.promoted_edge_id, c.created_at_epoch
-         FROM graph_candidates c
-         LEFT JOIN projects p ON p.id = c.project_id",
-    );
-    let mut filters = Vec::new();
-    if project.is_some() {
-        filters.push("p.project_path = ?1");
-    }
-    if review_status.is_some() {
-        filters.push(if project.is_some() {
-            "c.review_status = ?2"
-        } else {
-            "c.review_status = ?1"
-        });
-    }
-    if !filters.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&filters.join(" AND "));
-    }
-    sql.push_str(" ORDER BY c.created_at_epoch ASC, c.id ASC LIMIT ");
-    sql.push_str(&limit.to_string());
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = match (project, review_status) {
-        (Some(project), Some(status)) => stmt
-            .query_map(params![project, status], GraphCandidateRow::from_row)?
-            .collect::<Result<Vec<_>, _>>()?,
-        (Some(project), None) => stmt
-            .query_map(params![project], GraphCandidateRow::from_row)?
-            .collect::<Result<Vec<_>, _>>()?,
-        (None, Some(status)) => stmt
-            .query_map(params![status], GraphCandidateRow::from_row)?
-            .collect::<Result<Vec<_>, _>>()?,
-        (None, None) => stmt
-            .query_map([], GraphCandidateRow::from_row)?
-            .collect::<Result<Vec<_>, _>>()?,
-    };
-    rows.into_iter().map(|row| row.into_review(conn)).collect()
 }
 
 fn load_row(conn: &Connection, id: i64) -> Result<Option<GraphCandidateRow>> {
@@ -143,12 +96,13 @@ fn load_row(conn: &Connection, id: i64) -> Result<Option<GraphCandidateRow>> {
     .map_err(Into::into)
 }
 
-fn ensure_pending(row: &GraphCandidateRow) -> Result<()> {
-    if row.review_status != "pending_review" {
+fn ensure_reviewable(row: &GraphCandidateRow) -> Result<()> {
+    if !matches!(row.review_status.as_str(), "pending_review" | "deferred") {
         bail!(
-            "graph candidate {} is {}, expected pending_review",
+            "graph candidate {} is {}, expected {}",
             row.id,
-            row.review_status
+            row.review_status,
+            REVIEWABLE_STATUS_LABEL
         );
     }
     Ok(())
@@ -165,10 +119,43 @@ fn update_review_status(conn: &Connection, id: i64, status: &str, reason: &str) 
          SET review_status = ?1,
              review_note = ?2,
              updated_at_epoch = ?3
-         WHERE id = ?4 AND review_status = 'pending_review'",
+         WHERE id = ?4
+           AND review_status IN ('pending_review', 'deferred')",
         params![status, reason, now, id],
     )?;
     Ok(updated > 0)
+}
+
+fn load_reviewable_rows(
+    conn: &Connection,
+    project: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ReviewGraphCandidate>> {
+    let limit = limit.clamp(1, 200);
+    let mut sql = String::from(
+        "SELECT c.id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
+                c.from_ref, c.to_ref, c.evidence_event_ids, c.confidence, c.risk_class,
+                c.reason, c.review_status, c.promoted_edge_id, c.created_at_epoch
+         FROM graph_candidates c
+         LEFT JOIN projects p ON p.id = c.project_id
+         WHERE ",
+    );
+    if project.is_some() {
+        sql.push_str("p.project_path = ?1 AND ");
+    }
+    sql.push_str(REVIEWABLE_STATUS_SQL);
+    sql.push_str(" ORDER BY c.created_at_epoch ASC, c.id ASC LIMIT ");
+    sql.push_str(&limit.to_string());
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = if let Some(project) = project {
+        stmt.query_map(params![project], GraphCandidateRow::from_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        stmt.query_map([], GraphCandidateRow::from_row)?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    rows.into_iter().map(|row| row.into_review(conn)).collect()
 }
 
 impl GraphCandidateRow {

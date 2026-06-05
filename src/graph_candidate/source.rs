@@ -205,15 +205,10 @@ pub(super) fn graph_candidate_blocked_by_memory_candidates(
         )));
     }
 
-    let evidence_json = serde_json::to_string(&batch.evidence_event_ids)?;
-    let pending_memory_candidates: i64 = conn.query_row(
-        "SELECT COUNT(*)
-         FROM memory_candidates
-         WHERE project_id = ?1
-           AND evidence_event_ids = ?2
-           AND review_status = 'pending_review'",
-        params![task.project_id, evidence_json],
-        |row| row.get(0),
+    let pending_memory_candidates = count_pending_memory_candidates_with_evidence_overlap(
+        conn,
+        task.project_id,
+        &batch.evidence_event_ids,
     )?;
     if pending_memory_candidates > 0 {
         return Ok(Some(format!(
@@ -222,6 +217,41 @@ pub(super) fn graph_candidate_blocked_by_memory_candidates(
     }
 
     Ok(None)
+}
+
+fn count_pending_memory_candidates_with_evidence_overlap(
+    conn: &Connection,
+    project_id: i64,
+    evidence_event_ids: &[i64],
+) -> Result<i64> {
+    let evidence_event_ids = evidence_event_ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut stmt = conn.prepare(
+        "SELECT id, evidence_event_ids
+         FROM memory_candidates
+         WHERE project_id = ?1
+           AND review_status = 'pending_review'
+           AND evidence_event_ids IS NOT NULL",
+    )?;
+    let rows = stmt
+        .query_map(params![project_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut count = 0;
+    for (candidate_id, candidate_evidence_json) in rows {
+        let candidate_event_ids = serde_json::from_str::<Vec<i64>>(&candidate_evidence_json)
+            .with_context(|| {
+                format!("memory candidate {candidate_id} has malformed evidence_event_ids")
+            })?;
+        if candidate_event_ids
+            .iter()
+            .any(|event_id| evidence_event_ids.contains(event_id))
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 pub(super) fn graph_candidate_has_source_support(
