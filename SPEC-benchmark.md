@@ -24,7 +24,7 @@ eval/locomo/run_locomo.py    — LoCoMo 长对话记忆评估
 
 ```bash
 cargo test --test benchmark
-python3 eval/local/run_local_eval.py --n 20
+python3 eval/local/run_local_eval.py --db ~/.remem/remem.db --n 20
 cd eval/locomo && python3 run_locomo.py --remem-url http://127.0.0.1:7899
 ```
 

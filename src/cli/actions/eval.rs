@@ -9,10 +9,14 @@ pub(in crate::cli) fn run_eval_local() -> Result<()> {
     Ok(())
 }
 
-pub(in crate::cli) fn run_eval(dataset_path: &str, k: usize) -> Result<()> {
+pub(in crate::cli) fn run_eval(dataset_path: &str, k: usize, json: bool) -> Result<()> {
     let conn = db::open_db()?;
     let report = crate::eval::golden::run_dataset_path(&conn, dataset_path, k)?;
-    print!("{}", report);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", report);
+    }
     Ok(())
 }
 

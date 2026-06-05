@@ -4,8 +4,8 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
 
 use super::types::{
-    CategoryEvaluation, EvidenceRef, GoldenDataset, GoldenEvalReport, GoldenQuery, MetricSums,
-    QueryEvaluation, QueryMetrics, QueryStatus,
+    CategoryEvaluation, EvaluationLayers, EvidenceRef, GoldenDataset, GoldenEvalReport,
+    GoldenQuery, MetricSums, QueryEvaluation, QueryMetrics, QueryStatus,
 };
 
 const RANK_K: usize = 10;
@@ -84,6 +84,7 @@ pub fn evaluate_dataset(
     }
 
     Ok(GoldenEvalReport {
+        evaluation_layers: EvaluationLayers::deterministic_retrieval_only(),
         version: dataset.version.clone(),
         description: dataset.description.clone(),
         k,
@@ -168,6 +169,10 @@ fn evaluate_query(
                 QueryStatus::Fail
             },
             result_count: results.len(),
+            retrieved_ids: retrieved_ids(results, k),
+            expected_relevant_ids: expected_relevant_ids(&expected_refs),
+            missing_relevant_ids: Vec::new(),
+            missing_evidence_refs: Vec::new(),
             matched_refs: 0,
             expected_refs: expected_refs.len(),
             metrics: None,
@@ -181,6 +186,10 @@ fn evaluate_query(
             category: query.category.clone(),
             status: QueryStatus::Skip,
             result_count: results.len(),
+            retrieved_ids: retrieved_ids(results, k),
+            expected_relevant_ids: Vec::new(),
+            missing_relevant_ids: Vec::new(),
+            missing_evidence_refs: Vec::new(),
             matched_refs: 0,
             expected_refs: 0,
             metrics: None,
@@ -188,7 +197,10 @@ fn evaluate_query(
     }
 
     let metrics = score_results(results, &expected_refs, k);
-    let matched_refs = matched_ref_indexes(results, &expected_refs, k).len();
+    let matched_ref_indexes = matched_ref_indexes(results, &expected_refs, k);
+    let missing_evidence_refs = missing_evidence_refs(&expected_refs, &matched_ref_indexes);
+    let missing_relevant_ids = missing_relevant_ids(&missing_evidence_refs);
+    let matched_refs = matched_ref_indexes.len();
     let status = if metrics.hit_at_k > 0.0 {
         QueryStatus::Hit
     } else {
@@ -200,6 +212,10 @@ fn evaluate_query(
         category: query.category.clone(),
         status,
         result_count: results.len(),
+        retrieved_ids: retrieved_ids(results, k),
+        expected_relevant_ids: expected_relevant_ids(&expected_refs),
+        missing_relevant_ids,
+        missing_evidence_refs,
         matched_refs,
         expected_refs: expected_refs.len(),
         metrics: Some(metrics),
@@ -262,6 +278,37 @@ fn matched_ref_indexes(
         }
     }
     matched
+}
+
+fn retrieved_ids(results: &[crate::memory::Memory], k: usize) -> Vec<i64> {
+    results.iter().take(k).map(|memory| memory.id).collect()
+}
+
+fn expected_relevant_ids(expected_refs: &[EvidenceRef]) -> Vec<i64> {
+    expected_refs
+        .iter()
+        .filter_map(|evidence_ref| evidence_ref.memory_id)
+        .collect()
+}
+
+fn missing_evidence_refs(
+    expected_refs: &[EvidenceRef],
+    matched_ref_indexes: &HashSet<usize>,
+) -> Vec<EvidenceRef> {
+    expected_refs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, evidence_ref)| {
+            (!matched_ref_indexes.contains(&index)).then_some(evidence_ref.clone())
+        })
+        .collect()
+}
+
+fn missing_relevant_ids(missing_evidence_refs: &[EvidenceRef]) -> Vec<i64> {
+    missing_evidence_refs
+        .iter()
+        .filter_map(|evidence_ref| evidence_ref.memory_id)
+        .collect()
 }
 
 fn reciprocal_rank_from_relevance(relevance: &[bool]) -> f64 {

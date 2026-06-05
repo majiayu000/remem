@@ -13,8 +13,8 @@ Same pipeline as LoCoMo eval but against your actual memories:
 Usage:
   # Requires remem API running: remem api --port 5567
   # Reads REMEM_API_TOKEN or ~/.remem/.api-token for REST API auth.
-  python eval/local/run_local_eval.py
-  python eval/local/run_local_eval.py --n 50 --model gpt-5.4
+  python eval/local/run_local_eval.py --db ~/.remem/remem.db
+  python eval/local/run_local_eval.py --db ~/.remem/remem.db --n 50 --model gpt-5.4
 """
 
 import argparse
@@ -391,7 +391,11 @@ def print_report(type_scores, cat_scores):
 def main():
     parser = argparse.ArgumentParser(description="Local eval: real-data QA benchmark for remem")
     parser.add_argument("--remem-url", default="http://127.0.0.1:5567")
-    parser.add_argument("--db", default=str(Path.home() / ".remem" / "remem.db"))
+    parser.add_argument(
+        "--db",
+        required=True,
+        help="Explicit remem SQLite database path. Required to avoid accidental production-data eval.",
+    )
     _load_env_file(_PROJECT_ENV)
     parser.add_argument(
         "--model",

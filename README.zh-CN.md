@@ -221,7 +221,7 @@ Query: "database encryption"
 ### 本地端到端 QA 评测
 
 ```bash
-python3 eval/local/run_local_eval.py --n 20
+python3 eval/local/run_local_eval.py --db ~/.remem/remem.db --n 20
 ```
 
 | 指标 | 分数 |
@@ -232,7 +232,7 @@ python3 eval/local/run_local_eval.py --n 20
 | Preference | 100% |
 | Source in top-20 | 90.0% |
 
-需要项目根目录 `.env` 中配置 `OPENAI_API_KEY`（可选 `OPENAI_BASE_URL`、`OPENAI_MODEL`）。
+需要显式传入 `--db`，并在项目根目录 `.env` 中配置 `OPENAI_API_KEY`（可选 `OPENAI_BASE_URL`、`OPENAI_MODEL`）。
 
 ## Token 使用量与费用统计
 

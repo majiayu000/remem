@@ -3,6 +3,8 @@ mod cwd;
 mod dispatch;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_eval;
 mod types;
 
 use anyhow::Result;
