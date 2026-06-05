@@ -335,6 +335,7 @@ fn render_search_explain(explain: &SearchExplain) -> String {
     ));
     output.push_str(&format!("  fts_query: {:?}\n", explain.fts_query));
     output.push_str(&format!("  temporal_range: {:?}\n", explain.temporal_range));
+    output.push_str(&format!("  temporal_field: {:?}\n", explain.temporal_field));
     output.push_str(&format!("  rrf_k: {:.1}\n", explain.rrf_k));
     output.push_str("  channels:\n");
     for channel in &explain.channels {

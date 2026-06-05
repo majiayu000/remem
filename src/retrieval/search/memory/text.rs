@@ -22,6 +22,7 @@ struct QuerySearchPlan {
     core_terms: Vec<String>,
     fts_query: Option<String>,
     temporal_range: Option<(i64, i64)>,
+    temporal_field: Option<String>,
     fetch_limit: i64,
     channels: Vec<NamedChannel>,
 }
@@ -116,6 +117,7 @@ pub(super) fn search_with_query_explain(
                 core_terms: plan.core_terms,
                 fts_query: plan.fts_query,
                 temporal_range: plan.temporal_range,
+                temporal_field: plan.temporal_field,
                 rrf_k: RRF_K,
                 channels: vec![],
                 results: vec![],
@@ -177,6 +179,7 @@ fn build_query_search_plan(
     let mut channels: Vec<NamedChannel> = Vec::new();
     let mut fts_query = None;
     let mut temporal_range = None;
+    let mut temporal_field = None;
 
     if !long_tokens.is_empty() {
         let safe_query = sanitize_fts_query(&long_tokens.join(" "));
@@ -218,6 +221,7 @@ fn build_query_search_plan(
             temporal_constraint.start_epoch,
             temporal_constraint.end_epoch,
         ));
+        temporal_field = Some(temporal_constraint.field.as_str().to_string());
         let temporal_ids = crate::retrieval::temporal::search_by_time_filtered(
             conn,
             &temporal_constraint,
@@ -257,6 +261,7 @@ fn build_query_search_plan(
         core_terms: core_tokens,
         fts_query,
         temporal_range,
+        temporal_field,
         fetch_limit: fetch,
         channels,
     })
@@ -318,6 +323,7 @@ fn build_explain(
         core_terms: plan.core_terms.clone(),
         fts_query: plan.fts_query.clone(),
         temporal_range: plan.temporal_range,
+        temporal_field: plan.temporal_field.clone(),
         rrf_k: RRF_K,
         channels,
         results,
