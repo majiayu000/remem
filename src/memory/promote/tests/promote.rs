@@ -5,14 +5,19 @@ use super::super::promote_summary_to_memory_candidates;
 use super::super::slug::content_hash;
 use crate::db;
 use crate::memory::service::{save_memory, SaveMemoryRequest};
+use crate::memory_candidate::review::approve_candidate;
 
-fn setup_conn() -> Result<Connection> {
+pub(super) fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
     Ok(conn)
 }
 
-fn record_summary_evidence(conn: &Connection, session_id: &str, project: &str) -> Result<i64> {
+pub(super) fn record_summary_evidence(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+) -> Result<i64> {
     record_summary_evidence_with_host(conn, "codex-cli", session_id, project)
 }
 
@@ -198,6 +203,122 @@ fn test_summary_preference_candidate_defaults_to_project_scope() -> Result<()> {
 }
 
 #[test]
+fn test_summary_preference_candidate_uses_semantic_state_topic_key() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-preference-state-key";
+    let project = "test/proj";
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Capture preference"),
+        None,
+        None,
+        Some("Keep verification status separate from data and code changes."),
+    )?;
+    assert_eq!(count, 1);
+
+    let (topic_key, state_key, state_key_confidence, state_key_reason): (
+        String,
+        String,
+        f64,
+        String,
+    ) = conn.query_row(
+        "SELECT topic_key, state_key, state_key_confidence, state_key_reason
+         FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(topic_key, "verification-status-separation");
+    assert_eq!(state_key, "verification-status-separation");
+    assert_eq!(state_key_confidence, 1.0);
+    assert_eq!(state_key_reason, "stable_topic_key");
+    Ok(())
+}
+
+#[test]
+fn test_summary_preference_paraphrases_promote_through_same_state_key() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let project = "test/proj";
+
+    record_summary_evidence(&conn, "session-pref-state-a", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-pref-state-a",
+        project,
+        Some("Capture preference"),
+        None,
+        None,
+        Some("Keep verification status separate from data and code changes."),
+    )?;
+    let first_candidate_id: i64 = conn.query_row(
+        "SELECT id FROM memory_candidates WHERE review_status = 'pending_review'",
+        [],
+        |row| row.get(0),
+    )?;
+    let first_memory_id =
+        approve_candidate(&mut conn, first_candidate_id)?.expect("first candidate should promote");
+
+    record_summary_evidence(&conn, "session-pref-state-b", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-pref-state-b",
+        project,
+        Some("Capture refined preference"),
+        None,
+        None,
+        Some("Report data and code changes separately from verification status."),
+    )?;
+    let second_candidate_id: i64 = conn.query_row(
+        "SELECT id
+         FROM memory_candidates
+         WHERE review_status = 'pending_review'
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let second_topic_key: String = conn.query_row(
+        "SELECT topic_key FROM memory_candidates WHERE id = ?1",
+        [second_candidate_id],
+        |row| row.get(0),
+    )?;
+    let second_memory_id = approve_candidate(&mut conn, second_candidate_id)?
+        .expect("second candidate should promote");
+
+    let first_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [first_memory_id],
+        |row| row.get(0),
+    )?;
+    let (second_status, state_key, current_memory_id): (String, String, i64) = conn.query_row(
+        "SELECT m.status, sk.state_key, sk.current_memory_id
+         FROM memories m
+         JOIN memory_state_keys sk ON sk.id = m.state_key_id
+         WHERE m.id = ?1",
+        [second_memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(second_topic_key, "verification-status-separation");
+    assert_eq!(first_status, "stale");
+    assert_eq!(second_status, "active");
+    assert_eq!(state_key, "verification-status-separation");
+    assert_eq!(current_memory_id, second_memory_id);
+    assert_eq!(active_count, 1);
+    Ok(())
+}
+
+#[test]
 fn test_summary_candidates_missing_evidence_fails_closed() -> Result<()> {
     let mut conn = setup_conn()?;
 
@@ -368,6 +489,64 @@ fn summary_candidate_promotion_skips_candidate_covered_by_recent_project_claim()
     assert_eq!(count, 0);
     assert_eq!(candidate_count, 0);
     assert_eq!(noop_session, session_id);
+    assert_eq!(consumed_by.as_deref(), Some(session_id));
+    Ok(())
+}
+
+#[test]
+fn summary_preference_candidate_skips_exact_recent_claim_with_legacy_topic() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-preference-legacy-topic-claim";
+    let project = "test/proj";
+    let preference = "Keep verification status separate from data and code changes.";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: preference.to_string(),
+            title: Some("Legacy preference".to_string()),
+            project: Some(project.to_string()),
+            topic_key: Some("legacy-preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("save_memory should return claim_id"))?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Capture preference"),
+        None,
+        None,
+        Some(preference),
+    )?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let (noop_count, noop_reason): (i64, String) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(MAX(reason), '')
+         FROM memory_candidate_noops
+         WHERE memory_claim_id = ?1",
+        [claim_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let consumed_by: Option<String> = conn.query_row(
+        "SELECT consumed_by_session_id FROM memory_claims WHERE id = ?1",
+        [claim_id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 0);
+    assert_eq!(candidate_count, 0);
+    assert_eq!(noop_count, 1);
+    assert_eq!(noop_reason, "covered_by_manual_save");
     assert_eq!(consumed_by.as_deref(), Some(session_id));
     Ok(())
 }
