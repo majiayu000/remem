@@ -61,7 +61,12 @@ async fn process_job(job: &db::Job) -> Result<()> {
             Ok(())
         }
         db::JobType::Dream => {
-            crate::dream::process_dream_job_with_host(&job.project, &job.host).await?;
+            let profile = job_profile(&job.payload_json);
+            if let Some(profile) = profile.as_deref() {
+                crate::dream::process_dream_job_with_profile(&job.project, Some(profile)).await?;
+            } else {
+                crate::dream::process_dream_job_with_host(&job.project, &job.host).await?;
+            }
             Ok(())
         }
     }

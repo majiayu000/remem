@@ -44,6 +44,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "compressed_observation_sources",
     "raw_ingest_failures",
     "memory_embeddings",
+    "dream_cluster_decisions",
 ];
 
 fn make_upgraded_v10_db() -> Result<Connection> {

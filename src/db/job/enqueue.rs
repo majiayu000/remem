@@ -49,3 +49,91 @@ pub fn enqueue_job(
     )?;
     Ok(conn.last_insert_rowid())
 }
+
+pub fn maybe_enqueue_dream_job(
+    conn: &Connection,
+    host: &str,
+    project: &str,
+    payload_json: &str,
+    priority: i64,
+    cooldown_secs: i64,
+) -> Result<Option<i64>> {
+    let incoming_profile = dream_profile_key(payload_json);
+    let inflight: Option<(i64, String, String)> = conn
+        .query_row(
+            "SELECT id, state, payload_json FROM jobs
+             WHERE job_type = ?1
+               AND project = ?2
+               AND session_id IS NULL
+               AND state IN ('pending', 'processing')
+             ORDER BY CASE state WHEN 'pending' THEN 0 ELSE 1 END,
+                      updated_at_epoch DESC,
+                      id DESC
+             LIMIT 1",
+            params![JobType::Dream.as_str(), project],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    if let Some((id, state, existing_payload)) = inflight {
+        if state == "pending"
+            && incoming_profile.is_some()
+            && dream_profile_key(&existing_payload) != incoming_profile
+        {
+            let now = chrono::Utc::now().timestamp();
+            conn.execute(
+                "UPDATE jobs
+                 SET host = ?1,
+                     payload_json = ?2,
+                     priority = CASE WHEN priority <= ?3 THEN priority ELSE ?3 END,
+                     updated_at_epoch = ?4
+                 WHERE id = ?5 AND state = 'pending'",
+                params![host, payload_json, priority, now, id],
+            )?;
+        }
+        return Ok(None);
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let cutoff = now - cooldown_secs.max(1);
+    let recent_done: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM jobs
+             WHERE job_type = ?1
+               AND project = ?2
+               AND session_id IS NULL
+               AND state = 'done'
+               AND updated_at_epoch >= ?3
+             ORDER BY updated_at_epoch DESC, id DESC
+             LIMIT 1",
+            params![JobType::Dream.as_str(), project, cutoff],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if recent_done.is_some() {
+        return Ok(None);
+    }
+
+    enqueue_job(
+        conn,
+        host,
+        JobType::Dream,
+        project,
+        None,
+        payload_json,
+        priority,
+    )
+    .map(Some)
+}
+
+fn dream_profile_key(payload_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get(crate::runtime_config::MEMORY_AI_PROFILE_FIELD)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|profile| !profile.is_empty())
+                .map(str::to_string)
+        })
+}

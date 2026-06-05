@@ -5,7 +5,17 @@ use super::merge::MergeResult;
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
-pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ApplyOutcome {
+    pub merged_id: i64,
+    pub operation_id: i64,
+}
+
+pub(super) fn apply(
+    conn: &mut Connection,
+    project: &str,
+    result: &MergeResult,
+) -> Result<ApplyOutcome> {
     let tx = conn.transaction()?;
     let superseded_ids =
         validate_dream_superseded_ids(&tx, project, &result.memory_type, &result.superseded_ids)?;
@@ -82,7 +92,10 @@ pub(super) fn apply(conn: &mut Connection, project: &str, result: &MergeResult) 
     )?;
 
     tx.commit()?;
-    Ok(())
+    Ok(ApplyOutcome {
+        merged_id,
+        operation_id,
+    })
 }
 
 fn validate_dream_superseded_ids(

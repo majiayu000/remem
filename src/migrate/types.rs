@@ -150,6 +150,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_embeddings",
         sql: include_str!("../migrations/v029_memory_embeddings.sql"),
     },
+    Migration {
+        version: 30,
+        name: "dream_cluster_decisions",
+        sql: include_str!("../migrations/v030_dream_cluster_decisions.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

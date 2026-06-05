@@ -11,7 +11,10 @@ pub(super) const TOPIC_KEY_PREFIX_LEN: usize = 20;
 
 /// dream job 最小触发间隔（秒）
 #[allow(dead_code)]
-pub(super) const DREAM_COOLDOWN_SECS: i64 = 3600;
+pub(crate) const DREAM_COOLDOWN_SECS: i64 = 3600;
+
+/// unchanged no-merge clusters are not reconsidered until this review window expires.
+pub(crate) const DREAM_NO_MERGE_REVIEW_SECS: i64 = 7 * 24 * 3600;
 
 /// 最近 N 秒内写入的记忆不参与合并（避免合并进行中的会话）
 pub(super) const DREAM_RECENCY_GUARD_SECS: i64 = 3600;

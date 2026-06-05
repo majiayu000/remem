@@ -1,19 +1,33 @@
 mod apply;
 mod candidates;
 mod constants;
+mod decisions;
 mod merge;
 
 use anyhow::{anyhow, Result};
 use candidates::load_clusters;
 pub(crate) use candidates::Cluster;
+pub(crate) use constants::DREAM_COOLDOWN_SECS;
+use decisions::{load_cluster_plan, record_failed, record_merged, record_no_merge};
 use merge::{merge_cluster, MergeDecision};
 use rusqlite::Connection;
 use std::future::Future;
 use std::pin::Pin;
 
-pub(crate) fn list_clusters(project: &str) -> Result<Vec<Cluster>> {
+#[derive(Debug)]
+pub(crate) struct DreamClusterPlan {
+    pub eligible: Vec<Cluster>,
+    pub suppressed: usize,
+}
+
+pub(crate) fn list_cluster_plan(project: &str) -> Result<DreamClusterPlan> {
     let conn = crate::db::open_db()?;
-    load_clusters(&conn, project)
+    let clusters = load_clusters(&conn, project)?;
+    let plan = decisions::load_cluster_plan(&conn, project, clusters)?;
+    Ok(DreamClusterPlan {
+        eligible: plan.eligible,
+        suppressed: plan.suppressed,
+    })
 }
 
 pub async fn process_dream_job(project: &str) -> Result<()> {
@@ -38,7 +52,17 @@ async fn process_dream_job_with_selection(
     let profile = profile.map(str::to_string);
     let mut conn = crate::db::open_db()?;
     let clusters = load_clusters(&conn, project)?;
-    process_clusters(project, &mut conn, &clusters, |cluster, project| {
+    let plan = load_cluster_plan(&conn, project, clusters)?;
+    if plan.suppressed > 0 {
+        crate::log::info(
+            "dream",
+            &format!(
+                "project={} suppressed={} cluster(s) by durable dream decisions",
+                project, plan.suppressed
+            ),
+        );
+    }
+    process_clusters(project, &mut conn, &plan.eligible, |cluster, project| {
         Box::pin(merge_cluster(
             cluster,
             project,
@@ -82,6 +106,15 @@ async fn process_clusters(
         let decision = match merge_fn(cluster, project).await {
             Ok(decision) => decision,
             Err(error) => {
+                record_failed(
+                    conn,
+                    project,
+                    cluster,
+                    &format!(
+                        "merge failed: {}",
+                        crate::db::truncate_str(&error.to_string(), 500)
+                    ),
+                )?;
                 merge_failures += 1;
                 crate::log::warn(
                     "dream",
@@ -98,12 +131,35 @@ async fn process_clusters(
             MergeDecision::Merge(result) => {
                 let topic_key = result.topic_key.clone();
                 let superseded = result.superseded_ids.len();
-                if let Err(error) = apply::apply(conn, project, &result) {
+                let outcome = match apply::apply(conn, project, &result) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        record_failed(
+                            conn,
+                            project,
+                            cluster,
+                            &format!(
+                                "apply failed: {}",
+                                crate::db::truncate_str(&error.to_string(), 500)
+                            ),
+                        )?;
+                        apply_failures += 1;
+                        crate::log::warn(
+                            "dream",
+                            &format!(
+                                "project={} cluster_size={} cluster_first_id={:?} topic_key={} apply failed: {}",
+                                project, cluster_size, cluster_first_id, topic_key, error
+                            ),
+                        );
+                        continue;
+                    }
+                };
+                if let Err(error) = record_merged(conn, project, cluster, outcome) {
                     apply_failures += 1;
                     crate::log::warn(
                         "dream",
                         &format!(
-                            "project={} cluster_size={} cluster_first_id={:?} topic_key={} apply failed: {}",
+                            "project={} cluster_size={} cluster_first_id={:?} topic_key={} decision record failed: {}",
                             project, cluster_size, cluster_first_id, topic_key, error
                         ),
                     );
@@ -115,7 +171,8 @@ async fn process_clusters(
                     &format!("merged topic_key={} superseded={}", topic_key, superseded),
                 );
             }
-            MergeDecision::NoMerge => {
+            MergeDecision::NoMerge { reason } => {
+                record_no_merge(conn, project, cluster, reason.as_deref())?;
                 skipped += 1;
             }
         }
@@ -253,6 +310,37 @@ mod tests {
             error.to_string().contains("all 2 cluster attempts failed"),
             "error should report total failure: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn process_clusters_persists_no_merge_decision() {
+        let mut conn = Connection::open_in_memory().expect("in-memory db");
+        setup_memory_schema(&conn);
+        let project = "test-dream-no-merge";
+        let clusters = vec![make_cluster([101, 102], ["topic-a", "topic-b"])];
+
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::NoMerge {
+                    reason: Some("entries cover different decisions".to_string()),
+                })
+            })
+        })
+        .await
+        .expect("no-merge should persist and complete");
+
+        let row: (String, String, String) = conn
+            .query_row(
+                "SELECT decision, reason, member_ids_json
+                 FROM dream_cluster_decisions
+                 WHERE project = ?1",
+                params![project],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("decision row should load");
+        assert_eq!(row.0, "no_merge");
+        assert_eq!(row.1, "entries cover different decisions");
+        assert_eq!(row.2, "[101,102]");
     }
 
     #[tokio::test]
