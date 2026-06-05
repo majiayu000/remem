@@ -7,13 +7,17 @@ use crate::db;
 use crate::memory::service::{save_memory, SaveMemoryRequest};
 use crate::memory_candidate::review::approve_candidate;
 
-fn setup_conn() -> Result<Connection> {
+pub(super) fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
     Ok(conn)
 }
 
-fn record_summary_evidence(conn: &Connection, session_id: &str, project: &str) -> Result<i64> {
+pub(super) fn record_summary_evidence(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+) -> Result<i64> {
     record_summary_evidence_with_host(conn, "codex-cli", session_id, project)
 }
 

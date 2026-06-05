@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -9,6 +11,8 @@ use super::slug::content_hash;
 
 const MIN_LEARNED_LEN: usize = 30;
 const MIN_PREFERENCE_LEN: usize = 10;
+const MIN_SEMANTIC_TOPIC_TERMS: usize = 2;
+const MAX_SEMANTIC_TOPIC_TERMS: usize = 10;
 const SUMMARY_CANDIDATE_CONFIDENCE: f64 = 0.74;
 const SUMMARY_CANDIDATE_RISK: &str = "medium";
 
@@ -213,9 +217,126 @@ fn summary_topic_key(
     hash_seed: &str,
 ) -> String {
     let fallback = format!("{}-{}", topic_prefix, content_hash(hash_seed));
-    crate::memory::state_key::derive_state_key(memory_type, Some(&fallback), title, candidate_text)
-        .map(|decision| decision.state_key)
-        .unwrap_or(fallback)
+    if let Some(decision) = crate::memory::state_key::derive_state_key(
+        memory_type,
+        Some(&fallback),
+        title,
+        candidate_text,
+    ) {
+        return decision.state_key;
+    }
+    summary_semantic_topic_key(topic_prefix, hash_seed).unwrap_or(fallback)
+}
+
+fn summary_semantic_topic_key(topic_prefix: &str, text: &str) -> Option<String> {
+    let mut terms = summary_semantic_terms(text);
+    if terms.len() < MIN_SEMANTIC_TOPIC_TERMS {
+        return None;
+    }
+    terms.truncate(MAX_SEMANTIC_TOPIC_TERMS);
+    let key = format!("{}-{}", topic_prefix, terms.join("-"));
+    let slug = crate::memory::promote::slugify_for_topic(&key, 120);
+    if slug.is_empty() {
+        None
+    } else {
+        Some(slug)
+    }
+}
+
+fn summary_semantic_terms(text: &str) -> Vec<String> {
+    let mut terms = BTreeSet::new();
+    for raw in text.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+        let Some(term) = normalize_summary_semantic_term(raw) else {
+            continue;
+        };
+        if !is_summary_semantic_stopword(&term) {
+            terms.insert(term);
+        }
+    }
+    terms.into_iter().collect()
+}
+
+fn normalize_summary_semantic_term(raw: &str) -> Option<String> {
+    let mut term = raw.trim().to_ascii_lowercase();
+    if term.is_empty() {
+        return None;
+    }
+    term = match term.as_str() {
+        "tokenization" | "tokenized" | "tokenize" | "tokenizing" => "tokenizer".to_string(),
+        "summaries" => "summary".to_string(),
+        "memories" => "memory".to_string(),
+        "claims" => "claim".to_string(),
+        "candidates" => "candidate".to_string(),
+        "decisions" => "decision".to_string(),
+        "observations" => "observation".to_string(),
+        "indexes" | "indexed" | "indexing" => "index".to_string(),
+        "tests" | "tested" | "testing" => "test".to_string(),
+        "changes" | "changed" | "changing" => "change".to_string(),
+        "updates" | "updated" | "updating" => "update".to_string(),
+        "embeddings" => "embedding".to_string(),
+        "vectors" => "vector".to_string(),
+        _ => term,
+    };
+    if term.len() > 4 && term.ends_with('s') && !term.ends_with("ss") {
+        term.pop();
+    }
+    let has_digit = term.chars().any(|ch| ch.is_ascii_digit());
+    if term.len() < 3 && !has_digit {
+        return None;
+    }
+    Some(term)
+}
+
+fn is_summary_semantic_stopword(term: &str) -> bool {
+    matches!(
+        term,
+        "about"
+            | "active"
+            | "add"
+            | "after"
+            | "again"
+            | "against"
+            | "always"
+            | "and"
+            | "as"
+            | "because"
+            | "before"
+            | "choose"
+            | "current"
+            | "default"
+            | "disable"
+            | "disabled"
+            | "enable"
+            | "enabled"
+            | "for"
+            | "from"
+            | "in"
+            | "keep"
+            | "later"
+            | "must"
+            | "now"
+            | "of"
+            | "only"
+            | "or"
+            | "prefer"
+            | "record"
+            | "remove"
+            | "removed"
+            | "run"
+            | "should"
+            | "stop"
+            | "support"
+            | "switch"
+            | "text"
+            | "the"
+            | "this"
+            | "through"
+            | "to"
+            | "use"
+            | "using"
+            | "with"
+            | "without"
+    )
 }
 
 #[derive(Debug)]
