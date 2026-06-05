@@ -88,6 +88,15 @@ async fn memory_candidate_auto_promotes_architecture_from_discovery_observation(
     let memory_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
     assert_eq!(memory_count, 1);
+    let embedding_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_embeddings e
+         JOIN memories m ON m.id = e.memory_id
+         WHERE m.topic_key = 'architecture-worker-db'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(embedding_count, 1);
     Ok(())
 }
 

@@ -507,3 +507,73 @@ fn test_created_at_default_when_no_override() {
         .unwrap();
     assert!(created >= before && created <= after);
 }
+
+#[test]
+fn insert_memory_writes_embedding() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("semantic-recall"),
+        "Semantic recall",
+        "Vector search retrieves paraphrased memory.",
+        "decision",
+        None,
+    )?;
+
+    let row: (i64, i64, String) = conn.query_row(
+        "SELECT memory_id, dimensions, model FROM memory_embeddings WHERE memory_id = ?1",
+        params![id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(row.0, id);
+    assert_eq!(row.1, crate::retrieval::vector::EMBEDDING_DIMENSIONS as i64);
+    assert_eq!(row.2, crate::retrieval::vector::DEFAULT_EMBEDDING_MODEL);
+    Ok(())
+}
+
+#[test]
+fn topic_key_upsert_replaces_embedding_for_same_memory() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("semantic-recall"),
+        "Semantic recall",
+        "Initial vector note.",
+        "decision",
+        None,
+    )?;
+    let before_hash: String = conn.query_row(
+        "SELECT content_hash FROM memory_embeddings WHERE memory_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    let updated_id = insert_memory(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("semantic-recall"),
+        "Semantic recall",
+        "Updated vector note with different content.",
+        "decision",
+        None,
+    )?;
+    assert_eq!(updated_id, id);
+
+    let row: (i64, String) = conn.query_row(
+        "SELECT COUNT(*), MAX(content_hash) FROM memory_embeddings WHERE memory_id = ?1",
+        params![id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(row.0, 1);
+    assert_ne!(row.1, before_hash);
+    Ok(())
+}

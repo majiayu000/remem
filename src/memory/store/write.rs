@@ -132,6 +132,7 @@ pub fn insert_memory_full(
                 now,
             )?;
             refresh_memory_entities(conn, id, title, content)?;
+            refresh_memory_embedding(conn, id, title, content, memory_type, topic_key)?;
             Ok(id)
         });
     }
@@ -170,6 +171,7 @@ pub fn insert_memory_full(
         let id = conn.last_insert_rowid();
         attach_state_key(conn, id, memory_type, &ownership, state_key.as_ref(), now)?;
         refresh_memory_entities(conn, id, title, content)?;
+        refresh_memory_embedding(conn, id, title, content, memory_type, topic_key)?;
         Ok(id)
     })
 }
@@ -375,6 +377,24 @@ fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &st
     let entities = crate::retrieval::entity::extract_entities(title, content);
     crate::retrieval::entity::refresh_memory_entities(conn, id, &entities)
         .with_context(|| format!("entity refresh failed for memory id={id}"))
+}
+
+fn refresh_memory_embedding(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    topic_key: Option<&str>,
+) -> Result<()> {
+    crate::retrieval::vector::upsert_memory_embedding(
+        conn,
+        id,
+        title,
+        content,
+        memory_type,
+        topic_key,
+    )
 }
 
 #[cfg(test)]
