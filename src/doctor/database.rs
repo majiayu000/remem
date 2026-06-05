@@ -115,6 +115,58 @@ pub(super) fn check_pending_queue() -> Check {
     }
 }
 
+pub(super) fn check_raw_archive_ingest() -> Check {
+    let conn = match db::open_db_read_only() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return Check {
+                name: "Raw archive ingest",
+                status: Status::Warn,
+                detail: "cannot open database".to_string(),
+            };
+        }
+    };
+
+    let stats = match db::query_system_stats(&conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check {
+                name: "Raw archive ingest",
+                status: Status::Warn,
+                detail: format!("cannot load raw ingest stats: {}", err),
+            };
+        }
+    };
+
+    if stats.raw_ingest_failures == 0 {
+        return Check {
+            name: "Raw archive ingest",
+            status: Status::Ok,
+            detail: format!("{} raw messages, no ingest failures", stats.raw_messages),
+        };
+    }
+
+    let mut detail = format!(
+        "{} failure(s), parse_errors={}, insert_errors={}",
+        stats.raw_ingest_failures, stats.raw_ingest_parse_errors, stats.raw_ingest_insert_errors
+    );
+    if let Some(kind) = stats.latest_raw_ingest_failure_kind {
+        detail.push_str(&format!("; latest={kind}"));
+    }
+    if let Some(path) = stats.latest_raw_ingest_failure_path {
+        detail.push_str(&format!(" path={path}"));
+    }
+    if let Some(message) = stats.latest_raw_ingest_failure_message {
+        detail.push_str(&format!(" ({})", crate::db::truncate_str(&message, 160)));
+    }
+
+    Check {
+        name: "Raw archive ingest",
+        status: Status::Warn,
+        detail,
+    }
+}
+
 pub(super) fn check_worker_daemon() -> Check {
     let conn = match db::open_db_read_only() {
         Ok(conn) => conn,

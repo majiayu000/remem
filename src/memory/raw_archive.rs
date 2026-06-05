@@ -50,6 +50,47 @@ pub struct RawInsertOutcome {
     pub inserted: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RawIngestReport {
+    pub inserted: usize,
+    pub duplicates: usize,
+    pub empty_messages: usize,
+    pub skipped_messages: usize,
+    pub parse_errors: usize,
+    pub insert_errors: usize,
+    pub read_error: Option<String>,
+}
+
+impl RawIngestReport {
+    pub fn has_failures(&self) -> bool {
+        self.read_error.is_some() || self.parse_errors > 0 || self.insert_errors > 0
+    }
+
+    pub fn failure_kind(&self) -> Option<&'static str> {
+        match (
+            self.read_error.is_some(),
+            self.parse_errors > 0,
+            self.insert_errors > 0,
+        ) {
+            (true, false, false) => Some("read_error"),
+            (false, true, false) => Some("parse_errors"),
+            (false, false, true) => Some("insert_errors"),
+            (true, _, _) | (_, true, true) => Some("mixed_errors"),
+            (false, false, false) => None,
+        }
+    }
+
+    fn failure_message(&self) -> String {
+        if let Some(error) = &self.read_error {
+            return error.clone();
+        }
+        format!(
+            "parse_errors={} insert_errors={}",
+            self.parse_errors, self.insert_errors
+        )
+    }
+}
+
 pub fn insert_raw_message(
     conn: &Connection,
     session_id: &str,
@@ -95,7 +136,6 @@ pub fn insert_raw_message(
 }
 
 /// Drain a Claude Code transcript JSONL file into raw_messages.
-/// Best-effort: any parse error on a single line is skipped.
 pub fn drain_transcript(
     conn: &Connection,
     transcript_path: &str,
@@ -103,30 +143,53 @@ pub fn drain_transcript(
     project: &str,
     branch: Option<&str>,
     cwd: Option<&str>,
-) -> Result<usize> {
+) -> Result<RawIngestReport> {
     let content = match std::fs::read_to_string(transcript_path) {
         Ok(content) => content,
         Err(error) => {
+            let report = RawIngestReport {
+                read_error: Some(format!(
+                    "read transcript {} failed: {}",
+                    transcript_path, error
+                )),
+                ..RawIngestReport::default()
+            };
             crate::log::warn(
                 "raw-archive",
-                &format!("read transcript {} failed: {}", transcript_path, error),
+                report
+                    .read_error
+                    .as_deref()
+                    .unwrap_or("read transcript failed"),
             );
-            return Ok(0);
+            record_raw_ingest_failure(
+                conn,
+                session_id,
+                project,
+                SOURCE_TRANSCRIPT,
+                Some(transcript_path),
+                &report,
+            )?;
+            return Ok(report);
         }
     };
 
-    let mut new_rows = 0usize;
+    let mut report = RawIngestReport::default();
     for line in content.lines() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            report.parse_errors += 1;
             continue;
         };
         let role = match value["type"].as_str() {
             Some("user") => ROLE_USER,
             Some("assistant") => ROLE_ASSISTANT,
-            _ => continue,
+            _ => {
+                report.skipped_messages += 1;
+                continue;
+            }
         };
         let text = extract_message_text(&value);
         if text.trim().is_empty() {
+            report.empty_messages += 1;
             continue;
         }
 
@@ -140,9 +203,11 @@ pub fn drain_transcript(
             branch,
             cwd,
         ) {
-            Ok(Some(outcome)) if outcome.inserted => new_rows += 1,
-            Ok(_) => {}
+            Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
+            Ok(Some(_)) => report.duplicates += 1,
+            Ok(None) => report.empty_messages += 1,
             Err(error) => {
+                report.insert_errors += 1;
                 crate::log::warn(
                     "raw-archive",
                     &format!("insert raw message failed: {}", error),
@@ -150,7 +215,50 @@ pub fn drain_transcript(
             }
         }
     }
-    Ok(new_rows)
+    if report.has_failures() {
+        record_raw_ingest_failure(
+            conn,
+            session_id,
+            project,
+            SOURCE_TRANSCRIPT,
+            Some(transcript_path),
+            &report,
+        )?;
+    }
+    Ok(report)
+}
+
+pub fn record_raw_ingest_failure(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    source: &str,
+    transcript_path: Option<&str>,
+    report: &RawIngestReport,
+) -> Result<()> {
+    let Some(kind) = report.failure_kind() else {
+        return Ok(());
+    };
+    conn.execute(
+        "INSERT INTO raw_ingest_failures
+         (project, session_id, source, transcript_path, error_kind, error_message,
+          inserted, duplicates, parse_errors, insert_errors, created_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            project,
+            session_id,
+            source,
+            transcript_path,
+            kind,
+            crate::db::truncate_str(&report.failure_message(), 1000),
+            report.inserted as i64,
+            report.duplicates as i64,
+            report.parse_errors as i64,
+            report.insert_errors as i64,
+            chrono::Utc::now().timestamp()
+        ],
+    )?;
+    Ok(())
 }
 
 fn extract_message_text(value: &serde_json::Value) -> String {
@@ -270,6 +378,24 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         crate::migrate::run_migrations(&conn).unwrap();
         conn
+    }
+
+    fn write_temp_transcript(name: &str, content: &str) -> Result<std::path::PathBuf> {
+        let path = std::env::temp_dir().join(format!(
+            "remem-{name}-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, content)?;
+        Ok(path)
+    }
+
+    fn raw_ingest_failure_count(conn: &Connection) -> Result<i64> {
+        Ok(
+            conn.query_row("SELECT COUNT(*) FROM raw_ingest_failures", [], |row| {
+                row.get(0)
+            })?,
+        )
     }
 
     #[test]
@@ -454,5 +580,78 @@ mod tests {
             !branches.contains(&Some("feature".to_string())),
             "{branches:?}"
         );
+    }
+
+    #[test]
+    fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
+        let conn = setup_conn();
+        let path = write_temp_transcript(
+            "raw-parse-error",
+            format!(
+                "{}\nnot json\n",
+                r#"{"type":"assistant","message":{"content":[{"type":"text","text":"kept message"}]}}"#
+            )
+            .as_str(),
+        )?;
+
+        let report = drain_transcript(
+            &conn,
+            path.to_string_lossy().as_ref(),
+            "session-parse",
+            "/proj",
+            None,
+            None,
+        )?;
+
+        assert_eq!(report.inserted, 1);
+        assert_eq!(report.parse_errors, 1);
+        assert_eq!(raw_ingest_failure_count(&conn)?, 1);
+        let (kind, parse_errors): (String, i64) = conn.query_row(
+            "SELECT error_kind, parse_errors FROM raw_ingest_failures",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(kind, "parse_errors");
+        assert_eq!(parse_errors, 1);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn drain_transcript_counts_insert_errors_and_records_failure() -> Result<()> {
+        let conn = setup_conn();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_raw_archive_insert
+             BEFORE INSERT ON raw_messages
+             BEGIN
+                 SELECT RAISE(FAIL, 'raw insert failed');
+             END;",
+        )?;
+        let path = write_temp_transcript(
+            "raw-insert-error",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"cannot insert"}]}}"#,
+        )?;
+
+        let report = drain_transcript(
+            &conn,
+            path.to_string_lossy().as_ref(),
+            "session-insert",
+            "/proj",
+            None,
+            None,
+        )?;
+
+        assert_eq!(report.inserted, 0);
+        assert_eq!(report.insert_errors, 1);
+        assert_eq!(raw_ingest_failure_count(&conn)?, 1);
+        let (kind, insert_errors): (String, i64) = conn.query_row(
+            "SELECT error_kind, insert_errors FROM raw_ingest_failures",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(kind, "insert_errors");
+        assert_eq!(insert_errors, 1);
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 }

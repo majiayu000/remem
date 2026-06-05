@@ -11,13 +11,6 @@ pub(in crate::install) enum HookStrategy {
 }
 
 impl HookStrategy {
-    fn summary_executor(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-cli",
-            Self::Codex => "codex-cli",
-        }
-    }
-
     fn include_session_init(self) -> bool {
         matches!(self, Self::ClaudeCode)
     }
@@ -40,14 +33,7 @@ impl HookStrategy {
         }
     }
 
-    fn observe_adapter(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Codex => "codex-cli",
-        }
-    }
-
-    fn context_host(self) -> &'static str {
+    fn runtime_host(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex-cli",
@@ -56,35 +42,7 @@ impl HookStrategy {
 }
 
 fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
-    if subcommand == "context" {
-        let gate_arg = match strategy {
-            HookStrategy::Codex => " --gate strict",
-            HookStrategy::ClaudeCode => "",
-        };
-        format!(
-            "REMEM_CONTEXT_HOST={} {} {} --color{}",
-            strategy.context_host(),
-            bin,
-            subcommand,
-            gate_arg
-        )
-    } else if subcommand == "summarize" {
-        format!(
-            "REMEM_SUMMARY_EXECUTOR={} {} {}",
-            strategy.summary_executor(),
-            bin,
-            subcommand
-        )
-    } else if subcommand == "observe" || subcommand == "session-init" {
-        format!(
-            "REMEM_HOOK_ADAPTER={} {} {}",
-            strategy.observe_adapter(),
-            bin,
-            subcommand
-        )
-    } else {
-        format!("{} {}", bin, subcommand)
-    }
+    format!("{} {} --host {}", bin, subcommand, strategy.runtime_host())
 }
 
 pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Value {

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::search_context::build_search_context;
@@ -131,7 +131,8 @@ pub fn insert_memory_full(
                 state_key.as_ref(),
                 now,
             )?;
-            refresh_memory_entities(conn, id, title, content, "entity link refresh failed");
+            refresh_memory_entities(conn, id, title, content)?;
+            refresh_memory_embedding(conn, id, title, content, memory_type, topic_key)?;
             Ok(id)
         });
     }
@@ -169,7 +170,8 @@ pub fn insert_memory_full(
         )?;
         let id = conn.last_insert_rowid();
         attach_state_key(conn, id, memory_type, &ownership, state_key.as_ref(), now)?;
-        refresh_memory_entities(conn, id, title, content, "entity link failed");
+        refresh_memory_entities(conn, id, title, content)?;
+        refresh_memory_embedding(conn, id, title, content, memory_type, topic_key)?;
         Ok(id)
     })
 }
@@ -371,14 +373,28 @@ fn with_memory_savepoint<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) ->
     }
 }
 
-fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str, message: &str) {
+fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str) -> Result<()> {
     let entities = crate::retrieval::entity::extract_entities(title, content);
-    if entities.is_empty() {
-        return;
-    }
-    if let Err(e) = crate::retrieval::entity::link_entities(conn, id, &entities) {
-        crate::log::warn("memory", &format!("{} for id={}: {}", message, id, e));
-    }
+    crate::retrieval::entity::refresh_memory_entities(conn, id, &entities)
+        .with_context(|| format!("entity refresh failed for memory id={id}"))
+}
+
+fn refresh_memory_embedding(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    topic_key: Option<&str>,
+) -> Result<()> {
+    crate::retrieval::vector::upsert_memory_embedding(
+        conn,
+        id,
+        title,
+        content,
+        memory_type,
+        topic_key,
+    )
 }
 
 #[cfg(test)]

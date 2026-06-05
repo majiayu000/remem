@@ -17,10 +17,34 @@ pub(crate) fn list_clusters(project: &str) -> Result<Vec<Cluster>> {
 }
 
 pub async fn process_dream_job(project: &str) -> Result<()> {
+    let host = crate::runtime_config::default_host()?;
+    process_dream_job_with_host(project, &host).await
+}
+
+pub async fn process_dream_job_with_host(project: &str, host: &str) -> Result<()> {
+    process_dream_job_with_selection(project, Some(host), None).await
+}
+
+pub async fn process_dream_job_with_profile(project: &str, profile: Option<&str>) -> Result<()> {
+    process_dream_job_with_selection(project, None, profile).await
+}
+
+async fn process_dream_job_with_selection(
+    project: &str,
+    host: Option<&str>,
+    profile: Option<&str>,
+) -> Result<()> {
+    let host = host.map(str::to_string);
+    let profile = profile.map(str::to_string);
     let mut conn = crate::db::open_db()?;
     let clusters = load_clusters(&conn, project)?;
     process_clusters(project, &mut conn, &clusters, |cluster, project| {
-        Box::pin(merge_cluster(cluster, project))
+        Box::pin(merge_cluster(
+            cluster,
+            project,
+            host.clone(),
+            profile.clone(),
+        ))
     })
     .await
 }

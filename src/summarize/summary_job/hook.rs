@@ -6,7 +6,7 @@ use crate::hook_stdin::read_stdin_with_timeout;
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 
-pub async fn summarize() -> Result<()> {
+pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
     };
@@ -26,12 +26,20 @@ pub async fn summarize() -> Result<()> {
     };
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
-    let host = resolve_hook_host();
+    let host = resolve_hook_host(host)?;
     let conn = db::open_db()?;
-    let summary_payload = summary_payload_with_cwd(&input, &cwd)?;
+    let summary_payload = summary_payload_with_cwd(&input, &cwd, profile)?;
+    let compress_payload = compress_payload(profile)?;
 
     record_summary_capture_event(&conn, &host, session_id, &project, &cwd, &summary_payload);
-    enqueue_summary_jobs(&conn, &host, session_id, &project, &summary_payload)?;
+    enqueue_summary_jobs(
+        &conn,
+        &host,
+        session_id,
+        &project,
+        &summary_payload,
+        &compress_payload,
+    )?;
     if should_spawn_worker_once(&conn)? {
         spawn_worker_once()?;
     } else {
@@ -50,7 +58,7 @@ fn effective_cwd(hook: &SummarizeInput) -> Result<String> {
     Ok(std::env::current_dir()?.display().to_string())
 }
 
-fn summary_payload_with_cwd(input: &str, cwd: &str) -> Result<String> {
+fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Result<String> {
     let mut payload: serde_json::Value = serde_json::from_str(input)?;
     let Some(obj) = payload.as_object_mut() else {
         return Ok(input.to_string());
@@ -65,7 +73,24 @@ fn summary_payload_with_cwd(input: &str, cwd: &str) -> Result<String> {
             serde_json::Value::String(cwd.to_string()),
         );
     }
+    if let Some(profile) = clean_optional(profile) {
+        obj.insert(
+            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
+            serde_json::Value::String(profile),
+        );
+    }
     Ok(serde_json::to_string(&payload)?)
+}
+
+fn compress_payload(profile: Option<&str>) -> Result<String> {
+    let mut payload = serde_json::Map::new();
+    if let Some(profile) = clean_optional(profile) {
+        payload.insert(
+            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
+            serde_json::Value::String(profile),
+        );
+    }
+    Ok(serde_json::to_string(&serde_json::Value::Object(payload))?)
 }
 
 fn record_summary_capture_event(
@@ -110,6 +135,7 @@ fn enqueue_summary_jobs(
     session_id: &str,
     project: &str,
     input: &str,
+    compress_input: &str,
 ) -> Result<()> {
     let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
     if ready_pending > 0 {
@@ -129,7 +155,15 @@ fn enqueue_summary_jobs(
         input,
         100,
     )?;
-    db::enqueue_job(conn, host, db::JobType::Compress, project, None, "{}", 200)?;
+    db::enqueue_job(
+        conn,
+        host,
+        db::JobType::Compress,
+        project,
+        None,
+        compress_input,
+        200,
+    )?;
     crate::log::info(
         "summarize",
         &format!(
@@ -140,27 +174,34 @@ fn enqueue_summary_jobs(
     Ok(())
 }
 
-fn resolve_hook_host() -> String {
-    if let Ok(host) = std::env::var("REMEM_HOOK_HOST") {
-        if !host.trim().is_empty() {
-            return host;
-        }
+fn resolve_hook_host(host: Option<&str>) -> Result<String> {
+    if let Some(host) = clean_optional(host) {
+        return Ok(crate::runtime_config::normalize_host(&host));
     }
-    if let Ok(host) = std::env::var("REMEM_CONTEXT_HOST") {
-        if !host.trim().is_empty() {
-            return host;
+    if let Some(host) = legacy_hook_host_from_env() {
+        return Ok(host);
+    }
+    crate::runtime_config::default_host()
+}
+
+fn legacy_hook_host_from_env() -> Option<String> {
+    for key in ["REMEM_HOOK_HOST", "REMEM_CONTEXT_HOST"] {
+        if let Ok(host) = std::env::var(key) {
+            if let Some(host) = clean_optional(Some(&host)) {
+                return Some(crate::runtime_config::normalize_host(&host));
+            }
         }
     }
     for key in ["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"] {
         if let Ok(executor) = std::env::var(key) {
-            match executor.as_str() {
-                "codex-cli" | "codex" => return "codex-cli".to_string(),
-                "claude-cli" | "claude" | "cli" => return "claude-code".to_string(),
+            match executor.trim().to_ascii_lowercase().as_str() {
+                "codex-cli" | "codex" => return Some("codex-cli".to_string()),
+                "claude-cli" | "claude" | "cli" => return Some("claude-code".to_string()),
                 _ => {}
             }
         }
     }
-    "unknown".to_string()
+    None
 }
 
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
@@ -184,7 +225,6 @@ fn spawn_worker_once() -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg);
-    configure_worker_executor_env(&mut command);
     let _child = command.spawn()?;
     Ok(())
 }
@@ -205,115 +245,105 @@ fn stable_worker_dir() -> std::path::PathBuf {
     data_dir
 }
 
-fn configure_worker_executor_env(command: &mut std::process::Command) {
-    if std::env::var_os("REMEM_SUMMARY_EXECUTOR").is_none() {
-        if let Some(executor) = std::env::var_os("REMEM_EXECUTOR") {
-            command.env("REMEM_SUMMARY_EXECUTOR", executor);
-        }
-    }
+fn clean_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
     use std::sync::Mutex;
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        configure_worker_executor_env, enqueue_summary_jobs, record_summary_capture_event,
-        resolve_hook_host, should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
+        compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
+        should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    struct EnvGuard {
+        old_values: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn set(vars: &[(&str, Option<&str>)]) -> Self {
+            let old_values = vars
+                .iter()
+                .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+
+            for (key, value) in vars {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(key, value) },
+                    None => unsafe { std::env::remove_var(key) },
+                }
+            }
+
+            Self { old_values }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.old_values.drain(..) {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(&key, value) },
+                    None => unsafe { std::env::remove_var(&key) },
+                }
+            }
+        }
+    }
+
     fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
-        let old_values = vars
-            .iter()
-            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
-            .collect::<Vec<_>>();
-
-        for (key, value) in vars {
-            match value {
-                Some(value) => unsafe { std::env::set_var(key, value) },
-                None => unsafe { std::env::remove_var(key) },
-            }
-        }
-
-        let result = f();
-
-        for (key, value) in old_values {
-            match value {
-                Some(value) => unsafe { std::env::set_var(&key, value) },
-                None => unsafe { std::env::remove_var(&key) },
-            }
-        }
-
-        result
-    }
-
-    fn command_env<'a>(command: &'a std::process::Command, key: &str) -> Option<Option<&'a OsStr>> {
-        command
-            .get_envs()
-            .find(|(name, _)| *name == OsStr::new(key))
-            .map(|(_, value)| value)
+        let Ok(_guard) = ENV_LOCK.lock() else {
+            panic!("env lock should acquire");
+        };
+        let _env = EnvGuard::set(vars);
+        f()
     }
 
     #[test]
-    fn worker_env_translates_legacy_global_executor_without_removing_it() {
+    fn hook_host_normalizes_explicit_host() {
         with_env_vars(
             &[
-                ("REMEM_EXECUTOR", Some("codex-cli")),
-                ("REMEM_SUMMARY_EXECUTOR", None),
+                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
+                ("REMEM_EXECUTOR", Some("claude-cli")),
             ],
             || {
-                let mut command = std::process::Command::new("remem");
-                configure_worker_executor_env(&mut command);
-
-                assert_eq!(
-                    command_env(&command, "REMEM_SUMMARY_EXECUTOR"),
-                    Some(Some(OsStr::new("codex-cli")))
-                );
-                assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
+                assert!(matches!(
+                    resolve_hook_host(Some("codex")).as_deref(),
+                    Ok("codex-cli")
+                ));
             },
         );
     }
 
     #[test]
-    fn worker_env_preserves_explicit_summary_override_and_global_executor() {
-        with_env_vars(
-            &[
-                ("REMEM_EXECUTOR", Some("http")),
-                ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
-            ],
-            || {
-                let mut command = std::process::Command::new("remem");
-                configure_worker_executor_env(&mut command);
+    fn hook_host_uses_runtime_config_default() {
+        let _test_dir = ScopedTestDataDir::new("summary-default-host");
 
-                assert_eq!(command_env(&command, "REMEM_SUMMARY_EXECUTOR"), None);
-                assert_eq!(command_env(&command, "REMEM_EXECUTOR"), None);
-            },
-        );
-    }
-
-    #[test]
-    fn hook_host_uses_global_executor_when_summary_override_is_missing() {
         with_env_vars(
             &[
                 ("REMEM_HOOK_HOST", None),
                 ("REMEM_CONTEXT_HOST", None),
                 ("REMEM_SUMMARY_EXECUTOR", None),
-                ("REMEM_EXECUTOR", Some("codex-cli")),
+                ("REMEM_EXECUTOR", None),
             ],
             || {
-                assert_eq!(resolve_hook_host(), "codex-cli");
+                assert!(matches!(
+                    resolve_hook_host(None).as_deref(),
+                    Ok("codex-cli")
+                ));
             },
         );
     }
 
     #[test]
-    fn hook_host_prefers_summary_executor_over_global_executor() {
+    fn hook_host_preserves_legacy_summary_executor() {
         with_env_vars(
             &[
                 ("REMEM_HOOK_HOST", None),
@@ -322,15 +352,19 @@ mod tests {
                 ("REMEM_EXECUTOR", Some("codex-cli")),
             ],
             || {
-                assert_eq!(resolve_hook_host(), "claude-code");
+                assert!(matches!(
+                    resolve_hook_host(None).as_deref(),
+                    Ok("claude-code")
+                ));
             },
         );
     }
 
     #[test]
     fn summary_payload_with_cwd_fills_missing_cwd() {
-        let payload = summary_payload_with_cwd(r#"{"session_id":"sess-cwd"}"#, "/tmp/project")
-            .expect("payload should serialize");
+        let payload =
+            summary_payload_with_cwd(r#"{"session_id":"sess-cwd"}"#, "/tmp/project", None)
+                .expect("payload should serialize");
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload should parse");
 
@@ -340,13 +374,49 @@ mod tests {
 
     #[test]
     fn summary_payload_with_cwd_preserves_existing_cwd() {
-        let payload =
-            summary_payload_with_cwd(r#"{"session_id":"sess-cwd","cwd":"/repo"}"#, "/tmp/project")
-                .expect("payload should serialize");
+        let payload = summary_payload_with_cwd(
+            r#"{"session_id":"sess-cwd","cwd":"/repo"}"#,
+            "/tmp/project",
+            None,
+        )
+        .expect("payload should serialize");
         let parsed: serde_json::Value =
             serde_json::from_str(&payload).expect("payload should parse");
 
         assert_eq!(parsed["cwd"].as_str(), Some("/repo"));
+    }
+
+    #[test]
+    fn summary_and_compress_payloads_preserve_profile() {
+        let summary = summary_payload_with_cwd(
+            r#"{"session_id":"sess-cwd"}"#,
+            "/tmp/project",
+            Some("custom"),
+        )
+        .expect("payload should serialize");
+        let compress = compress_payload(Some("custom")).expect("payload should serialize");
+        let summary: serde_json::Value =
+            serde_json::from_str(&summary).expect("summary payload should parse");
+        let compress: serde_json::Value =
+            serde_json::from_str(&compress).expect("compress payload should parse");
+
+        assert_eq!(summary["remem_ai_profile"].as_str(), Some("custom"));
+        assert_eq!(compress["remem_ai_profile"].as_str(), Some("custom"));
+    }
+
+    #[test]
+    fn hosted_summary_hook_can_preserve_profile_override() -> anyhow::Result<()> {
+        let host = resolve_hook_host(Some("codex"))?;
+        let summary = summary_payload_with_cwd(
+            r#"{"session_id":"sess-hosted-profile"}"#,
+            "/tmp/project",
+            Some("custom"),
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&summary)?;
+
+        assert_eq!(host, "codex-cli");
+        assert_eq!(parsed["remem_ai_profile"].as_str(), Some("custom"));
+        Ok(())
     }
 
     #[test]
@@ -368,6 +438,7 @@ mod tests {
             "sess-legacy",
             "/tmp/remem",
             r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
+            "{}",
         )
         .expect("legacy summary jobs should still enqueue");
 
@@ -442,6 +513,7 @@ mod tests {
             "sess-no-pending",
             "/tmp/remem",
             r#"{"session_id":"sess-no-pending"}"#,
+            "{}",
         )
         .expect("summary jobs should enqueue");
 
@@ -471,6 +543,7 @@ mod tests {
             "sess-with-pending",
             "/tmp/remem",
             r#"{"session_id":"sess-with-pending"}"#,
+            "{}",
         )
         .expect("summary jobs should enqueue");
 

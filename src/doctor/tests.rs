@@ -3,7 +3,9 @@ use rusqlite::params;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
-use super::database::{check_database, check_pending_queue, check_worker_daemon};
+use super::database::{
+    check_database, check_pending_queue, check_raw_archive_ingest, check_worker_daemon,
+};
 use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
 use super::schema::check_schema_migration;
@@ -183,6 +185,28 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         "{}",
         check.detail
     );
+    Ok(())
+}
+
+#[test]
+fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-raw-ingest");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO raw_ingest_failures
+         (project, session_id, source, transcript_path, error_kind, error_message,
+          inserted, duplicates, parse_errors, insert_errors, created_at_epoch)
+         VALUES ('proj-a', 'session-a', 'transcript', '/bad/path.jsonl',
+                 'read_error', 'read failed', 0, 0, 0, 0, ?1)",
+        params![chrono::Utc::now().timestamp()],
+    )?;
+    drop(conn);
+
+    let check = check_raw_archive_ingest();
+    assert_eq!(check.icon(), "WARN");
+    assert!(check.detail.contains("1 failure"), "{}", check.detail);
+    assert!(check.detail.contains("read_error"), "{}", check.detail);
+    assert!(check.detail.contains("/bad/path.jsonl"), "{}", check.detail);
     Ok(())
 }
 

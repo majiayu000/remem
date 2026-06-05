@@ -5,6 +5,8 @@ mod state;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_compression_provenance;
+#[cfg(test)]
 mod tests_convergence;
 #[cfg(test)]
 mod tests_schema;

@@ -50,15 +50,20 @@ pub(super) struct RollupRange {
 pub(crate) async fn process(task: &db::ExtractionTask) -> Result<SessionRollupResult> {
     let mut conn = db::open_db()?;
     let project = task.project.clone();
+    let ai_profile = task.ai_profile.clone();
     process_with_summarizer(&mut conn, task, move |prompt| {
         let project = project.clone();
+        let ai_profile = ai_profile.clone();
         async move {
+            let profile = ai_profile.as_deref();
             crate::ai::call_ai(
                 SESSION_ROLLUP_SYSTEM,
                 &prompt,
                 crate::ai::UsageContext {
                     project: Some(project.as_str()),
                     operation: "session_rollup",
+                    host: profile.is_none().then_some(task.host.as_str()),
+                    profile,
                 },
             )
             .await

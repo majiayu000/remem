@@ -18,7 +18,7 @@ pub(super) struct Cli {
 pub(super) enum Commands {
     /// Render SessionStart memory context for the current project.
     #[command(
-        after_help = "Environment variables:\n  REMEM_CONTEXT_HOST: default host when --host is omitted.\n  REMEM_CONTEXT_GATE: default --gate mode.\n  REMEM_CONTEXT_GATE_HOSTS: comma-separated hosts that use duplicate-injection gating.\n  REMEM_CONTEXT_SUPPRESS_SOURCES: hook sources suppressed when the context hash is unchanged.\n  REMEM_CONTEXT_DEBUG=1: include context rendering and gate diagnostics."
+        after_help = "Environment variables:\n  REMEM_CONTEXT_HOST: legacy host fallback when --host is omitted.\n  REMEM_CONTEXT_GATE: legacy gate fallback when neither --gate nor host config sets context_gate.\n  REMEM_CONTEXT_GATE_HOSTS: comma-separated hosts that use duplicate-injection gating.\n  REMEM_CONTEXT_SUPPRESS_SOURCES: hook sources suppressed when the context hash is unchanged.\n  REMEM_CONTEXT_DEBUG=1: include context rendering and gate diagnostics."
     )]
     Context {
         /// Project working directory to render context for.
@@ -39,7 +39,7 @@ pub(super) enum Commands {
         /// Force full context emission and update gate state.
         #[arg(long)]
         force: bool,
-        /// Duplicate-injection gate mode: off, auto, strict, or delta. Overrides REMEM_CONTEXT_GATE.
+        /// Duplicate-injection gate mode: off, auto, strict, or delta. Overrides host config and REMEM_CONTEXT_GATE.
         #[arg(long, value_name = "off|auto|strict|delta")]
         gate: Option<String>,
     },
@@ -48,12 +48,40 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ContextGateAction,
     },
+    /// Inspect or edit remem runtime configuration.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+    /// Inspect or switch the memory AI model profile.
+    #[command(
+        after_help = "Examples:\n  remem model current\n  remem model list\n  remem model use cheap\n  remem model use balanced --dry-run\n  remem model use gpt-5.2 --reasoning medium\n  remem model use haiku --host claude-code\n  remem model test\n  remem model test --live\n  remem model rollback\n\nNotes:\n  Presets currently target Codex profiles. For Claude Code, pass an explicit model name.\n  `test` is a config check by default and only calls AI when --live is set.\n  `use` writes ~/.remem/config.toml and saves a rollback backup first."
+    )]
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
     /// Hook entrypoint for starting a memory capture session.
-    SessionInit,
+    SessionInit {
+        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Hook entrypoint for recording a tool or prompt observation.
-    Observe,
+    Observe {
+        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Hook entrypoint for summarizing captured session activity.
-    Summarize,
+    Summarize {
+        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        #[arg(long)]
+        host: Option<String>,
+        /// Memory AI profile name from [memory_ai.profiles].
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Run the background worker loop or one drain pass.
     Worker {
         /// Process ready work once and exit.
@@ -382,6 +410,9 @@ pub(super) enum Commands {
         /// Restrict dream processing to one project path.
         #[arg(long, short)]
         project: Option<String>,
+        /// Memory AI profile name from [memory_ai.profiles].
+        #[arg(long)]
+        profile: Option<String>,
         /// Print what would be merged without writing to DB
         #[arg(long)]
         dry_run: bool,
@@ -415,6 +446,64 @@ pub(in crate::cli) enum ContextGateAction {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ConfigAction {
+    /// Print the active config file path.
+    Path,
+    /// Print the resolved config text, including built-in defaults.
+    Show,
+    /// Create or update the config file with default sections.
+    Init,
+    /// Set one scalar config key, for example memory_ai.profiles.codex.model.
+    Set { key: String, value: String },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum ModelAction {
+    /// Show the currently effective memory AI model configuration.
+    Current {
+        /// Host to inspect, such as codex-cli or claude-code. Omit to show installed hosts.
+        #[arg(long)]
+        host: Option<String>,
+        /// Inspect a named memory AI profile directly.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// List built-in Codex model presets and examples.
+    List,
+    /// Switch a host/profile to a preset or explicit model name.
+    Use {
+        /// Preset or model name: cheap, balanced, quality, auto, or an explicit model.
+        target: String,
+        /// Host to update. Defaults to [memory_ai].default_host.
+        #[arg(long)]
+        host: Option<String>,
+        /// Update a named memory AI profile directly instead of resolving a host.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Codex reasoning effort: low, medium, or high.
+        #[arg(long, value_name = "low|medium|high")]
+        reasoning: Option<String>,
+        /// Print the config diff without writing files.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Check the selected model profile; pass --live to make a tiny AI call.
+    Test {
+        /// Host to test. Defaults to [memory_ai].default_host.
+        #[arg(long)]
+        host: Option<String>,
+        /// Test a named memory AI profile directly.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Actually call the configured AI model. Without this, only config is checked.
+        #[arg(long)]
+        live: bool,
+    },
+    /// Restore the config backup saved by the last `remem model use`.
+    Rollback,
 }
 
 #[derive(Subcommand)]

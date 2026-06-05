@@ -458,6 +458,7 @@ mod tests {
             host: "codex-cli".to_string(),
             project: "/tmp/remem".to_string(),
             session_id: Some("sess-procedure-current".to_string()),
+            ai_profile: None,
             priority: crate::db::ExtractionTaskKind::ObservationExtract.priority(),
             cursor_event_id: Some(old_high_watermark),
             high_watermark_event_id: Some(current.event_row_id),

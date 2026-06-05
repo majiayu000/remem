@@ -90,7 +90,7 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
     let explain = explain.context("query explain should be present")?;
 
     assert!(!memories.is_empty());
-    for expected in ["fts", "entity", "temporal", "like_fallback"] {
+    for expected in ["fts", "entity", "temporal", "vector", "like_fallback"] {
         assert!(
             explain
                 .channels
@@ -118,5 +118,78 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
                 .iter()
                 .all(|contribution| contribution.score > 0.0)
     }));
+    Ok(())
+}
+
+#[test]
+fn semantic_vector_channel_recalls_paraphrase_without_lexical_overlap() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    let id = crate::memory::insert_memory(
+        &conn,
+        Some("s1"),
+        "/repo",
+        Some("credential-storage"),
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("How do we protect private persisted data?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(id));
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == id)
+        .context("expected vector-recalled memory in explain results")?;
+    assert!(
+        result
+            .contributions
+            .iter()
+            .any(|contribution| contribution.channel == "vector"),
+        "{result:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn search_explain_reports_disabled_vector_channel_when_table_is_missing() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    conn.execute("DROP TABLE memory_embeddings", [])?;
+
+    let (_memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("semantic recall"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+    let vector = explain
+        .channels
+        .iter()
+        .find(|channel| channel.name == "vector")
+        .context("vector channel should be reported")?;
+
+    assert!(!vector.enabled);
+    assert!(vector
+        .disabled_reason
+        .as_deref()
+        .unwrap_or("")
+        .contains("memory_embeddings table is missing"));
     Ok(())
 }

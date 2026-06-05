@@ -11,6 +11,7 @@ use super::{
 };
 
 const RRF_K: f64 = 60.0;
+const MAX_VECTOR_DISTANCE: f32 = 0.51;
 
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
@@ -29,7 +30,30 @@ struct QuerySearchPlan {
 
 struct NamedChannel {
     name: &'static str,
+    disabled_reason: Option<String>,
     ids: Vec<i64>,
+}
+
+impl NamedChannel {
+    fn enabled(name: &'static str, ids: Vec<i64>) -> Self {
+        Self {
+            name,
+            disabled_reason: None,
+            ids,
+        }
+    }
+
+    fn disabled(name: &'static str, reason: impl Into<String>) -> Self {
+        Self {
+            name,
+            disabled_reason: Some(reason.into()),
+            ids: vec![],
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.disabled_reason.is_none()
+    }
 }
 
 fn load_ordered_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
@@ -196,7 +220,7 @@ fn build_query_search_plan(
         )?;
         let ids: Vec<i64> = fts.iter().map(|memory| memory.id).collect();
         if !ids.is_empty() {
-            channels.push(NamedChannel { name: "fts", ids });
+            channels.push(NamedChannel::enabled("fts", ids));
         }
     }
 
@@ -210,10 +234,7 @@ fn build_query_search_plan(
         include_stale,
     )?;
     if !entity_ids.is_empty() {
-        channels.push(NamedChannel {
-            name: "entity",
-            ids: entity_ids,
-        });
+        channels.push(NamedChannel::enabled("entity", entity_ids));
     }
 
     if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {
@@ -232,11 +253,34 @@ fn build_query_search_plan(
             include_stale,
         )?;
         if !temporal_ids.is_empty() {
-            channels.push(NamedChannel {
-                name: "temporal",
-                ids: temporal_ids,
-            });
+            channels.push(NamedChannel::enabled("temporal", temporal_ids));
         }
+    }
+
+    let query_embedding = crate::retrieval::vector::embed_query_text(query_text);
+    let vector_outcome = crate::retrieval::vector::vector_search_filtered(
+        conn,
+        &query_embedding,
+        crate::retrieval::vector::VectorSearchFilters {
+            project,
+            memory_type,
+            branch,
+            include_stale,
+        },
+        fetch as usize,
+    )?;
+    if let Some(reason) = vector_outcome.disabled_reason {
+        channels.push(NamedChannel::disabled("vector", reason));
+    } else {
+        channels.push(NamedChannel::enabled(
+            "vector",
+            vector_outcome
+                .hits
+                .into_iter()
+                .filter(|hit| hit.distance <= MAX_VECTOR_DISTANCE)
+                .map(|hit| hit.memory_id)
+                .collect(),
+        ));
     }
 
     let like = memory::search_memories_like_filtered(
@@ -250,10 +294,10 @@ fn build_query_search_plan(
         branch,
     )?;
     if !like.is_empty() {
-        channels.push(NamedChannel {
-            name: "like_fallback",
-            ids: like.iter().map(|memory| memory.id).collect(),
-        });
+        channels.push(NamedChannel::enabled(
+            "like_fallback",
+            like.iter().map(|memory| memory.id).collect(),
+        ));
     }
 
     Ok(QuerySearchPlan {
@@ -285,6 +329,8 @@ fn build_explain(
         .iter()
         .map(|channel| SearchExplainChannel {
             name: channel.name.to_string(),
+            enabled: channel.is_enabled(),
+            disabled_reason: channel.disabled_reason.clone(),
             hits: channel
                 .ids
                 .iter()

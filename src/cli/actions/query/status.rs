@@ -48,6 +48,19 @@ fn load_status_report() -> Result<StatusReport> {
             sessions: stats.session_summaries,
             raw_messages: stats.raw_messages,
         },
+        raw_archive: RawArchiveStatus {
+            messages: stats.raw_messages,
+            ingest_failures: stats.raw_ingest_failures,
+            parse_errors: stats.raw_ingest_parse_errors,
+            insert_errors: stats.raw_ingest_insert_errors,
+            latest_failure_epoch: stats.latest_raw_ingest_failure_epoch,
+            latest_failure_age_secs: stats
+                .latest_raw_ingest_failure_epoch
+                .map(|epoch| now.saturating_sub(epoch)),
+            latest_failure_kind: stats.latest_raw_ingest_failure_kind,
+            latest_failure_path: stats.latest_raw_ingest_failure_path,
+            latest_failure_message: stats.latest_raw_ingest_failure_message,
+        },
         capture_pipeline: CapturePipelineStatus {
             captured: stats.captured_events,
             extract_todo: stats.pending_extraction_tasks,
@@ -107,6 +120,23 @@ fn print_status_report(report: &StatusReport) {
     println!("  Observations:  {:>6}", report.totals.observations);
     println!("  Sessions:      {:>6}", report.totals.sessions);
     println!("  Raw messages:  {:>6}", report.totals.raw_messages);
+    println!();
+    println!("Raw archive:");
+    println!("  Messages:     {:>6}", report.raw_archive.messages);
+    println!("  Failures:     {:>6}", report.raw_archive.ingest_failures);
+    if report.raw_archive.ingest_failures > 0 {
+        println!("  Parse errors: {:>6}", report.raw_archive.parse_errors);
+        println!("  Insert err:   {:>6}", report.raw_archive.insert_errors);
+        if let Some(kind) = &report.raw_archive.latest_failure_kind {
+            println!("  Latest kind:  {}", kind);
+        }
+        if let Some(path) = &report.raw_archive.latest_failure_path {
+            println!("  Latest path:  {}", path);
+        }
+        if let Some(age_secs) = report.raw_archive.latest_failure_age_secs {
+            println!("  Latest age:   {:>6}s", age_secs);
+        }
+    }
     println!();
     println!("Capture pipeline:");
     println!("  Captured:     {:>6}", report.capture_pipeline.captured);
@@ -205,6 +235,7 @@ pub(super) struct StatusReport {
     pub version: String,
     pub database: StatusDatabase,
     pub totals: StatusTotals,
+    pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
     pub pending_observations: PendingObservationStatus,
     pub jobs: JobStatus,
@@ -226,6 +257,19 @@ pub(super) struct StatusTotals {
     pub observations: i64,
     pub sessions: i64,
     pub raw_messages: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct RawArchiveStatus {
+    pub messages: i64,
+    pub ingest_failures: i64,
+    pub parse_errors: i64,
+    pub insert_errors: i64,
+    pub latest_failure_epoch: Option<i64>,
+    pub latest_failure_age_secs: Option<i64>,
+    pub latest_failure_kind: Option<String>,
+    pub latest_failure_path: Option<String>,
+    pub latest_failure_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -297,6 +341,17 @@ mod tests {
                 sessions: 3,
                 raw_messages: 4,
             },
+            raw_archive: RawArchiveStatus {
+                messages: 4,
+                ingest_failures: 0,
+                parse_errors: 0,
+                insert_errors: 0,
+                latest_failure_epoch: None,
+                latest_failure_age_secs: None,
+                latest_failure_kind: None,
+                latest_failure_path: None,
+                latest_failure_message: None,
+            },
             capture_pipeline: CapturePipelineStatus {
                 captured: 5,
                 extract_todo: 6,
@@ -340,6 +395,11 @@ mod tests {
     #[test]
     fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
         let mut report = status_report_fixture();
+        report.raw_archive.ingest_failures = 1;
+        report.raw_archive.parse_errors = 2;
+        report.raw_archive.insert_errors = 3;
+        report.raw_archive.latest_failure_kind = Some("mixed_errors".to_string());
+        report.raw_archive.latest_failure_path = Some("/bad/raw.jsonl".to_string());
         report.pending_observations.expired = 15;
         report.pending_observations.failed = 16;
         report.jobs.failed = 21;
@@ -351,6 +411,15 @@ mod tests {
         assert_eq!(parsed["version"], "0.4.5");
         assert_eq!(parsed["database"]["size_bytes"], 1_048_576);
         assert_eq!(parsed["totals"]["memories"], 1);
+        assert_eq!(parsed["raw_archive"]["messages"], 4);
+        assert_eq!(parsed["raw_archive"]["ingest_failures"], 1);
+        assert_eq!(parsed["raw_archive"]["parse_errors"], 2);
+        assert_eq!(parsed["raw_archive"]["insert_errors"], 3);
+        assert_eq!(parsed["raw_archive"]["latest_failure_kind"], "mixed_errors");
+        assert_eq!(
+            parsed["raw_archive"]["latest_failure_path"],
+            "/bad/raw.jsonl"
+        );
         assert_eq!(parsed["capture_pipeline"]["extract_todo"], 6);
         assert_eq!(parsed["pending_observations"]["failed"], 16);
         assert_eq!(parsed["worker_daemon"]["health"], "healthy");

@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::get_recent_memories;
 use crate::memory::tests_helper::setup_memory_schema;
+use crate::retrieval::entity::search_by_entity;
 use rusqlite::Connection;
 
 #[test]
@@ -139,6 +140,86 @@ fn test_topic_key_upsert_reactivates_archived_row() {
     let memories = get_recent_memories(&conn, "test/proj", 10).unwrap();
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].title, "Token rotation v2");
+}
+
+#[test]
+fn test_topic_key_upsert_refreshes_entity_links() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("server-stack"),
+        "SQLCipher stack",
+        "SQLCipher stores local data.",
+        "decision",
+        None,
+    )?;
+    let id2 = insert_memory(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("server-stack"),
+        "Axum stack",
+        "Axum handles the service layer.",
+        "decision",
+        None,
+    )?;
+
+    assert_eq!(id1, id2);
+    assert!(search_by_entity(&conn, "SQLCipher", Some("test/proj"), 10)?.is_empty());
+    assert_eq!(
+        search_by_entity(&conn, "Axum", Some("test/proj"), 10)?,
+        vec![id1]
+    );
+
+    let sqlcipher_count: i64 = conn.query_row(
+        "SELECT mention_count FROM entities WHERE canonical_name = ?1 COLLATE NOCASE",
+        params!["SQLCipher"],
+        |row| row.get(0),
+    )?;
+    assert_eq!(sqlcipher_count, 0);
+    Ok(())
+}
+
+#[test]
+fn test_topic_key_upsert_with_no_entities_clears_entity_links() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id1 = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("plain-note"),
+        "SQLCipher note",
+        "SQLCipher stores local data.",
+        "decision",
+        None,
+    )?;
+    let id2 = insert_memory(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("plain-note"),
+        "note",
+        "plain words only",
+        "decision",
+        None,
+    )?;
+
+    assert_eq!(id1, id2);
+    assert!(search_by_entity(&conn, "SQLCipher", Some("test/proj"), 10)?.is_empty());
+
+    let link_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_entities WHERE memory_id = ?1",
+        params![id1],
+        |row| row.get(0),
+    )?;
+    assert_eq!(link_count, 0);
+    Ok(())
 }
 
 #[test]
@@ -425,4 +506,74 @@ fn test_created_at_default_when_no_override() {
         )
         .unwrap();
     assert!(created >= before && created <= after);
+}
+
+#[test]
+fn insert_memory_writes_embedding() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("semantic-recall"),
+        "Semantic recall",
+        "Vector search retrieves paraphrased memory.",
+        "decision",
+        None,
+    )?;
+
+    let row: (i64, i64, String) = conn.query_row(
+        "SELECT memory_id, dimensions, model FROM memory_embeddings WHERE memory_id = ?1",
+        params![id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(row.0, id);
+    assert_eq!(row.1, crate::retrieval::vector::EMBEDDING_DIMENSIONS as i64);
+    assert_eq!(row.2, crate::retrieval::vector::DEFAULT_EMBEDDING_MODEL);
+    Ok(())
+}
+
+#[test]
+fn topic_key_upsert_replaces_embedding_for_same_memory() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "test/proj",
+        Some("semantic-recall"),
+        "Semantic recall",
+        "Initial vector note.",
+        "decision",
+        None,
+    )?;
+    let before_hash: String = conn.query_row(
+        "SELECT content_hash FROM memory_embeddings WHERE memory_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    let updated_id = insert_memory(
+        &conn,
+        Some("s2"),
+        "test/proj",
+        Some("semantic-recall"),
+        "Semantic recall",
+        "Updated vector note with different content.",
+        "decision",
+        None,
+    )?;
+    assert_eq!(updated_id, id);
+
+    let row: (i64, String) = conn.query_row(
+        "SELECT COUNT(*), MAX(content_hash) FROM memory_embeddings WHERE memory_id = ?1",
+        params![id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(row.0, 1);
+    assert_ne!(row.1, before_hash);
+    Ok(())
 }

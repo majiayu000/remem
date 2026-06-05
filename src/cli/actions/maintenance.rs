@@ -5,7 +5,11 @@ use std::path::Path;
 use crate::cli::types::MemoryGovernanceCliAction;
 use crate::{db, memory};
 
-pub(in crate::cli) async fn run_dream(project: Option<&str>, dry_run: bool) -> Result<()> {
+pub(in crate::cli) async fn run_dream(
+    project: Option<&str>,
+    profile: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
     let cwd = crate::cli::cwd::resolve_cwd_arg(None);
     let project = project
         .map(str::to_owned)
@@ -27,7 +31,7 @@ pub(in crate::cli) async fn run_dream(project: Option<&str>, dry_run: bool) -> R
         return Ok(());
     }
 
-    crate::dream::process_dream_job(&project).await?;
+    crate::dream::process_dream_job_with_profile(&project, profile).await?;
     println!("dream complete for project={}", project);
     Ok(())
 }
