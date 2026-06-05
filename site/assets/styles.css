@@ -514,8 +514,8 @@ h3 {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
+  aspect-ratio: 5 / 3;
+  object-fit: contain;
 }
 .demo-frame figcaption {
   padding: 12px 14px;

@@ -2,7 +2,7 @@ document.documentElement.classList.add("js");
 
 const installCommands = {
   quick: "curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh",
-  homebrew: "brew install majiayu000/tap/remem",
+  homebrew: "brew install majiayu000/tap/remem\nremem install --target all",
   cargo: "cargo install remem-ai --bin remem\nremem install --target all",
 };
 
