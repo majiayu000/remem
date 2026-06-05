@@ -5,6 +5,7 @@ use super::super::promote_summary_to_memory_candidates;
 use super::super::slug::content_hash;
 use crate::db;
 use crate::memory::service::{save_memory, SaveMemoryRequest};
+use crate::memory_candidate::review::approve_candidate;
 
 fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
@@ -194,6 +195,122 @@ fn test_summary_preference_candidate_defaults_to_project_scope() -> Result<()> {
     assert_eq!(memory_type, "preference");
     assert_eq!(owner_scope, "repo");
     assert_eq!(owner_key, project);
+    Ok(())
+}
+
+#[test]
+fn test_summary_preference_candidate_uses_semantic_state_topic_key() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-preference-state-key";
+    let project = "test/proj";
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Capture preference"),
+        None,
+        None,
+        Some("Keep verification status separate from data and code changes."),
+    )?;
+    assert_eq!(count, 1);
+
+    let (topic_key, state_key, state_key_confidence, state_key_reason): (
+        String,
+        String,
+        f64,
+        String,
+    ) = conn.query_row(
+        "SELECT topic_key, state_key, state_key_confidence, state_key_reason
+         FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(topic_key, "verification-status-separation");
+    assert_eq!(state_key, "verification-status-separation");
+    assert_eq!(state_key_confidence, 1.0);
+    assert_eq!(state_key_reason, "stable_topic_key");
+    Ok(())
+}
+
+#[test]
+fn test_summary_preference_paraphrases_promote_through_same_state_key() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let project = "test/proj";
+
+    record_summary_evidence(&conn, "session-pref-state-a", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-pref-state-a",
+        project,
+        Some("Capture preference"),
+        None,
+        None,
+        Some("Keep verification status separate from data and code changes."),
+    )?;
+    let first_candidate_id: i64 = conn.query_row(
+        "SELECT id FROM memory_candidates WHERE review_status = 'pending_review'",
+        [],
+        |row| row.get(0),
+    )?;
+    let first_memory_id =
+        approve_candidate(&mut conn, first_candidate_id)?.expect("first candidate should promote");
+
+    record_summary_evidence(&conn, "session-pref-state-b", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-pref-state-b",
+        project,
+        Some("Capture refined preference"),
+        None,
+        None,
+        Some("Report data and code changes separately from verification status."),
+    )?;
+    let second_candidate_id: i64 = conn.query_row(
+        "SELECT id
+         FROM memory_candidates
+         WHERE review_status = 'pending_review'
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let second_topic_key: String = conn.query_row(
+        "SELECT topic_key FROM memory_candidates WHERE id = ?1",
+        [second_candidate_id],
+        |row| row.get(0),
+    )?;
+    let second_memory_id = approve_candidate(&mut conn, second_candidate_id)?
+        .expect("second candidate should promote");
+
+    let first_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [first_memory_id],
+        |row| row.get(0),
+    )?;
+    let (second_status, state_key, current_memory_id): (String, String, i64) = conn.query_row(
+        "SELECT m.status, sk.state_key, sk.current_memory_id
+         FROM memories m
+         JOIN memory_state_keys sk ON sk.id = m.state_key_id
+         WHERE m.id = ?1",
+        [second_memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(second_topic_key, "verification-status-separation");
+    assert_eq!(first_status, "stale");
+    assert_eq!(second_status, "active");
+    assert_eq!(state_key, "verification-status-separation");
+    assert_eq!(current_memory_id, second_memory_id);
+    assert_eq!(active_count, 1);
     Ok(())
 }
 

@@ -87,7 +87,7 @@ fn summary_memory_candidates(
             candidates.push(ParsedMemoryCandidate {
                 scope: "project".to_string(),
                 memory_type: "preference".to_string(),
-                topic_key: format!("preference-{}", content_hash(text)),
+                topic_key: summary_topic_key("preference", "preference", "Preference", text, text),
                 text: text.to_string(),
                 confidence: SUMMARY_CANDIDATE_CONFIDENCE,
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
@@ -125,7 +125,7 @@ fn append_learned_candidates(
             candidates.push(ParsedMemoryCandidate {
                 scope: "project".to_string(),
                 memory_type: "lesson".to_string(),
-                topic_key: format!("lesson-{}", content_hash(item)),
+                topic_key: summary_topic_key("lesson", "lesson", "Lesson", &content, item),
                 text: content,
                 confidence: lesson_confidence(item),
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
@@ -134,7 +134,7 @@ fn append_learned_candidates(
             candidates.push(ParsedMemoryCandidate {
                 scope: "project".to_string(),
                 memory_type: "discovery".to_string(),
-                topic_key: format!("discovery-{}", content_hash(item)),
+                topic_key: summary_topic_key("discovery", "discovery", "Discovery", &content, item),
                 text: content,
                 confidence: SUMMARY_CANDIDATE_CONFIDENCE,
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
@@ -170,25 +170,52 @@ fn append_standard_candidates(
     let items = split_into_items(text);
     if items.len() > 1 {
         for item in items.iter().filter(|item| item.len() >= min_len) {
+            let candidate_text = build_content(item, request_text);
             candidates.push(ParsedMemoryCandidate {
                 scope: "project".to_string(),
                 memory_type: memory_type.to_string(),
-                topic_key: format!("{}-{}", topic_prefix, content_hash(item)),
-                text: build_content(item, request_text),
+                topic_key: summary_topic_key(
+                    memory_type,
+                    topic_prefix,
+                    memory_type,
+                    &candidate_text,
+                    item,
+                ),
+                text: candidate_text,
                 confidence: SUMMARY_CANDIDATE_CONFIDENCE,
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
             });
         }
     } else {
+        let candidate_text = build_content(text, request_text);
         candidates.push(ParsedMemoryCandidate {
             scope: "project".to_string(),
             memory_type: memory_type.to_string(),
-            topic_key: format!("{}-{}", topic_prefix, content_hash(text)),
-            text: build_content(text, request_text),
+            topic_key: summary_topic_key(
+                memory_type,
+                topic_prefix,
+                memory_type,
+                &candidate_text,
+                text,
+            ),
+            text: candidate_text,
             confidence: SUMMARY_CANDIDATE_CONFIDENCE,
             risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
         });
     }
+}
+
+fn summary_topic_key(
+    memory_type: &str,
+    topic_prefix: &str,
+    title: &str,
+    candidate_text: &str,
+    hash_seed: &str,
+) -> String {
+    let fallback = format!("{}-{}", topic_prefix, content_hash(hash_seed));
+    crate::memory::state_key::derive_state_key(memory_type, Some(&fallback), title, candidate_text)
+        .map(|decision| decision.state_key)
+        .unwrap_or(fallback)
 }
 
 #[derive(Debug)]
