@@ -15,22 +15,59 @@ fn graph_test_conn() -> Connection {
 }
 
 fn graph_test_task(conn: &mut Connection, session_id: &str) -> Result<db::ExtractionTask> {
-    record_captured_event(
+    graph_test_task_with_events(
         conn,
-        &CaptureEventInput {
-            host: "codex-cli",
-            session_id,
-            project: "/tmp/remem",
-            cwd: None,
-            event_type: "tool_result",
-            role: None,
-            tool_name: Some("Bash"),
-            content: "worker loop touched src/worker.rs",
-            task_kind: Some(ExtractionTaskKind::GraphCandidate),
-        },
+        session_id,
+        &["Memory 1 mentions Worker and touches file src/worker.rs."],
+    )
+    .map(|(task, _)| task)
+}
+
+fn graph_test_task_with_events(
+    conn: &mut Connection,
+    session_id: &str,
+    contents: &[&str],
+) -> Result<(db::ExtractionTask, Vec<i64>)> {
+    let mut event_ids = Vec::new();
+    for content in contents {
+        let outcome = record_captured_event(
+            conn,
+            &CaptureEventInput {
+                host: "codex-cli",
+                session_id,
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content,
+                task_kind: Some(ExtractionTaskKind::GraphCandidate),
+            },
+        )?;
+        event_ids.push(outcome.event_row_id);
+    }
+    let task = db::claim_next_extraction_task(conn, "worker-graph", 60)?
+        .ok_or_else(|| anyhow::anyhow!("expected graph candidate task"))?;
+    Ok((task, event_ids))
+}
+
+fn insert_graph_memory(conn: &Connection, project: &str, id: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch, status, scope, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'decision',
+                 1, 1, 'active', 'project', ?2, ?2, 'repo', ?2)",
+        params![
+            id,
+            project,
+            format!("graph-memory-{id}"),
+            format!("Memory {id}"),
+            format!("Memory {id} source text"),
+        ],
     )?;
-    db::claim_next_extraction_task(conn, "worker-graph", 60)?
-        .ok_or_else(|| anyhow::anyhow!("expected graph candidate task"))
+    Ok(())
 }
 
 fn insert_graph_source_observation(
@@ -38,6 +75,17 @@ fn insert_graph_source_observation(
     task: &db::ExtractionTask,
     text: &str,
 ) -> Result<i64> {
+    let event_id = task.high_watermark_event_id.unwrap_or(1);
+    insert_graph_source_observation_with_evidence(conn, task, text, &[event_id])?;
+    Ok(event_id)
+}
+
+fn insert_graph_source_observation_with_evidence(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    text: &str,
+    event_ids: &[i64],
+) -> Result<()> {
     let obs_id = db::insert_observation_with_branch(
         conn,
         "capture-graph-test",
@@ -55,7 +103,6 @@ fn insert_graph_source_observation(
         None,
         None,
     )?;
-    let event_id = task.high_watermark_event_id.unwrap_or(1);
     conn.execute(
         "UPDATE observations
          SET host_id = ?1,
@@ -71,11 +118,11 @@ fn insert_graph_source_observation(
             task.project_id,
             task.session_row_id,
             text,
-            serde_json::to_string(&vec![event_id])?,
+            serde_json::to_string(event_ids)?,
             obs_id
         ],
     )?;
-    Ok(event_id)
+    Ok(())
 }
 
 fn graph_candidate_xml(edge_type: &str, to_ref: &str, evidence_id: i64) -> String {
@@ -97,6 +144,7 @@ fn graph_candidate_xml(edge_type: &str, to_ref: &str, evidence_id: i64) -> Strin
 async fn graph_candidate_auto_promotes_low_risk_mentions() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-mentions")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
     let event_id = insert_graph_source_observation(
         &conn,
         &task,
@@ -139,6 +187,7 @@ async fn graph_candidate_auto_promotes_low_risk_mentions() -> Result<()> {
 async fn graph_candidate_auto_promotes_supported_touches_file() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-touches-file")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
     let event_id =
         insert_graph_source_observation(&conn, &task, "Memory 1 touches file src/worker.rs.")?;
 
@@ -174,6 +223,7 @@ async fn graph_candidate_auto_promotes_supported_touches_file() -> Result<()> {
 async fn graph_candidate_routes_unsupported_auto_edge_to_review() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-unsupported-file")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
     let event_id =
         insert_graph_source_observation(&conn, &task, "Memory 1 touches file src/worker.rs.")?;
 
@@ -183,6 +233,88 @@ async fn graph_candidate_routes_unsupported_auto_edge_to_review() -> Result<()> 
             "file:Cargo.toml",
             event_id,
         ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(edge_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_routes_unsupported_cited_event_to_review() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-unsupported-cited-event",
+        &[
+            "Memory 1 mentions Worker.",
+            "Cargo build finished without graph context.",
+        ],
+    )?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_source_observation_with_evidence(
+        &conn,
+        &task,
+        "Memory 1 mentions Worker.",
+        &event_ids,
+    )?;
+
+    let unrelated_event_id = event_ids[1];
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(graph_candidate_xml(
+            "mentions",
+            "entity:Worker",
+            unrelated_event_id,
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(edge_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_routes_unresolved_memory_ref_to_review() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-unresolved-memory")?;
+    let event_id = insert_graph_source_observation(
+        &conn,
+        &task,
+        "Memory 1 mentions the extraction Worker entity.",
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(graph_candidate_xml("mentions", "entity:Worker", event_id))
     })
     .await?;
 
@@ -263,6 +395,7 @@ async fn graph_candidate_malformed_output_fails_closed() -> Result<()> {
 #[test]
 fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
     let mut conn = graph_test_conn();
+    insert_graph_memory(&conn, "/tmp/remem", 1)?;
     conn.execute(
         "INSERT INTO graph_candidates
          (source_project, candidate_type, edge_type, from_ref, to_ref,
@@ -304,10 +437,43 @@ fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn graph_review_approval_rejects_foreign_memory_ref() -> Result<()> {
+    let mut conn = graph_test_conn();
+    insert_graph_memory(&conn, "/tmp/other", 1)?;
+    conn.execute(
+        "INSERT INTO graph_candidates
+         (source_project, candidate_type, edge_type, from_ref, to_ref,
+          evidence_event_ids, confidence, risk_class, reason, review_status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/tmp/remem', 'edge', 'mentions', 'memory:1', 'entity:Worker',
+                 '[1]', 0.91, 'low', 'foreign memory ref', 'pending_review', 1, 1)",
+        [],
+    )?;
+
+    let err = review::approve_candidate(&mut conn, 1)
+        .expect_err("foreign memory ref must not create trusted edge");
+    assert!(
+        err.to_string().contains("does not resolve"),
+        "unexpected error: {err}"
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(edge_count, 0);
+    Ok(())
+}
+
 #[tokio::test]
 async fn graph_review_approve_reject_and_defer() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-review")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
     let event_id = insert_graph_source_observation(
         &conn,
         &task,

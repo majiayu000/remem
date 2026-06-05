@@ -64,10 +64,17 @@ struct GraphSourceObservation {
     confidence: f64,
 }
 
+#[derive(Debug, Clone)]
+struct GraphSourceEvent {
+    id: i64,
+    text: String,
+}
+
 struct GraphObservationBatch {
     from_event_id: i64,
     to_event_id: i64,
     evidence_event_ids: Vec<i64>,
+    source_events: Vec<GraphSourceEvent>,
     observations: Vec<GraphSourceObservation>,
 }
 
@@ -224,12 +231,39 @@ fn load_graph_observation_batch(
     }
     let from_event_id = *evidence_set.iter().next().unwrap_or(&0);
     let to_event_id = *evidence_set.iter().next_back().unwrap_or(&0);
+    let evidence_event_ids = evidence_set.into_iter().collect::<Vec<_>>();
+    let source_events = load_graph_source_events(conn, &evidence_event_ids)?;
     Ok(Some(GraphObservationBatch {
         from_event_id,
         to_event_id,
-        evidence_event_ids: evidence_set.into_iter().collect(),
+        evidence_event_ids,
+        source_events,
         observations,
     }))
+}
+
+fn load_graph_source_events(
+    conn: &Connection,
+    evidence_event_ids: &[i64],
+) -> Result<Vec<GraphSourceEvent>> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(content_text, '')
+         FROM captured_events
+         WHERE id = ?1",
+    )?;
+    let mut events = Vec::new();
+    for event_id in evidence_event_ids {
+        if let Some(text) = stmt
+            .query_row(params![event_id], |row| row.get(0))
+            .optional()?
+        {
+            events.push(GraphSourceEvent {
+                id: *event_id,
+                text,
+            });
+        }
+    }
+    Ok(events)
 }
 
 fn persist_graph_candidates(
@@ -278,7 +312,8 @@ fn persist_graph_candidates(
         summary.candidates += 1;
 
         let source_supported = graph_candidate_has_source_support(candidate, batch);
-        if graph_should_auto_promote(candidate) && source_supported {
+        let trusted_refs_valid = graph_candidate_has_trusted_refs(&tx, &task.project, candidate)?;
+        if graph_should_auto_promote(candidate) && source_supported && trusted_refs_valid {
             let outcome = insert_trusted_graph_edge(
                 &tx,
                 &task.project,
@@ -298,7 +333,7 @@ fn persist_graph_candidates(
                     candidate.edge_type,
                     candidate.risk_class,
                     candidate.confidence,
-                    graph_auto_promote_block_reason(candidate, source_supported)
+                    graph_auto_promote_block_reason(candidate, source_supported, trusted_refs_valid)
                 ),
             );
             summary.pending_review += 1;
@@ -332,7 +367,7 @@ fn graph_candidate_has_source_support(
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    batch
+    let observation_supported = batch
         .observations
         .iter()
         .filter(|observation| {
@@ -341,10 +376,20 @@ fn graph_candidate_has_source_support(
                 .iter()
                 .any(|event_id| candidate_evidence.contains(event_id))
         })
-        .any(|observation| {
-            ref_supported_by_text(&candidate.from_ref, &observation.text)
-                && ref_supported_by_text(&candidate.to_ref, &observation.text)
-        })
+        .any(|observation| refs_supported_by_text(candidate, &observation.text));
+    let cited_events_supported = candidate.evidence_event_ids.iter().all(|event_id| {
+        batch
+            .source_events
+            .iter()
+            .find(|event| event.id == *event_id)
+            .is_some_and(|event| refs_supported_by_text(candidate, &event.text))
+    });
+    observation_supported && cited_events_supported
+}
+
+fn refs_supported_by_text(candidate: &ParsedGraphCandidate, text: &str) -> bool {
+    ref_supported_by_text(&candidate.from_ref, text)
+        && ref_supported_by_text(&candidate.to_ref, text)
 }
 
 fn ref_supported_by_text(reference: &str, text: &str) -> bool {
@@ -411,6 +456,7 @@ pub(crate) fn insert_trusted_graph_edge(
     actor: &str,
 ) -> Result<TrustedGraphEdgeOutcome> {
     ensure_review_threshold(candidate)?;
+    ensure_trusted_graph_refs(conn, source_project, candidate)?;
     let operation_input = MemoryOperationInput {
         source: "graph_candidate".to_string(),
         actor: actor.to_string(),
@@ -508,9 +554,89 @@ fn ensure_review_threshold(candidate: &ParsedGraphCandidate) -> Result<()> {
     Ok(())
 }
 
+fn graph_candidate_has_trusted_refs(
+    conn: &Connection,
+    source_project: &str,
+    candidate: &ParsedGraphCandidate,
+) -> Result<bool> {
+    for reference in [&candidate.from_ref, &candidate.to_ref] {
+        let Some(memory_id) = (match parse_memory_ref_id(reference) {
+            Ok(memory_id) => memory_id,
+            Err(_) => return Ok(false),
+        }) else {
+            continue;
+        };
+        if !active_repo_memory_exists(conn, source_project, memory_id)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn ensure_trusted_graph_refs(
+    conn: &Connection,
+    source_project: &str,
+    candidate: &ParsedGraphCandidate,
+) -> Result<()> {
+    for reference in [&candidate.from_ref, &candidate.to_ref] {
+        let Some(memory_id) = parse_memory_ref_id(reference)? else {
+            continue;
+        };
+        if !active_repo_memory_exists(conn, source_project, memory_id)? {
+            bail!(
+                "graph candidate ref {reference} does not resolve to an active memory in {source_project}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn parse_memory_ref_id(reference: &str) -> Result<Option<i64>> {
+    let Some(raw_id) = reference.strip_prefix("memory:") else {
+        return Ok(None);
+    };
+    let memory_id = raw_id
+        .trim()
+        .parse::<i64>()
+        .with_context(|| format!("graph candidate ref {reference} is not a numeric memory id"))?;
+    if memory_id <= 0 {
+        bail!("graph candidate ref {reference} must use a positive memory id");
+    }
+    Ok(Some(memory_id))
+}
+
+fn active_repo_memory_exists(
+    conn: &Connection,
+    source_project: &str,
+    memory_id: i64,
+) -> Result<bool> {
+    conn.query_row(
+        "SELECT 1
+         FROM memories
+         WHERE id = ?1
+           AND status = 'active'
+           AND (
+                (owner_scope = 'repo' AND owner_key = ?2)
+                OR target_project = ?2
+                OR (
+                    owner_scope IS NULL
+                    AND project = ?2
+                    AND COALESCE(scope, 'project') != 'global'
+                )
+           )
+         LIMIT 1",
+        params![memory_id, source_project],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(Into::into)
+}
+
 fn graph_auto_promote_block_reason(
     candidate: &ParsedGraphCandidate,
     source_supported: bool,
+    trusted_refs_valid: bool,
 ) -> &'static str {
     if candidate.candidate_type != "edge" {
         return "candidate_type_requires_review";
@@ -532,6 +658,9 @@ fn graph_auto_promote_block_reason(
     }
     if !source_supported {
         return "source_observation_missing_ref_support";
+    }
+    if !trusted_refs_valid {
+        return "trusted_ref_unresolved";
     }
     "unknown"
 }
