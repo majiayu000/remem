@@ -1,7 +1,7 @@
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
-use super::super::types::{RawSearchHit, SearchParams, SearchResult};
+use super::super::types::{CurrentStateParams, RawSearchHit, SearchParams, SearchResult};
 use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::memory::service;
@@ -10,6 +10,35 @@ const RAW_PREVIEW_CHARS: usize = 300;
 
 #[tool_router(router = tool_router_search, vis = "pub(super)")]
 impl MemoryServer {
+    #[tool(
+        description = "Resolve the current memory/fact state for a stable state key. Returns explicit current, not_found, ambiguous, or unresolved_conflict status plus compact history and why edges."
+    )]
+    pub(super) fn current_state(
+        &self,
+        Parameters(params): Parameters<CurrentStateParams>,
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "current_state";
+        if params.state_key.trim().is_empty() {
+            return Err(McpToolError::invalid_request(TOOL, "state_key is required"));
+        }
+        self.with_conn(TOOL, |conn| {
+            let req = service::CurrentStateRequest {
+                state_key: params.state_key.clone(),
+                project: params.project.clone(),
+                owner_scope: params.owner_scope.clone(),
+                owner_key: params.owner_key.clone(),
+                memory_type: params.r#type.clone(),
+                as_of_epoch: params.as_of_epoch,
+                include_history: true,
+            };
+            let result = service::current_state(conn, &req).map_err(|e| {
+                crate::log::warn("mcp", &format!("current_state failed: {}", e));
+                McpToolError::db_query(TOOL, e)
+            })?;
+            errors::to_json_pretty(TOOL, &result)
+        })
+    }
+
     #[tool(
         description = "Search curated memories by query/project/type. Returns compact results with IDs, source='memory', pagination, and next_step for get_observations(ids, source). Use search_raw for literal chat recall."
     )]
