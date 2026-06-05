@@ -7,15 +7,15 @@ fn build_hooks_contains_expected_claude_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::ClaudeCode);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
-        "REMEM_CONTEXT_HOST=claude-code /tmp/remem context --color"
+        "/tmp/remem context --host claude-code"
     );
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "REMEM_HOOK_ADAPTER=claude-code /tmp/remem session-init"
+        "/tmp/remem session-init --host claude-code"
     );
     assert_eq!(
         hooks["PostToolUse"][0]["hooks"][0]["command"],
-        "REMEM_HOOK_ADAPTER=claude-code /tmp/remem observe"
+        "/tmp/remem observe --host claude-code"
     );
     assert_eq!(
         hooks["PostToolUse"][0]["matcher"],
@@ -23,7 +23,7 @@ fn build_hooks_contains_expected_claude_commands() {
     );
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
-        "REMEM_SUMMARY_EXECUTOR=claude-cli /tmp/remem summarize"
+        "/tmp/remem summarize --host claude-code"
     );
 }
 
@@ -32,13 +32,13 @@ fn build_hooks_contains_expected_codex_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::Codex);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
-        "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context --color --gate strict"
+        "/tmp/remem context --host codex-cli"
     );
     assert!(hooks.get("UserPromptSubmit").is_none());
     assert!(hooks.get("PostToolUse").is_none());
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
-        "REMEM_SUMMARY_EXECUTOR=codex-cli /tmp/remem summarize"
+        "/tmp/remem summarize --host codex-cli"
     );
 }
 

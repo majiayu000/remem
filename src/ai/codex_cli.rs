@@ -4,13 +4,17 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use crate::ai::config::{get_codex_model, get_codex_path, get_codex_reasoning_effort};
 use crate::ai::types::{AiCallResult, AI_TIMEOUT_SECS};
+use crate::runtime_config::ResolvedMemoryAiProfile;
 
-pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<AiCallResult> {
-    let codex = get_codex_path();
-    let model = get_codex_model();
-    let reasoning_effort = get_codex_reasoning_effort();
+pub(super) async fn call_codex_cli(
+    system: &str,
+    user_message: &str,
+    profile: &ResolvedMemoryAiProfile,
+) -> Result<AiCallResult> {
+    let codex = profile.cli_path.as_deref().unwrap_or("codex");
+    let model = profile.model.clone();
+    let reasoning_effort = profile.reasoning_effort.as_deref();
     let output_path = std::env::temp_dir().join(format!(
         "remem-codex-summary-{}-{}.txt",
         std::process::id(),
@@ -19,11 +23,11 @@ pub(super) async fn call_codex_cli(system: &str, user_message: &str) -> Result<A
     let prompt = build_prompt(system, user_message);
     let working_dir = super::stable_working_dir();
 
-    let mut command = Command::new(&codex);
+    let mut command = Command::new(codex);
     command.args(build_codex_args(
         &output_path,
         model.as_deref(),
-        reasoning_effort.as_deref(),
+        reasoning_effort,
     ));
     command
         .current_dir(&working_dir)

@@ -1,9 +1,3 @@
-const DEFAULT_CODEX_MODEL: &str = "gpt-5.2";
-
-pub(super) fn get_model_raw() -> String {
-    std::env::var("REMEM_MODEL").unwrap_or_else(|_| "haiku".to_string())
-}
-
 /// Map short model names to full Anthropic API model IDs.
 /// CLI handles short names itself; HTTP API needs the full ID.
 pub(super) fn resolve_model_for_api(short: &str) -> &str {
@@ -13,26 +7,4 @@ pub(super) fn resolve_model_for_api(short: &str) -> &str {
         "opus" => "claude-opus-4-20250514",
         _ => short,
     }
-}
-
-pub(super) fn get_claude_path() -> String {
-    std::env::var("REMEM_CLAUDE_PATH").unwrap_or_else(|_| "claude".to_string())
-}
-
-pub(super) fn get_codex_path() -> String {
-    std::env::var("REMEM_CODEX_PATH").unwrap_or_else(|_| "codex".to_string())
-}
-
-pub(super) fn get_codex_model() -> Option<String> {
-    match std::env::var("REMEM_CODEX_MODEL") {
-        Ok(model) if model.trim().eq_ignore_ascii_case("auto") => None,
-        Ok(model) if !model.trim().is_empty() => Some(model),
-        _ => Some(DEFAULT_CODEX_MODEL.to_string()),
-    }
-}
-
-pub(super) fn get_codex_reasoning_effort() -> Option<String> {
-    std::env::var("REMEM_CODEX_REASONING_EFFORT")
-        .ok()
-        .filter(|effort| !effort.trim().is_empty())
 }

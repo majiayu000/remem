@@ -1,21 +1,25 @@
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
-use crate::ai::config::{get_claude_path, get_model_raw};
 use crate::ai::types::{AiCallResult, AI_TIMEOUT_SECS};
+use crate::runtime_config::ResolvedMemoryAiProfile;
 
-pub(super) async fn call_cli(system: &str, user_message: &str) -> Result<AiCallResult> {
-    let model = get_model_raw();
-    let claude = get_claude_path();
+pub(super) async fn call_cli(
+    system: &str,
+    user_message: &str,
+    profile: &ResolvedMemoryAiProfile,
+) -> Result<AiCallResult> {
+    let model = profile.model.as_deref().unwrap_or("haiku");
+    let claude = profile.cli_path.as_deref().unwrap_or("claude");
     let working_dir = super::stable_working_dir();
 
-    let mut child = Command::new(&claude)
+    let mut child = Command::new(claude)
         .args([
             "-p",
             "--system-prompt",
             system,
             "--model",
-            &model,
+            model,
             "--output-format",
             "text",
             "--no-session-persistence",
@@ -55,7 +59,7 @@ pub(super) async fn call_cli(system: &str, user_message: &str) -> Result<AiCallR
     Ok(AiCallResult {
         text,
         executor: "cli",
-        model,
+        model: model.to_string(),
         usage: None,
         usage_source: None,
     })

@@ -150,6 +150,7 @@ mod tests {
             host: "codex-cli".to_string(),
             project: "/repo".to_string(),
             session_id: Some("session-1".to_string()),
+            ai_profile: None,
             priority: 0,
             cursor_event_id: Some(0),
             high_watermark_event_id: Some(3),

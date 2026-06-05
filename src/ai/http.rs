@@ -1,16 +1,23 @@
 use anyhow::{Context, Result};
 
-use crate::ai::config::{get_model_raw, resolve_model_for_api};
+use crate::ai::config::resolve_model_for_api;
 use crate::ai::types::{AiCallResult, TokenUsage, AI_TIMEOUT_SECS};
+use crate::runtime_config::ResolvedMemoryAiProfile;
 
-pub(super) async fn call_http(system: &str, user_message: &str) -> Result<AiCallResult> {
+pub(super) async fn call_http(
+    system: &str,
+    user_message: &str,
+    profile: &ResolvedMemoryAiProfile,
+) -> Result<AiCallResult> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
         .context("ANTHROPIC_API_KEY not set")?;
-    let raw = get_model_raw();
-    let model = resolve_model_for_api(&raw);
-    let base_url = std::env::var("ANTHROPIC_BASE_URL")
-        .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+    let raw = profile.model.as_deref().unwrap_or("haiku");
+    let model = resolve_model_for_api(raw);
+    let base_url = profile
+        .base_url
+        .as_deref()
+        .unwrap_or("https://api.anthropic.com");
 
     let body = serde_json::json!({
         "model": model,

@@ -3,10 +3,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
-use super::config::{get_codex_model, resolve_model_for_api};
+use super::config::resolve_model_for_api;
 use super::pricing::{estimate_cost_usd, pricing_for_model};
+use super::stable_working_dir;
 use super::TokenUsage;
-use super::{executor_for_operation, stable_working_dir, AiExecutor};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -60,16 +60,6 @@ fn pricing_for_model_uses_model_defaults() {
             assert_eq!(pricing_for_model("haiku"), (1.0, 5.0));
         },
     );
-}
-
-#[test]
-fn codex_model_defaults_to_gpt_52_and_allows_auto() {
-    with_env_vars(&[("REMEM_CODEX_MODEL", None)], || {
-        assert_eq!(get_codex_model().as_deref(), Some("gpt-5.2"));
-    });
-    with_env_vars(&[("REMEM_CODEX_MODEL", Some("auto"))], || {
-        assert_eq!(get_codex_model(), None);
-    });
 }
 
 #[test]
@@ -142,87 +132,6 @@ fn estimate_cost_usd_charges_cache_and_reasoning_separately() {
 }
 
 #[test]
-fn codex_summary_executor_applies_to_extraction_operations() {
-    with_env_vars(
-        &[
-            ("REMEM_EXECUTOR", None),
-            ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
-            ("REMEM_COMPRESS_EXECUTOR", None),
-            ("REMEM_DREAM_EXECUTOR", None),
-        ],
-        || {
-            assert_eq!(
-                executor_for_operation("summarize"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(
-                executor_for_operation("session_rollup"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(
-                executor_for_operation("observation_extract"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(
-                executor_for_operation("memory_candidate"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(executor_for_operation("compress"), None);
-        },
-    );
-}
-
-#[test]
-fn claude_summary_executor_applies_to_extraction_operations() {
-    with_env_vars(
-        &[
-            ("REMEM_EXECUTOR", None),
-            ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
-            ("REMEM_COMPRESS_EXECUTOR", None),
-            ("REMEM_DREAM_EXECUTOR", None),
-        ],
-        || {
-            assert_eq!(
-                executor_for_operation("summarize"),
-                Some(AiExecutor::ClaudeCli)
-            );
-            assert_eq!(
-                executor_for_operation("session_rollup"),
-                Some(AiExecutor::ClaudeCli)
-            );
-            assert_eq!(
-                executor_for_operation("observation_extract"),
-                Some(AiExecutor::ClaudeCli)
-            );
-        },
-    );
-}
-
-#[test]
-fn legacy_global_executor_applies_to_extraction_operations() {
-    with_env_vars(
-        &[
-            ("REMEM_EXECUTOR", Some("codex-cli")),
-            ("REMEM_SUMMARY_EXECUTOR", None),
-            ("REMEM_COMPRESS_EXECUTOR", None),
-            ("REMEM_DREAM_EXECUTOR", None),
-        ],
-        || {
-            assert_eq!(
-                executor_for_operation("summarize"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(
-                executor_for_operation("session_rollup"),
-                Some(AiExecutor::CodexCli)
-            );
-            assert_eq!(executor_for_operation("compress"), None);
-            assert_eq!(executor_for_operation("dream"), None);
-        },
-    );
-}
-
-#[test]
 fn stable_working_dir_uses_data_dir_even_if_caller_cwd_disappears() {
     let data_dir = crate::db::test_support::ScopedTestDataDir::new("ai-stable-cwd");
 
@@ -280,20 +189,26 @@ printf 'ok\n'
 
     with_env_vars(
         &[
-            ("REMEM_CLAUDE_PATH", Some(script.as_str())),
-            ("REMEM_MODEL", Some("haiku")),
             ("REMEM_FAKE_CLAUDE_ENV_OUT", Some(env_out.as_str())),
             ("REMEM_DISABLE_HOOKS", None),
             ("CLAUDECODE", Some("parent-session")),
         ],
         || -> Result<()> {
+            let profile = crate::runtime_config::ResolvedMemoryAiProfile {
+                profile_name: "test-claude".to_string(),
+                executor: crate::runtime_config::MemoryAiExecutor::ClaudeCli,
+                model: Some("haiku".to_string()),
+                cli_path: Some(script.clone()),
+                base_url: None,
+                reasoning_effort: None,
+            };
             let _data_dir = crate::db::test_support::ScopedTestDataDir::new("ai-claude-child");
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .context("tokio runtime should build")?;
             let result = runtime
-                .block_on(super::cli::call_cli("system", "user"))
+                .block_on(super::cli::call_cli("system", "user", &profile))
                 .context("fake claude call should succeed")?;
 
             assert_eq!(result.text, "ok");

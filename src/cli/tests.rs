@@ -720,6 +720,7 @@ fn cli_help_mentions_context_gate_modes_and_command_descriptions() {
     let help = command.render_long_help().to_string();
     assert!(help.contains("Show memory store health"));
     assert!(help.contains("Inspect or repair failed pending observation rows"));
+    assert!(help.contains("Inspect or switch the memory AI model profile"));
 
     let context = match Cli::command().find_subcommand("context") {
         Some(command) => command.clone(),

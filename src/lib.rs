@@ -29,6 +29,7 @@ mod observation_extract;
 pub mod observe;
 pub mod project_id;
 pub mod retrieval;
+pub mod runtime_config;
 mod session_rollup;
 pub mod summarize;
 pub mod timeline;
