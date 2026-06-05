@@ -54,8 +54,7 @@ async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Res
         }
     };
 
-    let ids: Vec<i64> = old_obs.iter().map(|obs| obs.id).collect();
-    let outcome = apply_compression_response(&conn, project, &ids, &response)?;
+    let outcome = apply_compression_response(&conn, project, &old_obs, &response)?;
     match outcome {
         CompressionOutcome::Skipped {
             reason,
@@ -101,9 +100,10 @@ fn store_compressed_observations(
     project: &str,
     response: &str,
     compressed: &[format::ParsedObservation],
-) -> Result<()> {
+) -> Result<StoredCompressedObservations> {
     let memory_session_id = format!("compressed-{}", chrono::Utc::now().timestamp());
     let usage = response.len() as i64 / 4;
+    let mut ids = Vec::with_capacity(compressed.len());
 
     for obs in compressed {
         let facts_json = if obs.facts.is_empty() {
@@ -116,7 +116,7 @@ fn store_compressed_observations(
         } else {
             Some(serde_json::to_string(&obs.concepts)?)
         };
-        db::insert_observation(
+        let id = db::insert_observation(
             conn,
             &memory_session_id,
             project,
@@ -131,9 +131,18 @@ fn store_compressed_observations(
             None,
             usage / compressed.len().max(1) as i64,
         )?;
+        ids.push(id);
     }
 
-    Ok(())
+    Ok(StoredCompressedObservations {
+        ids,
+        memory_session_id,
+    })
+}
+
+struct StoredCompressedObservations {
+    ids: Vec<i64>,
+    memory_session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,26 +161,37 @@ enum CompressionOutcome {
 fn apply_compression_response(
     conn: &rusqlite::Connection,
     project: &str,
-    source_ids: &[i64],
+    source_observations: &[db::models::Observation],
     response: &str,
 ) -> Result<CompressionOutcome> {
     let compressed = format::parse_observations(response);
     if compressed.is_empty() {
         return Ok(CompressionOutcome::Skipped {
             reason: NO_REPLACEMENTS_REASON,
-            source_count: source_ids.len(),
+            source_count: source_observations.len(),
         });
     }
     if compressed.iter().any(|obs| !has_replacement_content(obs)) {
         return Ok(CompressionOutcome::Skipped {
             reason: INVALID_REPLACEMENTS_REASON,
-            source_count: source_ids.len(),
+            source_count: source_observations.len(),
         });
     }
 
+    let source_ids: Vec<i64> = source_observations.iter().map(|obs| obs.id).collect();
     with_compression_savepoint(conn, || {
-        store_compressed_observations(conn, project, response, &compressed)?;
-        let marked = db::mark_observations_compressed(conn, source_ids)?;
+        let stored = store_compressed_observations(conn, project, response, &compressed)?;
+        let linked = db::insert_compressed_observation_sources(
+            conn,
+            &stored.ids,
+            source_observations,
+            &stored.memory_session_id,
+        )?;
+        let expected_links = stored.ids.len() * source_observations.len();
+        if linked != expected_links {
+            anyhow::bail!("inserted {linked} of {expected_links} compressed source links");
+        }
+        let marked = db::mark_observations_compressed(conn, &source_ids)?;
         if marked != source_ids.len() {
             anyhow::bail!(
                 "marked {marked} of {} source observations compressed",

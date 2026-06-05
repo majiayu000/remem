@@ -28,6 +28,23 @@ fn setup_observation_schema(conn: &Connection) -> Result<()> {
             last_accessed_epoch INTEGER,
             branch TEXT,
             commit_sha TEXT
+        );
+        CREATE TABLE sdk_sessions (
+            id INTEGER PRIMARY KEY,
+            content_session_id TEXT UNIQUE NOT NULL,
+            memory_session_id TEXT NOT NULL
+        );
+        CREATE TABLE compressed_observation_sources (
+            id INTEGER PRIMARY KEY,
+            compressed_observation_id INTEGER NOT NULL,
+            source_observation_id INTEGER NOT NULL,
+            source_hash TEXT NOT NULL,
+            source_snapshot_json TEXT NOT NULL,
+            source_created_at_epoch INTEGER NOT NULL,
+            compression_session_id TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL,
+            UNIQUE(compressed_observation_id, source_observation_id),
+            FOREIGN KEY(compressed_observation_id) REFERENCES observations(id) ON DELETE CASCADE
         );",
     )?;
     Ok(())
@@ -85,6 +102,26 @@ fn compressed_titles(conn: &Connection) -> Result<Vec<String>> {
     crate::db::query::collect_rows(rows)
 }
 
+fn source_observations(conn: &Connection, ids: &[i64]) -> Result<Vec<db::Observation>> {
+    db::get_observations_by_ids(conn, ids, Some("proj"))
+}
+
+fn compressed_source_links(conn: &Connection) -> Result<Vec<(i64, i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT compressed_observation_id, source_observation_id, source_hash
+         FROM compressed_observation_sources
+         ORDER BY compressed_observation_id, source_observation_id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    crate::db::query::collect_rows(rows)
+}
+
 fn valid_response(title: &str) -> String {
     format!(
         "<observation>
@@ -104,7 +141,8 @@ fn empty_compression_response_leaves_sources_active() -> Result<()> {
         insert_source_observation(&conn, "stale")?,
     ];
 
-    let outcome = apply_compression_response(&conn, "proj", &ids, "")?;
+    let sources = source_observations(&conn, &ids)?;
+    let outcome = apply_compression_response(&conn, "proj", &sources, "")?;
 
     assert_eq!(
         outcome,
@@ -124,10 +162,11 @@ fn malformed_compression_response_leaves_sources_active() -> Result<()> {
     setup_observation_schema(&conn)?;
     let ids = vec![insert_source_observation(&conn, "active")?];
 
+    let sources = source_observations(&conn, &ids)?;
     let outcome = apply_compression_response(
         &conn,
         "proj",
-        &ids,
+        &sources,
         "<observation><type>decision</type><title>broken",
     )?;
 
@@ -149,11 +188,12 @@ fn contentless_replacements_do_not_retire_sources() -> Result<()> {
     setup_observation_schema(&conn)?;
     let ids = vec![insert_source_observation(&conn, "active")?];
 
+    let sources = source_observations(&conn, &ids)?;
     for response in [
         "<observation></observation>",
         "<observation><type>decision</type></observation>",
     ] {
-        let outcome = apply_compression_response(&conn, "proj", &ids, response)?;
+        let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
         assert_eq!(
             outcome,
             CompressionOutcome::Skipped {
@@ -176,7 +216,9 @@ fn valid_compression_inserts_replacement_then_marks_sources() -> Result<()> {
         insert_source_observation(&conn, "stale")?,
     ];
 
-    let outcome = apply_compression_response(&conn, "proj", &ids, &valid_response("Compressed"))?;
+    let sources = source_observations(&conn, &ids)?;
+    let outcome =
+        apply_compression_response(&conn, "proj", &sources, &valid_response("Compressed"))?;
 
     assert_eq!(
         outcome,
@@ -188,6 +230,53 @@ fn valid_compression_inserts_replacement_then_marks_sources() -> Result<()> {
     );
     assert_eq!(statuses_for(&conn, &ids)?, vec!["compressed", "compressed"]);
     assert_eq!(compressed_titles(&conn)?, vec!["Compressed"]);
+    let links = compressed_source_links(&conn)?;
+    assert_eq!(links.len(), 2);
+    for (_, source_id, source_hash) in links {
+        let Some(source) = sources.iter().find(|source| source.id == source_id) else {
+            panic!("linked source should be in original batch");
+        };
+        assert_eq!(source_hash, db::observation_source_hash(source));
+    }
+    Ok(())
+}
+
+#[test]
+fn multi_replacement_compression_links_every_replacement_to_every_source() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![
+        insert_source_observation(&conn, "active")?,
+        insert_source_observation(&conn, "stale")?,
+    ];
+    let sources = source_observations(&conn, &ids)?;
+    let response = format!(
+        "{}\n{}",
+        valid_response("Compressed one"),
+        valid_response("Compressed two")
+    );
+
+    let outcome = apply_compression_response(&conn, "proj", &sources, &response)?;
+
+    assert_eq!(
+        outcome,
+        CompressionOutcome::Compressed {
+            source_count: 2,
+            replacement_count: 2,
+            marked_count: 2,
+        }
+    );
+    let links = compressed_source_links(&conn)?;
+    assert_eq!(links.len(), 4);
+    for source in &sources {
+        let matching = links
+            .iter()
+            .filter(|(_, source_id, source_hash)| {
+                *source_id == source.id && *source_hash == db::observation_source_hash(source)
+            })
+            .count();
+        assert_eq!(matching, 2);
+    }
     Ok(())
 }
 
@@ -200,7 +289,8 @@ fn partial_source_mark_rolls_back_sources_and_replacements() -> Result<()> {
         insert_source_observation(&conn, "compressed")?,
     ];
 
-    let error = apply_compression_response(&conn, "proj", &ids, &valid_response("Compressed"))
+    let sources = source_observations(&conn, &ids)?;
+    let error = apply_compression_response(&conn, "proj", &sources, &valid_response("Compressed"))
         .expect_err("partial mark should roll back");
 
     assert!(error
@@ -208,6 +298,7 @@ fn partial_source_mark_rolls_back_sources_and_replacements() -> Result<()> {
         .contains("marked 1 of 2 source observations compressed"));
     assert_eq!(statuses_for(&conn, &ids)?, vec!["active", "compressed"]);
     assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
     Ok(())
 }
 
@@ -225,12 +316,14 @@ fn source_mark_failure_rolls_back_replacements() -> Result<()> {
     )?;
     let ids = vec![insert_source_observation(&conn, "active")?];
 
-    let error = apply_compression_response(&conn, "proj", &ids, &valid_response("Compressed"))
+    let sources = source_observations(&conn, &ids)?;
+    let error = apply_compression_response(&conn, "proj", &sources, &valid_response("Compressed"))
         .expect_err("update trigger should fail");
 
     assert!(error.to_string().contains("source compression failed"));
     assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
     assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
     Ok(())
 }
 
@@ -257,11 +350,13 @@ fn replacement_insert_failure_rolls_back_sources_and_replacements() -> Result<()
         valid_response("Bad replacement")
     );
 
-    let error = apply_compression_response(&conn, "proj", &ids, &response)
+    let sources = source_observations(&conn, &ids)?;
+    let error = apply_compression_response(&conn, "proj", &sources, &response)
         .expect_err("insert trigger should fail");
 
     assert!(error.to_string().contains("bad compressed insert"));
     assert_eq!(statuses_for(&conn, &ids)?, vec!["active", "stale"]);
     assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
     Ok(())
 }
