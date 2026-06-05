@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- Kept compression from marking source observations as compressed when the AI
+  output produces no replacement observations or replacement writes fail.
+
 ### Changed
 - Reframed project metadata and README docs around Claude Code and Codex as
   first-class hosts, including a Codex setup section and distribution channel
