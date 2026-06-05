@@ -1,144 +1,10 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::params;
 
 use super::{current_state, CurrentStateRequest};
+use support::*;
 
-fn current_state_test_conn() -> Result<Connection> {
-    let conn = Connection::open_in_memory()?;
-    crate::migrate::run_migrations(&conn)?;
-    Ok(conn)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn insert_current_state_memory(
-    conn: &Connection,
-    id: i64,
-    title: &str,
-    content: &str,
-    status: &str,
-    state_key_id: i64,
-    valid_from_epoch: Option<i64>,
-    valid_to_epoch: Option<i64>,
-) -> Result<()> {
-    insert_current_state_memory_at(
-        conn,
-        id,
-        "/repo",
-        title,
-        content,
-        status,
-        state_key_id,
-        1_700_000_000_i64 + id,
-        valid_from_epoch,
-        valid_to_epoch,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn insert_current_state_memory_at(
-    conn: &Connection,
-    id: i64,
-    project: &str,
-    title: &str,
-    content: &str,
-    status: &str,
-    state_key_id: i64,
-    created_at_epoch: i64,
-    valid_from_epoch: Option<i64>,
-    valid_to_epoch: Option<i64>,
-) -> Result<()> {
-    insert_current_state_memory_with_expiry_at(
-        conn,
-        id,
-        project,
-        title,
-        content,
-        status,
-        state_key_id,
-        created_at_epoch,
-        None,
-        valid_from_epoch,
-        valid_to_epoch,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn insert_current_state_memory_with_expiry_at(
-    conn: &Connection,
-    id: i64,
-    project: &str,
-    title: &str,
-    content: &str,
-    status: &str,
-    state_key_id: i64,
-    created_at_epoch: i64,
-    expires_at_epoch: Option<i64>,
-    valid_from_epoch: Option<i64>,
-    valid_to_epoch: Option<i64>,
-) -> Result<()> {
-    conn.execute(
-        "INSERT INTO memories
-         (id, session_id, project, topic_key, title, content, memory_type, files,
-          created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
-          target_project, owner_scope, owner_key, context_class, expires_at_epoch, valid_from_epoch,
-          valid_to_epoch, state_key_id)
-         VALUES (?1, NULL, ?2, 'deploy-target', ?3, ?4, 'decision', NULL,
-                 ?5, ?5, ?6, NULL, 'project', ?2, ?2, 'repo', ?2,
-                 'startup_core', ?7, ?8, ?9, ?10)",
-        params![
-            id,
-            project,
-            title,
-            content,
-            created_at_epoch,
-            status,
-            expires_at_epoch,
-            valid_from_epoch,
-            valid_to_epoch,
-            state_key_id
-        ],
-    )?;
-    Ok(())
-}
-
-fn insert_state_key_for(
-    conn: &Connection,
-    id: i64,
-    owner_key: &str,
-    current_memory_id: Option<i64>,
-) -> Result<()> {
-    conn.execute(
-        "INSERT INTO memory_state_keys
-         (id, owner_scope, owner_key, memory_type, state_key, state_label,
-          state_status, current_memory_id, created_at_epoch, updated_at_epoch)
-         VALUES (?1, 'repo', ?2, 'decision', 'deploy-target',
-                 'deploy target', 'active', ?3, 1700000000, 1700000010)",
-        params![id, owner_key, current_memory_id],
-    )?;
-    Ok(())
-}
-
-fn insert_state_key(conn: &Connection) -> Result<()> {
-    insert_state_key_for(conn, 10, "/repo", None)
-}
-
-fn set_current_memory(conn: &Connection, current_memory_id: i64) -> Result<()> {
-    conn.execute(
-        "UPDATE memory_state_keys SET current_memory_id = ?1 WHERE id = 10",
-        [current_memory_id],
-    )?;
-    Ok(())
-}
-
-fn request() -> CurrentStateRequest {
-    CurrentStateRequest {
-        state_key: "deploy-target".to_string(),
-        project: Some("/repo".to_string()),
-        memory_type: Some("decision".to_string()),
-        include_history: true,
-        ..Default::default()
-    }
-}
+mod support;
 
 #[test]
 fn returns_current_answer_when_state_key_has_single_active_current() -> Result<()> {
@@ -437,6 +303,49 @@ fn as_of_time_includes_archived_memories_inside_validity_window() -> Result<()> 
 }
 
 #[test]
+fn as_of_time_excludes_archived_memories_without_valid_to_epoch() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory_at(
+        &conn,
+        1,
+        "/repo",
+        "Archived deploy target",
+        "Use staging.",
+        "archived",
+        10,
+        100,
+        Some(100),
+        None,
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Future deploy target",
+        "Use production.",
+        "active",
+        10,
+        300,
+        Some(300),
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+
+    let result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(150),
+            ..request()
+        },
+    )?;
+
+    assert_eq!(result.status, "no_current");
+    assert!(result.current.is_none());
+    Ok(())
+}
+
+#[test]
 fn current_answer_facts_exclude_expired_and_future_active_facts() -> Result<()> {
     let conn = current_state_test_conn()?;
     insert_state_key(&conn)?;
@@ -561,6 +470,85 @@ fn why_includes_derived_from_provenance_for_current_answer() -> Result<()> {
     assert_eq!(result.why[0].evidence_event_ids, vec![11, 12]);
     assert_eq!(result.why[0].source_candidate_id, Some(20));
     assert_eq!(result.why[0].source_operation_id, Some(30));
+    Ok(())
+}
+
+#[test]
+fn edge_details_scope_to_resolved_state_key() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, state_label,
+          state_status, current_memory_id, created_at_epoch, updated_at_epoch)
+         VALUES (11, 'repo', '/repo', 'decision', 'other-deploy-target',
+                 'other deploy target', 'active', NULL, 1700000000, 1700000010)",
+        [],
+    )?;
+    insert_current_state_memory(
+        &conn,
+        1,
+        "Old deploy target",
+        "Use staging.",
+        "stale",
+        10,
+        Some(100),
+        Some(200),
+    )?;
+    insert_current_state_memory(
+        &conn,
+        2,
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        Some(200),
+        None,
+    )?;
+    insert_current_state_memory(
+        &conn,
+        3,
+        "Other deploy target",
+        "Use canary.",
+        "stale",
+        11,
+        Some(100),
+        Some(200),
+    )?;
+    set_current_memory(&conn, 2)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, evidence_event_ids,
+          reason, created_at_epoch)
+         VALUES ('supersedes', 1, 2, 10, '[7]', 'same state', 300)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, evidence_event_ids,
+          reason, created_at_epoch)
+         VALUES ('merged_into', 3, 2, 11, '[8]', 'different state', 310)",
+        [],
+    )?;
+
+    let result = current_state(&conn, &request())?;
+
+    assert_eq!(
+        result
+            .history
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert_eq!(
+        result
+            .why
+            .iter()
+            .map(|edge| edge.reason.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("same state")]
+    );
     Ok(())
 }
 

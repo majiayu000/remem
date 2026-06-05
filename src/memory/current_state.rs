@@ -159,7 +159,7 @@ pub fn current_state(conn: &Connection, req: &CurrentStateRequest) -> Result<Cur
     let history = if req.include_history {
         current
             .as_ref()
-            .map(|current| load_history(conn, current.id, req.as_of_epoch))
+            .map(|current| load_history(conn, state.id, current.id, req.as_of_epoch))
             .transpose()?
             .unwrap_or_default()
     } else {
@@ -167,7 +167,7 @@ pub fn current_state(conn: &Connection, req: &CurrentStateRequest) -> Result<Cur
     };
     let why = current
         .as_ref()
-        .map(|current| load_why(conn, current.id, req.as_of_epoch))
+        .map(|current| load_why(conn, state.id, current.id, req.as_of_epoch))
         .transpose()?
         .unwrap_or_default();
     let facts = current
@@ -416,7 +416,8 @@ fn load_memories_as_of(
         "SELECT {}
          FROM memories
          WHERE state_key_id = ?1
-           AND status IN ('active', 'stale', 'archived')
+           AND (status IN ('active', 'stale')
+                OR (status = 'archived' AND valid_to_epoch IS NOT NULL))
            AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
            AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)
@@ -436,14 +437,18 @@ fn load_memories_as_of(
 
 fn load_history(
     conn: &Connection,
+    state_key_id: i64,
     current_memory_id: i64,
     as_of_epoch: Option<i64>,
 ) -> Result<Vec<CurrentStateMemoryRef>> {
-    let mut params_vec: Vec<Box<dyn ToSql>> =
-        vec![Box::new(current_memory_id), Box::new(HISTORY_LIMIT)];
+    let mut params_vec: Vec<Box<dyn ToSql>> = vec![
+        Box::new(current_memory_id),
+        Box::new(state_key_id),
+        Box::new(HISTORY_LIMIT),
+    ];
     let mut as_of_filter = String::new();
     if let Some(as_of_epoch) = as_of_epoch {
-        as_of_filter.push_str(" AND e.created_at_epoch <= ?3");
+        as_of_filter.push_str(" AND e.created_at_epoch <= ?4");
         params_vec.push(Box::new(as_of_epoch));
     }
     let sql = format!(
@@ -452,10 +457,12 @@ fn load_history(
          FROM memory_edges e
          JOIN memories m ON m.id = e.from_memory_id
          WHERE e.to_memory_id = ?1
+           AND e.state_key_id = ?2
+           AND m.state_key_id = ?2
            AND e.edge_type IN ('supersedes', 'merged_into')
            {as_of_filter}
          ORDER BY e.created_at_epoch DESC, e.id DESC
-         LIMIT ?2",
+         LIMIT ?3",
         prefixed_memory_cols("m")
     );
     let refs = crate::db::to_sql_refs(&params_vec);
@@ -469,14 +476,18 @@ fn load_history(
 
 fn load_why(
     conn: &Connection,
+    state_key_id: i64,
     current_memory_id: i64,
     as_of_epoch: Option<i64>,
 ) -> Result<Vec<CurrentStateWhy>> {
-    let mut params_vec: Vec<Box<dyn ToSql>> =
-        vec![Box::new(current_memory_id), Box::new(HISTORY_LIMIT)];
+    let mut params_vec: Vec<Box<dyn ToSql>> = vec![
+        Box::new(current_memory_id),
+        Box::new(state_key_id),
+        Box::new(HISTORY_LIMIT),
+    ];
     let mut as_of_filter = String::new();
     if let Some(as_of_epoch) = as_of_epoch {
-        as_of_filter.push_str(" AND created_at_epoch <= ?3");
+        as_of_filter.push_str(" AND created_at_epoch <= ?4");
         params_vec.push(Box::new(as_of_epoch));
     }
     let sql = format!(
@@ -485,9 +496,10 @@ fn load_why(
          FROM memory_edges
          WHERE ((to_memory_id = ?1 AND edge_type IN ('supersedes', 'merged_into', 'derived_from'))
              OR (edge_type = 'conflicts' AND (from_memory_id = ?1 OR to_memory_id = ?1)))
+           AND state_key_id = ?2
            {as_of_filter}
          ORDER BY created_at_epoch DESC, id DESC
-         LIMIT ?2"
+         LIMIT ?3"
     );
     let refs = crate::db::to_sql_refs(&params_vec);
     let mut stmt = conn.prepare(&sql)?;
