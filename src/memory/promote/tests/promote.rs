@@ -494,6 +494,64 @@ fn summary_candidate_promotion_skips_candidate_covered_by_recent_project_claim()
 }
 
 #[test]
+fn summary_preference_candidate_skips_exact_recent_claim_with_legacy_topic() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-preference-legacy-topic-claim";
+    let project = "test/proj";
+    let preference = "Keep verification status separate from data and code changes.";
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: preference.to_string(),
+            title: Some("Legacy preference".to_string()),
+            project: Some(project.to_string()),
+            topic_key: Some("legacy-preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let claim_id = saved
+        .claim_id
+        .ok_or_else(|| anyhow::anyhow!("save_memory should return claim_id"))?;
+    record_summary_evidence(&conn, session_id, project)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        Some("Capture preference"),
+        None,
+        None,
+        Some(preference),
+    )?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let (noop_count, noop_reason): (i64, String) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(MAX(reason), '')
+         FROM memory_candidate_noops
+         WHERE memory_claim_id = ?1",
+        [claim_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let consumed_by: Option<String> = conn.query_row(
+        "SELECT consumed_by_session_id FROM memory_claims WHERE id = ?1",
+        [claim_id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(count, 0);
+    assert_eq!(candidate_count, 0);
+    assert_eq!(noop_count, 1);
+    assert_eq!(noop_reason, "covered_by_manual_save");
+    assert_eq!(consumed_by.as_deref(), Some(session_id));
+    Ok(())
+}
+
+#[test]
 fn summary_candidate_promotion_skips_high_similarity_recent_claim() -> Result<()> {
     let mut conn = setup_conn()?;
     let session_id = "session-claim-near-match";

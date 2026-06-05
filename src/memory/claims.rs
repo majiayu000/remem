@@ -341,12 +341,18 @@ fn recent_project_claim(
     )?;
     let claims = crate::db::query::collect_rows(rows)?;
     for claim in claims {
+        if claim.content_fingerprint == candidate_fingerprint {
+            return Ok(Some(MatchingClaim {
+                id: claim.id,
+                memory_id: claim.memory_id,
+                claim_source: claim.claim_source,
+            }));
+        }
         if !topic_keys_compatible(claim.topic_key.as_deref(), Some(&candidate.topic_key)) {
             continue;
         }
-        if claim.content_fingerprint == candidate_fingerprint
-            || claim_text_similarity(&candidate_normalized, &normalize_claim_text(&claim.content))
-                >= 0.86
+        if claim_text_similarity(&candidate_normalized, &normalize_claim_text(&claim.content))
+            >= 0.86
         {
             return Ok(Some(MatchingClaim {
                 id: claim.id,
