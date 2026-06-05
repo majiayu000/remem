@@ -277,7 +277,8 @@ fn persist_graph_candidates(
         let candidate_id = tx.last_insert_rowid();
         summary.candidates += 1;
 
-        if graph_should_auto_promote(candidate) {
+        let source_supported = graph_candidate_has_source_support(candidate, batch);
+        if graph_should_auto_promote(candidate) && source_supported {
             let outcome = insert_trusted_graph_edge(
                 &tx,
                 &task.project,
@@ -297,7 +298,7 @@ fn persist_graph_candidates(
                     candidate.edge_type,
                     candidate.risk_class,
                     candidate.confidence,
-                    graph_auto_promote_block_reason(candidate)
+                    graph_auto_promote_block_reason(candidate, source_supported)
                 ),
             );
             summary.pending_review += 1;
@@ -320,6 +321,56 @@ fn ensure_candidate_evidence(
         }
     }
     Ok(())
+}
+
+fn graph_candidate_has_source_support(
+    candidate: &ParsedGraphCandidate,
+    batch: &GraphObservationBatch,
+) -> bool {
+    let candidate_evidence = candidate
+        .evidence_event_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    batch
+        .observations
+        .iter()
+        .filter(|observation| {
+            observation
+                .evidence_event_ids
+                .iter()
+                .any(|event_id| candidate_evidence.contains(event_id))
+        })
+        .any(|observation| {
+            ref_supported_by_text(&candidate.from_ref, &observation.text)
+                && ref_supported_by_text(&candidate.to_ref, &observation.text)
+        })
+}
+
+fn ref_supported_by_text(reference: &str, text: &str) -> bool {
+    let haystack = text.to_ascii_lowercase();
+    reference_support_needles(reference)
+        .into_iter()
+        .any(|needle| contains_support_needle(&haystack, &needle))
+}
+
+fn reference_support_needles(reference: &str) -> Vec<String> {
+    let reference = reference.trim();
+    if let Some(path) = reference.strip_prefix("file:") {
+        return vec![path.trim_start_matches("./").to_string(), path.to_string()];
+    }
+    if let Some(entity) = reference.strip_prefix("entity:") {
+        return vec![entity.to_string(), entity.replace(['_', '-'], " ")];
+    }
+    if let Some(memory_id) = reference.strip_prefix("memory:") {
+        return vec![reference.to_string(), format!("memory {memory_id}")];
+    }
+    vec![reference.to_string()]
+}
+
+fn contains_support_needle(haystack: &str, needle: &str) -> bool {
+    let needle = needle.trim().to_ascii_lowercase();
+    !needle.is_empty() && haystack.contains(&needle)
 }
 
 fn graph_candidate_exists(
@@ -410,13 +461,14 @@ pub(crate) fn mark_candidate_promoted(
     outcome: &TrustedGraphEdgeOutcome,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    conn.execute(
+    let updated = conn.execute(
         "UPDATE graph_candidates
          SET review_status = ?1,
              promoted_edge_id = ?2,
              source_operation_id = ?3,
              updated_at_epoch = ?4
-         WHERE id = ?5",
+         WHERE id = ?5
+           AND review_status = 'pending_review'",
         params![
             status,
             outcome.edge_id,
@@ -425,6 +477,11 @@ pub(crate) fn mark_candidate_promoted(
             candidate_id
         ],
     )?;
+    if updated == 0 {
+        bail!(
+            "graph candidate {candidate_id} is no longer pending_review, expected pending_review"
+        );
+    }
     Ok(())
 }
 
@@ -451,7 +508,10 @@ fn ensure_review_threshold(candidate: &ParsedGraphCandidate) -> Result<()> {
     Ok(())
 }
 
-fn graph_auto_promote_block_reason(candidate: &ParsedGraphCandidate) -> &'static str {
+fn graph_auto_promote_block_reason(
+    candidate: &ParsedGraphCandidate,
+    source_supported: bool,
+) -> &'static str {
     if candidate.candidate_type != "edge" {
         return "candidate_type_requires_review";
     }
@@ -469,6 +529,9 @@ fn graph_auto_promote_block_reason(candidate: &ParsedGraphCandidate) -> &'static
     }
     if candidate.edge_type == "touches_file" && !candidate.to_ref.starts_with("file:") {
         return "touches_file_target_not_file_ref";
+    }
+    if !source_supported {
+        return "source_observation_missing_ref_support";
     }
     "unknown"
 }

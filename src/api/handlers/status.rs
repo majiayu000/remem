@@ -29,6 +29,7 @@ pub(in crate::api) async fn handle_status(State(_state): State<DbState>) -> impl
         "captured_events": stats.captured_events,
         "pending_extraction_tasks": stats.pending_extraction_tasks,
         "pending_memory_candidates": stats.pending_memory_candidates,
+        "pending_graph_candidates": stats.pending_graph_candidates,
     }))
     .into_response()
 }

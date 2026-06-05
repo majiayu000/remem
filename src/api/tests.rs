@@ -310,4 +310,8 @@ async fn status_handler_matches_shared_system_stats() {
         payload["pending_extraction_tasks"],
         stats.pending_extraction_tasks
     );
+    assert_eq!(
+        payload["pending_graph_candidates"],
+        stats.pending_graph_candidates
+    );
 }

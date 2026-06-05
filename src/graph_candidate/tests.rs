@@ -3,7 +3,10 @@ use rusqlite::{params, Connection};
 
 use crate::db::{self, record_captured_event, CaptureEventInput, ExtractionTaskKind};
 
-use super::{process_with_graph_generator, review, GraphCandidateResult};
+use super::{
+    insert_trusted_graph_edge, mark_candidate_promoted, process_with_graph_generator, review,
+    GraphCandidateResult, ParsedGraphCandidate,
+};
 
 fn graph_test_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
@@ -133,6 +136,76 @@ async fn graph_candidate_auto_promotes_low_risk_mentions() -> Result<()> {
 }
 
 #[tokio::test]
+async fn graph_candidate_auto_promotes_supported_touches_file() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-touches-file")?;
+    let event_id =
+        insert_graph_source_observation(&conn, &task, "Memory 1 touches file src/worker.rs.")?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(graph_candidate_xml(
+            "touches_file",
+            "file:src/worker.rs",
+            event_id,
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "auto_promoted");
+    assert_eq!(edge_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_routes_unsupported_auto_edge_to_review() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-unsupported-file")?;
+    let event_id =
+        insert_graph_source_observation(&conn, &task, "Memory 1 touches file src/worker.rs.")?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(graph_candidate_xml(
+            "touches_file",
+            "file:Cargo.toml",
+            event_id,
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(edge_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn graph_candidate_keeps_supports_pending_review() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-supports")?;
@@ -184,6 +257,50 @@ async fn graph_candidate_malformed_output_fails_closed() -> Result<()> {
             row.get(0)
         })?;
     assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[test]
+fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
+    let mut conn = graph_test_conn();
+    conn.execute(
+        "INSERT INTO graph_candidates
+         (source_project, candidate_type, edge_type, from_ref, to_ref,
+          evidence_event_ids, confidence, risk_class, reason, review_status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/tmp/remem', 'edge', 'mentions', 'memory:1', 'entity:Worker',
+                 '[1]', 0.91, 'low', 'stale approval race', 'rejected', 1, 1)",
+        [],
+    )?;
+
+    let tx = conn.transaction()?;
+    let candidate = ParsedGraphCandidate {
+        candidate_type: "edge".to_string(),
+        edge_type: "mentions".to_string(),
+        from_ref: "memory:1".to_string(),
+        to_ref: "entity:Worker".to_string(),
+        evidence_event_ids: vec![1],
+        confidence: 0.91,
+        risk_class: "low".to_string(),
+        reason: "stale approval race".to_string(),
+    };
+    let outcome = insert_trusted_graph_edge(&tx, "/tmp/remem", 1, &candidate, "graph_review")?;
+    let err = mark_candidate_promoted(&tx, 1, "approved", &outcome)
+        .expect_err("stale candidate promotion must fail");
+    assert!(
+        err.to_string().contains("expected pending_review"),
+        "unexpected error: {err}"
+    );
+    drop(tx);
+
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "rejected");
+    assert_eq!(edge_count, 0);
     Ok(())
 }
 

@@ -51,6 +51,10 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY,
             review_status TEXT NOT NULL
         );
+        CREATE TABLE graph_candidates (
+            id INTEGER PRIMARY KEY,
+            review_status TEXT NOT NULL
+        );
         CREATE TABLE pending_observations (
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
@@ -156,6 +160,16 @@ fn query_system_stats_and_related_views_share_one_definition() {
     )
     .expect("memory candidate insert should succeed");
     conn.execute(
+        "INSERT INTO graph_candidates (review_status) VALUES ('pending_review')",
+        [],
+    )
+    .expect("graph candidate insert should succeed");
+    conn.execute(
+        "INSERT INTO graph_candidates (review_status) VALUES ('approved')",
+        [],
+    )
+    .expect("approved graph candidate insert should succeed");
+    conn.execute(
         "INSERT INTO pending_observations (status, created_at_epoch) VALUES ('pending', 100)",
         [],
     )
@@ -224,6 +238,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
             failed_extraction_tasks: 1,
             oldest_pending_extraction_epoch: Some(90),
             pending_memory_candidates: 1,
+            pending_graph_candidates: 1,
             pending_observations: 2,
             ready_pending_observations: 1,
             delayed_pending_observations: 1,

@@ -57,11 +57,11 @@ pub(crate) fn inspect_candidate(
 }
 
 pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option<i64>> {
-    let Some(row) = load_row(conn, id)? else {
+    let tx = conn.transaction()?;
+    let Some(row) = load_row(&tx, id)? else {
         return Ok(None);
     };
     ensure_pending(&row)?;
-    let tx = conn.transaction()?;
     let candidate = row.as_candidate()?;
     let outcome =
         insert_trusted_graph_edge(&tx, &row.source_project, row.id, &candidate, "graph_review")?;
