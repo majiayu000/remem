@@ -140,29 +140,102 @@ fn capture_raw_archive(
             branch.as_deref(),
             cwd_opt,
         ) {
-            Ok(new_rows) => crate::log::info(
-                "summary-job",
-                &format!(
-                    "raw archive drained transcript new_rows={} project={}",
-                    new_rows, project
-                ),
-            ),
+            Ok(report) => {
+                crate::log::info(
+                    "summary-job",
+                    &format!(
+                        "raw archive drained transcript status={} inserted={} duplicates={} parse_errors={} insert_errors={} read_error={} project={}",
+                        raw_archive_status(&report),
+                        report.inserted,
+                        report.duplicates,
+                        report.parse_errors,
+                        report.insert_errors,
+                        report.read_error.is_some(),
+                        project
+                    ),
+                );
+                if report.read_error.is_some() {
+                    if let Some(last) = hook.last_assistant_message.as_deref() {
+                        insert_raw_hook_fallback(
+                            conn,
+                            session_id,
+                            project,
+                            last,
+                            branch.as_deref(),
+                            cwd_opt,
+                        );
+                    }
+                }
+            }
             Err(error) => crate::log::warn(
                 "summary-job",
                 &format!("raw archive drain failed: {}", error),
             ),
         }
     } else if let Some(last) = hook.last_assistant_message.as_deref() {
-        if let Err(error) = crate::memory::raw_archive::insert_raw_message(
-            conn,
-            session_id,
-            project,
-            crate::memory::raw_archive::ROLE_ASSISTANT,
-            last,
-            crate::memory::raw_archive::SOURCE_HOOK,
-            branch.as_deref(),
-            cwd_opt,
-        ) {
+        insert_raw_hook_fallback(conn, session_id, project, last, branch.as_deref(), cwd_opt);
+    }
+}
+
+fn raw_archive_status(report: &crate::memory::raw_archive::RawIngestReport) -> &'static str {
+    if report.read_error.is_some() {
+        "read_failed"
+    } else if report.parse_errors > 0 || report.insert_errors > 0 {
+        "partial"
+    } else if report.inserted == 0 && report.duplicates > 0 {
+        "duplicate_only"
+    } else {
+        "ok"
+    }
+}
+
+fn insert_raw_hook_fallback(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    project: &str,
+    last: &str,
+    branch: Option<&str>,
+    cwd: Option<&str>,
+) {
+    match crate::memory::raw_archive::insert_raw_message(
+        conn,
+        session_id,
+        project,
+        crate::memory::raw_archive::ROLE_ASSISTANT,
+        last,
+        crate::memory::raw_archive::SOURCE_HOOK,
+        branch,
+        cwd,
+    ) {
+        Ok(Some(outcome)) => crate::log::info(
+            "summary-job",
+            &format!(
+                "raw archive hook fallback inserted={} duplicate={} project={}",
+                outcome.inserted, !outcome.inserted, project
+            ),
+        ),
+        Ok(None) => crate::log::info(
+            "summary-job",
+            &format!("raw archive hook fallback empty project={}", project),
+        ),
+        Err(error) => {
+            let report = crate::memory::raw_archive::RawIngestReport {
+                insert_errors: 1,
+                ..crate::memory::raw_archive::RawIngestReport::default()
+            };
+            if let Err(record_error) = crate::memory::raw_archive::record_raw_ingest_failure(
+                conn,
+                session_id,
+                project,
+                crate::memory::raw_archive::SOURCE_HOOK,
+                None,
+                &report,
+            ) {
+                crate::log::warn(
+                    "summary-job",
+                    &format!("raw archive failure record failed: {}", record_error),
+                );
+            }
             crate::log::warn(
                 "summary-job",
                 &format!("raw archive insert failed: {}", error),
@@ -211,4 +284,58 @@ fn profile_from_payload(input: &str) -> Option<String> {
                 .filter(|profile| !profile.is_empty())
                 .map(str::to_string)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+
+    #[tokio::test]
+    async fn bad_transcript_path_uses_last_assistant_message_hook_fallback() -> Result<()> {
+        let data_dir = ScopedTestDataDir::new("summary-raw-fallback");
+        let missing_transcript = data_dir.path.join("missing-transcript.jsonl");
+        let payload = serde_json::json!({
+            "session_id": "session-raw-fallback",
+            "cwd": data_dir.path.to_string_lossy(),
+            "transcript_path": missing_transcript.to_string_lossy(),
+            "last_assistant_message": "fallback assistant turn"
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        let conn = db::open_db()?;
+        let (role, source, content): (String, String, String) = conn.query_row(
+            "SELECT role, source, content FROM raw_messages WHERE session_id = ?1",
+            ["session-raw-fallback"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(role, crate::memory::raw_archive::ROLE_ASSISTANT);
+        assert_eq!(source, crate::memory::raw_archive::SOURCE_HOOK);
+        assert_eq!(content, "fallback assistant turn");
+
+        let (path, kind): (String, String) = conn.query_row(
+            "SELECT transcript_path, error_kind FROM raw_ingest_failures WHERE session_id = ?1",
+            ["session-raw-fallback"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(path, missing_transcript.to_string_lossy());
+        assert_eq!(kind, "read_error");
+        Ok(())
+    }
+
+    #[test]
+    fn raw_archive_status_distinguishes_duplicate_only_from_failed_zero() {
+        let duplicate_only = crate::memory::raw_archive::RawIngestReport {
+            duplicates: 2,
+            ..crate::memory::raw_archive::RawIngestReport::default()
+        };
+        assert_eq!(raw_archive_status(&duplicate_only), "duplicate_only");
+
+        let read_failed = crate::memory::raw_archive::RawIngestReport {
+            read_error: Some("missing transcript".to_string()),
+            ..crate::memory::raw_archive::RawIngestReport::default()
+        };
+        assert_eq!(raw_archive_status(&read_failed), "read_failed");
+    }
 }
