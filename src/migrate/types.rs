@@ -145,6 +145,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_ingest_failures",
         sql: include_str!("../migrations/v028_raw_ingest_failures.sql"),
     },
+    Migration {
+        version: 29,
+        name: "memory_embeddings",
+        sql: include_str!("../migrations/v029_memory_embeddings.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

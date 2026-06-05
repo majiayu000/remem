@@ -103,39 +103,24 @@ fn import_memories_into_runtime(
             stats.memories_skipped += 1;
             continue;
         }
-        let search_context = crate::memory::search_context::build_search_context(
-            &memory_type,
-            Some(&topic_key),
+        let result = insert_imported_memory(
+            conn,
+            session_id,
+            &project,
+            &topic_key,
+            &title,
             &content,
-            files.as_deref(),
-        );
-
-        let result = conn.execute(
-            "INSERT INTO memories
-             (session_id, project, topic_key, title, content, memory_type, files, search_context,
-              created_at_epoch, updated_at_epoch, status, branch, scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            rusqlite::params![
-                session_id,
-                project,
-                topic_key,
-                title,
-                content,
-                memory_type,
-                files,
-                search_context,
-                created_at,
-                updated_at,
-                status,
-                branch,
-                scope
-            ],
+            &memory_type,
+            files,
+            created_at,
+            updated_at,
+            &status,
+            branch,
+            &scope,
         );
         match result {
-            Ok(_) => {
+            Ok(_memory_id) => {
                 stats.memories_imported += 1;
-                let memory_id = conn.last_insert_rowid();
-                refresh_imported_memory_entities(conn, memory_id, &title, &content);
             }
             Err(error) => {
                 crate::log::warn(
@@ -217,6 +202,74 @@ fn runtime_memory_exists(
         Ok(_) => Ok(true),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
         Err(error) => Err(error.into()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_imported_memory(
+    conn: &Connection,
+    session_id: Option<String>,
+    project: &str,
+    topic_key: &str,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    status: &str,
+    branch: Option<String>,
+    scope: &str,
+) -> Result<i64> {
+    conn.execute_batch("SAVEPOINT remem_import_memory")?;
+    let result = (|| -> Result<i64> {
+        let search_context = crate::memory::search_context::build_search_context(
+            memory_type,
+            Some(topic_key),
+            content,
+            files.as_deref(),
+        );
+        conn.execute(
+            "INSERT INTO memories
+             (session_id, project, topic_key, title, content, memory_type, files, search_context,
+              created_at_epoch, updated_at_epoch, status, branch, scope)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            rusqlite::params![
+                session_id,
+                project,
+                topic_key,
+                title,
+                content,
+                memory_type,
+                files,
+                search_context,
+                created_at,
+                updated_at,
+                status,
+                branch,
+                scope
+            ],
+        )?;
+        let memory_id = conn.last_insert_rowid();
+        refresh_imported_memory_entities(conn, memory_id, title, content);
+        crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
+        Ok(memory_id)
+    })();
+
+    match result {
+        Ok(memory_id) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_import_memory")?;
+            Ok(memory_id)
+        }
+        Err(error) => {
+            if let Err(rollback_error) = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_import_memory; RELEASE SAVEPOINT remem_import_memory",
+            ) {
+                return Err(rollback_error)
+                    .context(format!("rollback imported memory after failure: {error}"));
+            }
+            Err(error)
+        }
     }
 }
 
@@ -313,28 +366,35 @@ mod tests {
     }
 
     #[test]
-    fn backup_import_writes_to_runtime_store_visible_to_search() {
+    fn backup_import_writes_to_runtime_store_visible_to_search() -> Result<()> {
         let _data_dir = ScopedTestDataDir::new("import-runtime-visible");
         let source_path = unique_temp_db_path("runtime-import-source");
         let source = create_source_db(&source_path);
         let project = "/tmp/remem-import-runtime";
-        source
-            .execute(
-                "INSERT INTO memories
+        source.execute(
+            "INSERT INTO memories
                  (id, session_id, project, topic_key, title, content, memory_type, files,
                   created_at_epoch, updated_at_epoch, status, branch, scope)
                  VALUES (1, 's1', ?1, 'import-runtime-topic',
                          'Imported runtime memory',
                          'Imported memory should be visible from runtime search',
                          'decision', NULL, 100, 200, 'active', NULL, 'project')",
-                [project],
-            )
-            .unwrap();
+            [project],
+        )?;
         drop(source);
 
-        let runtime_conn = crate::db::open_db().expect("runtime db should open");
-        let stats = import_memories_into_runtime(&source_path, &runtime_conn).unwrap();
+        let runtime_conn = crate::db::open_db()?;
+        let stats = import_memories_into_runtime(&source_path, &runtime_conn)?;
         assert_eq!(stats.memories_imported, 1);
+        let embedding_count: i64 = runtime_conn.query_row(
+            "SELECT COUNT(*)
+                 FROM memory_embeddings e
+                 JOIN memories m ON m.id = e.memory_id
+                 WHERE m.topic_key = 'import-runtime-topic'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(embedding_count, 1);
 
         let results = search_memories(
             &runtime_conn,
@@ -349,13 +409,13 @@ mod tests {
                 multi_hop: false,
                 explain: false,
             },
-        )
-        .unwrap();
+        )?;
 
         assert_eq!(results.memories.len(), 1);
         assert_eq!(results.memories[0].title, "Imported runtime memory");
 
         cleanup_temp_db_files(&source_path);
+        Ok(())
     }
 
     #[test]

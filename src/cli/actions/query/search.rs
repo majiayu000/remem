@@ -338,6 +338,14 @@ fn render_search_explain(explain: &SearchExplain) -> String {
     output.push_str(&format!("  rrf_k: {:.1}\n", explain.rrf_k));
     output.push_str("  channels:\n");
     for channel in &explain.channels {
+        if !channel.enabled {
+            output.push_str(&format!(
+                "    {}: disabled ({})\n",
+                channel.name,
+                channel.disabled_reason.as_deref().unwrap_or("unknown")
+            ));
+            continue;
+        }
         output.push_str(&format!(
             "    {}: {}\n",
             channel.name,

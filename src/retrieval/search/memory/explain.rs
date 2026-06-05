@@ -40,6 +40,9 @@ impl SearchExplain {
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchExplainChannel {
     pub name: String,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
     pub hits: Vec<ChannelHit>,
 }
 

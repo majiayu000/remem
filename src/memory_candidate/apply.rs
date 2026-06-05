@@ -409,6 +409,7 @@ fn insert_routed_memory(
         insert_lesson_metadata(conn, memory_id, candidate, evidence_json, now)?;
     }
     refresh_memory_entities(conn, memory_id, title, &candidate.text)?;
+    crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
     Ok(memory_id)
 }
 
