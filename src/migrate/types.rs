@@ -140,6 +140,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "compressed_observation_sources",
         sql: include_str!("../migrations/v027_compressed_observation_sources.sql"),
     },
+    Migration {
+        version: 28,
+        name: "raw_ingest_failures",
+        sql: include_str!("../migrations/v028_raw_ingest_failures.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

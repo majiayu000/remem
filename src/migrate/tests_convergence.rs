@@ -42,6 +42,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "memory_operation_log",
     "memory_edges",
     "compressed_observation_sources",
+    "raw_ingest_failures",
 ];
 
 fn make_upgraded_v10_db() -> Result<Connection> {
