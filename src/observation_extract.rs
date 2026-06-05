@@ -96,12 +96,6 @@ where
         db::ExtractionTaskKind::MemoryCandidate,
         range.to_event_id,
     )?;
-    db::enqueue_followup_extraction_task(
-        conn,
-        task,
-        db::ExtractionTaskKind::GraphCandidate,
-        range.to_event_id,
-    )?;
     Ok(ObservationExtractResult::Written(inserted))
 }
 
@@ -460,6 +454,13 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(pending_candidate_count, 1);
+        let pending_graph_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks
+             WHERE task_kind = 'graph_candidate'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pending_graph_count, 0);
         Ok(())
     }
 

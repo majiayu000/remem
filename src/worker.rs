@@ -396,10 +396,18 @@ mod tests {
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            let unfinished_tasks: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM extraction_tasks WHERE status != 'done'",
+            let pending_memory_candidates: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'pending_review'",
                 [],
                 |row| row.get(0),
+            )?;
+            let (graph_status, graph_attempts, graph_error): (String, i64, Option<String>) = conn
+                .query_row(
+                "SELECT status, attempts, last_error
+                     FROM extraction_tasks
+                     WHERE task_kind = ?1",
+                params![db::ExtractionTaskKind::GraphCandidate.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
 
             anyhow::ensure!(status == "done", "expected done task, got {status}");
@@ -410,8 +418,22 @@ mod tests {
             );
             anyhow::ensure!(evidence.contains('1'), "expected captured event evidence");
             anyhow::ensure!(
-                unfinished_tasks == 0,
-                "expected all extraction follow-up tasks done"
+                pending_memory_candidates == 1,
+                "expected pending memory candidate review"
+            );
+            anyhow::ensure!(
+                graph_status == "pending",
+                "expected graph task pending after memory review gate, got {graph_status}"
+            );
+            anyhow::ensure!(
+                graph_attempts == 1,
+                "expected graph task to defer once, got {graph_attempts}"
+            );
+            anyhow::ensure!(
+                graph_error
+                    .as_deref()
+                    .is_some_and(|err| err.contains("pending review")),
+                "expected graph task defer reason to mention pending review"
             );
             Ok::<(), anyhow::Error>(())
         }

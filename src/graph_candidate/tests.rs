@@ -86,6 +86,23 @@ fn insert_graph_source_observation_with_evidence(
     text: &str,
     event_ids: &[i64],
 ) -> Result<()> {
+    insert_graph_source_observation_with_files(conn, task, text, event_ids, &[], &[])
+}
+
+fn insert_graph_source_observation_with_files(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    text: &str,
+    event_ids: &[i64],
+    files_read: &[&str],
+    files_modified: &[&str],
+) -> Result<()> {
+    let files_read_json = (!files_read.is_empty())
+        .then(|| serde_json::to_string(files_read))
+        .transpose()?;
+    let files_modified_json = (!files_modified.is_empty())
+        .then(|| serde_json::to_string(files_modified))
+        .transpose()?;
     let obs_id = db::insert_observation_with_branch(
         conn,
         "capture-graph-test",
@@ -96,8 +113,8 @@ fn insert_graph_source_observation_with_evidence(
         Some(text),
         None,
         None,
-        None,
-        None,
+        files_read_json.as_deref(),
+        files_modified_json.as_deref(),
         None,
         12,
         None,
@@ -111,14 +128,18 @@ fn insert_graph_source_observation_with_evidence(
              observation_type = 'decision',
              text = ?4,
              evidence_event_ids = ?5,
+             files_read = ?6,
+             files_modified = ?7,
              confidence = 0.91
-         WHERE id = ?6",
+         WHERE id = ?8",
         params![
             task.host_id,
             task.project_id,
             task.session_row_id,
             text,
             serde_json::to_string(event_ids)?,
+            files_read_json.as_deref(),
+            files_modified_json.as_deref(),
             obs_id
         ],
     )?;
@@ -220,6 +241,90 @@ async fn graph_candidate_auto_promotes_supported_touches_file() -> Result<()> {
 }
 
 #[tokio::test]
+async fn graph_candidate_supports_blob_backed_cited_event_text() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let large_content = format!(
+        "Memory 1 {}\n touches file src/worker.rs \n{}",
+        "x".repeat(9_000),
+        "y".repeat(9_000)
+    );
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-blob-backed-event",
+        &[large_content.as_str()],
+    )?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    let event_id = event_ids[0];
+    insert_graph_source_observation_with_evidence(
+        &conn,
+        &task,
+        "Memory 1 touches file src/worker.rs.",
+        &[event_id],
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(graph_candidate_xml(
+            "touches_file",
+            "file:src/worker.rs",
+            event_id,
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "auto_promoted");
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_uses_structured_files_for_touch_support() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-structured-files")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    let event_id = task.high_watermark_event_id.unwrap_or(1);
+    insert_graph_source_observation_with_files(
+        &conn,
+        &task,
+        "Memory 1 updates the worker implementation.",
+        &[event_id],
+        &[],
+        &["src/worker.rs"],
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
+        assert!(prompt.contains("<files_modified>"));
+        assert!(prompt.contains("src/worker.rs"));
+        Ok(graph_candidate_xml(
+            "touches_file",
+            "file:src/worker.rs",
+            event_id,
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn graph_candidate_routes_unsupported_auto_edge_to_review() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-unsupported-file")?;
@@ -300,6 +405,70 @@ async fn graph_candidate_routes_unsupported_cited_event_to_review() -> Result<()
         conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
     assert_eq!(review_status, "pending_review");
     assert_eq!(edge_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_defers_until_memory_task_completes() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-waits-memory-task")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    let event_id =
+        insert_graph_source_observation(&conn, &task, "Memory 1 mentions the Worker entity.")?;
+    db::enqueue_followup_extraction_task(
+        &conn,
+        &task,
+        ExtractionTaskKind::MemoryCandidate,
+        event_id,
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async {
+        Ok("<no_graph_candidates reason=\"should not run\"/>".to_string())
+    })
+    .await?;
+
+    assert!(
+        matches!(result, GraphCandidateResult::Deferred { ref reason } if reason.contains("memory_candidate task")),
+        "unexpected result: {result:?}"
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_defers_while_memory_candidates_need_review() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-waits-memory-review")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    let event_id =
+        insert_graph_source_observation(&conn, &task, "Memory 1 mentions the Worker entity.")?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', 'decision-worker', 'Memory 1 mentions Worker',
+                 ?2, 0.91, 'low', 'pending_review', 1, 1)",
+        params![task.project_id, serde_json::to_string(&vec![event_id])?],
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async {
+        Ok("<no_graph_candidates reason=\"should not run\"/>".to_string())
+    })
+    .await?;
+
+    assert!(
+        matches!(result, GraphCandidateResult::Deferred { ref reason } if reason.contains("pending review")),
+        "unexpected result: {result:?}"
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
     Ok(())
 }
 

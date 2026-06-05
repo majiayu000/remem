@@ -140,12 +140,14 @@ where
             return Ok(MemoryCandidateResult::Deferred { reason });
         }
         if response.contains("<no_candidates") {
+            enqueue_graph_followup(conn, task, batch.to_event_id)?;
             return Ok(MemoryCandidateResult::NoCandidates);
         }
         bail!("malformed memory_candidate output: no candidates parsed");
     }
 
     let result = persist_candidates(conn, task, &batch, &candidates)?;
+    enqueue_graph_followup(conn, task, batch.to_event_id)?;
     crate::log::info(
         "memory-candidate",
         &format!(
@@ -163,6 +165,20 @@ where
         promoted: result.promoted,
         pending_review: result.pending_review,
     })
+}
+
+fn enqueue_graph_followup(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    high_watermark_event_id: i64,
+) -> Result<()> {
+    db::enqueue_followup_extraction_task(
+        conn,
+        task,
+        db::ExtractionTaskKind::GraphCandidate,
+        high_watermark_event_id,
+    )?;
+    Ok(())
 }
 
 fn load_observation_batch(

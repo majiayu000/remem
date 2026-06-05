@@ -5,14 +5,18 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
-use crate::memory::format::{xml_escape_attr, xml_escape_text};
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
 mod parser;
 pub(crate) mod review;
+mod source;
 
 use parser::{parse_graph_candidates, parse_graph_defer_reason};
+use source::{
+    build_graph_candidate_prompt, graph_candidate_blocked_by_memory_candidates,
+    graph_candidate_has_source_support, load_graph_observation_batch, GraphObservationBatch,
+};
 
 const GRAPH_CANDIDATE_SYSTEM: &str = "\
 Generate governed graph candidates from extracted observations.
@@ -53,29 +57,6 @@ pub(crate) struct ParsedGraphCandidate {
     pub(crate) confidence: f64,
     pub(crate) risk_class: String,
     pub(crate) reason: String,
-}
-
-#[derive(Debug, Clone)]
-struct GraphSourceObservation {
-    id: i64,
-    observation_type: String,
-    text: String,
-    evidence_event_ids: Vec<i64>,
-    confidence: f64,
-}
-
-#[derive(Debug, Clone)]
-struct GraphSourceEvent {
-    id: i64,
-    text: String,
-}
-
-struct GraphObservationBatch {
-    from_event_id: i64,
-    to_event_id: i64,
-    evidence_event_ids: Vec<i64>,
-    source_events: Vec<GraphSourceEvent>,
-    observations: Vec<GraphSourceObservation>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -130,6 +111,9 @@ where
     let Some(batch) = load_graph_observation_batch(conn, task)? else {
         return Ok(GraphCandidateResult::EmptyRange);
     };
+    if let Some(reason) = graph_candidate_blocked_by_memory_candidates(conn, task, &batch)? {
+        return Ok(GraphCandidateResult::Deferred { reason });
+    }
 
     let prompt = build_graph_candidate_prompt(task, &batch);
     let response = generate(prompt).await?;
@@ -162,108 +146,6 @@ where
         promoted: result.promoted,
         pending_review: result.pending_review,
     })
-}
-
-fn load_graph_observation_batch(
-    conn: &Connection,
-    task: &db::ExtractionTask,
-) -> Result<Option<GraphObservationBatch>> {
-    let Some(session_row_id) = task.session_row_id else {
-        return Ok(None);
-    };
-    let Some(high_watermark) = task.high_watermark_event_id else {
-        return Ok(None);
-    };
-    let cursor = task.cursor_event_id.unwrap_or(0);
-    if high_watermark <= cursor {
-        return Ok(None);
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT id,
-                COALESCE(observation_type, type, 'discovery') AS observation_type,
-                COALESCE(text, narrative, title, '') AS text,
-                evidence_event_ids,
-                COALESCE(confidence, 0.5) AS confidence
-         FROM observations
-         WHERE session_row_id = ?1
-           AND evidence_event_ids IS NOT NULL
-           AND text IS NOT NULL
-         ORDER BY id ASC",
-    )?;
-    let rows = stmt
-        .query_map(params![session_row_id], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, f64>(4)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut observations = Vec::new();
-    let mut evidence_set = BTreeSet::new();
-    for (id, observation_type, text, evidence_json, confidence) in rows {
-        let event_ids: Vec<i64> = serde_json::from_str(&evidence_json)
-            .with_context(|| format!("observation {id} has malformed evidence_event_ids"))?;
-        let in_range = event_ids
-            .iter()
-            .any(|event_id| *event_id > cursor && *event_id <= high_watermark);
-        if !in_range {
-            continue;
-        }
-        for event_id in &event_ids {
-            evidence_set.insert(*event_id);
-        }
-        observations.push(GraphSourceObservation {
-            id,
-            observation_type,
-            text,
-            evidence_event_ids: event_ids,
-            confidence,
-        });
-    }
-
-    if observations.is_empty() || evidence_set.is_empty() {
-        return Ok(None);
-    }
-    let from_event_id = *evidence_set.iter().next().unwrap_or(&0);
-    let to_event_id = *evidence_set.iter().next_back().unwrap_or(&0);
-    let evidence_event_ids = evidence_set.into_iter().collect::<Vec<_>>();
-    let source_events = load_graph_source_events(conn, &evidence_event_ids)?;
-    Ok(Some(GraphObservationBatch {
-        from_event_id,
-        to_event_id,
-        evidence_event_ids,
-        source_events,
-        observations,
-    }))
-}
-
-fn load_graph_source_events(
-    conn: &Connection,
-    evidence_event_ids: &[i64],
-) -> Result<Vec<GraphSourceEvent>> {
-    let mut stmt = conn.prepare(
-        "SELECT COALESCE(content_text, '')
-         FROM captured_events
-         WHERE id = ?1",
-    )?;
-    let mut events = Vec::new();
-    for event_id in evidence_event_ids {
-        if let Some(text) = stmt
-            .query_row(params![event_id], |row| row.get(0))
-            .optional()?
-        {
-            events.push(GraphSourceEvent {
-                id: *event_id,
-                text,
-            });
-        }
-    }
-    Ok(events)
 }
 
 fn persist_graph_candidates(
@@ -356,66 +238,6 @@ fn ensure_candidate_evidence(
         }
     }
     Ok(())
-}
-
-fn graph_candidate_has_source_support(
-    candidate: &ParsedGraphCandidate,
-    batch: &GraphObservationBatch,
-) -> bool {
-    let candidate_evidence = candidate
-        .evidence_event_ids
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let observation_supported = batch
-        .observations
-        .iter()
-        .filter(|observation| {
-            observation
-                .evidence_event_ids
-                .iter()
-                .any(|event_id| candidate_evidence.contains(event_id))
-        })
-        .any(|observation| refs_supported_by_text(candidate, &observation.text));
-    let cited_events_supported = candidate.evidence_event_ids.iter().all(|event_id| {
-        batch
-            .source_events
-            .iter()
-            .find(|event| event.id == *event_id)
-            .is_some_and(|event| refs_supported_by_text(candidate, &event.text))
-    });
-    observation_supported && cited_events_supported
-}
-
-fn refs_supported_by_text(candidate: &ParsedGraphCandidate, text: &str) -> bool {
-    ref_supported_by_text(&candidate.from_ref, text)
-        && ref_supported_by_text(&candidate.to_ref, text)
-}
-
-fn ref_supported_by_text(reference: &str, text: &str) -> bool {
-    let haystack = text.to_ascii_lowercase();
-    reference_support_needles(reference)
-        .into_iter()
-        .any(|needle| contains_support_needle(&haystack, &needle))
-}
-
-fn reference_support_needles(reference: &str) -> Vec<String> {
-    let reference = reference.trim();
-    if let Some(path) = reference.strip_prefix("file:") {
-        return vec![path.trim_start_matches("./").to_string(), path.to_string()];
-    }
-    if let Some(entity) = reference.strip_prefix("entity:") {
-        return vec![entity.to_string(), entity.replace(['_', '-'], " ")];
-    }
-    if let Some(memory_id) = reference.strip_prefix("memory:") {
-        return vec![reference.to_string(), format!("memory {memory_id}")];
-    }
-    vec![reference.to_string()]
-}
-
-fn contains_support_needle(haystack: &str, needle: &str) -> bool {
-    let needle = needle.trim().to_ascii_lowercase();
-    !needle.is_empty() && haystack.contains(&needle)
 }
 
 fn graph_candidate_exists(
@@ -663,38 +485,6 @@ fn graph_auto_promote_block_reason(
         return "trusted_ref_unresolved";
     }
     "unknown"
-}
-
-fn build_graph_candidate_prompt(
-    task: &db::ExtractionTask,
-    batch: &GraphObservationBatch,
-) -> String {
-    let mut prompt = format!(
-        "Task: graph_candidate\nProject: {}\nHost: {}\nSession: {}\nCovered evidence events: {}..{}\n\n",
-        task.project,
-        task.host,
-        task.session_id.as_deref().unwrap_or("<unknown>"),
-        batch.from_event_id,
-        batch.to_event_id
-    );
-    for observation in &batch.observations {
-        let evidence = observation
-            .evidence_event_ids
-            .iter()
-            .map(i64::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        prompt.push_str(&format!(
-            "<observation id=\"{}\" type=\"{}\" confidence=\"{}\" evidence_event_ids=\"{}\">\n",
-            observation.id,
-            xml_escape_attr(&observation.observation_type),
-            observation.confidence,
-            xml_escape_attr(&evidence)
-        ));
-        prompt.push_str(&xml_escape_text(&observation.text));
-        prompt.push_str("\n</observation>\n\n");
-    }
-    prompt
 }
 
 #[cfg(test)]
