@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection};
 
 use super::{candidate_title, CandidateRoute, ParsedMemoryCandidate};
@@ -408,7 +408,7 @@ fn insert_routed_memory(
     if candidate.memory_type == "lesson" {
         insert_lesson_metadata(conn, memory_id, candidate, evidence_json, now)?;
     }
-    refresh_memory_entities(conn, memory_id, title, &candidate.text);
+    refresh_memory_entities(conn, memory_id, title, &candidate.text)?;
     Ok(memory_id)
 }
 
@@ -429,14 +429,10 @@ fn insert_lesson_metadata(
     Ok(())
 }
 
-fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str) {
+fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str) -> Result<()> {
     let entities = crate::retrieval::entity::extract_entities(title, content);
-    if entities.is_empty() {
-        return;
-    }
-    if let Err(e) = crate::retrieval::entity::link_entities(conn, id, &entities) {
-        crate::log::warn("memory", &format!("entity link failed for id={id}: {e}"));
-    }
+    crate::retrieval::entity::refresh_memory_entities(conn, id, &entities)
+        .with_context(|| format!("entity refresh failed for memory id={id}"))
 }
 
 fn soft_supersede_routed(

@@ -3,8 +3,8 @@ use rusqlite::{params, Connection};
 
 use super::support::setup_entity_schema;
 use crate::retrieval::entity::{
-    expand_via_entity_graph, expand_via_entity_graph_filtered, link_entities, search_by_entity,
-    search_by_entity_filtered,
+    expand_via_entity_graph, expand_via_entity_graph_filtered, link_entities,
+    refresh_memory_entities, search_by_entity, search_by_entity_filtered,
 };
 
 #[test]
@@ -20,6 +20,104 @@ fn search_by_entity_fallback_matches_partial_name() {
 
     let ids = search_by_entity(&conn, "sql", Some("test/proj"), 10).unwrap();
     assert_eq!(ids, vec![1]);
+}
+
+#[test]
+fn link_entities_does_not_overcount_duplicate_links() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_entity_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories (id, project, memory_type, status) VALUES (?1, ?2, 'discovery', 'active')",
+        params![1_i64, "test/proj"],
+    )?;
+
+    link_entities(
+        &conn,
+        1,
+        &[
+            "SQLCipher".to_string(),
+            "sqlcipher".to_string(),
+            " SQLCipher ".to_string(),
+        ],
+    )?;
+    link_entities(&conn, 1, &["SQLCipher".to_string()])?;
+
+    let mention_count: i64 = conn.query_row(
+        "SELECT mention_count FROM entities WHERE canonical_name = ?1 COLLATE NOCASE",
+        params!["SQLCipher"],
+        |row| row.get(0),
+    )?;
+    let link_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_entities WHERE memory_id = ?1",
+        params![1_i64],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(mention_count, 1);
+    assert_eq!(link_count, 1);
+    Ok(())
+}
+
+#[test]
+fn refresh_memory_entities_replaces_obsolete_links_and_counts() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_entity_schema(&conn);
+    for id in 1_i64..=2_i64 {
+        conn.execute(
+            "INSERT INTO memories (id, project, memory_type, status) VALUES (?1, ?2, 'discovery', 'active')",
+            params![id, "test/proj"],
+        )?;
+    }
+    link_entities(&conn, 1, &["SQLCipher".to_string(), "Tokio".to_string()])?;
+    link_entities(&conn, 2, &["SQLCipher".to_string()])?;
+
+    refresh_memory_entities(&conn, 1, &["Axum".to_string(), "Tokio".to_string()])?;
+
+    assert_eq!(
+        search_by_entity(&conn, "SQLCipher", Some("test/proj"), 10)?,
+        vec![2]
+    );
+    assert_eq!(
+        search_by_entity(&conn, "Axum", Some("test/proj"), 10)?,
+        vec![1]
+    );
+
+    let sqlcipher_count: i64 = conn.query_row(
+        "SELECT mention_count FROM entities WHERE canonical_name = ?1 COLLATE NOCASE",
+        params!["SQLCipher"],
+        |row| row.get(0),
+    )?;
+    let axum_count: i64 = conn.query_row(
+        "SELECT mention_count FROM entities WHERE canonical_name = ?1 COLLATE NOCASE",
+        params!["Axum"],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(sqlcipher_count, 1);
+    assert_eq!(axum_count, 1);
+    Ok(())
+}
+
+#[test]
+fn refresh_memory_entities_with_empty_list_clears_links() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_entity_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories (id, project, memory_type, status) VALUES (?1, ?2, 'discovery', 'active')",
+        params![1_i64, "test/proj"],
+    )?;
+    link_entities(&conn, 1, &["SQLCipher".to_string()])?;
+
+    refresh_memory_entities(&conn, 1, &[])?;
+
+    assert!(search_by_entity(&conn, "SQLCipher", Some("test/proj"), 10)?.is_empty());
+    let mention_count: i64 = conn.query_row(
+        "SELECT mention_count FROM entities WHERE canonical_name = ?1 COLLATE NOCASE",
+        params!["SQLCipher"],
+        |row| row.get(0),
+    )?;
+    assert_eq!(mention_count, 0);
+    Ok(())
 }
 
 #[test]

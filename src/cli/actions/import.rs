@@ -222,10 +222,7 @@ fn runtime_memory_exists(
 
 fn refresh_imported_memory_entities(conn: &Connection, id: i64, title: &str, content: &str) {
     let entities = crate::retrieval::entity::extract_entities(title, content);
-    if entities.is_empty() {
-        return;
-    }
-    if let Err(error) = crate::retrieval::entity::link_entities(conn, id, &entities) {
+    if let Err(error) = crate::retrieval::entity::refresh_memory_entities(conn, id, &entities) {
         crate::log::warn(
             "import",
             &format!("entity link failed for imported memory id={id}: {error}"),
