@@ -108,8 +108,15 @@ pub(super) enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Clean old events and archive stale memories.
-    Cleanup,
+    /// Clean old events, compressed source observations, and stale lifecycle state.
+    Cleanup {
+        /// Preview retention counts without mutating data.
+        #[arg(long)]
+        dry_run: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
     /// Sync the project memory index into CLAUDE.md.
     SyncMemory {
         /// Project working directory to sync.

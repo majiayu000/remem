@@ -208,13 +208,13 @@ Tool operations ──→ pending_observations (raw queue, ≤4KB/event)
                          │
              ┌───────────┼───────────┐
              ▼           ▼           ▼
-          active      stale      compressed
+          active      stale      compressed source
         (normal      (file        (>100 active
          display)   overlap,      → auto merge)
                    lower rank)
                                      │
-                                     ▼ 90 days
-                                  deleted (cleanup command)
+                                     ▼ 90 days after compression link
+                                  deleted only with source hash/snapshot provenance
 ```
 
 ```
@@ -230,7 +230,9 @@ session_summaries ──→ memories (auto-promoted)
 - **File overlap staleness**: When new operations overwrite old files, old observations auto-marked stale
 - **Time decay**: FTS search ranked by relevance × time decay, stale observations further penalized
 - **Auto compression**: Projects with >100 observations: keep newest 50, merge oldest 30 into 1-2 summaries
-- **TTL cleanup**: Compressed records older than 90 days deleted by `cleanup` command
+- **Retention cleanup**: Compression replacement observations are retained; retired
+  source observations can be deleted 90 days after compression only when
+  `compressed_observation_sources` still has sufficient hash/snapshot provenance
 
 ## Rate Limiting
 
@@ -432,14 +434,30 @@ estimates or repriced rows from older schema versions; new Codex rows should use
 ## Data Cleanup
 
 ```bash
-remem cleanup    # One-command cleanup
+remem cleanup --dry-run --json    # Preview retention counts
+remem cleanup                     # Apply cleanup
 ```
 
 Cleans:
-- Orphan summaries (`mem-*` prefix with no corresponding observation)
-- Duplicate summaries (same session+project, keep newest)
-- Expired pending (>1 hour unprocessed)
-- Expired compressed (>90 days)
+- Expired active memories: mark `stale`; keep provenance rows
+- Inactive workstreams: pause after 14 days, abandon after 30 days paused
+- Events: delete rows older than 30 days
+- Compressed source observations: delete `status='compressed'` source rows
+  90 days after the compression link was created, only if
+  `compressed_observation_sources` preserves source hash and snapshot evidence
+- Stale memories: archive rows older than 180 days
+
+Retention matrix:
+
+| Data | Retention | Cleanup behavior | Provenance requirement |
+|---|---:|---|---|
+| `events` | 30 days | Hard delete | None; these are low-level captured events |
+| active memories with `expires_at_epoch` | Until expiry | Mark `stale` | Row remains auditable |
+| stale memories | 180 days | Mark `archived` | Row remains auditable |
+| workstreams | 14/30 days inactivity | Pause/abandon | Row remains auditable |
+| compressed replacement observations | Indefinite | Retained | Preserve retrieval and source-summary context |
+| compressed source observations | 90 days after compression link | Hard delete only when eligible | Required `compressed_observation_sources` hash + snapshot + live compressed row |
+| raw archive, session summaries, candidates, edges | Indefinite by default | No cleanup in this command | Retained for audit/eval unless future policy says otherwise |
 
 ## Database Schema
 

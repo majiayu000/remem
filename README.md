@@ -371,6 +371,7 @@ remem preferences list
 remem preferences add "text"
 remem preferences remove 42
 remem context --cwd .
+remem cleanup --dry-run --json
 remem cleanup
 remem dream [--project X] [--profile NAME] [--dry-run]
 remem install --target codex
@@ -386,6 +387,7 @@ is set:
 | Command | Stable top-level fields |
 |---|---|
 | `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `today`, `top_projects` |
+| `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied` |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |

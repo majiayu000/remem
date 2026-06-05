@@ -337,6 +337,7 @@ remem preferences list
 remem preferences add "text"
 remem preferences remove 42
 remem context --cwd .
+remem cleanup --dry-run --json
 remem cleanup
 remem dream [--project X] [--profile NAME] [--dry-run]
 remem install --target codex

@@ -401,6 +401,18 @@ pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize
     )?)
 }
 
+pub fn count_expired_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE status = 'active'
+           AND expires_at_epoch IS NOT NULL
+           AND expires_at_epoch <= ?1",
+        params![now_epoch],
+        |row| row.get(0),
+    )?;
+    Ok(count as usize)
+}
+
 pub fn soft_supersede(
     conn: &Connection,
     project: &str,

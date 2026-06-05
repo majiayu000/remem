@@ -5,6 +5,8 @@ mod dispatch;
 mod tests;
 #[cfg(test)]
 mod tests_eval;
+#[cfg(test)]
+mod tests_maintenance;
 mod types;
 
 use anyhow::Result;

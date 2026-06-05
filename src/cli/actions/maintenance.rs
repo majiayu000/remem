@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use serde::Serialize;
 use std::io::Read;
 use std::path::Path;
 
@@ -69,33 +70,203 @@ pub(in crate::cli) fn run_encrypt() -> Result<()> {
     Ok(())
 }
 
-pub(in crate::cli) fn run_cleanup() -> Result<()> {
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct CleanupRetentionDays {
+    old_events: i64,
+    compressed_source_observations: i64,
+    stale_memories: i64,
+    workstream_auto_pause: i64,
+    workstream_auto_abandon: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct CleanupPlan {
+    expired_memories_to_stale: usize,
+    inactive_workstreams_to_pause: usize,
+    long_paused_workstreams_to_abandon: usize,
+    old_events_to_delete: usize,
+    compressed_source_observations_to_delete: usize,
+    stale_memories_to_archive: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct CleanupApplied {
+    expired_memories_marked_stale: usize,
+    inactive_workstreams_paused: usize,
+    long_paused_workstreams_abandoned: usize,
+    old_events_deleted: usize,
+    compressed_source_observations_deleted: usize,
+    stale_memories_archived: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct CleanupReport {
+    dry_run: bool,
+    retention_days: CleanupRetentionDays,
+    plan: CleanupPlan,
+    applied: Option<CleanupApplied>,
+}
+
+pub(in crate::cli) fn run_cleanup(dry_run: bool, json: bool) -> Result<()> {
     let conn = db::open_db()?;
-    let expired_memories =
-        memory::lifecycle::expire_active_memories(&conn, chrono::Utc::now().timestamp())?;
-    let workstreams_paused = crate::workstream::auto_pause_all_inactive(
-        &conn,
-        crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
-    )?;
-    let workstreams_abandoned = crate::workstream::auto_abandon_all_inactive(
-        &conn,
-        crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
-    )?;
-    let events_deleted = memory::cleanup_old_events(&conn, 30)?;
-    let memories_archived = memory::archive_stale_memories(&conn, 180)?;
-    println!("Cleanup complete:");
-    println!("  Expired memories marked stale: {}", expired_memories);
-    println!("  Inactive workstreams paused: {}", workstreams_paused);
-    println!(
-        "  Long-paused workstreams abandoned: {}",
-        workstreams_abandoned
-    );
-    println!("  Old events deleted (>30 days): {}", events_deleted);
-    println!(
-        "  Stale memories archived (>180 days): {}",
-        memories_archived
-    );
+    let now_epoch = chrono::Utc::now().timestamp();
+    let report = build_cleanup_report(&conn, now_epoch, dry_run)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    if dry_run {
+        println!("Cleanup dry-run:");
+        print_cleanup_plan(&report.plan);
+        println!("  No changes written.");
+    } else {
+        println!("Cleanup complete:");
+        print_cleanup_plan(&report.plan);
+        if let Some(applied) = report.applied {
+            println!("Applied:");
+            println!(
+                "  Expired memories marked stale: {}",
+                applied.expired_memories_marked_stale
+            );
+            println!(
+                "  Inactive workstreams paused: {}",
+                applied.inactive_workstreams_paused
+            );
+            println!(
+                "  Long-paused workstreams abandoned: {}",
+                applied.long_paused_workstreams_abandoned
+            );
+            println!("  Old events deleted: {}", applied.old_events_deleted);
+            println!(
+                "  Compressed source observations deleted: {}",
+                applied.compressed_source_observations_deleted
+            );
+            println!(
+                "  Stale memories archived: {}",
+                applied.stale_memories_archived
+            );
+        }
+    }
     Ok(())
+}
+
+fn build_cleanup_report(
+    conn: &rusqlite::Connection,
+    now_epoch: i64,
+    dry_run: bool,
+) -> Result<CleanupReport> {
+    let retention_days = CleanupRetentionDays {
+        old_events: memory::OLD_EVENT_RETENTION_DAYS,
+        compressed_source_observations: memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
+        stale_memories: memory::STALE_MEMORY_ARCHIVE_DAYS,
+        workstream_auto_pause: crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
+        workstream_auto_abandon: crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
+    };
+    let plan = build_cleanup_plan(conn, now_epoch)?;
+    let applied = if dry_run {
+        None
+    } else {
+        Some(apply_cleanup_plan(conn, now_epoch)?)
+    };
+    Ok(CleanupReport {
+        dry_run,
+        retention_days,
+        plan,
+        applied,
+    })
+}
+
+fn build_cleanup_plan(conn: &rusqlite::Connection, now_epoch: i64) -> Result<CleanupPlan> {
+    Ok(CleanupPlan {
+        expired_memories_to_stale: memory::lifecycle::count_expired_active_memories(
+            conn, now_epoch,
+        )?,
+        inactive_workstreams_to_pause: crate::workstream::count_auto_pause_all_inactive_at(
+            conn,
+            now_epoch,
+            crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
+        )?,
+        long_paused_workstreams_to_abandon: crate::workstream::count_auto_abandon_all_inactive_at(
+            conn,
+            now_epoch,
+            crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
+        )?,
+        old_events_to_delete: memory::count_old_events_at(
+            conn,
+            now_epoch,
+            memory::OLD_EVENT_RETENTION_DAYS,
+        )?,
+        compressed_source_observations_to_delete:
+            memory::count_compressed_source_observations_to_delete_at(
+                conn,
+                now_epoch,
+                memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
+            )?,
+        stale_memories_to_archive: memory::count_stale_memories_to_archive_at(
+            conn,
+            now_epoch,
+            memory::STALE_MEMORY_ARCHIVE_DAYS,
+        )?,
+    })
+}
+
+fn apply_cleanup_plan(conn: &rusqlite::Connection, now_epoch: i64) -> Result<CleanupApplied> {
+    Ok(CleanupApplied {
+        expired_memories_marked_stale: memory::lifecycle::expire_active_memories(conn, now_epoch)?,
+        inactive_workstreams_paused: crate::workstream::auto_pause_all_inactive_at(
+            conn,
+            now_epoch,
+            crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
+        )?,
+        long_paused_workstreams_abandoned: crate::workstream::auto_abandon_all_inactive_at(
+            conn,
+            now_epoch,
+            crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
+        )?,
+        old_events_deleted: memory::cleanup_old_events_at(
+            conn,
+            now_epoch,
+            memory::OLD_EVENT_RETENTION_DAYS,
+        )?,
+        compressed_source_observations_deleted: memory::cleanup_compressed_source_observations_at(
+            conn,
+            now_epoch,
+            memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
+        )?,
+        stale_memories_archived: memory::archive_stale_memories_at(
+            conn,
+            now_epoch,
+            memory::STALE_MEMORY_ARCHIVE_DAYS,
+        )?,
+    })
+}
+
+fn print_cleanup_plan(plan: &CleanupPlan) {
+    println!(
+        "  Expired memories to mark stale: {}",
+        plan.expired_memories_to_stale
+    );
+    println!(
+        "  Inactive workstreams to pause: {}",
+        plan.inactive_workstreams_to_pause
+    );
+    println!(
+        "  Long-paused workstreams to abandon: {}",
+        plan.long_paused_workstreams_to_abandon
+    );
+    println!(
+        "  Old events to delete (>30 days): {}",
+        plan.old_events_to_delete
+    );
+    println!(
+        "  Compressed source observations to delete (>90 days after compression): {}",
+        plan.compressed_source_observations_to_delete
+    );
+    println!(
+        "  Stale memories to archive (>180 days): {}",
+        plan.stale_memories_to_archive
+    );
 }
 
 pub(in crate::cli) struct GovernanceCliRequest<'a> {
@@ -335,6 +506,41 @@ mod tests {
         assert_eq!(parsed["dry_run"], true);
         assert_eq!(parsed["action"], "stale");
         assert_eq!(parsed["affected"][0]["new_status"], "stale");
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_report_json_exposes_dry_run_plan_counts(
+    ) -> std::result::Result<(), serde_json::Error> {
+        let report = CleanupReport {
+            dry_run: true,
+            retention_days: CleanupRetentionDays {
+                old_events: 30,
+                compressed_source_observations: 90,
+                stale_memories: 180,
+                workstream_auto_pause: 14,
+                workstream_auto_abandon: 30,
+            },
+            plan: CleanupPlan {
+                expired_memories_to_stale: 1,
+                inactive_workstreams_to_pause: 2,
+                long_paused_workstreams_to_abandon: 3,
+                old_events_to_delete: 4,
+                compressed_source_observations_to_delete: 5,
+                stale_memories_to_archive: 6,
+            },
+            applied: None,
+        };
+
+        let parsed = serde_json::to_value(report)?;
+
+        assert_eq!(parsed["dry_run"], true);
+        assert_eq!(parsed["applied"], Value::Null);
+        assert_eq!(parsed["plan"]["old_events_to_delete"], 4);
+        assert_eq!(
+            parsed["plan"]["compressed_source_observations_to_delete"],
+            5
+        );
         Ok(())
     }
 }
