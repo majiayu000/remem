@@ -1,9 +1,8 @@
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 
-use super::{extract_temporal, search_by_time_filtered, TemporalConstraint};
+use super::{extract_temporal, search_by_time_filtered, TemporalConstraint, TemporalField};
 use crate::migrate::MIGRATIONS;
-use crate::retrieval::temporal::types::TemporalField;
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
@@ -93,7 +92,12 @@ fn parse_month_year_dates() -> Result<()> {
         .timestamp()
         - 1;
 
-    for query in ["notes from May 2026", "notes from 2026 May"] {
+    for query in [
+        "notes from May 2026",
+        "notes from 2026 May",
+        "2026年5月的决策",
+        "2026年5月份",
+    ] {
         let constraint =
             extract_temporal(query).ok_or_else(|| anyhow!("month/year should parse: {query}"))?;
         assert_eq!(constraint.start_epoch, expected_start);

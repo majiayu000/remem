@@ -123,10 +123,10 @@ fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64)> {
     let after_month = &after_year[month_idx + '月'.len_utf8()..];
     let day_text = after_month.split(['日', '号']).next().unwrap_or("").trim();
 
-    if day_text.is_empty() {
-        month_range(year, month)
+    if let Some(day) = parse_leading_u32(day_text) {
+        day_range(NaiveDate::from_ymd_opt(year, month, day)?)
     } else {
-        day_range(NaiveDate::from_ymd_opt(year, month, parse_u32(day_text)?)?)
+        month_range(year, month)
     }
 }
 
@@ -221,6 +221,15 @@ fn parse_day(input: &str) -> Option<u32> {
 
 fn parse_u32(input: &str) -> Option<u32> {
     input.trim().parse::<u32>().ok()
+}
+
+fn parse_leading_u32(input: &str) -> Option<u32> {
+    let digits: String = input
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    parse_u32(&digits)
 }
 
 fn month_number(input: &str) -> Option<u32> {
