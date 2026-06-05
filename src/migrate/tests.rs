@@ -110,6 +110,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_edges",
         "memory_claims",
         "memory_candidate_noops",
+        "compressed_observation_sources",
     ] {
         let exists: bool = conn
             .query_row(
@@ -129,6 +130,8 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_memory_claims_fingerprint",
         "idx_memory_candidate_noops_claim",
         "idx_memory_candidate_noops_project",
+        "idx_compressed_observation_sources_compressed",
+        "idx_compressed_observation_sources_source",
     ] {
         let exists: bool = conn
             .query_row(

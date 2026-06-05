@@ -12,6 +12,8 @@ use crate::memory;
 use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
 use crate::memory::service::{resolve_local_note_path, sanitize_segment};
 
+mod compressed_sources;
+
 fn assert_mcp_error(
     err: McpToolError,
     expected_code: McpErrorCode,

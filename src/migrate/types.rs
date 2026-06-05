@@ -135,6 +135,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_claims",
         sql: include_str!("../migrations/v026_memory_claims.sql"),
     },
+    Migration {
+        version: 27,
+        name: "compressed_observation_sources",
+        sql: include_str!("../migrations/v027_compressed_observation_sources.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

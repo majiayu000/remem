@@ -38,6 +38,18 @@ pub struct Observation {
     pub commit_sha: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompressedObservationSource {
+    pub compressed_observation_id: i64,
+    pub source_observation_id: i64,
+    pub source_hash: String,
+    #[serde(skip_serializing)]
+    pub source_snapshot_json: String,
+    pub source_created_at_epoch: i64,
+    pub compression_session_id: String,
+    pub created_at_epoch: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: i64,
