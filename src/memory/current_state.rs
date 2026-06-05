@@ -167,7 +167,7 @@ pub fn current_state(conn: &Connection, req: &CurrentStateRequest) -> Result<Cur
     };
     let why = current
         .as_ref()
-        .map(|current| load_why(conn, current.id))
+        .map(|current| load_why(conn, current.id, req.as_of_epoch))
         .transpose()?
         .unwrap_or_default();
     let facts = current
@@ -419,6 +419,7 @@ fn load_memories_as_of(
            AND status IN ('active', 'stale', 'archived')
            AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
+           AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)
          ORDER BY COALESCE(valid_from_epoch, created_at_epoch) DESC,
                   updated_at_epoch DESC,
                   id DESC
@@ -453,17 +454,31 @@ fn load_history(conn: &Connection, current_memory_id: i64) -> Result<Vec<Current
     crate::db::query::collect_rows(rows).context("load current-state history")
 }
 
-fn load_why(conn: &Connection, current_memory_id: i64) -> Result<Vec<CurrentStateWhy>> {
-    let mut stmt = conn.prepare(
+fn load_why(
+    conn: &Connection,
+    current_memory_id: i64,
+    as_of_epoch: Option<i64>,
+) -> Result<Vec<CurrentStateWhy>> {
+    let mut params_vec: Vec<Box<dyn ToSql>> =
+        vec![Box::new(current_memory_id), Box::new(HISTORY_LIMIT)];
+    let mut as_of_filter = String::new();
+    if let Some(as_of_epoch) = as_of_epoch {
+        as_of_filter.push_str(" AND created_at_epoch <= ?3");
+        params_vec.push(Box::new(as_of_epoch));
+    }
+    let sql = format!(
         "SELECT edge_type, from_memory_id, to_memory_id, reason, evidence_event_ids,
                 source_candidate_id, source_operation_id, created_at_epoch
          FROM memory_edges
-         WHERE (to_memory_id = ?1 AND edge_type IN ('supersedes', 'merged_into'))
-            OR (edge_type = 'conflicts' AND (from_memory_id = ?1 OR to_memory_id = ?1))
+         WHERE ((to_memory_id = ?1 AND edge_type IN ('supersedes', 'merged_into', 'derived_from'))
+             OR (edge_type = 'conflicts' AND (from_memory_id = ?1 OR to_memory_id = ?1)))
+           {as_of_filter}
          ORDER BY created_at_epoch DESC, id DESC
-         LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![current_memory_id, HISTORY_LIMIT], |row| {
+         LIMIT ?2"
+    );
+    let refs = crate::db::to_sql_refs(&params_vec);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(refs.as_slice(), |row| {
         let evidence_json: Option<String> = row.get(4)?;
         Ok(CurrentStateWhy {
             edge_type: row.get(0)?,
