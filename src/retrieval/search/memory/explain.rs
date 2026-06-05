@@ -14,6 +14,7 @@ pub struct SearchExplain {
     pub core_terms: Vec<String>,
     pub fts_query: Option<String>,
     pub temporal_range: Option<(i64, i64)>,
+    pub temporal_field: Option<String>,
     pub rrf_k: f64,
     pub channels: Vec<SearchExplainChannel>,
     pub results: Vec<SearchExplainResult>,
