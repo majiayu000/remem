@@ -16,13 +16,14 @@ pub(in crate::cli) async fn run_dream(
         .unwrap_or_else(|| db::project_from_cwd(&cwd));
 
     if dry_run {
-        let clusters = crate::dream::list_clusters(&project)?;
+        let plan = crate::dream::list_cluster_plan(&project)?;
         println!(
-            "project={} clusters={} (dry-run, no changes)",
+            "project={} clusters={} suppressed={} (dry-run, no changes)",
             project,
-            clusters.len()
+            plan.eligible.len(),
+            plan.suppressed
         );
-        for (i, c) in clusters.iter().enumerate() {
+        for (i, c) in plan.eligible.iter().enumerate() {
             println!("  cluster[{}] size={}", i, c.members.len());
             for m in &c.members {
                 println!("    id={} title={}", m.id, m.title);

@@ -6,7 +6,7 @@ use super::constants::DREAM_PROMPT;
 #[derive(Debug)]
 pub(super) enum MergeDecision {
     Merge(MergeResult),
-    NoMerge,
+    NoMerge { reason: Option<String> },
 }
 
 #[derive(Debug)]
@@ -63,7 +63,9 @@ fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDec
             "dream",
             "rejecting merge with no valid superseded_id(s) after filtering",
         );
-        return MergeDecision::NoMerge;
+        return MergeDecision::NoMerge {
+            reason: Some("no valid superseded ids after filtering".to_string()),
+        };
     }
     MergeDecision::Merge(result)
 }
@@ -85,7 +87,9 @@ fn build_user_message(members: &[MemoryCandidate]) -> String {
 
 fn parse_response(response: &str) -> Result<MergeDecision> {
     if response.contains("<no_merge") {
-        return Ok(MergeDecision::NoMerge);
+        return Ok(MergeDecision::NoMerge {
+            reason: extract_no_merge_reason(response),
+        });
     }
 
     let topic_key = require_tag(response, "topic_key")?;
@@ -102,7 +106,9 @@ fn parse_response(response: &str) -> Result<MergeDecision> {
         .filter_map(|s| s.parse::<i64>().ok())
         .collect();
     if superseded_ids.is_empty() {
-        return Ok(MergeDecision::NoMerge);
+        return Ok(MergeDecision::NoMerge {
+            reason: Some("merge response had no superseded ids".to_string()),
+        });
     }
 
     Ok(MergeDecision::Merge(MergeResult {
@@ -136,6 +142,35 @@ fn extract_tag(text: &str, tag: &str) -> Option<String> {
     let start = text.find(&open)? + open.len();
     let end = text[start..].find(&close)? + start;
     Some(text[start..end].trim().to_owned())
+}
+
+fn extract_no_merge_reason(text: &str) -> Option<String> {
+    let start = text.find("<no_merge")?;
+    let tag = &text[start..];
+    let end = tag.find('>')?;
+    extract_attr(&tag[..=end], "reason")
+        .map(|reason| reason.trim().to_string())
+        .filter(|reason| !reason.is_empty())
+}
+
+fn extract_attr(tag: &str, name: &str) -> Option<String> {
+    let marker = format!("{name}=");
+    let start = tag.find(&marker)? + marker.len();
+    let quote = tag[start..].chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let value_start = start + quote.len_utf8();
+    let value_end = tag[value_start..].find(quote)? + value_start;
+    Some(xml_unescape(&tag[value_start..value_end]))
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 fn redact_excerpt(response: &str) -> String {
@@ -216,7 +251,7 @@ mod tests {
                 assert_eq!(r.memory_type, "decision");
                 assert_eq!(r.superseded_ids, vec![42, 17]);
             }
-            MergeDecision::NoMerge => panic!("expected Merge"),
+            MergeDecision::NoMerge { .. } => panic!("expected Merge"),
         }
     }
 
@@ -225,8 +260,19 @@ mod tests {
         let response = r#"<no_merge reason="entries cover different topics"/>"#;
         assert!(matches!(
             parse_response(response).expect("expected Ok"),
-            MergeDecision::NoMerge
+            MergeDecision::NoMerge { .. }
         ));
+    }
+
+    #[test]
+    fn test_parse_no_merge_reason() {
+        let response = r#"<no_merge reason="entries cover different topics"/>"#;
+        match parse_response(response).expect("expected Ok") {
+            MergeDecision::NoMerge { reason } => {
+                assert_eq!(reason.as_deref(), Some("entries cover different topics"));
+            }
+            MergeDecision::Merge(_) => panic!("expected no merge"),
+        }
     }
 
     #[test]
@@ -285,7 +331,7 @@ mod tests {
 </memory>"#;
         match parse_response(response).expect("expected Ok") {
             MergeDecision::Merge(r) => assert_eq!(r.memory_type, "discovery"),
-            MergeDecision::NoMerge => panic!("expected Merge"),
+            MergeDecision::NoMerge { .. } => panic!("expected Merge"),
         }
     }
 
@@ -321,7 +367,7 @@ mod tests {
         });
         match filter_superseded_ids(decision, &cluster) {
             MergeDecision::Merge(r) => assert_eq!(r.superseded_ids, vec![10, 20]),
-            MergeDecision::NoMerge => panic!("expected Merge"),
+            MergeDecision::NoMerge { .. } => panic!("expected Merge"),
         }
     }
 
@@ -346,7 +392,7 @@ mod tests {
         });
         assert!(matches!(
             filter_superseded_ids(decision, &cluster),
-            MergeDecision::NoMerge
+            MergeDecision::NoMerge { .. }
         ));
     }
 
@@ -354,8 +400,8 @@ mod tests {
     fn test_filter_superseded_ids_no_merge_passthrough() {
         let cluster = Cluster { members: vec![] };
         assert!(matches!(
-            filter_superseded_ids(MergeDecision::NoMerge, &cluster),
-            MergeDecision::NoMerge
+            filter_superseded_ids(MergeDecision::NoMerge { reason: None }, &cluster),
+            MergeDecision::NoMerge { .. }
         ));
     }
 
@@ -370,7 +416,7 @@ mod tests {
 </memory>"#;
         assert!(matches!(
             parse_response(response).expect("expected Ok"),
-            MergeDecision::NoMerge
+            MergeDecision::NoMerge { .. }
         ));
     }
 

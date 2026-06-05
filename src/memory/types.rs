@@ -434,6 +434,29 @@ pub mod tests_helper {
                 ON memory_edges(to_memory_id, edge_type);
             CREATE INDEX idx_memory_edges_state
                 ON memory_edges(state_key_id, edge_type, created_at_epoch);
+            CREATE TABLE dream_cluster_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                cluster_signature TEXT NOT NULL,
+                decision TEXT NOT NULL CHECK(decision IN ('merged', 'no_merge', 'defer', 'failed')),
+                reason TEXT,
+                member_ids_json TEXT NOT NULL,
+                cluster_size INTEGER NOT NULL,
+                next_review_epoch INTEGER,
+                source_memory_id INTEGER,
+                source_operation_id INTEGER,
+                created_at_epoch INTEGER NOT NULL,
+                updated_at_epoch INTEGER NOT NULL,
+                last_seen_epoch INTEGER NOT NULL,
+                UNIQUE(project, memory_type, cluster_signature),
+                FOREIGN KEY(source_memory_id) REFERENCES memories(id),
+                FOREIGN KEY(source_operation_id) REFERENCES memory_operation_log(id)
+            );
+            CREATE INDEX idx_dream_cluster_decisions_review
+                ON dream_cluster_decisions(project, decision, next_review_epoch);
+            CREATE INDEX idx_dream_cluster_decisions_signature
+                ON dream_cluster_decisions(project, memory_type, cluster_signature);
             CREATE VIRTUAL TABLE memories_fts USING fts5(
                 title, content, search_context,
                 content='memories',

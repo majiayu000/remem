@@ -164,6 +164,14 @@ fn enqueue_summary_jobs(
         compress_input,
         200,
     )?;
+    db::maybe_enqueue_dream_job(
+        conn,
+        host,
+        project,
+        compress_input,
+        300,
+        crate::dream::DREAM_COOLDOWN_SECS,
+    )?;
     crate::log::info(
         "summarize",
         &format!(
@@ -444,7 +452,14 @@ mod tests {
 
         assert!(!captured);
         let jobs = job_types(&conn);
-        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
+        assert_eq!(
+            jobs,
+            vec![
+                "summary".to_string(),
+                "compress".to_string(),
+                "dream".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -518,7 +533,14 @@ mod tests {
         .expect("summary jobs should enqueue");
 
         let jobs = job_types(&conn);
-        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
+        assert_eq!(
+            jobs,
+            vec![
+                "summary".to_string(),
+                "compress".to_string(),
+                "dream".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -548,7 +570,46 @@ mod tests {
         .expect("summary jobs should enqueue");
 
         let jobs = job_types(&conn);
-        assert_eq!(jobs, vec!["summary".to_string(), "compress".to_string()]);
+        assert_eq!(
+            jobs,
+            vec![
+                "summary".to_string(),
+                "compress".to_string(),
+                "dream".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn enqueue_summary_jobs_dedups_dream_and_preserves_profile_payload() {
+        let _test_dir = ScopedTestDataDir::new("summary-dream-profile");
+        let conn = db::open_db().expect("db should open");
+        let payload = compress_payload(Some("custom")).expect("compress payload should serialize");
+
+        enqueue_summary_jobs(
+            &conn,
+            "codex-cli",
+            "sess-dream-a",
+            "/tmp/remem",
+            r#"{"session_id":"sess-dream-a"}"#,
+            &payload,
+        )
+        .expect("first summary jobs should enqueue");
+        enqueue_summary_jobs(
+            &conn,
+            "codex-cli",
+            "sess-dream-b",
+            "/tmp/remem",
+            r#"{"session_id":"sess-dream-b"}"#,
+            &payload,
+        )
+        .expect("second summary jobs should enqueue");
+
+        let dream_payloads = job_payloads(&conn, "dream");
+        assert_eq!(dream_payloads.len(), 1);
+        let dream_payload: serde_json::Value =
+            serde_json::from_str(&dream_payloads[0]).expect("dream payload should parse");
+        assert_eq!(dream_payload["remem_ai_profile"].as_str(), Some("custom"));
     }
 
     fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
@@ -556,6 +617,16 @@ mod tests {
             .prepare("SELECT job_type FROM jobs ORDER BY id ASC")
             .expect("job query should prepare");
         stmt.query_map([], |row| row.get(0))
+            .expect("job query should run")
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .expect("job rows should collect")
+    }
+
+    fn job_payloads(conn: &rusqlite::Connection, job_type: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT payload_json FROM jobs WHERE job_type = ?1 ORDER BY id ASC")
+            .expect("job query should prepare");
+        stmt.query_map([job_type], |row| row.get(0))
             .expect("job query should run")
             .collect::<rusqlite::Result<Vec<String>>>()
             .expect("job rows should collect")
