@@ -7,7 +7,9 @@ mod types;
 mod write;
 
 pub use lifecycle::{
-    auto_abandon_all_inactive, auto_abandon_inactive, auto_pause_all_inactive, auto_pause_inactive,
+    auto_abandon_all_inactive, auto_abandon_all_inactive_at, auto_abandon_inactive,
+    auto_pause_all_inactive, auto_pause_all_inactive_at, auto_pause_inactive,
+    count_auto_abandon_all_inactive_at, count_auto_pause_all_inactive_at,
     DEFAULT_AUTO_ABANDON_DAYS, DEFAULT_AUTO_PAUSE_DAYS,
 };
 pub use matcher::find_matching_workstream;
