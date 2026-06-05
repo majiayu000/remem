@@ -121,11 +121,7 @@ fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64)> {
     let month_idx = after_year.find('月')?;
     let month = parse_u32(after_year[..month_idx].trim())?;
     let after_month = &after_year[month_idx + '月'.len_utf8()..];
-    let day_text = after_month
-        .split(|c| c == '日' || c == '号')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let day_text = after_month.split(['日', '号']).next().unwrap_or("").trim();
 
     if day_text.is_empty() {
         month_range(year, month)
@@ -146,28 +142,29 @@ fn parse_month_name_date(lower: &str) -> Option<(i64, i64)> {
             Some(month) => month,
             None => continue,
         };
+        let next = parts.get(idx + 1).copied();
+        let next2 = parts.get(idx + 2).copied();
+        let previous = idx.checked_sub(1).and_then(|prev| parts.get(prev).copied());
 
-        if let Some(day_text) = parts.get(idx + 1) {
-            if let Some(day) = parse_u32(day_text) {
-                let year = parts
-                    .get(idx + 2)
-                    .and_then(|value| parse_year(value))
-                    .unwrap_or(current_year);
-                return day_range(NaiveDate::from_ymd_opt(year, month, day)?);
-            }
-            if let Some(year) = parse_year(day_text) {
-                return month_range(year, month);
-            }
+        if let (Some(day), Some(year)) = (previous.and_then(parse_day), next.and_then(parse_year)) {
+            return day_range(NaiveDate::from_ymd_opt(year, month, day)?);
         }
-
-        if idx > 0 {
-            if let Some(day) = parse_u32(parts[idx - 1]) {
-                let year = parts
-                    .get(idx + 1)
-                    .and_then(|value| parse_year(value))
-                    .unwrap_or(current_year);
-                return day_range(NaiveDate::from_ymd_opt(year, month, day)?);
-            }
+        if let (Some(year), Some(day)) = (previous.and_then(parse_year), next.and_then(parse_day)) {
+            return day_range(NaiveDate::from_ymd_opt(year, month, day)?);
+        }
+        if let Some(day) = next.and_then(parse_day) {
+            let year = next2.and_then(parse_year).unwrap_or(current_year);
+            return day_range(NaiveDate::from_ymd_opt(year, month, day)?);
+        }
+        if let Some(year) = next.and_then(parse_year) {
+            return month_range(year, month);
+        }
+        if let Some(year) = previous.and_then(parse_year) {
+            return month_range(year, month);
+        }
+        if let Some(day) = previous.and_then(parse_day) {
+            let year = next.and_then(parse_year).unwrap_or(current_year);
+            return day_range(NaiveDate::from_ymd_opt(year, month, day)?);
         }
     }
 
@@ -208,6 +205,15 @@ fn parse_year(input: &str) -> Option<i32> {
     let year = parse_u32(input)?;
     if (1000..=9999).contains(&year) {
         Some(year as i32)
+    } else {
+        None
+    }
+}
+
+fn parse_day(input: &str) -> Option<u32> {
+    let day = parse_u32(input)?;
+    if (1..=31).contains(&day) {
+        Some(day)
     } else {
         None
     }

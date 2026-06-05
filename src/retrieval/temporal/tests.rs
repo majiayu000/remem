@@ -65,12 +65,39 @@ fn parse_exact_dates() -> Result<()> {
     for query in [
         "notes from 2026-05-04",
         "notes from May 4, 2026",
+        "notes from 4 May 2026",
+        "notes from 2026 May 4",
         "notes from 2026年5月4日",
     ] {
         let constraint =
             extract_temporal(query).ok_or_else(|| anyhow!("exact date should parse: {query}"))?;
         assert_eq!(constraint.start_epoch, expected_start);
         assert_eq!(constraint.end_epoch, expected_start + 86_400 - 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn parse_month_year_dates() -> Result<()> {
+    let expected_start = chrono::NaiveDate::from_ymd_opt(2026, 5, 1)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp();
+    let expected_end = chrono::NaiveDate::from_ymd_opt(2026, 6, 1)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp()
+        - 1;
+
+    for query in ["notes from May 2026", "notes from 2026 May"] {
+        let constraint =
+            extract_temporal(query).ok_or_else(|| anyhow!("month/year should parse: {query}"))?;
+        assert_eq!(constraint.start_epoch, expected_start);
+        assert_eq!(constraint.end_epoch, expected_end);
     }
     Ok(())
 }
@@ -235,6 +262,129 @@ fn search_by_time_prefers_temporal_fact_event_time() -> Result<()> {
         10,
         false,
     )?;
-    assert!(today_ids.is_empty());
+    assert_eq!(today_ids, vec![1]);
+    Ok(())
+}
+
+#[test]
+fn search_by_time_treats_fact_intervals_as_open_ended_and_exclusive() -> Result<()> {
+    let conn = setup_conn();
+    conn.execute_batch(MIGRATIONS[12].sql)?;
+    let now = chrono::Utc::now().timestamp();
+    let may_start = chrono::NaiveDate::from_ymd_opt(2026, 5, 1)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp();
+    let june_start = chrono::NaiveDate::from_ymd_opt(2026, 6, 1)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp();
+    let july_start = chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp();
+
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, created_at_epoch,
+          updated_at_epoch, status, branch, scope)
+         VALUES
+         (1, NULL, 'alpha', NULL, 'open ended fact', 'active since May', 'decision', NULL, ?1, ?1, 'active', 'main', 'project'),
+         (2, NULL, 'alpha', NULL, 'ended fact', 'ended before June', 'decision', NULL, ?1, ?1, 'active', 'main', 'project')",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, created_at_epoch, updated_at_epoch)
+         VALUES
+         ('alpha', 'open ended fact', 'affects_project', 'alpha', ?1, NULL,
+          ?3, 1, NULL, '[]', 0.9, NULL, 'active', ?3, ?3),
+         ('alpha', 'ended fact', 'affects_project', 'alpha', ?1, ?2,
+          ?3, 2, NULL, '[]', 0.9, NULL, 'active', ?3, ?3)",
+        rusqlite::params![may_start, june_start, now],
+    )?;
+
+    let june_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: june_start,
+            end_epoch: july_start - 1,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+
+    assert!(june_ids.contains(&1), "{june_ids:?}");
+    assert!(!june_ids.contains(&2), "{june_ids:?}");
+    Ok(())
+}
+
+#[test]
+fn search_by_time_ignores_stale_temporal_facts() -> Result<()> {
+    let conn = setup_conn();
+    conn.execute_batch(MIGRATIONS[12].sql)?;
+    let now = chrono::Utc::now().timestamp();
+    let stale_fact_time = now - 45 * 86_400;
+
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, created_at_epoch,
+          updated_at_epoch, status, branch, scope)
+         VALUES
+         (1, NULL, 'alpha', NULL, 'current event', 'stale fact should not override created_at', 'decision', NULL, ?1, ?1, 'active', 'main', 'project')",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, created_at_epoch, updated_at_epoch)
+         VALUES
+         ('alpha', 'old stale fact', 'affects_project', 'alpha', ?1, NULL,
+          ?2, 1, NULL, '[]', 0.9, NULL, 'stale', ?2, ?2)",
+        rusqlite::params![stale_fact_time, now],
+    )?;
+
+    let stale_fact_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: stale_fact_time - 10,
+            end_epoch: stale_fact_time + 10,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+    assert!(stale_fact_ids.is_empty());
+
+    let created_at_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: now - 10,
+            end_epoch: now + 10,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+    assert_eq!(created_at_ids, vec![1]);
     Ok(())
 }

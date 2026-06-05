@@ -81,10 +81,12 @@ fn temporal_sql(field: TemporalField, has_memory_facts: bool) -> (String, String
         ),
         TemporalField::EventTime if has_memory_facts => {
             let fact_event_overlap = "f.source_memory_id = memories.id \
+                 AND f.status = 'active' \
                  AND f.valid_from_epoch IS NOT NULL \
                  AND f.valid_from_epoch <= ?2 \
-                 AND COALESCE(f.valid_to_epoch, f.valid_from_epoch) >= ?1";
+                 AND (f.valid_to_epoch IS NULL OR f.valid_to_epoch > ?1)";
             let any_fact_event = "f.source_memory_id = memories.id \
+                 AND f.status = 'active' \
                  AND f.valid_from_epoch IS NOT NULL";
             (
                 format!(
