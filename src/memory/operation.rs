@@ -108,6 +108,7 @@ pub fn plan_direct_save(
         memory_type,
         topic_key,
         state_key.as_deref(),
+        now,
     )?;
     let input = MemoryOperationInput {
         source: source.to_string(),
@@ -272,6 +273,7 @@ fn existing_memory_for_direct_save(
     memory_type: &str,
     topic_key: Option<&str>,
     state_key: Option<&str>,
+    now_epoch: i64,
 ) -> Result<Option<ExistingMemory>> {
     if let Some(topic_key) = topic_key.filter(|topic_key| !topic_key.is_empty()) {
         let existing_id = conn
@@ -302,6 +304,7 @@ fn existing_memory_for_direct_save(
         &owner_key,
         memory_type,
         state_key,
+        now_epoch,
     )?
     else {
         return Ok(None);

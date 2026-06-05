@@ -107,6 +107,7 @@ pub fn insert_memory_full(
                 ownership.owner_key,
                 memory_type,
                 &decision.state_key,
+                now,
             )?;
         }
     }
