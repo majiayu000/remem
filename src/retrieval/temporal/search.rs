@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{types::ToSql, Connection};
 
-use crate::retrieval::temporal::types::TemporalConstraint;
+use crate::retrieval::temporal::types::{TemporalConstraint, TemporalField};
 
 /// Search memories within a time range, sorted by recency.
 pub fn search_by_time(
@@ -23,7 +23,9 @@ pub fn search_by_time_filtered(
     include_inactive: bool,
 ) -> Result<Vec<i64>> {
     let mut ids = Vec::new();
-    let mut conditions = vec!["updated_at_epoch BETWEEN ?1 AND ?2".to_string()];
+    let has_memory_facts = table_exists(conn, "memory_facts")?;
+    let (temporal_condition, order_epoch) = temporal_sql(constraint.field, has_memory_facts);
+    let mut conditions = vec![temporal_condition];
     let mut params_vec: Vec<Box<dyn ToSql>> = vec![
         Box::new(constraint.start_epoch),
         Box::new(constraint.end_epoch),
@@ -56,7 +58,7 @@ pub fn search_by_time_filtered(
     let sql = format!(
         "SELECT id FROM memories
          WHERE {}
-         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+         ORDER BY {order_epoch} DESC, id DESC LIMIT ?{}",
         conditions.join(" AND "),
         idx
     );
@@ -69,4 +71,60 @@ pub fn search_by_time_filtered(
     }
 
     Ok(ids)
+}
+
+fn temporal_sql(field: TemporalField, has_memory_facts: bool) -> (String, String) {
+    match field {
+        TemporalField::UpdatedAt => (
+            "updated_at_epoch BETWEEN ?1 AND ?2".to_string(),
+            "updated_at_epoch".to_string(),
+        ),
+        TemporalField::EventTime if has_memory_facts => {
+            let fact_event_overlap = "f.source_memory_id = memories.id \
+                 AND f.status = 'active' \
+                 AND f.valid_from_epoch IS NOT NULL \
+                 AND f.valid_from_epoch <= ?2 \
+                 AND (f.valid_to_epoch IS NULL OR f.valid_to_epoch > ?1)";
+            let any_fact_event = "f.source_memory_id = memories.id \
+                 AND f.status = 'active' \
+                 AND f.valid_from_epoch IS NOT NULL";
+            (
+                format!(
+                    "(EXISTS (
+                         SELECT 1 FROM memory_facts f
+                         WHERE {fact_event_overlap}
+                     )
+                     OR (
+                         NOT EXISTS (
+                             SELECT 1 FROM memory_facts f
+                             WHERE {any_fact_event}
+                         )
+                         AND created_at_epoch BETWEEN ?1 AND ?2
+                     ))"
+                ),
+                format!(
+                    "COALESCE((
+                         SELECT MAX(f.valid_from_epoch)
+                         FROM memory_facts f
+                         WHERE {fact_event_overlap}
+                     ), created_at_epoch)"
+                ),
+            )
+        }
+        TemporalField::EventTime => (
+            "created_at_epoch BETWEEN ?1 AND ?2".to_string(),
+            "created_at_epoch".to_string(),
+        ),
+    }
+}
+
+fn table_exists(conn: &Connection, table_name: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM sqlite_master
+         WHERE type = 'table' AND name = ?1",
+        [table_name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
 }

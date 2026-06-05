@@ -14,6 +14,7 @@ pub struct SearchExplain {
     pub core_terms: Vec<String>,
     pub fts_query: Option<String>,
     pub temporal_range: Option<(i64, i64)>,
+    pub temporal_field: Option<String>,
     pub rrf_k: f64,
     pub channels: Vec<SearchExplainChannel>,
     pub results: Vec<SearchExplainResult>,
@@ -40,6 +41,9 @@ impl SearchExplain {
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchExplainChannel {
     pub name: String,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
     pub hits: Vec<ChannelHit>,
 }
 

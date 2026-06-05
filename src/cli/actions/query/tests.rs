@@ -66,9 +66,12 @@ fn sample_explain() -> SearchExplain {
         core_terms: vec!["needle".to_string()],
         fts_query: Some("\"needle\"".to_string()),
         temporal_range: None,
+        temporal_field: None,
         rrf_k: 60.0,
         channels: vec![crate::retrieval::search::SearchExplainChannel {
             name: "fts".to_string(),
+            enabled: true,
+            disabled_reason: None,
             hits: vec![crate::retrieval::search::ChannelHit {
                 memory_id: 1,
                 rank: 1,

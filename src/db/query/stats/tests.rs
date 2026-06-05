@@ -30,6 +30,15 @@ fn setup_stats_schema(conn: &Connection) {
         CREATE TABLE raw_messages (
             id INTEGER PRIMARY KEY
         );
+        CREATE TABLE raw_ingest_failures (
+            id INTEGER PRIMARY KEY,
+            transcript_path TEXT,
+            error_kind TEXT NOT NULL,
+            error_message TEXT NOT NULL,
+            parse_errors INTEGER NOT NULL,
+            insert_errors INTEGER NOT NULL,
+            created_at_epoch INTEGER NOT NULL
+        );
         CREATE TABLE captured_events (
             id INTEGER PRIMARY KEY
         );
@@ -117,6 +126,13 @@ fn query_system_stats_and_related_views_share_one_definition() {
     .expect("stale observation insert should succeed");
     conn.execute("INSERT INTO session_summaries (id) VALUES (1)", [])
         .expect("summary insert should succeed");
+    conn.execute(
+        "INSERT INTO raw_ingest_failures
+         (transcript_path, error_kind, error_message, parse_errors, insert_errors, created_at_epoch)
+         VALUES ('/bad/transcript.jsonl', 'parse_errors', 'bad jsonl', 2, 1, 160)",
+        [],
+    )
+    .expect("raw ingest failure insert should succeed");
     conn.execute("INSERT INTO captured_events (id) VALUES (1)", [])
         .expect("captured event insert should succeed");
     conn.execute(
@@ -195,6 +211,13 @@ fn query_system_stats_and_related_views_share_one_definition() {
             active_observations: 1,
             session_summaries: 1,
             raw_messages: 0,
+            raw_ingest_failures: 1,
+            raw_ingest_parse_errors: 2,
+            raw_ingest_insert_errors: 1,
+            latest_raw_ingest_failure_epoch: Some(160),
+            latest_raw_ingest_failure_kind: Some("parse_errors".to_string()),
+            latest_raw_ingest_failure_path: Some("/bad/transcript.jsonl".to_string()),
+            latest_raw_ingest_failure_message: Some("bad jsonl".to_string()),
             captured_events: 1,
             pending_extraction_tasks: 1,
             processing_extraction_tasks: 1,
@@ -245,6 +268,21 @@ fn query_system_stats_and_related_views_share_one_definition() {
             },
         ]
     );
+}
+
+#[test]
+fn query_system_stats_defaults_raw_ingest_failures_when_table_is_absent() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    conn.execute("DROP TABLE raw_ingest_failures", [])?;
+
+    let system = query_system_stats(&conn)?;
+
+    assert_eq!(system.raw_ingest_failures, 0);
+    assert_eq!(system.raw_ingest_parse_errors, 0);
+    assert_eq!(system.raw_ingest_insert_errors, 0);
+    assert_eq!(system.latest_raw_ingest_failure_epoch, None);
+    Ok(())
 }
 
 fn insert_usage(

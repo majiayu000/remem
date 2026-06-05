@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::{
     AiUsageBreakdown, AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage,
@@ -13,6 +13,13 @@ pub struct SystemStats {
     pub active_observations: i64,
     pub session_summaries: i64,
     pub raw_messages: i64,
+    pub raw_ingest_failures: i64,
+    pub raw_ingest_parse_errors: i64,
+    pub raw_ingest_insert_errors: i64,
+    pub latest_raw_ingest_failure_epoch: Option<i64>,
+    pub latest_raw_ingest_failure_kind: Option<String>,
+    pub latest_raw_ingest_failure_path: Option<String>,
+    pub latest_raw_ingest_failure_message: Option<String>,
     pub captured_events: i64,
     pub pending_extraction_tasks: i64,
     pub processing_extraction_tasks: i64,
@@ -49,6 +56,7 @@ pub struct ProjectCount {
 
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
+    let raw_ingest = query_raw_ingest_failure_stats(conn)?;
     let worker_heartbeat = crate::db::worker::latest_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_worker_heartbeat(
         conn,
@@ -73,6 +81,13 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             row.get(0)
         })?,
         raw_messages: conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?,
+        raw_ingest_failures: raw_ingest.failures,
+        raw_ingest_parse_errors: raw_ingest.parse_errors,
+        raw_ingest_insert_errors: raw_ingest.insert_errors,
+        latest_raw_ingest_failure_epoch: raw_ingest.latest_epoch,
+        latest_raw_ingest_failure_kind: raw_ingest.latest_kind,
+        latest_raw_ingest_failure_path: raw_ingest.latest_path,
+        latest_raw_ingest_failure_message: raw_ingest.latest_message,
         captured_events: conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| {
             row.get(0)
         })?,
@@ -169,6 +184,79 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         worker_heartbeat_owner: worker_heartbeat.map(|heartbeat| heartbeat.owner),
         worker_heartbeat_age_secs,
     })
+}
+
+#[derive(Debug, Clone, Default)]
+struct RawIngestFailureStats {
+    failures: i64,
+    parse_errors: i64,
+    insert_errors: i64,
+    latest_epoch: Option<i64>,
+    latest_kind: Option<String>,
+    latest_path: Option<String>,
+    latest_message: Option<String>,
+}
+
+fn query_raw_ingest_failure_stats(conn: &Connection) -> Result<RawIngestFailureStats> {
+    if !table_exists(conn, "raw_ingest_failures")? {
+        return Ok(RawIngestFailureStats::default());
+    }
+
+    let (failures, parse_errors, insert_errors) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(parse_errors), 0), COALESCE(SUM(insert_errors), 0)
+         FROM raw_ingest_failures",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+    let latest = conn
+        .query_row(
+            "SELECT created_at_epoch, error_kind, transcript_path, error_message
+             FROM raw_ingest_failures
+             ORDER BY created_at_epoch DESC, id DESC
+             LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    let (latest_epoch, latest_kind, latest_path, latest_message) = match latest {
+        Some((epoch, kind, path, message)) => (Some(epoch), Some(kind), path, Some(message)),
+        None => (None, None, None, None),
+    };
+
+    Ok(RawIngestFailureStats {
+        failures,
+        parse_errors,
+        insert_errors,
+        latest_epoch,
+        latest_kind,
+        latest_path,
+        latest_message,
+    })
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+            [table],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }
 
 pub fn query_daily_activity_stats(

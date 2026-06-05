@@ -219,6 +219,14 @@ fn insert_replacement_memory(
             now,
         )?;
     }
+    crate::retrieval::vector::upsert_memory_embedding(
+        conn,
+        memory_id,
+        title,
+        content,
+        memory_type,
+        Some(topic_key),
+    )?;
     Ok(memory_id)
 }
 
@@ -496,6 +504,8 @@ fn durable_type_has_no_content_ttl(memory_type: &str) -> bool {
 
 #[cfg(test)]
 mod ttl_tests;
+#[cfg(test)]
+mod vector_tests;
 
 #[cfg(test)]
 mod tests {

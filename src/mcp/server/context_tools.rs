@@ -141,7 +141,15 @@ impl MemoryServer {
                             );
                         }
                     }
-                    errors::to_json_value(TOOL, &observations)?
+                    observation_details_with_compressed_sources(conn, &observations).map_err(
+                        |e| {
+                            crate::log::warn(
+                                "mcp",
+                                &format!("load compressed observation sources failed: {}", e),
+                            );
+                            McpToolError::db_query(TOOL, e)
+                        },
+                    )?
                 }
                 "memory" => {
                     let memories_result =
@@ -181,6 +189,30 @@ impl MemoryServer {
             errors::to_json_pretty(TOOL, &results)
         })
     }
+}
+
+fn observation_details_with_compressed_sources(
+    conn: &rusqlite::Connection,
+    observations: &[db::Observation],
+) -> anyhow::Result<serde_json::Value> {
+    let mut value = serde_json::to_value(observations)?;
+    let Some(items) = value.as_array_mut() else {
+        return Ok(value);
+    };
+    let observation_ids: Vec<i64> = observations
+        .iter()
+        .map(|observation| observation.id)
+        .collect();
+    let sources_by_observation = db::load_compressed_observation_sources(conn, &observation_ids)?;
+    for (item, observation) in items.iter_mut().zip(observations) {
+        let Some(sources) = sources_by_observation.get(&observation.id) else {
+            continue;
+        };
+        if !sources.is_empty() {
+            item["compressed_sources"] = serde_json::to_value(sources)?;
+        }
+    }
+    Ok(value)
 }
 
 fn memory_details_with_topic_traces(

@@ -90,8 +90,33 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
             context_class TEXT,
             expires_at_epoch INTEGER,
             valid_from_epoch INTEGER,
-            valid_to_epoch INTEGER
+            valid_to_epoch INTEGER,
+            state_key_id INTEGER
         );
+        CREATE TABLE memory_state_keys (
+            id INTEGER PRIMARY KEY,
+            owner_scope TEXT NOT NULL,
+            owner_key TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            state_key TEXT NOT NULL,
+            state_label TEXT,
+            state_status TEXT NOT NULL DEFAULT 'active',
+            current_memory_id INTEGER,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            UNIQUE(owner_scope, owner_key, memory_type, state_key)
+        );
+        CREATE TABLE memory_embeddings (
+            memory_id INTEGER PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            dimensions INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_memory_embeddings_model
+            ON memory_embeddings(model, updated_at_epoch);
 
         CREATE VIRTUAL TABLE memories_fts USING fts5(
             title, content, search_context,
