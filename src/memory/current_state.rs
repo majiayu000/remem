@@ -246,18 +246,12 @@ fn load_state_key_matches(
             bail!("owner_scope and owner_key must be provided together");
         }
         (None, None) => {
-            if let Some(project) = req
-                .project
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                conditions.push(format!(
-                    "((owner_scope = 'repo' AND owner_key = ?{idx})
-                       OR (owner_scope = 'user' AND owner_key = 'user:default'))"
-                ));
-                params_vec.push(Box::new(project.to_string()));
-            }
+            let project = project_filter(req)?;
+            conditions.push(format!(
+                "((owner_scope = 'repo' AND owner_key = ?{idx})
+                   OR (owner_scope = 'user' AND owner_key = 'user:default'))"
+            ));
+            params_vec.push(Box::new(project));
         }
     }
 
@@ -288,6 +282,20 @@ fn load_state_key_matches(
         })
     })?;
     crate::db::query::collect_rows(rows).context("load current-state key matches")
+}
+
+fn project_filter(req: &CurrentStateRequest) -> Result<String> {
+    if let Some(project) = req
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(project.to_string());
+    }
+    let cwd =
+        std::env::current_dir().context("resolve current project for current-state lookup")?;
+    Ok(crate::db::project_from_cwd(cwd.to_string_lossy().as_ref()))
 }
 
 fn resolve_current_state(
@@ -408,8 +416,8 @@ fn load_memories_as_of(
         "SELECT {}
          FROM memories
          WHERE state_key_id = ?1
-           AND status IN ('active', 'stale')
-           AND (valid_from_epoch IS NULL OR valid_from_epoch <= ?2)
+           AND status IN ('active', 'stale', 'archived')
+           AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
          ORDER BY COALESCE(valid_from_epoch, created_at_epoch) DESC,
                   updated_at_epoch DESC,
@@ -479,16 +487,16 @@ fn load_facts_for_memory(
     let mut conditions = vec!["source_memory_id = ?1".to_string()];
     let mut params_vec: Vec<Box<dyn ToSql>> = vec![Box::new(memory_id)];
     let mut idx = 2;
-    if let Some(as_of_epoch) = as_of_epoch {
-        conditions.push(format!(
-            "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{idx})"
-        ));
-        conditions.push(format!(
-            "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
-        ));
-        params_vec.push(Box::new(as_of_epoch));
-        idx += 1;
-    } else {
+    let effective_epoch = as_of_epoch.unwrap_or_else(|| chrono::Utc::now().timestamp());
+    conditions.push(format!(
+        "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{idx})"
+    ));
+    conditions.push(format!(
+        "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
+    ));
+    params_vec.push(Box::new(effective_epoch));
+    idx += 1;
+    if as_of_epoch.is_none() {
         conditions.push("status = 'active'".to_string());
     }
 
