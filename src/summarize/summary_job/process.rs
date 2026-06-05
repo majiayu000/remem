@@ -10,7 +10,11 @@ use super::super::input::{extract_last_assistant_message, hash_message, Summariz
 use super::super::parse::parse_summary;
 use super::persist::{build_existing_summary_context, finalize_summary, sync_native_memory};
 
-pub async fn process_summary_job_input(input: &str) -> Result<()> {
+pub async fn process_summary_job_input(
+    host: &str,
+    profile: Option<&str>,
+    input: &str,
+) -> Result<()> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = hook.session_id.clone() else {
         return Ok(());
@@ -69,7 +73,9 @@ pub async fn process_summary_job_input(input: &str) -> Result<()> {
         return Ok(());
     }
 
-    let response = call_summary_ai(&project, &user_message)
+    let payload_profile = profile_from_payload(input);
+    let effective_profile = profile.or(payload_profile.as_deref());
+    let response = call_summary_ai(host, effective_profile, &project, &user_message)
         .await
         .map_err(|err| {
             release_lock_or_log(&conn, &project, "ai-failure");
@@ -165,7 +171,12 @@ fn capture_raw_archive(
     }
 }
 
-async fn call_summary_ai(project: &str, user_message: &str) -> Result<String> {
+async fn call_summary_ai(
+    host: &str,
+    profile: Option<&str>,
+    project: &str,
+    user_message: &str,
+) -> Result<String> {
     let ai_start = std::time::Instant::now();
     let response = crate::ai::call_ai(
         SUMMARY_PROMPT,
@@ -173,6 +184,8 @@ async fn call_summary_ai(project: &str, user_message: &str) -> Result<String> {
         crate::ai::UsageContext {
             project: Some(project),
             operation: "summarize",
+            host: profile.is_none().then_some(host),
+            profile,
         },
     )
     .await?;
@@ -185,4 +198,17 @@ async fn call_summary_ai(project: &str, user_message: &str) -> Result<String> {
         ),
     );
     Ok(response)
+}
+
+fn profile_from_payload(input: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(input)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("remem_ai_profile")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|profile| !profile.is_empty())
+                .map(str::to_string)
+        })
 }

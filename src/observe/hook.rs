@@ -4,7 +4,7 @@ use crate::db;
 
 use super::native::sync_native_memory;
 
-pub async fn session_init() -> Result<()> {
+pub async fn session_init(host: Option<&str>) -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
     let input = std::io::read_to_string(std::io::stdin())?;
     crate::log::debug(
@@ -12,7 +12,7 @@ pub async fn session_init() -> Result<()> {
         &format!("raw input: {}", crate::db::truncate_str(&input, 500)),
     );
 
-    let Some(event) = session_init_event(&input) else {
+    let Some(event) = session_init_event(&input, host) else {
         timer.done("skipped");
         return Ok(());
     };
@@ -25,8 +25,8 @@ pub async fn session_init() -> Result<()> {
     Ok(())
 }
 
-fn session_init_event(input: &str) -> Option<crate::adapter::ParsedHookEvent> {
-    let Some((_adapter, event)) = crate::adapter::detect_adapter(input) else {
+fn session_init_event(input: &str, host: Option<&str>) -> Option<crate::adapter::ParsedHookEvent> {
+    let Some((_adapter, event)) = detect_adapter_for_host(input, host) else {
         crate::log::warn("session-init", "SKIP no adapter matched hook input");
         return None;
     };
@@ -38,13 +38,13 @@ fn session_init_event(input: &str) -> Option<crate::adapter::ParsedHookEvent> {
     Some(event)
 }
 
-pub async fn observe() -> Result<()> {
+pub async fn observe(host: Option<&str>) -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
-    observe_input(&input).await
+    observe_input(&input, host).await
 }
 
-async fn observe_input(input: &str) -> Result<()> {
-    let Some((adapter, event)) = crate::adapter::detect_adapter(input) else {
+async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
+    let Some((adapter, event)) = detect_adapter_for_host(input, host) else {
         return Ok(());
     };
     if adapter.should_skip(&event) || should_skip_bash_event(adapter, &event) {
@@ -56,7 +56,10 @@ async fn observe_input(input: &str) -> Result<()> {
     };
 
     let conn = db::open_db()?;
-    record_capture_event(&conn, adapter.name(), &event, &summary)?;
+    let capture_host = host
+        .map(crate::runtime_config::normalize_host)
+        .unwrap_or_else(|| adapter.name().to_string());
+    record_capture_event(&conn, &capture_host, &event, &summary)?;
     crate::memory::insert_event(
         &conn,
         &event.session_id,
@@ -92,6 +95,23 @@ async fn observe_input(input: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn detect_adapter_for_host(
+    input: &str,
+    host: Option<&str>,
+) -> Option<(
+    &'static dyn crate::adapter::ToolAdapter,
+    crate::adapter::ParsedHookEvent,
+)> {
+    let Some(host) = host else {
+        return crate::adapter::detect_adapter(input);
+    };
+    let adapter_name = crate::runtime_config::resolve_host_runtime_config(Some(host))
+        .map(|config| config.capture_adapter)
+        .unwrap_or_else(|_| crate::runtime_config::normalize_host(host));
+    crate::adapter::detect_adapter_by_name(input, &adapter_name)
+        .or_else(|| crate::adapter::detect_adapter(input))
 }
 
 fn record_capture_event(
@@ -200,7 +220,7 @@ mod tests {
     fn session_init_skips_empty_hook_input() {
         let _test_dir = ScopedTestDataDir::new("session-init-empty");
 
-        assert!(session_init_event("").is_none());
+        assert!(session_init_event("", Some("claude-code")).is_none());
     }
 
     #[test]
@@ -214,7 +234,7 @@ mod tests {
         })
         .to_string();
 
-        let Some(event) = session_init_event(&input) else {
+        let Some(event) = session_init_event(&input, Some("claude-code")) else {
             panic!("event should parse");
         };
 
@@ -276,7 +296,7 @@ mod tests {
         .to_string();
 
         let test_result = async {
-            observe_input(&input).await?;
+            observe_input(&input, Some("claude-code")).await?;
 
             let conn = db::open_db()?;
             let captured_count: i64 =

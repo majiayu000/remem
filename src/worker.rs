@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::ffi::OsString;
 use tokio::time::{sleep, Duration};
 
 use crate::{db, summarize};
@@ -14,53 +13,6 @@ const JOB_TIMEOUT_SECS: u64 = 420;
 const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
 const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
-
-struct ScopedExecutorEnv {
-    previous: Vec<(&'static str, Option<OsString>)>,
-}
-
-impl ScopedExecutorEnv {
-    fn for_job(job: &db::Job) -> Self {
-        let Some(executor) = executor_for_host(&job.host) else {
-            return Self {
-                previous: Vec::new(),
-            };
-        };
-        let keys: &[&'static str] = match job.job_type {
-            db::JobType::Observation => &[],
-            db::JobType::Summary => &["REMEM_SUMMARY_EXECUTOR"],
-            db::JobType::Compress | db::JobType::Dream => &[],
-        };
-        let previous = keys
-            .iter()
-            .map(|key| {
-                let old = std::env::var_os(key);
-                unsafe { std::env::set_var(key, executor) };
-                (*key, old)
-            })
-            .collect();
-        Self { previous }
-    }
-}
-
-impl Drop for ScopedExecutorEnv {
-    fn drop(&mut self) {
-        for (key, old) in self.previous.iter().rev() {
-            match old {
-                Some(value) => unsafe { std::env::set_var(key, value) },
-                None => unsafe { std::env::remove_var(key) },
-            }
-        }
-    }
-}
-
-fn executor_for_host(host: &str) -> Option<&'static str> {
-    match host {
-        "codex-cli" => Some("codex-cli"),
-        "claude-code" => Some("claude-cli"),
-        _ => None,
-    }
-}
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
@@ -100,18 +52,32 @@ async fn process_job(job: &db::Job) -> Result<()> {
             Ok(())
         }
         db::JobType::Summary => {
-            summarize::process_summary_job_input(&job.payload_json).await?;
+            summarize::process_summary_job_input(&job.host, None, &job.payload_json).await?;
             Ok(())
         }
         db::JobType::Compress => {
-            summarize::process_compress_job(&job.project).await?;
+            let profile = job_profile(&job.payload_json);
+            summarize::process_compress_job(&job.host, &job.project, profile.as_deref()).await?;
             Ok(())
         }
         db::JobType::Dream => {
-            crate::dream::process_dream_job(&job.project).await?;
+            crate::dream::process_dream_job_with_host(&job.project, &job.host).await?;
             Ok(())
         }
     }
+}
+
+fn job_profile(payload_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("remem_ai_profile")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|profile| !profile.is_empty())
+                .map(str::to_string)
+        })
 }
 
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
@@ -155,11 +121,9 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                 ),
             );
 
-            let scoped_executor = ScopedExecutorEnv::for_job(&job);
             let timed =
                 tokio::time::timeout(Duration::from_secs(JOB_TIMEOUT_SECS), process_job(&job))
                     .await;
-            drop(scoped_executor);
             let conn = db::open_db()?;
             match timed {
                 Ok(Ok(())) => {
@@ -225,7 +189,7 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::run;
-    use test_support::{install_stub_codex, ScopedEnv};
+    use test_support::install_stub_codex;
 
     mod test_support;
 
@@ -322,14 +286,7 @@ mod tests {
             .as_os_str()
             .to_str()
             .expect("stub codex path should be valid utf-8");
-        let _env = ScopedEnv::set(&[
-            ("REMEM_EXECUTOR", None),
-            ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
-            ("REMEM_CODEX_PATH", Some(stub_codex_str)),
-            ("REMEM_CLAUDE_PATH", Some("/definitely/missing/claude")),
-            ("ANTHROPIC_API_KEY", None),
-            ("ANTHROPIC_AUTH_TOKEN", None),
-        ]);
+        configure_codex_stub(stub_codex_str)?;
 
         let conn = db::open_db()?;
         let outcome = db::record_captured_event(
@@ -396,14 +353,7 @@ mod tests {
             .as_os_str()
             .to_str()
             .expect("stub codex path should be valid utf-8");
-        let _env = ScopedEnv::set(&[
-            ("REMEM_EXECUTOR", None),
-            ("REMEM_SUMMARY_EXECUTOR", Some("codex-cli")),
-            ("REMEM_CODEX_PATH", Some(stub_codex_str)),
-            ("REMEM_CLAUDE_PATH", Some("/definitely/missing/claude")),
-            ("ANTHROPIC_API_KEY", None),
-            ("ANTHROPIC_AUTH_TOKEN", None),
-        ]);
+        configure_codex_stub(stub_codex_str)?;
 
         let conn = db::open_db()?;
         let outcome = db::record_captured_event(
@@ -485,6 +435,12 @@ mod tests {
             heartbeat.updated_at_epoch >= heartbeat.started_at_epoch,
             "heartbeat should advance updated_at_epoch"
         );
+        Ok(())
+    }
+
+    fn configure_codex_stub(stub_codex: &str) -> anyhow::Result<()> {
+        crate::runtime_config::init_config()?;
+        crate::runtime_config::set_config_value("memory_ai.profiles.codex.path", stub_codex)?;
         Ok(())
     }
 }

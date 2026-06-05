@@ -18,7 +18,12 @@ pub(super) struct MergeResult {
     pub superseded_ids: Vec<i64>,
 }
 
-pub(super) async fn merge_cluster(cluster: &Cluster, project: &str) -> Result<MergeDecision> {
+pub(super) async fn merge_cluster(
+    cluster: &Cluster,
+    project: &str,
+    host: Option<String>,
+    profile: Option<String>,
+) -> Result<MergeDecision> {
     let user_message = build_user_message(&cluster.members);
 
     let response = crate::ai::call_ai(
@@ -27,6 +32,8 @@ pub(super) async fn merge_cluster(cluster: &Cluster, project: &str) -> Result<Me
         crate::ai::UsageContext {
             project: Some(project),
             operation: "dream",
+            host: profile.is_none().then_some(host.as_deref()).flatten(),
+            profile: profile.as_deref(),
         },
     )
     .await?;

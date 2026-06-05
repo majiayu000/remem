@@ -97,15 +97,20 @@ pub(crate) struct CandidatePersistSummary {
 pub(crate) async fn process(task: &db::ExtractionTask) -> Result<MemoryCandidateResult> {
     let mut conn = db::open_db()?;
     let project = task.project.clone();
+    let ai_profile = task.ai_profile.clone();
     process_with_generator(&mut conn, task, move |prompt| {
         let project = project.clone();
+        let ai_profile = ai_profile.clone();
         async move {
+            let profile = ai_profile.as_deref();
             crate::ai::call_ai(
                 MEMORY_CANDIDATE_SYSTEM,
                 &prompt,
                 crate::ai::UsageContext {
                     project: Some(project.as_str()),
                     operation: "memory_candidate",
+                    host: profile.is_none().then_some(task.host.as_str()),
+                    profile,
                 },
             )
             .await

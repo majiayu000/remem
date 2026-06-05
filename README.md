@@ -94,12 +94,12 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.claude/settings.json
 jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 ```
 
-Expected command prefixes include; additional flags such as `--color` or
-`--gate strict` may follow:
+Expected commands are host-only; model, executor, and context policy live in
+`~/.remem/config.toml`:
 
 ```text
-REMEM_CONTEXT_HOST=claude-code /Users/you/.local/bin/remem context ...
-REMEM_CONTEXT_HOST=codex-cli /Users/you/.local/bin/remem context ...
+/Users/you/.local/bin/remem context --host claude-code
+/Users/you/.local/bin/remem context --host codex-cli
 ```
 
 ## Use With Codex
@@ -117,6 +117,7 @@ remem status
 - Enables Codex hooks with `[features].hooks = true` in `~/.codex/config.toml`
 - Registers `remem` as an MCP server in `~/.codex/config.toml`
 - Writes Codex hook commands to `~/.codex/hooks.json`
+- Creates or updates `~/.remem/config.toml` memory-AI profiles
 
 After restarting Codex, remem automatically injects relevant project memory at
 session start and summarizes the session at stop. Codex can also call the MCP
@@ -125,10 +126,10 @@ tools exposed by `remem mcp`, including `search`, `get_observations`,
 
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.
-The installed Codex `SessionStart` hook uses strict duplicate-injection gating,
-so a mid-chat `SessionStart` repeat stays silent after the first injection for
-the same session. It does not install high-frequency Bash observation by
-default.
+Codex uses strict duplicate-injection gating via
+`[memory_ai.hosts."codex-cli"].context_gate = "strict"`, so a mid-chat
+`SessionStart` repeat stays silent after the first injection for the same
+session. It does not install high-frequency Bash observation by default.
 
 ## Distribution Channels
 
@@ -282,8 +283,51 @@ tagged by source:
 
 Cost is an estimate, not an invoice. Historical rows may be text estimates or
 may have been repriced from older rows that did not store the exact model.
-Codex summarization defaults to `gpt-5.2`; set `REMEM_CODEX_MODEL=auto` to let
-Codex choose its own default, or set any explicit Codex model name.
+
+## Memory AI Configuration
+
+Memory AI execution is configured in `~/.remem/config.toml` (override path with
+`REMEM_CONFIG`). Hooks pass only `--host`; the config maps each host to one
+profile used by summarize, flush/extract, compress, and dream.
+
+```bash
+remem config path
+remem config show
+remem config set memory_ai.profiles.codex.model gpt-5.2
+```
+
+For normal model switching, prefer the higher-level `remem model` commands:
+
+```bash
+remem model current
+remem model list
+remem model use cheap
+remem model use balanced --dry-run
+remem model use gpt-5.2 --reasoning medium
+remem model use haiku --host claude-code
+remem model test
+remem model test --live
+remem model rollback
+```
+
+`remem model test` only validates the selected config unless `--live` is set.
+`remem model use` saves a rollback backup before writing the config. Built-in
+presets are Codex-focused; use explicit model names for Claude Code profiles.
+
+Default Codex profile:
+
+```toml
+[memory_ai.hosts."codex-cli"]
+memory_profile = "codex"
+context_gate = "strict"
+context_color = true
+capture_adapter = "codex-cli"
+
+[memory_ai.profiles.codex]
+executor = "codex-cli"
+model = "gpt-5.2"
+path = "codex"
+```
 
 ## Commands
 
@@ -304,6 +348,15 @@ remem encrypt
 remem api --port 5567
 remem status
 remem status --json
+remem config show
+remem config set memory_ai.profiles.codex.model gpt-5.2
+remem model current
+remem model list
+remem model use balanced --dry-run
+remem model use gpt-5.2 --reasoning medium
+remem model use haiku --host claude-code
+remem model test [--live]
+remem model rollback
 remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending list-failed --json
@@ -319,7 +372,7 @@ remem preferences add "text"
 remem preferences remove 42
 remem context --cwd .
 remem cleanup
-remem dream [--project X] [--dry-run]
+remem dream [--project X] [--profile NAME] [--dry-run]
 remem install --target codex
 remem mcp
 remem sync-memory --cwd .

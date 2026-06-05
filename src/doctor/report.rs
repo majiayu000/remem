@@ -5,6 +5,7 @@ use anyhow::Result;
 use super::database::{check_database, check_disk_space, check_pending_queue, check_worker_daemon};
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::native_memory::check_native_memory_sync;
+use super::runtime_config_check::check_runtime_config;
 use super::schema::check_schema_migration;
 use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION};
 
@@ -47,6 +48,7 @@ pub(crate) fn run_doctor_with_writer<W: Write>(
 fn collect_checks() -> Vec<Check> {
     let mut checks = vec![check_binary(), check_schema_migration(), check_database()];
     checks.push(check_install_paths());
+    checks.push(check_runtime_config());
     checks.extend(check_hooks());
     checks.extend(check_mcp());
     checks.push(check_worker_daemon());
