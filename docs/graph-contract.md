@@ -30,8 +30,9 @@ Graph node references are typed by `(node_kind, node_id)`.
 
 Rust code must construct refs through `GraphNodeRef` so invalid ids fail before
 SQL execution. The database also has insert/update triggers that reject missing
-backing rows for every node kind. This is intentional: ad hoc SQL should fail
-closed rather than leave dangling graph references.
+backing rows for every node kind, plus delete triggers that remove graph edges
+when a referenced node is hard-deleted. This is intentional: ad hoc SQL should
+fail closed rather than leave dangling graph references.
 
 ## Edge Storage
 
@@ -43,7 +44,7 @@ Migration `v031_graph_edges` creates `graph_edges`:
 | `edge_trust` | `trusted` or `diagnostic_hint`, derived from `edge_type`. |
 | `from_node_kind` / `from_node_id` | Typed source node ref. |
 | `to_node_kind` / `to_node_id` | Typed target node ref. |
-| `source_event_ids` | JSON array of `captured_events.id` evidence. |
+| `source_event_ids` | JSON array of positive `captured_events.id` evidence. |
 | `source_candidate_id` | Candidate row that proposed the trusted edge. |
 | `source_operation_id` | Operation log row that accepted/wrote the edge. |
 | `confidence` | Extractor/reviewer confidence, constrained to `0.0..=1.0`. |
@@ -53,8 +54,25 @@ Migration `v031_graph_edges` creates `graph_edges`:
 
 Trusted edges require non-empty `source_event_ids`, `source_candidate_id`,
 `source_operation_id`, `confidence`, `reason`, and `created_at_epoch`.
+`source_event_ids` must be a non-empty JSON array of existing captured event
+ids. If a source event is later hard-deleted, graph edges using it as trusted
+evidence are removed with it.
 Diagnostic hints may omit provenance because they are not authoritative inputs
 to retrieval or memory truth.
+
+## Endpoint Constraints
+
+Each edge type has fixed endpoint kinds. Rust `insert_graph_edge` validates the
+same matrix that the schema enforces for raw SQL writers:
+
+| Edge types | Allowed endpoints |
+|---|---|
+| `supersedes`, `duplicates`, `conflicts`, `derived_from`, `merged_into`, `split_from` | Same node kind on both sides. |
+| `extracted_from` | `entity`, `fact`, `state`, or `topic` to `episode`. |
+| `mentions` | `memory` or `episode` to `entity`. |
+| `has_state` | `memory` to `state`. |
+| `has_topic` | `memory` or `episode` to `topic`. |
+| `similar_to`, `candidate_hint`, `co_occurs_with` | Same node kind on both sides. |
 
 ## Edge Types
 

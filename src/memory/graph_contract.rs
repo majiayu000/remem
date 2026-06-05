@@ -131,6 +131,52 @@ impl GraphEdgeType {
             | Self::HasTopic => GraphEdgeTrust::Trusted,
         }
     }
+
+    pub const fn allows_endpoints(self, from: GraphNodeKind, to: GraphNodeKind) -> bool {
+        match self {
+            Self::Supersedes
+            | Self::Duplicates
+            | Self::Conflicts
+            | Self::DerivedFrom
+            | Self::MergedInto
+            | Self::SplitFrom
+            | Self::SimilarTo
+            | Self::CandidateHint
+            | Self::CoOccursWith => same_graph_node_kind(from, to),
+            Self::ExtractedFrom => {
+                matches!(
+                    from,
+                    GraphNodeKind::Entity
+                        | GraphNodeKind::Fact
+                        | GraphNodeKind::State
+                        | GraphNodeKind::Topic
+                ) && matches!(to, GraphNodeKind::Episode)
+            }
+            Self::Mentions => {
+                matches!(from, GraphNodeKind::Memory | GraphNodeKind::Episode)
+                    && matches!(to, GraphNodeKind::Entity)
+            }
+            Self::HasState => {
+                matches!(from, GraphNodeKind::Memory) && matches!(to, GraphNodeKind::State)
+            }
+            Self::HasTopic => {
+                matches!(from, GraphNodeKind::Memory | GraphNodeKind::Episode)
+                    && matches!(to, GraphNodeKind::Topic)
+            }
+        }
+    }
+}
+
+const fn same_graph_node_kind(left: GraphNodeKind, right: GraphNodeKind) -> bool {
+    matches!(
+        (left, right),
+        (GraphNodeKind::Memory, GraphNodeKind::Memory)
+            | (GraphNodeKind::Entity, GraphNodeKind::Entity)
+            | (GraphNodeKind::Fact, GraphNodeKind::Fact)
+            | (GraphNodeKind::Episode, GraphNodeKind::Episode)
+            | (GraphNodeKind::State, GraphNodeKind::State)
+            | (GraphNodeKind::Topic, GraphNodeKind::Topic)
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -153,7 +199,7 @@ pub struct GraphEdgeInput<'a> {
 }
 
 pub fn insert_graph_edge(conn: &Connection, input: &GraphEdgeInput<'_>) -> Result<i64> {
-    validate_graph_edge(input)?;
+    validate_graph_edge(conn, input)?;
     let now = chrono::Utc::now().timestamp();
     let source_event_ids = serde_json::to_string(input.provenance.source_event_ids)
         .context("serialize graph edge source event ids")?;
@@ -184,9 +230,20 @@ pub fn insert_graph_edge(conn: &Connection, input: &GraphEdgeInput<'_>) -> Resul
     Ok(conn.last_insert_rowid())
 }
 
-fn validate_graph_edge(input: &GraphEdgeInput<'_>) -> Result<()> {
+fn validate_graph_edge(conn: &Connection, input: &GraphEdgeInput<'_>) -> Result<()> {
     if input.from_node == input.to_node {
         bail!("graph edge cannot link a node to itself");
+    }
+    if !input
+        .edge_type
+        .allows_endpoints(input.from_node.kind, input.to_node.kind)
+    {
+        bail!(
+            "graph edge type {} does not allow {} to {} endpoints",
+            input.edge_type.as_str(),
+            input.from_node.kind.as_str(),
+            input.to_node.kind.as_str()
+        );
     }
     if let (Some(valid_from), Some(valid_to)) = (input.valid_from_epoch, input.valid_to_epoch) {
         if valid_to < valid_from {
@@ -199,17 +256,32 @@ fn validate_graph_edge(input: &GraphEdgeInput<'_>) -> Result<()> {
         }
     }
     if input.edge_type.trust() == GraphEdgeTrust::Trusted {
-        validate_trusted_provenance(input.provenance)?;
+        validate_trusted_provenance(conn, input.provenance)?;
     }
     Ok(())
 }
 
-fn validate_trusted_provenance(provenance: GraphEdgeProvenance<'_>) -> Result<()> {
+fn validate_trusted_provenance(
+    conn: &Connection,
+    provenance: GraphEdgeProvenance<'_>,
+) -> Result<()> {
     if provenance.source_event_ids.is_empty() {
         bail!("trusted graph edge requires source event ids");
     }
     if provenance.source_event_ids.iter().any(|id| *id <= 0) {
         bail!("trusted graph edge source event ids must be positive");
+    }
+    for event_id in provenance.source_event_ids {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM captured_events WHERE id = ?1)",
+                [event_id],
+                |row| row.get(0),
+            )
+            .with_context(|| format!("validate graph edge source event id {event_id}"))?;
+        if !exists {
+            bail!("trusted graph edge source event id {event_id} does not exist");
+        }
     }
     if provenance.source_candidate_id.is_none() {
         bail!("trusted graph edge requires source candidate id");
@@ -235,7 +307,9 @@ mod tests {
     struct GraphFixture {
         conn: Connection,
         memory_id: i64,
+        second_memory_id: i64,
         entity_id: i64,
+        second_entity_id: i64,
         fact_id: i64,
         episode_id: i64,
         state_id: i64,
@@ -293,12 +367,28 @@ mod tests {
             "decision",
             None,
         )?;
+        let second_memory_id = crate::memory::insert_memory(
+            &conn,
+            Some("session-a"),
+            "/tmp/remem-graph",
+            Some("graph-contract-2"),
+            "Graph contract follow-up",
+            "Typed graph refs keep endpoints constrained.",
+            "decision",
+            None,
+        )?;
         conn.execute(
             "INSERT INTO entities(canonical_name, entity_type, mention_count, created_at_epoch)
              VALUES ('Graph API', 'concept', 1, ?1)",
             [now],
         )?;
         let entity_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO entities(canonical_name, entity_type, mention_count, created_at_epoch)
+             VALUES ('Graph API Review', 'concept', 1, ?1)",
+            [now],
+        )?;
+        let second_entity_id = conn.last_insert_rowid();
         conn.execute(
             "INSERT INTO memory_state_keys(owner_scope, owner_key, memory_type, state_key,
                                            state_label, current_memory_id,
@@ -369,7 +459,9 @@ mod tests {
         Ok(GraphFixture {
             conn,
             memory_id,
+            second_memory_id,
             entity_id,
+            second_entity_id,
             fact_id,
             episode_id,
             state_id,
@@ -387,6 +479,27 @@ mod tests {
             confidence: Some(0.9),
             reason: Some("test provenance"),
         }
+    }
+
+    fn insert_raw_trusted_mention(
+        fixture: &GraphFixture,
+        source_event_ids: &str,
+    ) -> rusqlite::Result<usize> {
+        fixture.conn.execute(
+            "INSERT INTO graph_edges
+             (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+              source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+              created_at_epoch)
+             VALUES ('mentions', 'trusted', 'memory', ?1, 'entity', ?2,
+                     ?3, ?4, ?5, 0.9, 'raw trusted provenance', 1)",
+            params![
+                fixture.memory_id,
+                fixture.entity_id,
+                source_event_ids,
+                fixture.candidate_id,
+                fixture.operation_id
+            ],
+        )
     }
 
     #[test]
@@ -475,7 +588,7 @@ mod tests {
             &GraphEdgeInput {
                 edge_type: GraphEdgeType::SimilarTo,
                 from_node: GraphNodeRef::memory(fixture.memory_id)?,
-                to_node: GraphNodeRef::entity(fixture.entity_id)?,
+                to_node: GraphNodeRef::memory(fixture.second_memory_id)?,
                 provenance: GraphEdgeProvenance::default(),
                 valid_from_epoch: None,
                 valid_to_epoch: None,
@@ -498,7 +611,7 @@ mod tests {
             &GraphEdgeInput {
                 edge_type: GraphEdgeType::SimilarTo,
                 from_node: GraphNodeRef::memory(fixture.memory_id)?,
-                to_node: GraphNodeRef::entity(99_999)?,
+                to_node: GraphNodeRef::memory(99_999)?,
                 provenance: GraphEdgeProvenance::default(),
                 valid_from_epoch: None,
                 valid_to_epoch: None,
@@ -507,7 +620,36 @@ mod tests {
         .expect_err("missing graph target must fail");
         assert!(err.to_string().contains("insert graph edge"));
         let chain = format!("{err:#}");
-        assert!(chain.contains("graph_edges to entity node missing"));
+        assert!(chain.contains("graph_edges to memory node missing"));
+        Ok(())
+    }
+
+    #[test]
+    fn trusted_edge_requires_existing_source_events() -> Result<()> {
+        let fixture = fixture()?;
+        let missing_event_id = 99_999_i64;
+        let source_event_ids = [missing_event_id];
+        let err = insert_graph_edge(
+            &fixture.conn,
+            &GraphEdgeInput {
+                edge_type: GraphEdgeType::Mentions,
+                from_node: GraphNodeRef::memory(fixture.memory_id)?,
+                to_node: GraphNodeRef::entity(fixture.entity_id)?,
+                provenance: GraphEdgeProvenance {
+                    source_event_ids: &source_event_ids,
+                    source_candidate_id: Some(fixture.candidate_id),
+                    source_operation_id: Some(fixture.operation_id),
+                    confidence: Some(0.9),
+                    reason: Some("missing event must fail"),
+                },
+                valid_from_epoch: None,
+                valid_to_epoch: None,
+            },
+        )
+        .expect_err("trusted graph edge with missing evidence must fail");
+        assert!(err
+            .to_string()
+            .contains("source event id 99999 does not exist"));
         Ok(())
     }
 
@@ -519,12 +661,122 @@ mod tests {
             .execute(
                 "INSERT INTO graph_edges
                  (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+                  source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
                   created_at_epoch)
-                 VALUES ('made_up', 'trusted', 'memory', ?1, 'entity', ?2, 1)",
-                params![fixture.memory_id, fixture.entity_id],
+                 VALUES ('made_up', 'trusted', 'memory', ?1, 'entity', ?2,
+                         ?3, ?4, ?5, 0.9, 'invalid edge type', 1)",
+                params![
+                    fixture.memory_id,
+                    fixture.entity_id,
+                    format!("[{}]", fixture.episode_id),
+                    fixture.candidate_id,
+                    fixture.operation_id
+                ],
             )
             .expect_err("invalid graph edge type must fail");
         assert!(err.to_string().contains("CHECK constraint failed"));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_source_event_ids_fail_closed_at_schema_boundary() -> Result<()> {
+        let fixture = fixture()?;
+        for source_event_ids in ["[ ]", "not-json", "{\"id\":1}", "[\"event-a\"]", "[99999]"] {
+            assert!(
+                insert_raw_trusted_mention(&fixture, source_event_ids).is_err(),
+                "invalid source_event_ids {source_event_ids:?} must fail"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edge_type_rejects_invalid_endpoint_kinds() -> Result<()> {
+        let fixture = fixture()?;
+        let err = insert_graph_edge(
+            &fixture.conn,
+            &GraphEdgeInput {
+                edge_type: GraphEdgeType::HasState,
+                from_node: GraphNodeRef::entity(fixture.entity_id)?,
+                to_node: GraphNodeRef::memory(fixture.memory_id)?,
+                provenance: trusted_provenance(&fixture),
+                valid_from_epoch: None,
+                valid_to_epoch: None,
+            },
+        )
+        .expect_err("has_state with entity to memory endpoints must fail");
+        assert!(err
+            .to_string()
+            .contains("graph edge type has_state does not allow entity to memory endpoints"));
+
+        let err = fixture
+            .conn
+            .execute(
+                "INSERT INTO graph_edges
+                 (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+                  source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+                  created_at_epoch)
+                 VALUES ('has_state', 'trusted', 'entity', ?1, 'memory', ?2,
+                         ?3, ?4, ?5, 0.9, 'invalid endpoints', 1)",
+                params![
+                    fixture.entity_id,
+                    fixture.memory_id,
+                    format!("[{}]", fixture.episode_id),
+                    fixture.candidate_id,
+                    fixture.operation_id
+                ],
+            )
+            .expect_err("raw SQL invalid graph endpoints must fail");
+        assert!(err.to_string().contains("CHECK constraint failed"));
+        Ok(())
+    }
+
+    #[test]
+    fn parent_node_deletes_remove_graph_edges() -> Result<()> {
+        let fixture = fixture()?;
+        let entity_edge_id = insert_graph_edge(
+            &fixture.conn,
+            &GraphEdgeInput {
+                edge_type: GraphEdgeType::Mentions,
+                from_node: GraphNodeRef::memory(fixture.memory_id)?,
+                to_node: GraphNodeRef::entity(fixture.second_entity_id)?,
+                provenance: trusted_provenance(&fixture),
+                valid_from_epoch: None,
+                valid_to_epoch: None,
+            },
+        )?;
+        let state_edge_id = insert_graph_edge(
+            &fixture.conn,
+            &GraphEdgeInput {
+                edge_type: GraphEdgeType::HasState,
+                from_node: GraphNodeRef::memory(fixture.memory_id)?,
+                to_node: GraphNodeRef::state(fixture.state_id)?,
+                provenance: trusted_provenance(&fixture),
+                valid_from_epoch: None,
+                valid_to_epoch: None,
+            },
+        )?;
+        fixture.conn.execute(
+            "DELETE FROM entities WHERE id = ?1",
+            [fixture.second_entity_id],
+        )?;
+        let entity_edge_count: i64 = fixture.conn.query_row(
+            "SELECT COUNT(*) FROM graph_edges WHERE id = ?1",
+            [entity_edge_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(entity_edge_count, 0);
+
+        fixture.conn.execute(
+            "DELETE FROM memory_state_keys WHERE id = ?1",
+            [fixture.state_id],
+        )?;
+        let state_edge_count: i64 = fixture.conn.query_row(
+            "SELECT COUNT(*) FROM graph_edges WHERE id = ?1",
+            [state_edge_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(state_edge_count, 0);
         Ok(())
     }
 }
