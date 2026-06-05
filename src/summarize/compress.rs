@@ -5,6 +5,9 @@ use crate::memory::format;
 
 use super::constants::{COMPRESS_BATCH, COMPRESS_PROMPT, COMPRESS_THRESHOLD, KEEP_RECENT};
 
+const NO_REPLACEMENTS_REASON: &str = "no replacement observations parsed";
+const INVALID_REPLACEMENTS_REASON: &str = "invalid replacement observations parsed";
+
 pub async fn process_compress_job(host: &str, project: &str, profile: Option<&str>) -> Result<()> {
     maybe_compress(host, project, profile).await
 }
@@ -51,19 +54,30 @@ async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Res
         }
     };
 
-    let compressed = format::parse_observations(&response);
-    if !compressed.is_empty() {
-        store_compressed_observations(&conn, project, &response, &compressed)?;
-    }
-
     let ids: Vec<i64> = old_obs.iter().map(|obs| obs.id).collect();
-    let marked = db::mark_observations_compressed(&conn, &ids)?;
-    timer.done(&format!(
-        "{} old → {} compressed, {} marked",
-        old_obs.len(),
-        compressed.len(),
-        marked
-    ));
+    let outcome = apply_compression_response(&conn, project, &ids, &response)?;
+    match outcome {
+        CompressionOutcome::Skipped {
+            reason,
+            source_count,
+        } => {
+            crate::log::info(
+                "compress",
+                &format!("project={project} skipped compression: {reason}"),
+            );
+            timer.done(&format!("{source_count} old → skipped ({reason})"));
+        }
+        CompressionOutcome::Compressed {
+            source_count,
+            replacement_count,
+            marked_count,
+        } => {
+            timer.done(&format!(
+                "{} old → {} compressed, {} marked",
+                source_count, replacement_count, marked_count
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -121,3 +135,92 @@ fn store_compressed_observations(
 
     Ok(())
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CompressionOutcome {
+    Skipped {
+        reason: &'static str,
+        source_count: usize,
+    },
+    Compressed {
+        source_count: usize,
+        replacement_count: usize,
+        marked_count: usize,
+    },
+}
+
+fn apply_compression_response(
+    conn: &rusqlite::Connection,
+    project: &str,
+    source_ids: &[i64],
+    response: &str,
+) -> Result<CompressionOutcome> {
+    let compressed = format::parse_observations(response);
+    if compressed.is_empty() {
+        return Ok(CompressionOutcome::Skipped {
+            reason: NO_REPLACEMENTS_REASON,
+            source_count: source_ids.len(),
+        });
+    }
+    if compressed.iter().any(|obs| !has_replacement_content(obs)) {
+        return Ok(CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: source_ids.len(),
+        });
+    }
+
+    with_compression_savepoint(conn, || {
+        store_compressed_observations(conn, project, response, &compressed)?;
+        let marked = db::mark_observations_compressed(conn, source_ids)?;
+        if marked != source_ids.len() {
+            anyhow::bail!(
+                "marked {marked} of {} source observations compressed",
+                source_ids.len()
+            );
+        }
+        Ok(CompressionOutcome::Compressed {
+            source_count: source_ids.len(),
+            replacement_count: compressed.len(),
+            marked_count: marked,
+        })
+    })
+}
+
+fn has_replacement_content(obs: &format::ParsedObservation) -> bool {
+    has_text(obs.title.as_deref())
+        || has_text(obs.subtitle.as_deref())
+        || has_text(obs.narrative.as_deref())
+        || !obs.facts.is_empty()
+        || !obs.concepts.is_empty()
+}
+
+fn has_text(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn with_compression_savepoint<T>(
+    conn: &rusqlite::Connection,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("SAVEPOINT remem_compression_apply;")?;
+    match f() {
+        Ok(value) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_compression_apply;")?;
+            Ok(value)
+        }
+        Err(error) => {
+            if let Err(rollback_error) = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_compression_apply;
+                 RELEASE SAVEPOINT remem_compression_apply;",
+            ) {
+                return Err(error.context(format!(
+                    "compression rollback also failed: {rollback_error}"
+                )));
+            }
+            Err(error)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
