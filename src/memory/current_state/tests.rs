@@ -628,3 +628,101 @@ fn as_of_why_excludes_edges_created_after_cutoff() -> Result<()> {
     assert_eq!(result.why[0].evidence_event_ids, vec![1]);
     Ok(())
 }
+
+#[test]
+fn as_of_history_excludes_edges_created_after_cutoff() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        100,
+        Some(100),
+        None,
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        3,
+        "/repo",
+        "Future merged target",
+        "Use canary.",
+        "stale",
+        10,
+        130,
+        Some(130),
+        Some(150),
+    )?;
+    set_current_memory(&conn, 2)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, evidence_event_ids,
+          reason, created_at_epoch)
+         VALUES ('merged_into', 3, 2, 10, '[9]', 'future merge', 150)",
+        [],
+    )?;
+
+    let result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(120),
+            ..request()
+        },
+    )?;
+
+    assert_eq!(result.current.as_ref().map(|memory| memory.id), Some(2));
+    assert!(result.history.is_empty());
+    Ok(())
+}
+
+#[test]
+fn as_of_facts_exclude_facts_learned_after_cutoff() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        100,
+        Some(100),
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+    for (id, object, learned_at) in [(1_i64, "known", 110_i64), (2_i64, "future", 150_i64)] {
+        conn.execute(
+            "INSERT INTO memory_facts
+             (id, project, subject, predicate, object, valid_from_epoch,
+              valid_to_epoch, learned_at_epoch, source_memory_id, source_event_ids,
+              confidence, status, created_at_epoch, updated_at_epoch)
+             VALUES (?1, '/repo', 'deploy-target', 'affects_project', ?2, 100,
+                     NULL, ?3, 2, '[]', 0.9, 'active', ?3, ?3)",
+            params![id, object, learned_at],
+        )?;
+    }
+
+    let result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(120),
+            ..request()
+        },
+    )?;
+
+    assert_eq!(
+        result
+            .facts
+            .iter()
+            .map(|fact| fact.object.as_str())
+            .collect::<Vec<_>>(),
+        vec!["known"]
+    );
+    Ok(())
+}

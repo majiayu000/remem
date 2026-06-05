@@ -159,7 +159,7 @@ pub fn current_state(conn: &Connection, req: &CurrentStateRequest) -> Result<Cur
     let history = if req.include_history {
         current
             .as_ref()
-            .map(|current| load_history(conn, current.id))
+            .map(|current| load_history(conn, current.id, req.as_of_epoch))
             .transpose()?
             .unwrap_or_default()
     } else {
@@ -434,7 +434,18 @@ fn load_memories_as_of(
     crate::db::query::collect_rows(rows).context("load current-state memories as-of")
 }
 
-fn load_history(conn: &Connection, current_memory_id: i64) -> Result<Vec<CurrentStateMemoryRef>> {
+fn load_history(
+    conn: &Connection,
+    current_memory_id: i64,
+    as_of_epoch: Option<i64>,
+) -> Result<Vec<CurrentStateMemoryRef>> {
+    let mut params_vec: Vec<Box<dyn ToSql>> =
+        vec![Box::new(current_memory_id), Box::new(HISTORY_LIMIT)];
+    let mut as_of_filter = String::new();
+    if let Some(as_of_epoch) = as_of_epoch {
+        as_of_filter.push_str(" AND e.created_at_epoch <= ?3");
+        params_vec.push(Box::new(as_of_epoch));
+    }
     let sql = format!(
         "SELECT {}, e.edge_type, e.reason, e.evidence_event_ids,
                 e.source_candidate_id, e.source_operation_id
@@ -442,12 +453,14 @@ fn load_history(conn: &Connection, current_memory_id: i64) -> Result<Vec<Current
          JOIN memories m ON m.id = e.from_memory_id
          WHERE e.to_memory_id = ?1
            AND e.edge_type IN ('supersedes', 'merged_into')
+           {as_of_filter}
          ORDER BY e.created_at_epoch DESC, e.id DESC
          LIMIT ?2",
         prefixed_memory_cols("m")
     );
+    let refs = crate::db::to_sql_refs(&params_vec);
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params![current_memory_id, HISTORY_LIMIT], |row| {
+    let rows = stmt.query_map(refs.as_slice(), |row| {
         let memory = memory::map_memory_row_pub(row)?;
         ref_from_edge_row(memory, row, 13)
     })?;
@@ -511,6 +524,11 @@ fn load_facts_for_memory(
     ));
     params_vec.push(Box::new(effective_epoch));
     idx += 1;
+    if let Some(as_of_epoch) = as_of_epoch {
+        conditions.push(format!("learned_at_epoch <= ?{idx}"));
+        params_vec.push(Box::new(as_of_epoch));
+        idx += 1;
+    }
     if as_of_epoch.is_none() {
         conditions.push("status = 'active'".to_string());
     }
