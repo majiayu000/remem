@@ -274,11 +274,22 @@ pub(super) fn graph_candidate_has_source_support(
         })
         .any(|observation| refs_supported_by_observation(candidate, observation));
     let cited_events_supported = candidate.evidence_event_ids.iter().all(|event_id| {
-        batch
+        let event_text = batch
             .source_events
             .iter()
             .find(|event| event.id == *event_id)
-            .is_some_and(|event| refs_supported_by_text(candidate, &event.text))
+            .map(|event| event.text.as_str());
+        let event_text_supported =
+            event_text.is_some_and(|text| refs_supported_by_text(candidate, text));
+        event_text_supported
+            || batch.observations.iter().any(|observation| {
+                observation.evidence_event_ids.contains(event_id)
+                    && structured_file_evidence_supports_cited_event(
+                        candidate,
+                        event_text,
+                        observation,
+                    )
+            })
     });
     observation_supported && cited_events_supported
 }
@@ -288,6 +299,27 @@ fn refs_supported_by_observation(
     observation: &GraphSourceObservation,
 ) -> bool {
     refs_supported_by_text(candidate, &observation_support_text(observation))
+}
+
+fn structured_file_evidence_supports_cited_event(
+    candidate: &ParsedGraphCandidate,
+    event_text: Option<&str>,
+    observation: &GraphSourceObservation,
+) -> bool {
+    candidate.edge_type == "touches_file"
+        && event_text.is_some_and(|text| ref_supported_by_text(&candidate.from_ref, text))
+        && ref_supported_by_structured_files(&candidate.to_ref, observation)
+}
+
+fn ref_supported_by_structured_files(
+    reference: &str,
+    observation: &GraphSourceObservation,
+) -> bool {
+    observation
+        .files_read
+        .iter()
+        .chain(observation.files_modified.iter())
+        .any(|file| ref_supported_by_text(reference, file))
 }
 
 fn observation_support_text(observation: &GraphSourceObservation) -> String {

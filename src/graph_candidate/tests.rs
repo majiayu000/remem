@@ -290,9 +290,13 @@ async fn graph_candidate_supports_blob_backed_cited_event_text() -> Result<()> {
 #[tokio::test]
 async fn graph_candidate_uses_structured_files_for_touch_support() -> Result<()> {
     let mut conn = graph_test_conn();
-    let task = graph_test_task(&mut conn, "sess-graph-structured-files")?;
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-structured-files",
+        &["Memory 1 updates the worker implementation."],
+    )?;
     insert_graph_memory(&conn, &task.project, 1)?;
-    let event_id = task.high_watermark_event_id.unwrap_or(1);
+    let event_id = event_ids[0];
     insert_graph_source_observation_with_files(
         &conn,
         &task,
