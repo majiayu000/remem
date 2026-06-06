@@ -458,7 +458,6 @@ fn load_history(
          JOIN memories m ON m.id = e.from_memory_id
          WHERE e.to_memory_id = ?1
            AND e.state_key_id = ?2
-           AND m.state_key_id = ?2
            AND e.edge_type IN ('supersedes', 'merged_into')
            {as_of_filter}
          ORDER BY e.created_at_epoch DESC, e.id DESC

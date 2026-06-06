@@ -75,6 +75,54 @@ fn shows_superseded_history_and_edge_evidence_for_current_answer() -> Result<()>
 }
 
 #[test]
+fn history_preserves_edge_for_legacy_superseded_row_without_state_key() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory(
+        &conn,
+        1,
+        "Legacy deploy target",
+        "Use staging.",
+        "stale",
+        10,
+        Some(100),
+        Some(200),
+    )?;
+    conn.execute("UPDATE memories SET state_key_id = NULL WHERE id = 1", [])?;
+    insert_current_state_memory(
+        &conn,
+        2,
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        Some(200),
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, evidence_event_ids,
+          reason, created_at_epoch)
+         VALUES ('supersedes', 1, 2, 10, '[9]', 'legacy replacement', 300)",
+        [],
+    )?;
+
+    let result = current_state(&conn, &request())?;
+
+    assert_eq!(result.status, "current");
+    assert_eq!(result.history.len(), 1);
+    assert_eq!(result.history[0].id, 1);
+    assert_eq!(result.history[0].relation.as_deref(), Some("supersedes"));
+    assert_eq!(result.history[0].evidence_event_ids, vec![9]);
+    assert_eq!(
+        result.history[0].reason.as_deref(),
+        Some("legacy replacement")
+    );
+    Ok(())
+}
+
+#[test]
 fn unresolved_active_conflict_does_not_silently_choose_current_pointer() -> Result<()> {
     let conn = current_state_test_conn()?;
     insert_state_key(&conn)?;
