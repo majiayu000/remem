@@ -155,6 +155,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "dream_cluster_decisions",
         sql: include_str!("../migrations/v030_dream_cluster_decisions.sql"),
     },
+    Migration {
+        version: 31,
+        name: "graph_edges",
+        sql: include_str!("../migrations/v031_graph_edges.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

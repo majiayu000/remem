@@ -474,6 +474,11 @@ observations (memory_session_id, project, type, title, subtitle, narrative, fact
 memories (session_id, project, topic_key, title, content, memory_type, files, branch,
           created_at_epoch, updated_at_epoch, status, scope[project|global])
 
+-- Typed graph contract for future traversal; see docs/graph-contract.md
+graph_edges (edge_type, edge_trust, from_node_kind/from_node_id, to_node_kind/to_node_id,
+             source_event_ids, source_candidate_id, source_operation_id, confidence,
+             reason, valid_from_epoch, valid_to_epoch)
+
 -- Session summaries
 session_summaries (memory_session_id, project, request, completed, decisions, learned,
                    next_steps, preferences, discovery_tokens)

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
 
-use super::schema_drift::repair_known_schema_drift;
+use super::schema_drift::{install_v031_state_delete_trigger, repair_known_schema_drift};
 use super::state::{applied_versions, ensure_migration_table, mark_applied};
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
@@ -102,6 +102,11 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             "migrate",
             &format!("rebuilt search_context for {rebuilt} memories"),
         );
+    }
+    if version == 31 {
+        install_v031_state_delete_trigger(conn).with_context(|| {
+            format!("migration v{version:03}_{name} failed to install graph edge cleanup triggers")
+        })?;
     }
     Ok(())
 }
