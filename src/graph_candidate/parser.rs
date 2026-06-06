@@ -78,9 +78,7 @@ fn normalize_graph_edge_type(candidate_type: &str, raw: &str) -> Result<String> 
     let value = raw.trim().to_ascii_lowercase();
     match candidate_type {
         "edge" => match value.as_str() {
-            "mentions" | "supports" | "refutes" | "touches_file" | "related_to" | "conflicts" => {
-                Ok(value)
-            }
+            "mentions" | "touches_file" | "conflicts" => Ok(value),
             other => bail!("malformed graph_candidate output: invalid edge_type '{other}'"),
         },
         "entity_alias" => match value.as_str() {
@@ -117,7 +115,9 @@ fn normalize_graph_ref(raw: &str) -> Result<String> {
         bail!("malformed graph_candidate output: empty ref value");
     }
     match prefix {
-        "memory" | "entity" | "file" | "state" | "claim" | "project" => Ok(value.to_string()),
+        "memory" | "entity" | "episode" | "file" | "state" | "claim" | "project" => {
+            Ok(value.to_string())
+        }
         other => bail!("malformed graph_candidate output: invalid ref kind '{other}'"),
     }
 }
@@ -217,6 +217,26 @@ mod tests {
         .expect_err("bad ref should fail");
 
         assert!(err.to_string().contains("malformed graph_candidate"));
+    }
+
+    #[test]
+    fn unpromotable_edge_type_fails_closed() {
+        let err = parse_graph_candidates(
+            "<graph_candidate><type>edge</type><edge_type>supports</edge_type><from_ref>memory:1</from_ref><to_ref>memory:2</to_ref><evidence_event_ids>1</evidence_event_ids><risk_class>low</risk_class><confidence>0.91</confidence><reason>unsupported edge</reason></graph_candidate>",
+        )
+        .expect_err("unsupported edge type should fail");
+
+        assert!(err.to_string().contains("invalid edge_type 'supports'"));
+    }
+
+    #[test]
+    fn episode_ref_is_valid_source_ref() -> Result<()> {
+        let rows = parse_graph_candidates(
+            "<graph_candidate><type>edge</type><edge_type>mentions</edge_type><from_ref>episode:42</from_ref><to_ref>entity:Worker</to_ref><evidence_event_ids>42</evidence_event_ids><risk_class>low</risk_class><confidence>0.91</confidence><reason>event mentions Worker.</reason></graph_candidate>",
+        )?;
+
+        assert_eq!(rows[0].from_ref, "episode:42");
+        Ok(())
     }
 
     #[test]

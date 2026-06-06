@@ -1,10 +1,40 @@
--- v031_graph_edges: first-class typed graph contract.
+-- v033_graph_edge_file_nodes: add file graph nodes and touches_file edges.
 --
--- memory_edges remains the memory-to-memory lifecycle relation table. graph_edges
--- is the typed cross-node contract for future traversal; this migration adds the
--- storage contract only and does not change retrieval behavior.
+-- v031 was already applied by earlier binaries, so this migration rebuilds the
+-- graph_edges table with the expanded typed contract instead of editing v031.
 
-CREATE TABLE IF NOT EXISTS graph_edges (
+DROP TRIGGER IF EXISTS graph_edges_validate_source_events_insert;
+DROP TRIGGER IF EXISTS graph_edges_validate_source_events_update;
+DROP TRIGGER IF EXISTS graph_edges_validate_nodes_insert;
+DROP TRIGGER IF EXISTS graph_edges_validate_nodes_update;
+DROP TRIGGER IF EXISTS graph_edges_memories_delete;
+DROP TRIGGER IF EXISTS graph_edges_entities_delete;
+DROP TRIGGER IF EXISTS graph_edges_memory_facts_delete;
+DROP TRIGGER IF EXISTS graph_edges_captured_events_delete;
+DROP TRIGGER IF EXISTS graph_edges_topic_segments_delete;
+DROP TRIGGER IF EXISTS graph_edges_memory_state_keys_delete;
+DROP TRIGGER IF EXISTS graph_edges_graph_file_nodes_delete;
+
+DROP INDEX IF EXISTS idx_graph_edges_from;
+DROP INDEX IF EXISTS idx_graph_edges_to;
+DROP INDEX IF EXISTS idx_graph_edges_type;
+
+ALTER TABLE graph_edges RENAME TO graph_edges_v031;
+
+CREATE TABLE IF NOT EXISTS graph_file_nodes (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER REFERENCES projects(id),
+    source_project TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at_epoch INTEGER NOT NULL,
+    updated_at_epoch INTEGER NOT NULL,
+    UNIQUE(project_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_file_nodes_source
+    ON graph_file_nodes(source_project, path);
+
+CREATE TABLE graph_edges (
     id INTEGER PRIMARY KEY,
     edge_type TEXT NOT NULL CHECK (
         edge_type IN (
@@ -16,6 +46,7 @@ CREATE TABLE IF NOT EXISTS graph_edges (
             'split_from',
             'extracted_from',
             'mentions',
+            'touches_file',
             'has_state',
             'has_topic',
             'similar_to',
@@ -25,11 +56,11 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     ),
     edge_trust TEXT NOT NULL CHECK (edge_trust IN ('trusted', 'diagnostic_hint')),
     from_node_kind TEXT NOT NULL CHECK (
-        from_node_kind IN ('memory', 'entity', 'fact', 'episode', 'state', 'topic')
+        from_node_kind IN ('memory', 'entity', 'fact', 'episode', 'state', 'topic', 'file')
     ),
     from_node_id INTEGER NOT NULL CHECK (from_node_id > 0),
     to_node_kind TEXT NOT NULL CHECK (
-        to_node_kind IN ('memory', 'entity', 'fact', 'episode', 'state', 'topic')
+        to_node_kind IN ('memory', 'entity', 'fact', 'episode', 'state', 'topic', 'file')
     ),
     to_node_id INTEGER NOT NULL CHECK (to_node_id > 0),
     source_event_ids TEXT NOT NULL DEFAULT '[]' CHECK (
@@ -60,6 +91,7 @@ CREATE TABLE IF NOT EXISTS graph_edges (
                 'split_from',
                 'extracted_from',
                 'mentions',
+                'touches_file',
                 'has_state',
                 'has_topic'
             )
@@ -96,6 +128,11 @@ CREATE TABLE IF NOT EXISTS graph_edges (
             AND to_node_kind = 'entity'
         )
         OR (
+            edge_type = 'touches_file'
+            AND from_node_kind IN ('memory', 'episode')
+            AND to_node_kind = 'file'
+        )
+        OR (
             edge_type = 'has_state'
             AND from_node_kind = 'memory'
             AND to_node_kind = 'state'
@@ -118,9 +155,45 @@ CREATE TABLE IF NOT EXISTS graph_edges (
             AND length(trim(reason)) > 0
         )
     ),
-    FOREIGN KEY(source_candidate_id) REFERENCES memory_candidates(id),
     FOREIGN KEY(source_operation_id) REFERENCES memory_operation_log(id)
 );
+
+INSERT INTO graph_edges (
+    id,
+    edge_type,
+    edge_trust,
+    from_node_kind,
+    from_node_id,
+    to_node_kind,
+    to_node_id,
+    source_event_ids,
+    source_candidate_id,
+    source_operation_id,
+    confidence,
+    reason,
+    valid_from_epoch,
+    valid_to_epoch,
+    created_at_epoch
+)
+SELECT
+    id,
+    edge_type,
+    edge_trust,
+    from_node_kind,
+    from_node_id,
+    to_node_kind,
+    to_node_id,
+    source_event_ids,
+    source_candidate_id,
+    source_operation_id,
+    confidence,
+    reason,
+    valid_from_epoch,
+    valid_to_epoch,
+    created_at_epoch
+FROM graph_edges_v031;
+
+DROP TABLE graph_edges_v031;
 
 CREATE INDEX IF NOT EXISTS idx_graph_edges_from
     ON graph_edges(from_node_kind, from_node_id, edge_type, created_at_epoch);
@@ -205,6 +278,9 @@ BEGIN
         WHEN NEW.from_node_kind = 'topic'
              AND NOT EXISTS (SELECT 1 FROM topic_segments WHERE id = NEW.from_node_id)
         THEN RAISE(ABORT, 'graph_edges from topic node missing')
+        WHEN NEW.from_node_kind = 'file'
+             AND NOT EXISTS (SELECT 1 FROM graph_file_nodes WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from file node missing')
     END;
 
     SELECT CASE
@@ -226,6 +302,61 @@ BEGIN
         WHEN NEW.to_node_kind = 'topic'
              AND NOT EXISTS (SELECT 1 FROM topic_segments WHERE id = NEW.to_node_id)
         THEN RAISE(ABORT, 'graph_edges to topic node missing')
+        WHEN NEW.to_node_kind = 'file'
+             AND NOT EXISTS (SELECT 1 FROM graph_file_nodes WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to file node missing')
+    END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS graph_edges_validate_nodes_update
+BEFORE UPDATE OF from_node_kind, from_node_id, to_node_kind, to_node_id ON graph_edges
+BEGIN
+    SELECT CASE
+        WHEN NEW.from_node_kind = 'memory'
+             AND NOT EXISTS (SELECT 1 FROM memories WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from memory node missing')
+        WHEN NEW.from_node_kind = 'entity'
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from entity node missing')
+        WHEN NEW.from_node_kind = 'fact'
+             AND NOT EXISTS (SELECT 1 FROM memory_facts WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from fact node missing')
+        WHEN NEW.from_node_kind = 'episode'
+             AND NOT EXISTS (SELECT 1 FROM captured_events WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from episode node missing')
+        WHEN NEW.from_node_kind = 'state'
+             AND NOT EXISTS (SELECT 1 FROM memory_state_keys WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from state node missing')
+        WHEN NEW.from_node_kind = 'topic'
+             AND NOT EXISTS (SELECT 1 FROM topic_segments WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from topic node missing')
+        WHEN NEW.from_node_kind = 'file'
+             AND NOT EXISTS (SELECT 1 FROM graph_file_nodes WHERE id = NEW.from_node_id)
+        THEN RAISE(ABORT, 'graph_edges from file node missing')
+    END;
+
+    SELECT CASE
+        WHEN NEW.to_node_kind = 'memory'
+             AND NOT EXISTS (SELECT 1 FROM memories WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to memory node missing')
+        WHEN NEW.to_node_kind = 'entity'
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to entity node missing')
+        WHEN NEW.to_node_kind = 'fact'
+             AND NOT EXISTS (SELECT 1 FROM memory_facts WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to fact node missing')
+        WHEN NEW.to_node_kind = 'episode'
+             AND NOT EXISTS (SELECT 1 FROM captured_events WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to episode node missing')
+        WHEN NEW.to_node_kind = 'state'
+             AND NOT EXISTS (SELECT 1 FROM memory_state_keys WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to state node missing')
+        WHEN NEW.to_node_kind = 'topic'
+             AND NOT EXISTS (SELECT 1 FROM topic_segments WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to topic node missing')
+        WHEN NEW.to_node_kind = 'file'
+             AND NOT EXISTS (SELECT 1 FROM graph_file_nodes WHERE id = NEW.to_node_id)
+        THEN RAISE(ABORT, 'graph_edges to file node missing')
     END;
 END;
 
@@ -274,48 +405,10 @@ BEGIN
        OR (to_node_kind = 'topic' AND to_node_id = OLD.id);
 END;
 
-CREATE TRIGGER IF NOT EXISTS graph_edges_validate_nodes_update
-BEFORE UPDATE OF from_node_kind, from_node_id, to_node_kind, to_node_id ON graph_edges
+CREATE TRIGGER IF NOT EXISTS graph_edges_graph_file_nodes_delete
+AFTER DELETE ON graph_file_nodes
 BEGIN
-    SELECT CASE
-        WHEN NEW.from_node_kind = 'memory'
-             AND NOT EXISTS (SELECT 1 FROM memories WHERE id = NEW.from_node_id)
-        THEN RAISE(ABORT, 'graph_edges from memory node missing')
-        WHEN NEW.from_node_kind = 'entity'
-             AND NOT EXISTS (SELECT 1 FROM entities WHERE id = NEW.from_node_id)
-        THEN RAISE(ABORT, 'graph_edges from entity node missing')
-        WHEN NEW.from_node_kind = 'fact'
-             AND NOT EXISTS (SELECT 1 FROM memory_facts WHERE id = NEW.from_node_id)
-        THEN RAISE(ABORT, 'graph_edges from fact node missing')
-        WHEN NEW.from_node_kind = 'episode'
-             AND NOT EXISTS (SELECT 1 FROM captured_events WHERE id = NEW.from_node_id)
-        THEN RAISE(ABORT, 'graph_edges from episode node missing')
-        WHEN NEW.from_node_kind = 'state'
-             AND NOT EXISTS (SELECT 1 FROM memory_state_keys WHERE id = NEW.from_node_id)
-        THEN RAISE(ABORT, 'graph_edges from state node missing')
-        WHEN NEW.from_node_kind = 'topic'
-             AND NOT EXISTS (SELECT 1 FROM topic_segments WHERE id = NEW.from_node_id)
-        THEN RAISE(ABORT, 'graph_edges from topic node missing')
-    END;
-
-    SELECT CASE
-        WHEN NEW.to_node_kind = 'memory'
-             AND NOT EXISTS (SELECT 1 FROM memories WHERE id = NEW.to_node_id)
-        THEN RAISE(ABORT, 'graph_edges to memory node missing')
-        WHEN NEW.to_node_kind = 'entity'
-             AND NOT EXISTS (SELECT 1 FROM entities WHERE id = NEW.to_node_id)
-        THEN RAISE(ABORT, 'graph_edges to entity node missing')
-        WHEN NEW.to_node_kind = 'fact'
-             AND NOT EXISTS (SELECT 1 FROM memory_facts WHERE id = NEW.to_node_id)
-        THEN RAISE(ABORT, 'graph_edges to fact node missing')
-        WHEN NEW.to_node_kind = 'episode'
-             AND NOT EXISTS (SELECT 1 FROM captured_events WHERE id = NEW.to_node_id)
-        THEN RAISE(ABORT, 'graph_edges to episode node missing')
-        WHEN NEW.to_node_kind = 'state'
-             AND NOT EXISTS (SELECT 1 FROM memory_state_keys WHERE id = NEW.to_node_id)
-        THEN RAISE(ABORT, 'graph_edges to state node missing')
-        WHEN NEW.to_node_kind = 'topic'
-             AND NOT EXISTS (SELECT 1 FROM topic_segments WHERE id = NEW.to_node_id)
-        THEN RAISE(ABORT, 'graph_edges to topic node missing')
-    END;
+    DELETE FROM graph_edges
+    WHERE (from_node_kind = 'file' AND from_node_id = OLD.id)
+       OR (to_node_kind = 'file' AND to_node_id = OLD.id);
 END;

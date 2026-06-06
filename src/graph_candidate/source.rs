@@ -280,12 +280,13 @@ pub(super) fn graph_candidate_has_source_support(
             .find(|event| event.id == *event_id)
             .map(|event| event.text.as_str());
         let event_text_supported =
-            event_text.is_some_and(|text| refs_supported_by_text(candidate, text));
+            event_text.is_some_and(|text| refs_supported_by_event(candidate, *event_id, text));
         event_text_supported
             || batch.observations.iter().any(|observation| {
                 observation.evidence_event_ids.contains(event_id)
                     && structured_file_evidence_supports_cited_event(
                         candidate,
+                        *event_id,
                         event_text,
                         observation,
                     )
@@ -298,16 +299,25 @@ fn refs_supported_by_observation(
     candidate: &ParsedGraphCandidate,
     observation: &GraphSourceObservation,
 ) -> bool {
-    refs_supported_by_text(candidate, &observation_support_text(observation))
+    ref_supported_by_observation(&candidate.from_ref, observation)
+        && ref_supported_by_observation(&candidate.to_ref, observation)
+}
+
+fn ref_supported_by_observation(reference: &str, observation: &GraphSourceObservation) -> bool {
+    parse_episode_ref_id(reference)
+        .is_some_and(|episode_id| observation.evidence_event_ids.contains(&episode_id))
+        || ref_supported_by_text(reference, &observation_support_text(observation))
 }
 
 fn structured_file_evidence_supports_cited_event(
     candidate: &ParsedGraphCandidate,
+    event_id: i64,
     event_text: Option<&str>,
     observation: &GraphSourceObservation,
 ) -> bool {
     candidate.edge_type == "touches_file"
-        && event_text.is_some_and(|text| ref_supported_by_text(&candidate.from_ref, text))
+        && event_text
+            .is_some_and(|text| ref_supported_by_event(&candidate.from_ref, event_id, text))
         && ref_supported_by_structured_files(&candidate.to_ref, observation)
 }
 
@@ -335,9 +345,9 @@ fn observation_support_text(observation: &GraphSourceObservation) -> String {
     text
 }
 
-fn refs_supported_by_text(candidate: &ParsedGraphCandidate, text: &str) -> bool {
-    ref_supported_by_text(&candidate.from_ref, text)
-        && ref_supported_by_text(&candidate.to_ref, text)
+fn refs_supported_by_event(candidate: &ParsedGraphCandidate, event_id: i64, text: &str) -> bool {
+    ref_supported_by_event(&candidate.from_ref, event_id, text)
+        && ref_supported_by_event(&candidate.to_ref, event_id, text)
 }
 
 fn ref_supported_by_text(reference: &str, text: &str) -> bool {
@@ -347,23 +357,129 @@ fn ref_supported_by_text(reference: &str, text: &str) -> bool {
         .any(|needle| contains_support_needle(&haystack, &needle))
 }
 
-fn reference_support_needles(reference: &str) -> Vec<String> {
-    let reference = reference.trim();
-    if let Some(path) = reference.strip_prefix("file:") {
-        return vec![path.trim_start_matches("./").to_string(), path.to_string()];
-    }
-    if let Some(entity) = reference.strip_prefix("entity:") {
-        return vec![entity.to_string(), entity.replace(['_', '-'], " ")];
-    }
-    if let Some(memory_id) = reference.strip_prefix("memory:") {
-        return vec![reference.to_string(), format!("memory {memory_id}")];
-    }
-    vec![reference.to_string()]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SupportBoundary {
+    Word,
+    Entity,
+    Path,
 }
 
-fn contains_support_needle(haystack: &str, needle: &str) -> bool {
-    let needle = needle.trim().to_ascii_lowercase();
-    !needle.is_empty() && haystack.contains(&needle)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SupportNeedle {
+    text: String,
+    boundary: SupportBoundary,
+}
+
+fn reference_support_needles(reference: &str) -> Vec<SupportNeedle> {
+    let reference = reference.trim();
+    if let Some(path) = reference.strip_prefix("file:") {
+        return vec![
+            SupportNeedle {
+                text: path.trim_start_matches("./").to_string(),
+                boundary: SupportBoundary::Path,
+            },
+            SupportNeedle {
+                text: path.to_string(),
+                boundary: SupportBoundary::Path,
+            },
+        ];
+    }
+    if let Some(entity) = reference.strip_prefix("entity:") {
+        return vec![
+            SupportNeedle {
+                text: entity.to_string(),
+                boundary: SupportBoundary::Entity,
+            },
+            SupportNeedle {
+                text: entity.replace(['_', '-'], " "),
+                boundary: SupportBoundary::Entity,
+            },
+        ];
+    }
+    if let Some(memory_id) = reference.strip_prefix("memory:") {
+        return vec![
+            SupportNeedle {
+                text: reference.to_string(),
+                boundary: SupportBoundary::Word,
+            },
+            SupportNeedle {
+                text: format!("memory {memory_id}"),
+                boundary: SupportBoundary::Word,
+            },
+        ];
+    }
+    if let Some(episode_id) = reference.strip_prefix("episode:") {
+        return vec![
+            SupportNeedle {
+                text: reference.to_string(),
+                boundary: SupportBoundary::Word,
+            },
+            SupportNeedle {
+                text: format!("event {episode_id}"),
+                boundary: SupportBoundary::Word,
+            },
+        ];
+    }
+    vec![SupportNeedle {
+        text: reference.to_string(),
+        boundary: SupportBoundary::Word,
+    }]
+}
+
+fn contains_support_needle(haystack: &str, needle: &SupportNeedle) -> bool {
+    let needle_text = needle.text.trim().to_ascii_lowercase();
+    !needle_text.is_empty()
+        && haystack.match_indices(&needle_text).any(|(start, _)| {
+            let end = start + needle_text.len();
+            support_boundary_before(haystack, start, needle.boundary)
+                && support_boundary_after(haystack, end, needle.boundary)
+        })
+}
+
+fn support_boundary_before(haystack: &str, start: usize, boundary: SupportBoundary) -> bool {
+    haystack[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|ch| is_support_boundary(ch, boundary))
+}
+
+fn support_boundary_after(haystack: &str, end: usize, boundary: SupportBoundary) -> bool {
+    let mut chars = haystack[end..].chars();
+    let Some(ch) = chars.next() else {
+        return true;
+    };
+    if boundary == SupportBoundary::Path
+        && ch == '.'
+        && chars
+            .next()
+            .is_some_and(|next| next.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+    is_support_boundary(ch, boundary)
+}
+
+fn is_support_boundary(ch: char, boundary: SupportBoundary) -> bool {
+    if ch.is_ascii_alphanumeric() || ch == '_' {
+        return false;
+    }
+    match boundary {
+        SupportBoundary::Word => true,
+        SupportBoundary::Entity => !matches!(ch, '-' | '/' | '.'),
+        SupportBoundary::Path => !matches!(ch, '-' | '/'),
+    }
+}
+
+fn ref_supported_by_event(reference: &str, event_id: i64, text: &str) -> bool {
+    parse_episode_ref_id(reference).is_some_and(|episode_id| episode_id == event_id)
+        || ref_supported_by_text(reference, text)
+}
+
+fn parse_episode_ref_id(reference: &str) -> Option<i64> {
+    reference
+        .strip_prefix("episode:")
+        .and_then(|raw| raw.trim().parse::<i64>().ok())
+        .filter(|id| *id > 0)
 }
 
 pub(super) fn build_graph_candidate_prompt(
@@ -412,4 +528,37 @@ pub(super) fn build_graph_candidate_prompt(
         prompt.push_str("\n</observation>\n\n");
     }
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn support_matching_uses_ref_boundaries() {
+        assert!(!ref_supported_by_text(
+            "memory:1",
+            "Memory 10 mentions Worker."
+        ));
+        assert!(ref_supported_by_text(
+            "memory:1",
+            "Memory 1 mentions Worker."
+        ));
+        assert!(!ref_supported_by_text(
+            "entity:Worker",
+            "Changed src/worker.rs"
+        ));
+        assert!(ref_supported_by_text(
+            "entity:Worker",
+            "The Worker entity is mentioned."
+        ));
+        assert!(!ref_supported_by_text(
+            "file:src/worker.rs",
+            "Changed src/worker.rs.bak"
+        ));
+        assert!(ref_supported_by_text(
+            "file:src/worker.rs",
+            "Changed src/worker.rs."
+        ));
+    }
 }

@@ -6,7 +6,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
 use crate::memory::graph_contract::{
-    insert_graph_edge, GraphEdgeInput, GraphEdgeProvenance, GraphEdgeType, GraphNodeRef,
+    insert_graph_edge, GraphEdgeInput, GraphEdgeProvenance, GraphEdgeType, GraphNodeKind,
+    GraphNodeRef,
 };
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
@@ -28,7 +29,8 @@ Each block must include <type>, <edge_type>, <from_ref>, <to_ref>,
 <evidence_event_ids>, <risk_class>, <confidence>, and <reason>.
 Use type=edge for graph edges, type=entity_alias for alias/canonicalization,
 type=claim for claim/fact candidates, and type=state_relation for current-state
-relationships. Use only provided observations and evidence ids.
+relationships. For type=edge, use only mentions, touches_file, or conflicts.
+Use only provided observations and evidence ids.
 If there is no durable graph candidate, return exactly <no_graph_candidates reason=\"...\"/>.
 If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/>.
 Do not invent files, entities, memories, evidence ids, or relationships.";
@@ -287,7 +289,7 @@ pub(crate) fn insert_trusted_graph_edge(
     actor: &str,
 ) -> Result<TrustedGraphEdgeOutcome> {
     ensure_review_threshold(candidate)?;
-    ensure_trusted_graph_refs(conn, source_project, candidate)?;
+    ensure_trusted_graph_refs(conn, source_project, project_id, candidate)?;
     let operation_input = MemoryOperationInput {
         source: "graph_candidate".to_string(),
         actor: actor.to_string(),
@@ -387,18 +389,10 @@ fn graph_candidate_has_trusted_refs(
 fn ensure_trusted_graph_refs(
     conn: &Connection,
     source_project: &str,
+    project_id: i64,
     candidate: &ParsedGraphCandidate,
 ) -> Result<()> {
-    for reference in [&candidate.from_ref, &candidate.to_ref] {
-        let Some(memory_id) = parse_memory_ref_id(reference)? else {
-            continue;
-        };
-        if !active_repo_memory_exists(conn, source_project, memory_id)? {
-            bail!(
-                "graph candidate ref {reference} does not resolve to an active memory in {source_project}"
-            );
-        }
-    }
+    candidate_refs_resolve(conn, source_project, project_id, candidate)?;
     Ok(())
 }
 
@@ -435,35 +429,60 @@ fn candidate_refs_resolve(
     project_id: i64,
     candidate: &ParsedGraphCandidate,
 ) -> Result<bool> {
-    parse_trusted_graph_edge_type(&candidate.edge_type)?;
-    candidate_ref_resolves(conn, source_project, project_id, &candidate.from_ref)?;
-    candidate_ref_resolves(conn, source_project, project_id, &candidate.to_ref)?;
+    let edge_type = parse_trusted_graph_edge_type(&candidate.edge_type)?;
+    let from_kind = candidate_ref_kind(
+        conn,
+        source_project,
+        project_id,
+        candidate,
+        &candidate.from_ref,
+    )?;
+    let to_kind = candidate_ref_kind(
+        conn,
+        source_project,
+        project_id,
+        candidate,
+        &candidate.to_ref,
+    )?;
+    if !edge_type.allows_endpoints(from_kind, to_kind) {
+        bail!(
+            "graph edge type {} does not allow {} to {} endpoints",
+            edge_type.as_str(),
+            from_kind.as_str(),
+            to_kind.as_str()
+        );
+    }
     Ok(true)
 }
 
-fn candidate_ref_resolves(
+fn candidate_ref_kind(
     conn: &Connection,
     source_project: &str,
     _project_id: i64,
+    candidate: &ParsedGraphCandidate,
     reference: &str,
-) -> Result<()> {
+) -> Result<GraphNodeKind> {
     if let Some(memory_id) = parse_memory_ref_id(reference)? {
         if active_repo_memory_exists(conn, source_project, memory_id)? {
-            return Ok(());
+            return Ok(GraphNodeKind::Memory);
         }
         bail!(
             "graph candidate ref {reference} does not resolve to an active memory in {source_project}"
         );
     }
+    if let Some(episode_id) = parse_episode_ref_id(reference)? {
+        ensure_episode_ref_is_cited(conn, candidate, reference, episode_id)?;
+        return Ok(GraphNodeKind::Episode);
+    }
     if let Some(entity_name) = reference.strip_prefix("entity:") {
         resolve_entity_ref(conn, entity_name.trim())?;
-        return Ok(());
+        return Ok(GraphNodeKind::Entity);
     }
     if let Some(path) = reference.strip_prefix("file:") {
         if path.trim_start_matches("./").trim().is_empty() {
             bail!("graph file ref must not be empty");
         }
-        return Ok(());
+        return Ok(GraphNodeKind::File);
     }
     bail!("graph candidate ref {reference} is not supported by the typed graph contract")
 }
@@ -490,6 +509,10 @@ fn graph_node_ref(
             );
         }
         return GraphNodeRef::memory(memory_id);
+    }
+    if let Some(episode_id) = parse_episode_ref_id(reference)? {
+        ensure_episode_ref_exists(conn, reference, episode_id)?;
+        return GraphNodeRef::episode(episode_id);
     }
     if let Some(entity_name) = reference.strip_prefix("entity:") {
         let entity_id = resolve_entity_ref(conn, entity_name.trim())?;
@@ -556,6 +579,47 @@ fn parse_memory_ref_id(reference: &str) -> Result<Option<i64>> {
         bail!("graph candidate ref {reference} must use a positive memory id");
     }
     Ok(Some(memory_id))
+}
+
+fn parse_episode_ref_id(reference: &str) -> Result<Option<i64>> {
+    let Some(raw_id) = reference.strip_prefix("episode:") else {
+        return Ok(None);
+    };
+    let episode_id = raw_id
+        .trim()
+        .parse::<i64>()
+        .with_context(|| format!("graph candidate ref {reference} is not a numeric episode id"))?;
+    if episode_id <= 0 {
+        bail!("graph candidate ref {reference} must use a positive episode id");
+    }
+    Ok(Some(episode_id))
+}
+
+fn ensure_episode_ref_is_cited(
+    conn: &Connection,
+    candidate: &ParsedGraphCandidate,
+    reference: &str,
+    episode_id: i64,
+) -> Result<()> {
+    if !candidate.evidence_event_ids.contains(&episode_id) {
+        bail!("graph candidate ref {reference} must be listed in evidence_event_ids");
+    }
+    ensure_episode_ref_exists(conn, reference, episode_id)
+}
+
+fn ensure_episode_ref_exists(conn: &Connection, reference: &str, episode_id: i64) -> Result<()> {
+    let exists = conn
+        .query_row(
+            "SELECT 1 FROM captured_events WHERE id = ?1 LIMIT 1",
+            [episode_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        bail!("graph candidate ref {reference} does not resolve to a captured event");
+    }
+    Ok(())
 }
 
 fn active_repo_memory_exists(

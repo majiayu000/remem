@@ -165,6 +165,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "graph_candidates",
         sql: include_str!("../migrations/v032_graph_candidates.sql"),
     },
+    Migration {
+        version: 33,
+        name: "graph_edge_file_nodes",
+        sql: include_str!("../migrations/v033_graph_edge_file_nodes.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

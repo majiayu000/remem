@@ -8,6 +8,8 @@ use super::{
     GraphCandidateResult, ParsedGraphCandidate,
 };
 
+mod review_regressions;
+
 fn graph_test_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");
@@ -567,7 +569,7 @@ async fn graph_candidate_routes_unresolved_memory_ref_to_review() -> Result<()> 
 }
 
 #[tokio::test]
-async fn graph_candidate_keeps_supports_pending_review() -> Result<()> {
+async fn graph_candidate_rejects_unpromotable_supports_edge() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-supports")?;
     let event_id = insert_graph_source_observation(
@@ -576,26 +578,20 @@ async fn graph_candidate_keeps_supports_pending_review() -> Result<()> {
         "Memory 1 supports memory 2, but this relation needs review.",
     )?;
 
-    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+    let err = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
         Ok(graph_candidate_xml("supports", "memory:2", event_id))
     })
-    .await?;
+    .await
+    .expect_err("unsupported graph edge type should fail closed");
+    assert!(err.to_string().contains("invalid edge_type 'supports'"));
 
-    assert_eq!(
-        result,
-        GraphCandidateResult::Written {
-            candidates: 1,
-            promoted: 0,
-            pending_review: 1
-        }
-    );
-    let review_status: String =
-        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_candidates", [], |row| {
             row.get(0)
         })?;
     let edge_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
-    assert_eq!(review_status, "pending_review");
+    assert_eq!(candidate_count, 0);
     assert_eq!(edge_count, 0);
     Ok(())
 }

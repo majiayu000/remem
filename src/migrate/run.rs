@@ -103,7 +103,7 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             &format!("rebuilt search_context for {rebuilt} memories"),
         );
     }
-    if version == 31 {
+    if version == 31 || version == 33 {
         install_v031_state_delete_trigger(conn).with_context(|| {
             format!("migration v{version:03}_{name} failed to install graph edge cleanup triggers")
         })?;
