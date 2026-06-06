@@ -241,6 +241,7 @@ fn load_state_key_matches(
             idx += 1;
             conditions.push(format!("owner_key = ?{idx}"));
             params_vec.push(Box::new(owner_key.to_string()));
+            idx += 1;
         }
         (Some(_), None) | (None, Some(_)) => {
             bail!("owner_scope and owner_key must be provided together");
@@ -392,28 +393,38 @@ fn load_active_state_key_rivals(
     now_epoch: i64,
 ) -> Result<Vec<CurrentStateMemoryRef>> {
     let sql = format!(
-        "SELECT {}
-         FROM memories
-         WHERE state_key_id = ?1
-           AND id <> ?2
-           AND status = 'active'
-           AND COALESCE(valid_from_epoch, created_at_epoch) <= ?3
-           AND (valid_to_epoch IS NULL OR valid_to_epoch > ?3)
-           AND (expires_at_epoch IS NULL OR expires_at_epoch > ?3)
-         ORDER BY updated_at_epoch DESC, id DESC
+        "SELECT {}, e.edge_type, e.reason, e.evidence_event_ids,
+                e.source_candidate_id, e.source_operation_id
+         FROM memories m
+         LEFT JOIN memory_edges e ON e.id = (
+             SELECT ce.id
+             FROM memory_edges ce
+             WHERE ce.edge_type = 'conflicts'
+               AND ce.state_key_id = ?1
+               AND ((ce.from_memory_id = m.id AND ce.to_memory_id = ?2)
+                    OR (ce.from_memory_id = ?2 AND ce.to_memory_id = m.id))
+             ORDER BY ce.created_at_epoch DESC, ce.id DESC
+             LIMIT 1
+         )
+         WHERE m.state_key_id = ?1
+           AND m.id <> ?2
+           AND m.status = 'active'
+           AND COALESCE(m.valid_from_epoch, m.created_at_epoch) <= ?3
+           AND (m.valid_to_epoch IS NULL OR m.valid_to_epoch > ?3)
+           AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?3)
+         ORDER BY m.updated_at_epoch DESC, m.id DESC
          LIMIT ?4",
-        memory::MEMORY_COLS
+        prefixed_memory_cols("m")
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
         rusqlite::params![state_key_id, current_memory_id, now_epoch, HISTORY_LIMIT],
-        memory::map_memory_row_pub,
+        |row| {
+            let memory = memory::map_memory_row_pub(row)?;
+            ref_from_edge_row(memory, row, 13)
+        },
     )?;
-    let memories = crate::db::query::collect_rows(rows)?;
-    Ok(memories
-        .into_iter()
-        .map(CurrentStateMemoryRef::from_memory)
-        .collect())
+    crate::db::query::collect_rows(rows).context("load active current-state rivals")
 }
 
 fn load_memories_as_of(
@@ -431,6 +442,7 @@ fn load_memories_as_of(
                 OR (status = 'archived' AND valid_to_epoch IS NOT NULL))
            AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
+           AND (status <> 'active' OR updated_at_epoch <= ?2)
            AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)
          ORDER BY COALESCE(valid_from_epoch, created_at_epoch) DESC,
                   updated_at_epoch DESC,
