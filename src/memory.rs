@@ -6,6 +6,7 @@ pub mod events;
 pub mod facts;
 pub mod format;
 pub mod governance;
+pub mod graph_contract;
 pub mod lesson;
 pub mod lifecycle;
 pub mod operation;
