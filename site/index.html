@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>remem - Persistent memory for Claude Code and Codex</title>
+    <meta
+      name="description"
+      content="remem is a single Rust binary that captures, distills, and injects persistent project memory across Claude Code and Codex sessions."
+    >
+    <meta name="theme-color" content="#111111">
+    <meta property="og:title" content="remem - Persistent memory for Claude Code and Codex">
+    <meta property="og:description" content="Stop re-explaining your project every new coding-agent session.">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="720">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="assets/styles.css">
+    <script src="assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary">
+        <a class="brand" href="#top" aria-label="remem home">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <rect width="32" height="32" rx="8"></rect>
+              <path d="M10 11.5 21 13.7 15.3 22 10 11.5Z"></path>
+              <circle cx="10" cy="11.5" r="2.4"></circle>
+              <circle cx="21" cy="13.7" r="2.2"></circle>
+              <circle cx="15.3" cy="22" r="2.2"></circle>
+            </svg>
+          </span>
+          <span>remem</span>
+        </a>
+        <div class="nav-links">
+          <a href="#how" data-i18n="nav_how">How it works</a>
+          <a href="#search" data-i18n="nav_search">Search</a>
+          <a href="#benchmarks" data-i18n="nav_bench">Benchmarks</a>
+          <a href="#install" data-i18n="nav_install">Install</a>
+        </div>
+        <div class="nav-actions">
+          <div class="language-toggle" role="group" aria-label="Language">
+            <button type="button" data-lang="en" aria-pressed="true">EN</button>
+            <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+          </div>
+          <a class="button ghost small" href="https://github.com/majiayu000/remem" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.4 1.1 2.9.8.1-.7.4-1.1.6-1.4-2.2-.2-4.5-1.1-4.5-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.3 4.7-4.6 4.9.4.3.7.9.7 1.9V21c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"></path>
+            </svg>
+            <span data-i18n="nav_github">GitHub</span>
+          </a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="shell hero-grid">
+          <div class="hero-copy reveal">
+            <p class="eyebrow" data-i18n="hero_eyebrow">Persistent memory for Claude Code and Codex</p>
+            <h1 data-i18n-html="hero_title">
+              Stop re-explaining your project every new session.
+            </h1>
+            <p class="lead" data-i18n="hero_lead">
+              A single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings.
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="#install">
+                <svg class="stroke-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 5h16v14H4z"></path>
+                  <path d="m8 10 3 2-3 2M13 15h4"></path>
+                </svg>
+                <span data-i18n="hero_primary">Get started</span>
+              </a>
+              <a class="button ghost" href="https://github.com/majiayu000/remem" rel="noreferrer">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.3-3.4-1.3-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.4 1.1 2.9.8.1-.7.4-1.1.6-1.4-2.2-.2-4.5-1.1-4.5-4.9 0-1.1.4-2 1-2.7-.1-.3-.4-1.3.1-2.7 0 0 .8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1 .5 1.4.2 2.4.1 2.7.6.7 1 1.6 1 2.7 0 3.8-2.3 4.7-4.6 4.9.4.3.7.9.7 1.9V21c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"></path>
+                </svg>
+                <span data-i18n="hero_secondary">View on GitHub</span>
+              </a>
+            </div>
+            <ul class="trust-list" aria-label="Highlights">
+              <li data-i18n="trust_binary">Single Rust binary</li>
+              <li data-i18n="trust_local">Localhost only</li>
+              <li data-i18n="trust_sqlcipher">SQLCipher at rest</li>
+              <li data-i18n="trust_mit">MIT licensed</li>
+            </ul>
+          </div>
+
+          <div class="hero-visual reveal" aria-label="remem terminal preview">
+            <div class="terminal-panel">
+              <div class="terminal-bar">
+                <span></span><span></span><span></span>
+                <strong>claude - remem</strong>
+              </div>
+              <div class="terminal-body" aria-hidden="true">
+                <p><b>$</b> remem install --target all</p>
+                <p class="ok">ok Claude Code hooks configured</p>
+                <p class="ok">ok Codex MCP server registered</p>
+                <p><b>$</b> claude</p>
+                <p class="muted">SessionStart</p>
+                <p><em>decision</em> use host-specific context commands</p>
+                <p><em>preference</em> keep remem minimal and auditable</p>
+                <p><em>bugfix</em> preserve root cause before patching</p>
+                <p class="ok">context restored</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section band" id="problem">
+        <div class="shell">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="problem_kicker">The problem</p>
+            <h2 data-i18n="problem_title">Every new session starts from zero.</h2>
+            <p data-i18n="problem_lead">Context you spent hours building disappears the moment the thread ends.</p>
+          </div>
+          <div class="card-grid four">
+            <article class="info-card reveal">
+              <span class="card-icon">01</span>
+              <h3 data-i18n="problem_1_title">Session amnesia</h3>
+              <p data-i18n="problem_1_body">Each new Claude Code or Codex session starts without the context you already earned.</p>
+            </article>
+            <article class="info-card reveal">
+              <span class="card-icon">02</span>
+              <h3 data-i18n="problem_2_title">Lost rationale</h3>
+              <p data-i18n="problem_2_body">Design decisions and bug-fix root causes vanish when the session ends.</p>
+            </article>
+            <article class="info-card reveal">
+              <span class="card-icon">03</span>
+              <h3 data-i18n="problem_3_title">Preference fatigue</h3>
+              <p data-i18n="problem_3_body">The same project preferences get repeated instead of carried forward.</p>
+            </article>
+            <article class="info-card reveal">
+              <span class="card-icon">04</span>
+              <h3 data-i18n="problem_4_title">No continuity</h3>
+              <p data-i18n="problem_4_body">Long-running work is hard to resume with confidence after context compaction or a fresh session.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="how">
+        <div class="shell two-col">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="how_kicker">How it works</p>
+            <h2 data-i18n="how_title">Hooks into your agents. Nothing to capture by hand.</h2>
+            <p data-i18n="how_lead">
+              remem records raw session evidence, distills it in the background, then serves compact memory back through hooks and MCP.
+            </p>
+          </div>
+          <div class="flow reveal">
+            <div class="flow-row">
+              <span>Claude Code</span>
+              <strong>SessionStart</strong>
+              <p data-i18n="flow_1">Inject relevant project memory and preferences.</p>
+            </div>
+            <div class="flow-row">
+              <span>Claude Code</span>
+              <strong>UserPromptSubmit</strong>
+              <p data-i18n="flow_2">Register sessions and flush stale queues.</p>
+            </div>
+            <div class="flow-row">
+              <span>Claude Code</span>
+              <strong>PostToolUse</strong>
+              <p data-i18n="flow_3">Queue tool observations without blocking the workflow.</p>
+            </div>
+            <div class="flow-row">
+              <span>Claude Code / Codex</span>
+              <strong>Stop</strong>
+              <p data-i18n="flow_4">Summarize and promote durable memories in the background.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section band" id="search">
+        <div class="shell search-layout">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="search_kicker">Search architecture</p>
+            <h2 data-i18n="search_title">Four retrieval channels, fused.</h2>
+            <p data-i18n="search_lead">
+              A query is routed through BM25, entities, temporal parsing, and LIKE fallback, then merged with Reciprocal Rank Fusion.
+            </p>
+            <ul class="feature-list">
+              <li data-i18n="search_feat_1">Project-scoped search prevents cross-project leakage.</li>
+              <li data-i18n="search_feat_2">CJK segmentation and Chinese-English synonym expansion improve recall.</li>
+              <li data-i18n="search_feat_3">Title-weighted BM25 and topic-key dedup keep results compact.</li>
+            </ul>
+          </div>
+          <div class="diagram reveal" aria-label="Search architecture diagram">
+            <div class="query">"database encryption"</div>
+            <div class="channels">
+              <span>FTS5 BM25</span>
+              <span>Entity index</span>
+              <span>Temporal</span>
+              <span>LIKE fallback</span>
+            </div>
+            <div class="formula">RRF = sum 1 / (60 + rank)</div>
+            <div class="result">Top-K merged memories</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section proof" id="proof">
+        <div class="shell proof-grid">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="proof_kicker">Product proof</p>
+            <h2 data-i18n="proof_title">The memory arrives before the work begins.</h2>
+            <p data-i18n="proof_lead">
+              The site ships with the repository's existing terminal demo asset, so the first release uses real project media instead of stock visuals.
+            </p>
+          </div>
+          <figure class="demo-frame reveal">
+            <img src="assets/remem-demo.gif" width="1200" height="720" alt="Animated terminal demo of remem injecting memory context">
+            <figcaption data-i18n="proof_caption">Terminal demo from the remem repository assets.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section band" id="benchmarks">
+        <div class="shell">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="bench_kicker">Benchmarks</p>
+            <h2 data-i18n="bench_title">Measured, not hand-waved.</h2>
+            <p data-i18n="bench_lead">Published README snapshots cover LoCoMo, internal retrieval, and local QA evaluation.</p>
+          </div>
+          <div class="metrics-grid reveal">
+            <article>
+              <span>LoCoMo overall</span>
+              <strong>62.7%</strong>
+              <p data-i18n="metric_locomo">v2 optimized, session summary ingest, gpt-5.4.</p>
+            </article>
+            <article>
+              <span>MRR</span>
+              <strong>0.858</strong>
+              <p data-i18n="metric_mrr">Internal eval over 1,777 real memories.</p>
+            </article>
+            <article>
+              <span>Hit Rate@5</span>
+              <strong>1.000</strong>
+              <p data-i18n="metric_hit">Internal retrieval hit rate.</p>
+            </article>
+            <article>
+              <span>Project leak</span>
+              <strong>0%</strong>
+              <p data-i18n="metric_leak">Project-scoped search validation.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section install-section" id="install">
+        <div class="shell install-grid">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="install_kicker">Install</p>
+            <h2 data-i18n="install_title">Use the same commands as the README.</h2>
+            <p data-i18n="install_lead">Start with Homebrew, the prebuilt GitHub Release installer, or Cargo. Then restart your coding agent.</p>
+            <div class="tabs" role="tablist" aria-label="Install method">
+              <button type="button" role="tab" aria-selected="true" data-command="quick" data-i18n="tab_quick">Quick install</button>
+              <button type="button" role="tab" aria-selected="false" data-command="homebrew">Homebrew</button>
+              <button type="button" role="tab" aria-selected="false" data-command="cargo">Cargo</button>
+            </div>
+            <div class="code-card">
+              <button class="copy-command" type="button" data-copy-command>
+                <span data-i18n="copy">Copy</span>
+              </button>
+              <pre><code id="install-code">curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh</code></pre>
+            </div>
+          </div>
+          <aside class="security-panel reveal">
+            <h3 data-i18n="security_title">Secure by default</h3>
+            <ul>
+              <li data-i18n="security_1">SQLCipher encryption at rest.</li>
+              <li data-i18n="security_2">Data directory 0700 and key file 0600.</li>
+              <li data-i18n="security_3">REST API binds to 127.0.0.1 and requires a local token.</li>
+              <li data-i18n="security_4">Uninstall removes hooks and MCP config without deleting memory data.</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section final-cta">
+        <div class="shell cta-inner reveal">
+          <h2 data-i18n="cta_title">Give Claude Code and Codex a memory.</h2>
+          <p data-i18n="cta_lead">Single binary. Local store. Durable context for long-running engineering work.</p>
+          <div class="cta-actions">
+            <a class="button primary invert" href="#install" data-i18n="cta_primary">Install remem</a>
+            <a class="button ghost invert" href="https://github.com/majiayu000/remem#readme" rel="noreferrer" data-i18n="cta_secondary">Read the docs</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="brand" href="#top">
+            <span class="mark" aria-hidden="true">
+              <svg viewBox="0 0 32 32" role="img">
+                <rect width="32" height="32" rx="8"></rect>
+                <path d="M10 11.5 21 13.7 15.3 22 10 11.5Z"></path>
+                <circle cx="10" cy="11.5" r="2.4"></circle>
+                <circle cx="21" cy="13.7" r="2.2"></circle>
+                <circle cx="15.3" cy="22" r="2.2"></circle>
+              </svg>
+            </span>
+            <span>remem</span>
+          </a>
+          <p data-i18n="footer_tagline">Persistent memory for Claude Code and Codex.</p>
+        </div>
+        <div>
+          <h3 data-i18n="footer_product">Product</h3>
+          <a href="#how" data-i18n="nav_how">How it works</a>
+          <a href="#search" data-i18n="nav_search">Search</a>
+          <a href="#install" data-i18n="nav_install">Install</a>
+        </div>
+        <div>
+          <h3 data-i18n="footer_resources">Resources</h3>
+          <a href="https://github.com/majiayu000/remem#readme" rel="noreferrer">README</a>
+          <a href="https://github.com/majiayu000/remem/blob/main/docs/ARCHITECTURE.md" rel="noreferrer">Architecture</a>
+          <a href="https://github.com/majiayu000/remem/blob/main/CHANGELOG.md" rel="noreferrer">Changelog</a>
+          <a href="https://github.com/majiayu000/remem/blob/main/SECURITY.md" rel="noreferrer">Security</a>
+        </div>
+        <div>
+          <h3 data-i18n="footer_community">Community</h3>
+          <a href="https://github.com/majiayu000/remem" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/majiayu000/remem/issues" rel="noreferrer">Issues</a>
+          <a href="https://github.com/majiayu000/remem/blob/main/CONTRIBUTING.md" rel="noreferrer">Contributing</a>
+          <a href="https://github.com/majiayu000/remem/blob/main/LICENSE" rel="noreferrer">MIT License</a>
+        </div>
+      </div>
+      <div class="shell footer-bottom">
+        <span data-i18n="footer_built">Built as a static site in the remem repository.</span>
+        <span>© 2026 remem</span>
+      </div>
+    </footer>
+  </body>
+</html>
