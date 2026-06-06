@@ -371,6 +371,8 @@ fn load_active_memory(conn: &Connection, id: i64, now_epoch: i64) -> Result<Opti
          FROM memories
          WHERE id = ?1
            AND status = 'active'
+           AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
+           AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
            AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)",
         memory::MEMORY_COLS
     );
@@ -395,6 +397,8 @@ fn load_active_state_key_rivals(
          WHERE state_key_id = ?1
            AND id <> ?2
            AND status = 'active'
+           AND COALESCE(valid_from_epoch, created_at_epoch) <= ?3
+           AND (valid_to_epoch IS NULL OR valid_to_epoch > ?3)
            AND (expires_at_epoch IS NULL OR expires_at_epoch > ?3)
          ORDER BY updated_at_epoch DESC, id DESC
          LIMIT ?4",

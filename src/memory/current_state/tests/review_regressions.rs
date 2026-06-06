@@ -130,3 +130,118 @@ fn as_of_excludes_open_ended_stale_rows_after_stale_update() -> Result<()> {
     assert!(after_stale.current.is_none());
     Ok(())
 }
+
+#[test]
+fn current_lookup_respects_memory_validity_window() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    insert_current_state_memory_at(
+        &conn,
+        1,
+        "/repo",
+        "Future deploy target",
+        "Use production later.",
+        "active",
+        10,
+        now,
+        Some(now + 100),
+        None,
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Expired deploy target",
+        "Use staging before cutoff.",
+        "active",
+        10,
+        now - 200,
+        Some(now - 200),
+        Some(now - 100),
+    )?;
+
+    set_current_memory(&conn, 1)?;
+    let future_result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+
+    set_current_memory(&conn, 2)?;
+    let expired_result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(future_result.status, "no_current");
+    assert!(future_result.current.is_none());
+    assert_eq!(expired_result.status, "no_current");
+    assert!(expired_result.current.is_none());
+    Ok(())
+}
+
+#[test]
+fn current_conflicts_ignore_future_active_rivals() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    insert_current_state_memory_at(
+        &conn,
+        1,
+        "/repo",
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        now - 100,
+        Some(now - 100),
+        None,
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Future rival deploy target",
+        "Use canary later.",
+        "active",
+        10,
+        now,
+        Some(now + 100),
+        None,
+    )?;
+    set_current_memory(&conn, 1)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, reason, created_at_epoch)
+         VALUES ('conflicts', 2, 1, 10, 'future rival', ?1)",
+        params![now],
+    )?;
+
+    let result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(result.status, "current");
+    assert_eq!(result.current.as_ref().map(|memory| memory.id), Some(1));
+    assert!(result.conflicts.is_empty());
+    Ok(())
+}
