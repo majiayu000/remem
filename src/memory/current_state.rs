@@ -252,7 +252,12 @@ fn load_state_key_matches(
                    OR (owner_scope = 'user' AND owner_key = 'user:default'))"
             ));
             params_vec.push(Box::new(project));
+            idx += 1;
         }
+    }
+    if let Some(as_of_epoch) = req.as_of_epoch {
+        conditions.push(format!("created_at_epoch <= ?{idx}"));
+        params_vec.push(Box::new(as_of_epoch));
     }
 
     let sql = format!(
@@ -416,7 +421,9 @@ fn load_memories_as_of(
         "SELECT {}
          FROM memories
          WHERE state_key_id = ?1
-           AND (status IN ('active', 'stale')
+           AND (status = 'active'
+                OR (status = 'stale'
+                    AND (valid_to_epoch IS NOT NULL OR updated_at_epoch > ?2))
                 OR (status = 'archived' AND valid_to_epoch IS NOT NULL))
            AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
@@ -493,9 +500,15 @@ fn load_why(
         "SELECT edge_type, from_memory_id, to_memory_id, reason, evidence_event_ids,
                 source_candidate_id, source_operation_id, created_at_epoch
          FROM memory_edges
-         WHERE ((to_memory_id = ?1 AND edge_type IN ('supersedes', 'merged_into', 'derived_from'))
-             OR (edge_type = 'conflicts' AND (from_memory_id = ?1 OR to_memory_id = ?1)))
-           AND state_key_id = ?2
+         WHERE ((to_memory_id = ?1
+                  AND edge_type IN ('supersedes', 'merged_into')
+                  AND state_key_id = ?2)
+             OR (to_memory_id = ?1
+                 AND edge_type = 'derived_from'
+                 AND (state_key_id = ?2 OR state_key_id IS NULL))
+             OR (edge_type = 'conflicts'
+                 AND (from_memory_id = ?1 OR to_memory_id = ?1)
+                 AND state_key_id = ?2))
            {as_of_filter}
          ORDER BY created_at_epoch DESC, id DESC
          LIMIT ?3"

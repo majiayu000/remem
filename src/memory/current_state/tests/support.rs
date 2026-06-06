@@ -112,7 +112,7 @@ pub(super) fn insert_state_key_for(
          (id, owner_scope, owner_key, memory_type, state_key, state_label,
           state_status, current_memory_id, created_at_epoch, updated_at_epoch)
          VALUES (?1, 'repo', ?2, 'decision', 'deploy-target',
-                 'deploy target', 'active', ?3, 1700000000, 1700000010)",
+                 'deploy target', 'active', ?3, 1, 10)",
         params![id, owner_key, current_memory_id],
     )?;
     Ok(())

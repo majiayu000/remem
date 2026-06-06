@@ -4,6 +4,7 @@ use rusqlite::params;
 use super::{current_state, CurrentStateRequest};
 use support::*;
 
+mod review_regressions;
 mod support;
 
 #[test]
@@ -505,7 +506,7 @@ fn why_includes_derived_from_provenance_for_current_answer() -> Result<()> {
         "INSERT INTO memory_edges
          (edge_type, from_memory_id, to_memory_id, state_key_id, source_candidate_id,
           evidence_event_ids, source_operation_id, reason, created_at_epoch)
-         VALUES ('derived_from', NULL, 2, 10, 20, '[11,12]', 30,
+         VALUES ('derived_from', NULL, 2, NULL, 20, '[11,12]', 30,
                  'candidate promoted', 100)",
         [],
     )?;
