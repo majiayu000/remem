@@ -396,7 +396,8 @@ h3 {
 .two-col,
 .search-layout,
 .install-grid,
-.proof-grid {
+.proof-grid,
+.usage-layout {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   gap: 54px;
@@ -521,6 +522,55 @@ h3 {
   padding: 12px 14px;
   color: #b8b3aa;
   font-size: 13px;
+}
+.usage-panel {
+  display: grid;
+  gap: 18px;
+}
+.usage-command {
+  padding: 20px;
+  border: 1px solid var(--terminal-line);
+  border-radius: var(--radius);
+  color: var(--terminal-ink);
+  background: var(--terminal);
+}
+.usage-command span {
+  display: block;
+  margin-bottom: 10px;
+  color: #9d9b95;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+.usage-command code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  word-break: break-word;
+}
+.source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.source-grid article {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+.source-grid strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.source-grid p,
+.usage-note {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+}
+.usage-note {
+  margin: 0;
+  padding: 16px 18px;
+  border-left: 3px solid var(--amber);
+  background: var(--paper);
 }
 .metrics-grid {
   display: grid;
@@ -700,7 +750,8 @@ h3 {
   .two-col,
   .search-layout,
   .install-grid,
-  .proof-grid {
+  .proof-grid,
+  .usage-layout {
     grid-template-columns: 1fr;
   }
   h1 {
@@ -771,6 +822,7 @@ h3 {
   }
   .card-grid.four,
   .metrics-grid,
+  .source-grid,
   .channels,
   .footer-grid {
     grid-template-columns: 1fr;

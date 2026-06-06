@@ -38,6 +38,7 @@
         <div class="nav-links">
           <a href="#how" data-i18n="nav_how">How it works</a>
           <a href="#search" data-i18n="nav_search">Search</a>
+          <a href="#usage" data-i18n="nav_usage">Usage & cost</a>
           <a href="#benchmarks" data-i18n="nav_bench">Benchmarks</a>
           <a href="#install" data-i18n="nav_install">Install</a>
         </div>
@@ -222,6 +223,45 @@
         </div>
       </section>
 
+      <section class="section band" id="usage">
+        <div class="shell usage-layout">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="usage_kicker">Usage & cost</p>
+            <h2 data-i18n="usage_title">Background memory AI usage stays visible.</h2>
+            <p data-i18n="usage_lead">
+              remem records usage for its own extraction, summary, compression, and promotion calls. The report is designed for operational visibility, not billing.
+            </p>
+            <ul class="feature-list">
+              <li data-i18n="usage_feat_1">Memory AI execution is configured in ~/.remem/config.toml.</li>
+              <li data-i18n="usage_feat_2">Claude Code host-side memory, system context, and cache usage can remain outside remem's ledger.</li>
+            </ul>
+          </div>
+          <div class="usage-panel reveal">
+            <div class="usage-command">
+              <span data-i18n="usage_command_label">Report command</span>
+              <code>remem usage --days 14 --weeks 8</code>
+            </div>
+            <div class="source-grid" aria-label="Usage source types">
+              <article>
+                <strong>anthropic_usage</strong>
+                <p data-i18n="usage_source_anthropic">Provider-reported usage from the Anthropic Messages API.</p>
+              </article>
+              <article>
+                <strong>codex_log</strong>
+                <p data-i18n="usage_source_codex">Exact token counts parsed from codex exec JSON usage events.</p>
+              </article>
+              <article>
+                <strong>text_estimate</strong>
+                <p data-i18n="usage_source_estimate">Fallback estimates from prompt and response text length.</p>
+              </article>
+            </div>
+            <p class="usage-note" data-i18n="usage_note">
+              Cost is an estimate, not an invoice. Historical rows may be text estimates or repriced from older rows that did not store the exact model.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section class="section band" id="benchmarks">
         <div class="shell">
           <div class="section-head reveal">
@@ -317,6 +357,7 @@
           <h3 data-i18n="footer_product">Product</h3>
           <a href="#how" data-i18n="nav_how">How it works</a>
           <a href="#search" data-i18n="nav_search">Search</a>
+          <a href="#usage" data-i18n="nav_usage">Usage & cost</a>
           <a href="#install" data-i18n="nav_install">Install</a>
         </div>
         <div>
