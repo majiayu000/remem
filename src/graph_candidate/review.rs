@@ -27,6 +27,7 @@ pub(crate) struct ReviewGraphCandidate {
 #[derive(Debug, Clone)]
 struct GraphCandidateRow {
     id: i64,
+    project_id: Option<i64>,
     project: Option<String>,
     source_project: String,
     candidate_type: String,
@@ -66,8 +67,17 @@ pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option
     };
     ensure_reviewable(&row)?;
     let candidate = row.as_candidate()?;
-    let outcome =
-        insert_trusted_graph_edge(&tx, &row.source_project, row.id, &candidate, "graph_review")?;
+    let project_id = row
+        .project_id
+        .with_context(|| format!("graph candidate {} is missing project_id", row.id))?;
+    let outcome = insert_trusted_graph_edge(
+        &tx,
+        &row.source_project,
+        project_id,
+        row.id,
+        &candidate,
+        "graph_review",
+    )?;
     mark_candidate_promoted(&tx, row.id, "approved", &outcome)?;
     tx.commit()?;
     Ok(Some(outcome.edge_id))
@@ -83,7 +93,7 @@ pub(crate) fn defer_candidate(conn: &Connection, id: i64, reason: &str) -> Resul
 
 fn load_row(conn: &Connection, id: i64) -> Result<Option<GraphCandidateRow>> {
     conn.query_row(
-        "SELECT c.id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
+        "SELECT c.id, c.project_id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
                 c.from_ref, c.to_ref, c.evidence_event_ids, c.confidence, c.risk_class,
                 c.reason, c.review_status, c.promoted_edge_id, c.created_at_epoch
          FROM graph_candidates c
@@ -133,7 +143,7 @@ fn load_reviewable_rows(
 ) -> Result<Vec<ReviewGraphCandidate>> {
     let limit = limit.clamp(1, 200);
     let mut sql = String::from(
-        "SELECT c.id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
+        "SELECT c.id, c.project_id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
                 c.from_ref, c.to_ref, c.evidence_event_ids, c.confidence, c.risk_class,
                 c.reason, c.review_status, c.promoted_edge_id, c.created_at_epoch
          FROM graph_candidates c
@@ -162,19 +172,20 @@ impl GraphCandidateRow {
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
-            project: row.get(1)?,
-            source_project: row.get(2)?,
-            candidate_type: row.get(3)?,
-            edge_type: row.get(4)?,
-            from_ref: row.get(5)?,
-            to_ref: row.get(6)?,
-            evidence_event_ids: row.get(7)?,
-            confidence: row.get(8)?,
-            risk_class: row.get(9)?,
-            reason: row.get(10)?,
-            review_status: row.get(11)?,
-            promoted_edge_id: row.get(12)?,
-            created_at_epoch: row.get(13)?,
+            project_id: row.get(1)?,
+            project: row.get(2)?,
+            source_project: row.get(3)?,
+            candidate_type: row.get(4)?,
+            edge_type: row.get(5)?,
+            from_ref: row.get(6)?,
+            to_ref: row.get(7)?,
+            evidence_event_ids: row.get(8)?,
+            confidence: row.get(9)?,
+            risk_class: row.get(10)?,
+            reason: row.get(11)?,
+            review_status: row.get(12)?,
+            promoted_edge_id: row.get(13)?,
+            created_at_epoch: row.get(14)?,
         })
     }
 

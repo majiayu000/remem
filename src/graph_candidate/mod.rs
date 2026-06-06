@@ -5,6 +5,9 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
+use crate::memory::graph_contract::{
+    insert_graph_edge, GraphEdgeInput, GraphEdgeProvenance, GraphEdgeType, GraphNodeRef,
+};
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
@@ -197,11 +200,13 @@ fn persist_graph_candidates(
         summary.candidates += 1;
 
         let source_supported = graph_candidate_has_source_support(candidate, batch);
-        let trusted_refs_valid = graph_candidate_has_trusted_refs(&tx, &task.project, candidate)?;
+        let trusted_refs_valid =
+            graph_candidate_has_trusted_refs(&tx, &task.project, task.project_id, candidate)?;
         if graph_should_auto_promote(candidate) && source_supported && trusted_refs_valid {
             let outcome = insert_trusted_graph_edge(
                 &tx,
                 &task.project,
+                task.project_id,
                 candidate_id,
                 candidate,
                 "graph_candidate",
@@ -276,6 +281,7 @@ fn graph_candidate_exists(
 pub(crate) fn insert_trusted_graph_edge(
     conn: &Connection,
     source_project: &str,
+    project_id: i64,
     candidate_id: i64,
     candidate: &ParsedGraphCandidate,
     actor: &str,
@@ -300,27 +306,17 @@ pub(crate) fn insert_trusted_graph_edge(
         "graph candidate promoted to trusted graph edge",
     );
     let operation_id = insert_operation_log(conn, &operation_input, &operation_plan, None)?;
-    let evidence_json = serde_json::to_string(&candidate.evidence_event_ids)?;
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "INSERT INTO graph_edges
-         (edge_type, from_ref, to_ref, source_candidate_id, evidence_event_ids,
-          source_operation_id, confidence, reason, created_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            candidate.edge_type,
-            candidate.from_ref,
-            candidate.to_ref,
-            candidate_id,
-            evidence_json,
-            operation_id,
-            candidate.confidence,
-            candidate.reason,
-            now
-        ],
+    let edge_input = trusted_graph_edge_input(
+        conn,
+        source_project,
+        project_id,
+        candidate_id,
+        operation_id,
+        candidate,
     )?;
+    let edge_id = insert_graph_edge(conn, &edge_input)?;
     Ok(TrustedGraphEdgeOutcome {
-        edge_id: conn.last_insert_rowid(),
+        edge_id,
         operation_id,
     })
 }
@@ -382,20 +378,10 @@ fn ensure_review_threshold(candidate: &ParsedGraphCandidate) -> Result<()> {
 fn graph_candidate_has_trusted_refs(
     conn: &Connection,
     source_project: &str,
+    project_id: i64,
     candidate: &ParsedGraphCandidate,
 ) -> Result<bool> {
-    for reference in [&candidate.from_ref, &candidate.to_ref] {
-        let Some(memory_id) = (match parse_memory_ref_id(reference) {
-            Ok(memory_id) => memory_id,
-            Err(_) => return Ok(false),
-        }) else {
-            continue;
-        };
-        if !active_repo_memory_exists(conn, source_project, memory_id)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    Ok(candidate_refs_resolve(conn, source_project, project_id, candidate).is_ok())
 }
 
 fn ensure_trusted_graph_refs(
@@ -414,6 +400,148 @@ fn ensure_trusted_graph_refs(
         }
     }
     Ok(())
+}
+
+fn trusted_graph_edge_input<'a>(
+    conn: &Connection,
+    source_project: &str,
+    project_id: i64,
+    candidate_id: i64,
+    operation_id: i64,
+    candidate: &'a ParsedGraphCandidate,
+) -> Result<GraphEdgeInput<'a>> {
+    let edge_type = parse_trusted_graph_edge_type(&candidate.edge_type)?;
+    let from_node = graph_node_ref(conn, source_project, project_id, &candidate.from_ref)?;
+    let to_node = graph_node_ref(conn, source_project, project_id, &candidate.to_ref)?;
+    Ok(GraphEdgeInput {
+        edge_type,
+        from_node,
+        to_node,
+        provenance: GraphEdgeProvenance {
+            source_event_ids: &candidate.evidence_event_ids,
+            source_candidate_id: Some(candidate_id),
+            source_operation_id: Some(operation_id),
+            confidence: Some(candidate.confidence),
+            reason: Some(&candidate.reason),
+        },
+        valid_from_epoch: None,
+        valid_to_epoch: None,
+    })
+}
+
+fn candidate_refs_resolve(
+    conn: &Connection,
+    source_project: &str,
+    project_id: i64,
+    candidate: &ParsedGraphCandidate,
+) -> Result<bool> {
+    parse_trusted_graph_edge_type(&candidate.edge_type)?;
+    candidate_ref_resolves(conn, source_project, project_id, &candidate.from_ref)?;
+    candidate_ref_resolves(conn, source_project, project_id, &candidate.to_ref)?;
+    Ok(true)
+}
+
+fn candidate_ref_resolves(
+    conn: &Connection,
+    source_project: &str,
+    _project_id: i64,
+    reference: &str,
+) -> Result<()> {
+    if let Some(memory_id) = parse_memory_ref_id(reference)? {
+        if active_repo_memory_exists(conn, source_project, memory_id)? {
+            return Ok(());
+        }
+        bail!(
+            "graph candidate ref {reference} does not resolve to an active memory in {source_project}"
+        );
+    }
+    if let Some(entity_name) = reference.strip_prefix("entity:") {
+        resolve_entity_ref(conn, entity_name.trim())?;
+        return Ok(());
+    }
+    if let Some(path) = reference.strip_prefix("file:") {
+        if path.trim_start_matches("./").trim().is_empty() {
+            bail!("graph file ref must not be empty");
+        }
+        return Ok(());
+    }
+    bail!("graph candidate ref {reference} is not supported by the typed graph contract")
+}
+
+fn parse_trusted_graph_edge_type(edge_type: &str) -> Result<GraphEdgeType> {
+    match edge_type {
+        "conflicts" => Ok(GraphEdgeType::Conflicts),
+        "mentions" => Ok(GraphEdgeType::Mentions),
+        "touches_file" => Ok(GraphEdgeType::TouchesFile),
+        other => bail!("graph edge type {other} is not supported by the typed graph contract"),
+    }
+}
+
+fn graph_node_ref(
+    conn: &Connection,
+    source_project: &str,
+    project_id: i64,
+    reference: &str,
+) -> Result<GraphNodeRef> {
+    if let Some(memory_id) = parse_memory_ref_id(reference)? {
+        if !active_repo_memory_exists(conn, source_project, memory_id)? {
+            bail!(
+                "graph candidate ref {reference} does not resolve to an active memory in {source_project}"
+            );
+        }
+        return GraphNodeRef::memory(memory_id);
+    }
+    if let Some(entity_name) = reference.strip_prefix("entity:") {
+        let entity_id = resolve_entity_ref(conn, entity_name.trim())?;
+        return GraphNodeRef::entity(entity_id);
+    }
+    if let Some(path) = reference.strip_prefix("file:") {
+        let file_id = ensure_graph_file_node(conn, project_id, source_project, path.trim())?;
+        return GraphNodeRef::file(file_id);
+    }
+    bail!("graph candidate ref {reference} is not supported by the typed graph contract")
+}
+
+fn resolve_entity_ref(conn: &Connection, entity_name: &str) -> Result<i64> {
+    if entity_name.is_empty() {
+        bail!("graph entity ref must not be empty");
+    }
+    let entity_id = conn
+        .query_row(
+            "SELECT id FROM entities WHERE lower(canonical_name) = lower(?1) LIMIT 1",
+            [entity_name],
+            |row| row.get(0),
+        )
+        .optional()?;
+    entity_id.with_context(|| format!("graph entity ref entity:{entity_name} does not exist"))
+}
+
+fn ensure_graph_file_node(
+    conn: &Connection,
+    project_id: i64,
+    source_project: &str,
+    path: &str,
+) -> Result<i64> {
+    let normalized_path = path.trim_start_matches("./").trim();
+    if normalized_path.is_empty() {
+        bail!("graph file ref must not be empty");
+    }
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO graph_file_nodes
+         (project_id, source_project, path, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(project_id, path) DO UPDATE
+         SET source_project = excluded.source_project,
+             updated_at_epoch = excluded.updated_at_epoch",
+        params![project_id, source_project, normalized_path, now],
+    )?;
+    conn.query_row(
+        "SELECT id FROM graph_file_nodes WHERE project_id = ?1 AND path = ?2",
+        params![project_id, normalized_path],
+        |row| row.get(0),
+    )
+    .context("load graph file node")
 }
 
 fn parse_memory_ref_id(reference: &str) -> Result<Option<i64>> {

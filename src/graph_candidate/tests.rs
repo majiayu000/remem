@@ -70,6 +70,15 @@ fn insert_graph_memory(conn: &Connection, project: &str, id: i64) -> Result<()> 
     Ok(())
 }
 
+fn insert_graph_entity(conn: &Connection, name: &str) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO entities(canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES (?1, 'concept', 1, 1)",
+        [name],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 fn insert_graph_source_observation(
     conn: &Connection,
     task: &db::ExtractionTask,
@@ -166,6 +175,7 @@ async fn graph_candidate_auto_promotes_low_risk_mentions() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-mentions")?;
     insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_entity(&conn, "Worker")?;
     let event_id = insert_graph_source_observation(
         &conn,
         &task,
@@ -614,15 +624,25 @@ async fn graph_candidate_malformed_output_fails_closed() -> Result<()> {
 #[test]
 fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
     let mut conn = graph_test_conn();
-    insert_graph_memory(&conn, "/tmp/remem", 1)?;
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-stale-approval",
+        &["Memory 1 mentions Worker."],
+    )?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_entity(&conn, "Worker")?;
     conn.execute(
         "INSERT INTO graph_candidates
-         (source_project, candidate_type, edge_type, from_ref, to_ref,
+         (project_id, source_project, candidate_type, edge_type, from_ref, to_ref,
           evidence_event_ids, confidence, risk_class, reason, review_status,
           created_at_epoch, updated_at_epoch)
-         VALUES ('/tmp/remem', 'edge', 'mentions', 'memory:1', 'entity:Worker',
-                 '[1]', 0.91, 'low', 'stale approval race', 'rejected', 1, 1)",
-        [],
+         VALUES (?1, ?2, 'edge', 'mentions', 'memory:1', 'entity:Worker',
+                 ?3, 0.91, 'low', 'stale approval race', 'rejected', 1, 1)",
+        params![
+            task.project_id,
+            task.project,
+            serde_json::to_string(&vec![event_ids[0]])?
+        ],
     )?;
 
     let tx = conn.transaction()?;
@@ -631,12 +651,19 @@ fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
         edge_type: "mentions".to_string(),
         from_ref: "memory:1".to_string(),
         to_ref: "entity:Worker".to_string(),
-        evidence_event_ids: vec![1],
+        evidence_event_ids: vec![event_ids[0]],
         confidence: 0.91,
         risk_class: "low".to_string(),
         reason: "stale approval race".to_string(),
     };
-    let outcome = insert_trusted_graph_edge(&tx, "/tmp/remem", 1, &candidate, "graph_review")?;
+    let outcome = insert_trusted_graph_edge(
+        &tx,
+        &task.project,
+        task.project_id,
+        1,
+        &candidate,
+        "graph_review",
+    )?;
     let err = mark_candidate_promoted(&tx, 1, "approved", &outcome)
         .expect_err("stale candidate promotion must fail");
     assert!(
@@ -660,15 +687,16 @@ fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
 #[test]
 fn graph_review_approval_rejects_foreign_memory_ref() -> Result<()> {
     let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-foreign-memory")?;
     insert_graph_memory(&conn, "/tmp/other", 1)?;
     conn.execute(
         "INSERT INTO graph_candidates
-         (source_project, candidate_type, edge_type, from_ref, to_ref,
+         (project_id, source_project, candidate_type, edge_type, from_ref, to_ref,
           evidence_event_ids, confidence, risk_class, reason, review_status,
           created_at_epoch, updated_at_epoch)
-         VALUES ('/tmp/remem', 'edge', 'mentions', 'memory:1', 'entity:Worker',
+         VALUES (?1, '/tmp/remem', 'edge', 'mentions', 'memory:1', 'entity:Worker',
                  '[1]', 0.91, 'low', 'foreign memory ref', 'pending_review', 1, 1)",
-        [],
+        [task.project_id],
     )?;
 
     let err = review::approve_candidate(&mut conn, 1)
@@ -699,13 +727,13 @@ async fn graph_review_approve_reject_and_defer() -> Result<()> {
     let event_id = insert_graph_source_observation(
         &conn,
         &task,
-        "Memory 1 supports memory 2 and mentions Worker.",
+        "Memory 1 conflicts with memory 2, memory 3, and memory 4.",
     )?;
     process_with_graph_generator(&mut conn, &task, |_prompt| async move {
         Ok(format!(
             "{}{}{}",
-            graph_candidate_xml("supports", "memory:2", event_id),
-            graph_candidate_xml("refutes", "memory:3", event_id),
+            graph_candidate_xml("conflicts", "memory:2", event_id),
+            graph_candidate_xml("conflicts", "memory:3", event_id),
             graph_candidate_xml("conflicts", "memory:4", event_id)
         ))
     })

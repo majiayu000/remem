@@ -42,9 +42,28 @@ pub(super) fn repair_known_schema_drift(conn: &Connection, applied: &[i64]) -> R
             still_missing.join(", ")
         );
     }
+    install_v031_state_delete_trigger(conn)
+        .context("install v031 graph_edges memory_state_keys delete trigger")?;
 
     repaired.push(format!("v022_memory_state_keys ({})", missing.join(", ")));
     Ok(repaired)
+}
+
+pub(super) fn install_v031_state_delete_trigger(conn: &Connection) -> Result<()> {
+    if !table_exists(conn, "graph_edges")? || !table_exists(conn, "memory_state_keys")? {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS graph_edges_memory_state_keys_delete
+        AFTER DELETE ON memory_state_keys
+        BEGIN
+            DELETE FROM graph_edges
+            WHERE (from_node_kind = 'state' AND from_node_id = OLD.id)
+               OR (to_node_kind = 'state' AND to_node_id = OLD.id);
+        END;",
+    )?;
+    Ok(())
 }
 
 fn repair_v022_memory_state_keys(conn: &Connection) -> Result<()> {

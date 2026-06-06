@@ -157,8 +157,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 31,
+        name: "graph_edges",
+        sql: include_str!("../migrations/v031_graph_edges.sql"),
+    },
+    Migration {
+        version: 32,
         name: "graph_candidates",
-        sql: include_str!("../migrations/v031_graph_candidates.sql"),
+        sql: include_str!("../migrations/v032_graph_candidates.sql"),
     },
 ];
 

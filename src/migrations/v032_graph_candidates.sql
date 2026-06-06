@@ -1,8 +1,8 @@
--- v031_graph_candidates: governed graph candidate queue and trusted graph edges.
+-- v032_graph_candidates: governed graph candidate queue.
 --
--- LLM output lands in graph_candidates first. Trusted graph_edges require either
--- a graph candidate or an explicit operation log, so model output cannot mutate
--- the trusted graph directly.
+-- LLM output lands in graph_candidates first. Promotion writes to the typed
+-- graph_edges contract from v031, so model output cannot mutate the trusted
+-- graph directly.
 
 CREATE TABLE IF NOT EXISTS graph_candidates (
     id INTEGER PRIMARY KEY,
@@ -38,22 +38,6 @@ CREATE TABLE IF NOT EXISTS graph_candidates (
     FOREIGN KEY(source_operation_id) REFERENCES memory_operation_log(id)
 );
 
-CREATE TABLE IF NOT EXISTS graph_edges (
-    id INTEGER PRIMARY KEY,
-    edge_type TEXT NOT NULL,
-    from_ref TEXT NOT NULL,
-    to_ref TEXT NOT NULL,
-    source_candidate_id INTEGER,
-    evidence_event_ids TEXT NOT NULL,
-    source_operation_id INTEGER,
-    confidence REAL,
-    reason TEXT,
-    created_at_epoch INTEGER NOT NULL,
-    CHECK(source_candidate_id IS NOT NULL OR source_operation_id IS NOT NULL),
-    FOREIGN KEY(source_candidate_id) REFERENCES graph_candidates(id),
-    FOREIGN KEY(source_operation_id) REFERENCES memory_operation_log(id)
-);
-
 CREATE INDEX IF NOT EXISTS idx_graph_candidates_review
     ON graph_candidates(review_status, created_at_epoch, id);
 
@@ -62,10 +46,3 @@ CREATE INDEX IF NOT EXISTS idx_graph_candidates_project
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_candidates_dedupe
     ON graph_candidates(project_id, candidate_type, edge_type, from_ref, to_ref, evidence_event_ids);
-
-CREATE INDEX IF NOT EXISTS idx_graph_edges_refs
-    ON graph_edges(from_ref, edge_type, to_ref);
-
-CREATE INDEX IF NOT EXISTS idx_graph_edges_candidate
-    ON graph_edges(source_candidate_id)
-    WHERE source_candidate_id IS NOT NULL;
