@@ -267,6 +267,7 @@
               <li data-i18n="usage_feat_1">Provider/log usage is separated from text-estimated fallback rows.</li>
               <li data-i18n="usage_feat_2">Cost is an estimate, not a provider invoice or subscription bill.</li>
               <li data-i18n="usage_feat_3">Executor and model selection live in ~/.remem/config.toml.</li>
+              <li data-i18n="usage_feat_4">The local audit below is a snapshot from 2026-06-06; usage varies by workload.</li>
             </ul>
           </div>
           <div class="diagram reveal" aria-label="Usage and cost report">
@@ -279,6 +280,30 @@
             </div>
             <div class="formula" data-i18n="usage_formula">provider/log rows stay separate from estimates</div>
             <div class="result" data-i18n="usage_result">cost estimate, not invoice</div>
+          </div>
+        </div>
+        <div class="shell">
+          <div class="metrics-grid reveal" aria-label="Local 8-week usage audit">
+            <article>
+              <span data-i18n="usage_audit_project_share">Project ledger share</span>
+              <strong>0.04%</strong>
+              <p data-i18n="usage_audit_project_share_body">This repository's remem ledger was $6.18 against $17,595.10 of total agent spend.</p>
+            </article>
+            <article>
+              <span data-i18n="usage_audit_global_share">Full remem ledger share</span>
+              <strong>2.48%</strong>
+              <p data-i18n="usage_audit_global_share_body">All remem background memory calls across projects were $437.15 in the same window.</p>
+            </article>
+            <article>
+              <span data-i18n="usage_audit_project_cost">Project ledger cost</span>
+              <strong>$6.18</strong>
+              <p data-i18n="usage_audit_project_cost_body">Estimated background memory cost for this repository over 8 weeks.</p>
+            </article>
+            <article>
+              <span data-i18n="usage_audit_total_spend">Total agent spend</span>
+              <strong>$17.6k</strong>
+              <p data-i18n="usage_audit_total_spend_body">ccstats all-source spend over the same 2026-04-12 to 2026-06-06 window.</p>
+            </article>
           </div>
         </div>
       </section>
