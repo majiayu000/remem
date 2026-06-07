@@ -38,6 +38,7 @@
         <div class="nav-links">
           <a href="#how" data-i18n="nav_how">How it works</a>
           <a href="#search" data-i18n="nav_search">Search</a>
+          <a href="#usage" data-i18n="nav_usage">Usage</a>
           <a href="#benchmarks" data-i18n="nav_bench">Benchmarks</a>
           <a href="#install" data-i18n="nav_install">Install</a>
         </div>
@@ -254,6 +255,59 @@
         </div>
       </section>
 
+      <section class="section" id="usage">
+        <div class="shell search-layout">
+          <div class="section-head reveal">
+            <p class="eyebrow" data-i18n="usage_kicker">Usage & cost</p>
+            <h2 data-i18n="usage_title">Measured locally, reported as estimates.</h2>
+            <p data-i18n="usage_lead">
+              remem records AI usage for its own background extraction, summaries, compression, and promotion calls. The CLI reports token usage and estimated USD cost by day, week, source, project, and executor.
+            </p>
+            <ul class="feature-list">
+              <li data-i18n="usage_feat_1">Provider/log usage is separated from text-estimated fallback rows.</li>
+              <li data-i18n="usage_feat_2">Cost is an estimate, not a provider invoice or subscription bill.</li>
+              <li data-i18n="usage_feat_3">Executor and model selection live in ~/.remem/config.toml.</li>
+              <li data-i18n="usage_feat_4">The local audit below is a snapshot from 2026-06-06; usage varies by workload.</li>
+            </ul>
+          </div>
+          <div class="diagram reveal" aria-label="Usage and cost report">
+            <div class="query">remem usage --days 14 --weeks 8</div>
+            <div class="channels">
+              <span data-i18n="usage_channel_1">Daily and weekly totals</span>
+              <span data-i18n="usage_channel_2">Project-scoped reports</span>
+              <span data-i18n="usage_channel_3">Usage source precision</span>
+              <span data-i18n="usage_channel_4">Estimated USD cost</span>
+            </div>
+            <div class="formula" data-i18n="usage_formula">provider/log rows stay separate from estimates</div>
+            <div class="result" data-i18n="usage_result">cost estimate, not invoice</div>
+          </div>
+        </div>
+        <div class="shell">
+          <div class="metrics-grid reveal" aria-label="Local 8-week usage audit">
+            <article>
+              <span data-i18n="usage_audit_project_share">Project ledger share</span>
+              <strong>0.04%</strong>
+              <p data-i18n="usage_audit_project_share_body">This repository's remem ledger was $6.18 against $17,595.10 of total agent spend.</p>
+            </article>
+            <article>
+              <span data-i18n="usage_audit_global_share">Full remem ledger share</span>
+              <strong>2.48%</strong>
+              <p data-i18n="usage_audit_global_share_body">All remem background memory calls across projects were $437.15 in the same window.</p>
+            </article>
+            <article>
+              <span data-i18n="usage_audit_project_cost">Project ledger cost</span>
+              <strong>$6.18</strong>
+              <p data-i18n="usage_audit_project_cost_body">Estimated background memory cost for this repository over 8 weeks.</p>
+            </article>
+            <article>
+              <span data-i18n="usage_audit_total_spend">Total agent spend</span>
+              <strong>$17.6k</strong>
+              <p data-i18n="usage_audit_total_spend_body">ccstats all-source spend over the same 2026-04-12 to 2026-06-06 window.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section class="section install-section" id="install">
         <div class="shell install-grid">
           <div class="section-head reveal">
@@ -317,6 +371,7 @@
           <h3 data-i18n="footer_product">Product</h3>
           <a href="#how" data-i18n="nav_how">How it works</a>
           <a href="#search" data-i18n="nav_search">Search</a>
+          <a href="#usage" data-i18n="nav_usage">Usage</a>
           <a href="#install" data-i18n="nav_install">Install</a>
         </div>
         <div>
