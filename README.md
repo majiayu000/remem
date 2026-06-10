@@ -213,9 +213,13 @@ Enhancements:
 
 ## Benchmark Snapshot
 
-### LoCoMo
+### LoCoMo (Informational Only)
 
 Full [LoCoMo](https://github.com/snap-research/locomo) benchmark (10 conversations, 1540 QA pairs after adversarial skip):
+
+This snapshot is a historical footnote and is not a CI or release gate. Use the
+golden retrieval eval for deterministic gating; LoCoMo remains useful only for
+manual, informational comparison because the methodology is disputed.
 
 | Config | Overall | Single-hop | Multi-hop | Temporal | Open-domain | Ingest | Model |
 |---|---:|---:|---:|---:|---:|---|---|

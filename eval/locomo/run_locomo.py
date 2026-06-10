@@ -1,5 +1,9 @@
 """
-LoCoMo Benchmark Runner for remem (v3 — all optimizations except vector search).
+Informational-only LoCoMo Benchmark Runner for remem.
+
+This runner is not a CI or release gate. The checked-in LoCoMo scores are a
+historical footnote for manual comparison; use the golden retrieval eval for
+deterministic gating.
 
 Optimizations:
 1. Hybrid ingest: session_summary + timestamp index from raw turns
@@ -673,7 +677,9 @@ def print_report(category_scores):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LoCoMo benchmark for remem (v3)")
+    parser = argparse.ArgumentParser(
+        description="Informational-only LoCoMo benchmark for remem"
+    )
     parser.add_argument("--remem-url", default="http://127.0.0.1:5567")
     parser.add_argument("--model", default="gpt-5.4")
     parser.add_argument("--top-k", type=int, default=20)

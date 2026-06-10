@@ -200,6 +200,8 @@ Useful sources:
 
 Relevant ideas:
 
+- LoCoMo is informational-only for remem. It is useful research context, but
+  not a CI or release gate.
 - `self_retrieval` alone is too optimistic. It tests whether a recent title can find itself, not whether a user question gets the right evidence.
 - LongMemEval's buckets are useful for remem: information extraction, multi-session reasoning, temporal reasoning, knowledge update, and abstention.
 - RAGAS separates context quality from answer faithfulness. remem should do the same: first measure retrieved evidence, then measure generated answer quality if answer generation is introduced.

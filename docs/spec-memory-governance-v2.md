@@ -80,6 +80,7 @@ Recent memory-system papers point in the same direction:
 8. Benchmarks should cover knowledge update, temporal reasoning, abstention,
    and multi-session reasoning rather than only self-retrieval.
    Sources: LoCoMo, arXiv:2402.17753; LongMemEval, arXiv:2410.10813.
+   LoCoMo is informational-only for remem and must not be used as a CI gate.
 
 These sources support a local-first, auditable architecture:
 
@@ -377,5 +378,6 @@ modes are fixed, which risks remain, and which commands produced the evidence.
   https://arxiv.org/abs/2404.13501
 - LoCoMo:
   https://arxiv.org/abs/2402.17753
+  Informational-only for remem; not a CI or release gate.
 - LongMemEval:
   https://arxiv.org/abs/2410.10813

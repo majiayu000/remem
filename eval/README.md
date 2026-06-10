@@ -1,12 +1,14 @@
 # Golden Query Eval
 
 `remem eval` runs a deterministic retrieval-quality check against a versioned JSON fixture.
+This golden eval is the deterministic retrieval gate; LoCoMo remains
+informational-only and must not be used as a CI gate.
 
 ```bash
 remem eval --dataset eval/golden.json -k 5
 ```
 
-The command reports per-query status plus overall and per-category metrics:
+The command reports per-query status plus overall, per-slice, and per-category metrics:
 
 - `H@k`: at least one expected memory or evidence ref appears in the top `k`.
 - `MRR@10`: reciprocal rank of the first expected hit in the top 10.
@@ -22,13 +24,28 @@ Top-level fields:
 
 - `version`: schema version string.
 - `description`: human-readable dataset note.
+- `corpus`: optional fixture memories. When present, `remem eval` seeds these memories into an in-memory SQLite database and does not open the configured live database.
 - `queries`: array of query cases.
+
+Corpus memory fields:
+
+- `project`: project path or stable synthetic project id.
+- `topic_key`: optional stable topic key.
+- `title`: memory title.
+- `content`: memory text to seed.
+- `memory_type`: memory type, for example `decision`, `discovery`, or `procedure`.
+- `branch`: optional branch filter value.
+- `scope`: optional memory scope. Defaults to `project`.
+- `status`: optional lifecycle status. Defaults to `active`.
+- `files`: optional JSON-encoded file list.
+- `created_at_epoch`: optional fixed creation timestamp.
 
 Query fields:
 
 - `id`: stable case id.
 - `query`: user-facing search query.
 - `category`: bucket for per-category reporting, for example `single_session`, `multi_session`, `temporal`, `knowledge_update`, `project_scope`, `procedure`, or `abstention`.
+- `slice`: ability slice for per-slice reporting, for example `paraphrase`, `knowledge_update`, `temporal`, `abstention`, or `multi_hop`. Defaults to `category` for older datasets.
 - `project`: optional project filter.
 - `branch`: optional branch filter.
 - `memory_type`: optional memory type filter.

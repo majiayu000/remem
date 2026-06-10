@@ -7,7 +7,44 @@ pub struct GoldenDataset {
     pub version: Option<String>,
     pub description: Option<String>,
     #[serde(default)]
+    pub corpus: Vec<GoldenMemory>,
+    #[serde(default)]
     pub queries: Vec<GoldenQuery>,
+}
+
+impl GoldenDataset {
+    pub fn has_fixture_corpus(&self) -> bool {
+        !self.corpus.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct GoldenMemory {
+    pub project: String,
+    #[serde(default)]
+    pub topic_key: Option<String>,
+    pub title: String,
+    #[serde(alias = "text")]
+    pub content: String,
+    pub memory_type: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default = "default_scope")]
+    pub scope: String,
+    #[serde(default = "default_status")]
+    pub status: String,
+    #[serde(default)]
+    pub files: Option<String>,
+    #[serde(default)]
+    pub created_at_epoch: Option<i64>,
+}
+
+fn default_scope() -> String {
+    "project".to_string()
+}
+
+fn default_status() -> String {
+    "active".to_string()
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -15,6 +52,8 @@ pub struct GoldenQuery {
     pub id: String,
     pub query: String,
     pub category: String,
+    #[serde(default)]
+    pub slice: Option<String>,
     pub project: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
@@ -34,6 +73,13 @@ pub struct GoldenQuery {
 impl GoldenQuery {
     pub fn expects_abstention(&self) -> bool {
         self.expect_abstain || self.false_premise
+    }
+
+    pub fn slice_label(&self) -> &str {
+        self.slice
+            .as_deref()
+            .filter(|slice| !slice.trim().is_empty())
+            .unwrap_or(&self.category)
     }
 
     pub fn expected_refs(&self) -> Vec<EvidenceRef> {
@@ -135,6 +181,7 @@ pub struct GoldenEvalReport {
     pub abstention_queries: usize,
     pub abstention_passed: usize,
     pub overall: Option<MetricAverages>,
+    pub by_slice: BTreeMap<String, CategoryEvaluation>,
     pub by_category: BTreeMap<String, CategoryEvaluation>,
     pub queries: Vec<QueryEvaluation>,
 }
@@ -153,6 +200,7 @@ pub struct QueryEvaluation {
     pub id: String,
     pub query: String,
     pub category: String,
+    pub slice: String,
     pub status: QueryStatus,
     pub result_count: usize,
     pub retrieved_ids: Vec<i64>,

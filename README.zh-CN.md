@@ -199,9 +199,12 @@ Query: "database encryption"
 
 ## 基准概览
 
-### LoCoMo
+### LoCoMo（仅作信息参考）
 
 完整 [LoCoMo](https://github.com/snap-research/locomo) 基准（10 个会话，对抗类跳过后共 1540 QA）：
+
+这个快照只是历史脚注，不作为 CI 或发布门禁。确定性门禁使用 golden
+retrieval eval；LoCoMo 仅保留给人工信息参考，因为该基准的方法论已有争议。
 
 | 配置 | Overall | Single-hop | Multi-hop | Temporal | Open-domain | Ingest | Model |
 |---|---:|---:|---:|---:|---:|---|---|
