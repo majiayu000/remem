@@ -319,12 +319,101 @@ fn is_scoped_path(token: &str) -> bool {
 }
 
 fn redact_and_truncate(text: &str, max_bytes: usize) -> String {
-    let redacted = text
-        .split_whitespace()
-        .map(redact_token)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let redacted = redact_sensitive_text(text);
     db::truncate_str(&redacted, max_bytes).to_string()
+}
+
+pub(crate) fn redact_sensitive_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    let redacted = if is_sensitive_key(key) {
+                        serde_json::Value::String("[REDACTED]".to_string())
+                    } else {
+                        redact_sensitive_value(value)
+                    };
+                    (key.clone(), redacted)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(redact_sensitive_value).collect::<Vec<_>>())
+        }
+        serde_json::Value::String(text) => serde_json::Value::String(redact_sensitive_text(text)),
+        _ => value.clone(),
+    }
+}
+
+pub(crate) fn redact_sensitive_text(text: &str) -> String {
+    text.lines()
+        .map(redact_sensitive_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn redact_sensitive_line(line: &str) -> String {
+    if let Some((prefix, _)) = split_sensitive_assignment(line) {
+        return format!("{prefix}[REDACTED]");
+    }
+
+    let mut previous_was_bearer = false;
+    line.split_whitespace()
+        .map(|token| {
+            let redacted = if previous_was_bearer {
+                "[REDACTED]"
+            } else {
+                redact_token(token)
+            };
+            previous_was_bearer = token
+                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+                .eq_ignore_ascii_case("bearer");
+            redacted
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn split_sensitive_assignment(line: &str) -> Option<(&str, &str)> {
+    let (idx, separator_len) = line
+        .find('=')
+        .map(|idx| (idx, 1))
+        .or_else(|| line.find(':').map(|idx| (idx, 1)))?;
+    let key = line[..idx].trim();
+    if !is_sensitive_key(key) {
+        return None;
+    }
+    Some((&line[..idx + separator_len], &line[idx + separator_len..]))
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = key
+        .trim()
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    matches!(
+        normalized.as_str(),
+        "api_key"
+            | "apikey"
+            | "auth"
+            | "authorization"
+            | "bearer"
+            | "cookie"
+            | "set_cookie"
+            | "password"
+            | "passwd"
+            | "secret"
+            | "token"
+            | "access_token"
+            | "refresh_token"
+            | "id_token"
+            | "client_secret"
+            | "private_key"
+    ) || normalized.ends_with("_api_key")
+        || normalized.ends_with("_token")
+        || normalized.ends_with("_secret")
+        || normalized.ends_with("_password")
 }
 
 fn redact_token(token: &str) -> &str {

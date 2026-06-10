@@ -43,6 +43,30 @@ fn build_hooks_contains_expected_codex_commands() {
 }
 
 #[test]
+fn build_hooks_quotes_binary_paths_with_spaces() {
+    let hooks = build_hooks("/tmp/remem bin/remem", HookStrategy::Codex);
+
+    assert_eq!(
+        hooks["SessionStart"][0]["hooks"][0]["command"],
+        "'/tmp/remem bin/remem' context --host codex-cli"
+    );
+    assert_eq!(
+        hooks["Stop"][0]["hooks"][0]["command"],
+        "'/tmp/remem bin/remem' summarize --host codex-cli"
+    );
+}
+
+#[test]
+fn build_hooks_quotes_binary_paths_with_single_quotes() {
+    let hooks = build_hooks("/tmp/remem'bin/remem", HookStrategy::ClaudeCode);
+
+    assert_eq!(
+        hooks["PostToolUse"][0]["hooks"][0]["command"],
+        "'/tmp/remem'\\''bin/remem' observe --host claude-code"
+    );
+}
+
+#[test]
 fn remove_remem_hooks_preserves_other_hooks() {
     let mut settings = json!({
         "hooks": {

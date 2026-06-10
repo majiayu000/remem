@@ -155,6 +155,14 @@ Stop hook fires
        └─ >100 active observations → oldest 30 merged into 1-2 summaries
 ```
 
+The legacy Summary job remains the canonical source for SessionStart recent
+session context because it also drives summary-derived candidates, workstream
+updates, raw archive ingest, and native-memory sync. Capture-ledger
+`SessionRollup` rows are event-range artifacts keyed by `session_row_id` and
+coverage columns; they may coexist in `session_summaries`, but recent-session
+context queries exclude rows with `session_row_id IS NOT NULL` so the two
+pipelines cannot surface duplicate user-facing session summaries.
+
 ### 3. Context Injection (SessionStart → context)
 
 ```
@@ -482,7 +490,8 @@ graph_edges (edge_type, edge_trust, from_node_kind/from_node_id, to_node_kind/to
 
 -- Session summaries
 session_summaries (memory_session_id, project, request, completed, decisions, learned,
-                   next_steps, preferences, discovery_tokens)
+                   next_steps, preferences, discovery_tokens, session_row_id,
+                   covered_from_event_id, covered_to_event_id)
 
 -- WorkStreams (cross-session task tracking)
 workstreams (project, title, status, next_action, blockers,

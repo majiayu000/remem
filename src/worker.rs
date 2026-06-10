@@ -236,6 +236,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn worker_retries_compress_job_when_ai_fails() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-compress-ai-failure");
+        configure_codex_stub("/tmp/remem-missing-codex-for-compress")?;
+
+        let conn = db::open_db()?;
+        insert_compressible_observations(&conn, "/tmp/remem", 101)?;
+        let job_id = db::enqueue_job(
+            &conn,
+            "codex-cli",
+            db::JobType::Compress,
+            "/tmp/remem",
+            None,
+            "{}",
+            200,
+        )?;
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let (state, attempt_count, next_retry, last_error): (
+            String,
+            i64,
+            Option<i64>,
+            Option<String>,
+        ) = conn.query_row(
+            "SELECT state, attempt_count, next_retry_epoch, last_error FROM jobs WHERE id = ?1",
+            params![job_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        anyhow::ensure!(state == "pending", "expected pending retry, got {state}");
+        anyhow::ensure!(
+            attempt_count == 1,
+            "expected one attempt, got {attempt_count}"
+        );
+        anyhow::ensure!(next_retry.is_some(), "expected retry delay");
+        anyhow::ensure!(
+            last_error
+                .as_deref()
+                .is_some_and(|err| err.contains("failed to spawn")),
+            "expected missing codex path error, got {last_error:?}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn worker_retries_unimplemented_extraction_task() -> anyhow::Result<()> {
         let _data_dir = ScopedTestDataDir::new("worker-extraction-unimplemented");
         let conn = db::open_db()?;
@@ -468,6 +513,31 @@ mod tests {
     fn configure_codex_stub(stub_codex: &str) -> anyhow::Result<()> {
         crate::runtime_config::init_config()?;
         crate::runtime_config::set_config_value("memory_ai.profiles.codex.path", stub_codex)?;
+        Ok(())
+    }
+
+    fn insert_compressible_observations(
+        conn: &rusqlite::Connection,
+        project: &str,
+        count: usize,
+    ) -> anyhow::Result<()> {
+        for idx in 0..count {
+            db::insert_observation(
+                conn,
+                &format!("compress-source-{idx}"),
+                project,
+                "discovery",
+                Some(&format!("Source {idx}")),
+                None,
+                Some(&format!("Source observation {idx}")),
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+            )?;
+        }
         Ok(())
     }
 }
