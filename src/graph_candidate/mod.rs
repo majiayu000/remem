@@ -25,11 +25,9 @@ use source::{
 const GRAPH_CANDIDATE_SYSTEM: &str = "\
 Generate governed graph candidates from extracted observations.
 Return zero or more <graph_candidate> blocks.
-Each block must include <type>, <edge_type>, <from_ref>, <to_ref>,
+Each block must include <type>edge</type>, <edge_type>, <from_ref>, <to_ref>,
 <evidence_event_ids>, <risk_class>, <confidence>, and <reason>.
-Use type=edge for graph edges, type=entity_alias for alias/canonicalization,
-type=claim for claim/fact candidates, and type=state_relation for current-state
-relationships. For type=edge, use only mentions, touches_file, or conflicts.
+Use only edge candidates with edge_type mentions, touches_file, or conflicts.
 Use only provided observations and evidence ids.
 If there is no durable graph candidate, return exactly <no_graph_candidates reason=\"...\"/>.
 If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/>.

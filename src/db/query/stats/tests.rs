@@ -164,6 +164,12 @@ fn query_system_stats_and_related_views_share_one_definition() {
         [],
     )
     .expect("graph candidate insert should succeed");
+    if let Err(err) = conn.execute(
+        "INSERT INTO graph_candidates (review_status) VALUES ('deferred')",
+        [],
+    ) {
+        panic!("deferred graph candidate insert should succeed: {err}");
+    }
     conn.execute(
         "INSERT INTO graph_candidates (review_status) VALUES ('approved')",
         [],
@@ -238,7 +244,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
             failed_extraction_tasks: 1,
             oldest_pending_extraction_epoch: Some(90),
             pending_memory_candidates: 1,
-            pending_graph_candidates: 1,
+            pending_graph_candidates: 2,
             pending_observations: 2,
             ready_pending_observations: 1,
             delayed_pending_observations: 1,

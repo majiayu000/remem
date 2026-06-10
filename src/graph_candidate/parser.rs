@@ -69,7 +69,7 @@ fn graph_required_field(content: &str, field: &str) -> Result<String> {
 
 fn normalize_graph_candidate_type(raw: &str) -> Result<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "entity_alias" | "claim" | "edge" | "state_relation" => Ok(raw.trim().to_ascii_lowercase()),
+        "edge" => Ok(raw.trim().to_ascii_lowercase()),
         other => bail!("malformed graph_candidate output: invalid type '{other}'"),
     }
 }
@@ -80,18 +80,6 @@ fn normalize_graph_edge_type(candidate_type: &str, raw: &str) -> Result<String> 
         "edge" => match value.as_str() {
             "mentions" | "touches_file" | "conflicts" => Ok(value),
             other => bail!("malformed graph_candidate output: invalid edge_type '{other}'"),
-        },
-        "entity_alias" => match value.as_str() {
-            "alias_of" => Ok(value),
-            other => bail!("malformed graph_candidate output: invalid alias edge_type '{other}'"),
-        },
-        "claim" => match value.as_str() {
-            "claims" => Ok(value),
-            other => bail!("malformed graph_candidate output: invalid claim edge_type '{other}'"),
-        },
-        "state_relation" => match value.as_str() {
-            "current_state" => Ok(value),
-            other => bail!("malformed graph_candidate output: invalid state edge_type '{other}'"),
         },
         _ => bail!("malformed graph_candidate output: invalid type '{candidate_type}'"),
     }
@@ -170,18 +158,12 @@ fn normalize_graph_reason(raw: &str) -> Result<String> {
 }
 
 fn validate_graph_candidate_shape(
-    candidate_type: &str,
+    _candidate_type: &str,
     edge_type: &str,
     to_ref: &str,
 ) -> Result<()> {
     if edge_type == "touches_file" && !to_ref.starts_with("file:") {
         bail!("malformed graph_candidate output: touches_file to_ref must be file:<path>");
-    }
-    if candidate_type == "entity_alias" && !to_ref.starts_with("entity:") {
-        bail!("malformed graph_candidate output: entity_alias to_ref must be entity:<name>");
-    }
-    if candidate_type == "state_relation" && !to_ref.starts_with("state:") {
-        bail!("malformed graph_candidate output: state_relation to_ref must be state:<key>");
     }
     Ok(())
 }
@@ -222,11 +204,24 @@ mod tests {
     #[test]
     fn unpromotable_edge_type_fails_closed() {
         let err = parse_graph_candidates(
-            "<graph_candidate><type>edge</type><edge_type>supports</edge_type><from_ref>memory:1</from_ref><to_ref>memory:2</to_ref><evidence_event_ids>1</evidence_event_ids><risk_class>low</risk_class><confidence>0.91</confidence><reason>unsupported edge</reason></graph_candidate>",
+			"<graph_candidate><type>edge</type><edge_type>supports</edge_type><from_ref>memory:1</from_ref><to_ref>memory:2</to_ref><evidence_event_ids>1</evidence_event_ids><risk_class>low</risk_class><confidence>0.91</confidence><reason>unsupported edge</reason></graph_candidate>",
         )
         .expect_err("unsupported edge type should fail");
 
         assert!(err.to_string().contains("invalid edge_type 'supports'"));
+    }
+
+    #[test]
+    fn unpromotable_candidate_type_fails_closed() {
+        let result = parse_graph_candidates(
+			"<graph_candidate><type>state_relation</type><edge_type>current_state</edge_type><from_ref>memory:1</from_ref><to_ref>state:active_focus</to_ref><evidence_event_ids>1</evidence_event_ids><risk_class>low</risk_class><confidence>0.91</confidence><reason>unsupported candidate type</reason></graph_candidate>",
+		);
+        let err = match result {
+            Ok(_) => panic!("unsupported candidate type should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("invalid type 'state_relation'"));
     }
 
     #[test]

@@ -266,10 +266,10 @@ fn query_pending_graph_candidates(conn: &Connection) -> Result<i64> {
         return Ok(0);
     }
     conn.query_row(
-        "SELECT COUNT(*) FROM graph_candidates WHERE review_status = 'pending_review'",
-        [],
-        |row| row.get(0),
-    )
+		"SELECT COUNT(*) FROM graph_candidates WHERE review_status IN ('pending_review', 'deferred')",
+		[],
+		|row| row.get(0),
+	)
     .map_err(Into::into)
 }
 

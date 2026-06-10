@@ -187,6 +187,7 @@ pub(super) fn graph_candidate_blocked_by_memory_candidates(
                AND session_row_id = ?3
                AND task_kind = 'memory_candidate'
                AND COALESCE(high_watermark_event_id, 0) >= ?4
+               AND COALESCE(cursor_event_id, 0) < ?4
                AND status != 'done'
              ORDER BY id ASC
              LIMIT 1",

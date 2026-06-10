@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- Fixed graph-candidate review follow-ups so graph extraction only prompts for
+  promotable edge types, deferred graph candidates stay visible in status, and
+  graph tasks do not wait on memory tasks that already covered their range.
+
 ### Changed
 - Reframed project metadata and README docs around Claude Code and Codex as
   first-class hosts, including a Codex setup section and distribution channel
