@@ -47,6 +47,7 @@ pub fn evaluate_dataset(
     let mut query_reports = Vec::with_capacity(dataset.queries.len());
     let mut overall_sums = MetricSums::default();
     let mut categories = BTreeMap::<String, CategoryAccumulator>::new();
+    let mut slices = BTreeMap::<String, CategoryAccumulator>::new();
     let mut skipped_queries = 0usize;
     let mut abstention_queries = 0usize;
     let mut abstention_passed = 0usize;
@@ -64,18 +65,17 @@ pub fn evaluate_dataset(
         )?;
         let evaluation = evaluate_query(query, &results, k);
         let category = categories.entry(query.category.clone()).or_default();
-        category.total_queries += 1;
+        record_bucket(category, query, &evaluation);
+        let slice = slices.entry(query.slice_label().to_string()).or_default();
+        record_bucket(slice, query, &evaluation);
 
         if query.expects_abstention() {
             abstention_queries += 1;
-            category.abstention_queries += 1;
             if evaluation.status == QueryStatus::Pass {
                 abstention_passed += 1;
-                category.abstention_passed += 1;
             }
         } else if let Some(metrics) = evaluation.metrics.as_ref() {
             overall_sums.add(metrics);
-            category.metrics.add(metrics);
         } else {
             skipped_queries += 1;
         }
@@ -95,23 +95,42 @@ pub fn evaluate_dataset(
         abstention_queries,
         abstention_passed,
         overall: overall_sums.averages(),
+        by_slice: slices
+            .into_iter()
+            .map(|(name, slice)| (name, bucket_evaluation(slice)))
+            .collect(),
         by_category: categories
             .into_iter()
-            .map(|(name, category)| {
-                (
-                    name,
-                    CategoryEvaluation {
-                        total_queries: category.total_queries,
-                        scored_queries: category.metrics.averages().map_or(0, |m| m.count),
-                        abstention_queries: category.abstention_queries,
-                        abstention_passed: category.abstention_passed,
-                        metrics: category.metrics.averages(),
-                    },
-                )
-            })
+            .map(|(name, category)| (name, bucket_evaluation(category)))
             .collect(),
         queries: query_reports,
     })
+}
+
+fn record_bucket(
+    bucket: &mut CategoryAccumulator,
+    query: &GoldenQuery,
+    evaluation: &QueryEvaluation,
+) {
+    bucket.total_queries += 1;
+    if query.expects_abstention() {
+        bucket.abstention_queries += 1;
+        if evaluation.status == QueryStatus::Pass {
+            bucket.abstention_passed += 1;
+        }
+    } else if let Some(metrics) = evaluation.metrics.as_ref() {
+        bucket.metrics.add(metrics);
+    }
+}
+
+fn bucket_evaluation(bucket: CategoryAccumulator) -> CategoryEvaluation {
+    CategoryEvaluation {
+        total_queries: bucket.total_queries,
+        scored_queries: bucket.metrics.averages().map_or(0, |m| m.count),
+        abstention_queries: bucket.abstention_queries,
+        abstention_passed: bucket.abstention_passed,
+        metrics: bucket.metrics.averages(),
+    }
 }
 
 fn validate_dataset(dataset: &GoldenDataset) -> Result<()> {
@@ -140,6 +159,24 @@ fn validate_dataset(dataset: &GoldenDataset) -> Result<()> {
                 query.id
             ));
         }
+        if query
+            .slice
+            .as_deref()
+            .is_some_and(|slice| slice.trim().is_empty())
+        {
+            return Err(anyhow!(
+                "golden eval query {} slice must not be empty",
+                query.id
+            ));
+        }
+        if query.expects_abstention()
+            && (!query.evidence_refs.is_empty() || !query.relevant_ids.is_empty())
+        {
+            return Err(anyhow!(
+                "golden eval query {} abstention case must not declare expected evidence",
+                query.id
+            ));
+        }
         for evidence_ref in &query.evidence_refs {
             if !evidence_ref.has_match_criteria() {
                 return Err(anyhow!(
@@ -163,6 +200,7 @@ fn evaluate_query(
             id: query.id.clone(),
             query: query.query.clone(),
             category: query.category.clone(),
+            slice: query.slice_label().to_string(),
             status: if results.is_empty() {
                 QueryStatus::Pass
             } else {
@@ -184,6 +222,7 @@ fn evaluate_query(
             id: query.id.clone(),
             query: query.query.clone(),
             category: query.category.clone(),
+            slice: query.slice_label().to_string(),
             status: QueryStatus::Skip,
             result_count: results.len(),
             retrieved_ids: retrieved_ids(results, k),
@@ -210,6 +249,7 @@ fn evaluate_query(
         id: query.id.clone(),
         query: query.query.clone(),
         category: query.category.clone(),
+        slice: query.slice_label().to_string(),
         status,
         result_count: results.len(),
         retrieved_ids: retrieved_ids(results, k),

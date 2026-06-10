@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use std::collections::BTreeSet;
 
-use super::{evaluate_dataset, EvidenceRef, GoldenDataset, GoldenQuery, QueryStatus};
+use super::{evaluate_dataset, load_dataset, EvidenceRef, GoldenDataset, GoldenQuery, QueryStatus};
 
 fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
@@ -56,6 +57,7 @@ fn query(
         id: id.to_string(),
         query: text.to_string(),
         category: category.to_string(),
+        slice: None,
         project: project.map(str::to_string),
         branch: branch.map(str::to_string),
         memory_type: None,
@@ -232,6 +234,7 @@ fn golden_eval_scores_core_categories_and_abstention() -> Result<()> {
                 id: "abstain".to_string(),
                 query: "MongoDB migration nonexistent".to_string(),
                 category: "abstention".to_string(),
+                slice: None,
                 project: Some("/repo-a".to_string()),
                 branch: Some("main".to_string()),
                 memory_type: None,
@@ -260,6 +263,11 @@ fn golden_eval_scores_core_categories_and_abstention() -> Result<()> {
         .as_ref()
         .context("missing project_scope metrics")?;
     assert_eq!(project_scope_metrics.count, 2);
+    let project_scope_slice = report
+        .by_slice
+        .get("project_scope")
+        .context("missing default project_scope slice")?;
+    assert_eq!(project_scope_slice.scored_queries, 2);
     assert_eq!(
         report.queries.last().map(|query| query.status),
         Some(QueryStatus::Pass)
@@ -317,6 +325,7 @@ fn golden_eval_miss_records_retrieved_and_missing_ids() -> Result<()> {
             id: "miss".to_string(),
             query: "wrong eval needle".to_string(),
             category: "single_hop".to_string(),
+            slice: None,
             project: Some("/repo-a".to_string()),
             branch: Some("main".to_string()),
             memory_type: None,
@@ -354,6 +363,8 @@ fn golden_eval_miss_records_retrieved_and_missing_ids() -> Result<()> {
         "not_run"
     );
     assert_eq!(json["queries"][0]["status"], "MISS");
+    assert_eq!(json["queries"][0]["slice"], "single_hop");
+    assert_eq!(json["by_slice"]["single_hop"]["metrics"]["count"], 1);
     assert_eq!(json["queries"][0]["retrieved_ids"][0], 1);
     assert_eq!(json["queries"][0]["missing_relevant_ids"][0], 42);
     Ok(())
@@ -455,6 +466,7 @@ fn golden_eval_ndcg_uses_best_assignment_for_overlapping_refs() -> Result<()> {
             id: "overlap".to_string(),
             query: "overlapping assignment shared".to_string(),
             category: "dedupe".to_string(),
+            slice: Some("multi_hop".to_string()),
             project: Some("/repo-a".to_string()),
             branch: Some("main".to_string()),
             memory_type: None,
@@ -481,6 +493,121 @@ fn golden_eval_ndcg_uses_best_assignment_for_overlapping_refs() -> Result<()> {
         .as_ref()
         .context("missing query metrics")?;
     assert_eq!(report.queries[0].matched_refs, 2);
+    assert_eq!(report.queries[0].slice, "multi_hop");
+    assert_eq!(
+        report
+            .by_slice
+            .get("multi_hop")
+            .context("missing multi_hop slice")?
+            .scored_queries,
+        1
+    );
     assert_eq!(metrics.ndcg_at_10, 1.0);
+    Ok(())
+}
+
+#[test]
+fn checked_in_golden_dataset_has_required_slices() -> Result<()> {
+    let dataset = load_dataset("eval/golden.json")?;
+    assert!(
+        dataset.queries.len() >= 50,
+        "golden dataset should have at least 50 cases, got {}",
+        dataset.queries.len()
+    );
+
+    let slices: BTreeSet<_> = dataset
+        .queries
+        .iter()
+        .map(|query| query.slice_label().to_string())
+        .collect();
+    for required in [
+        "paraphrase",
+        "knowledge_update",
+        "temporal",
+        "abstention",
+        "multi_hop",
+    ] {
+        assert!(slices.contains(required), "missing slice {required}");
+    }
+
+    for query in dataset
+        .queries
+        .iter()
+        .filter(|query| query.slice_label() == "abstention")
+    {
+        assert!(
+            query.expects_abstention(),
+            "abstention slice query {} must assert abstention",
+            query.id
+        );
+        assert!(
+            query.evidence_refs.is_empty() && query.relevant_ids.is_empty(),
+            "abstention query {} must not declare evidence",
+            query.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn golden_eval_records_current_paraphrase_baseline_for_issue_358() -> Result<()> {
+    let conn = setup_conn()?;
+    insert_memory(
+        &conn,
+        &TestMemory {
+            id: 1,
+            project: "/repo-a",
+            topic_key: "glimmerdock-ledger",
+            title: "Glimmerdock ledger",
+            content: "Mira Vale controls violet rail allowance.",
+            memory_type: "decision",
+            branch: Some("main"),
+            status: "active",
+            updated_at_epoch: chrono::Utc::now().timestamp(),
+        },
+    )?;
+
+    let dataset = GoldenDataset {
+        version: Some("1.2-test".to_string()),
+        description: None,
+        queries: vec![GoldenQuery {
+            id: "paraphrase-baseline-358".to_string(),
+            query: "owner mauve locomotive ration".to_string(),
+            category: "retrieval".to_string(),
+            slice: Some("paraphrase".to_string()),
+            project: Some("/repo-a".to_string()),
+            branch: Some("main".to_string()),
+            memory_type: None,
+            relevant_ids: vec![],
+            evidence_refs: vec![EvidenceRef {
+                topic_key: Some("glimmerdock-ledger".to_string()),
+                text_contains: Some("violet rail allowance".to_string()),
+                ..EvidenceRef::default()
+            }],
+            expect_abstain: false,
+            false_premise: false,
+            notes: Some("Current feature-hash retrieval baseline for #358.".to_string()),
+        }],
+    };
+
+    let report = evaluate_dataset(&conn, &dataset, 5)?;
+    let metrics = report.queries[0]
+        .metrics
+        .as_ref()
+        .context("missing paraphrase metrics")?;
+    assert_eq!(report.queries[0].status, QueryStatus::Miss);
+    assert_eq!(metrics.hit_at_k, 0.0);
+    assert_eq!(metrics.mrr_at_10, 0.0);
+    assert_eq!(metrics.recall_at_k, 0.0);
+    let paraphrase = report
+        .by_slice
+        .get("paraphrase")
+        .context("missing paraphrase slice")?
+        .metrics
+        .as_ref()
+        .context("missing paraphrase slice metrics")?;
+    assert_eq!(paraphrase.count, 1);
+    assert_eq!(paraphrase.hit_at_k, 0.0);
+    assert_eq!(paraphrase.mrr_at_10, 0.0);
     Ok(())
 }

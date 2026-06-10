@@ -9,6 +9,9 @@
 
 ### 1.1 LoCoMo — Very Long-Term Conversational Memory (ACL 2024)
 
+**remem 状态**：仅作信息参考，不作为 CI / release gate。历史 62.66%
+快照只保留为脚注；确定性门禁以 golden retrieval eval 为准。
+
 **来源**：Snap Research, Maharana et al.
 **论文**：[arxiv.org/abs/2402.17753](https://arxiv.org/abs/2402.17753)
 **官网**：[snap-research.github.io/locomo](https://snap-research.github.io/locomo)
@@ -39,7 +42,7 @@
 - 长上下文模型在对抗性问题上严重幻觉
 - 基于断言的数据库检索效果最佳
 
-**remem 适用性**：⭐⭐⭐⭐ — 跨 session 记忆召回是 remem 核心场景，但 LoCoMo 是对话型，需要适配到代码开发场景。
+**remem 适用性**：⭐⭐⭐ — 跨 session 记忆召回是 remem 核心场景，但 LoCoMo 是对话型，且方法论已有争议，因此只能作为人工参考。
 
 ---
 
@@ -631,7 +634,7 @@ cargo test --test eval -- --ignored   # 评估测试（需要 LLM API key）
 
 | 名称 | 年份 | 会议/平台 | 核心贡献 |
 |------|------|----------|---------|
-| LoCoMo | 2024 | ACL | 首个大规模长对话记忆 benchmark |
+| LoCoMo | 2024 | ACL | 信息参考 benchmark；不作为 remem CI / release gate |
 | LongMemEval | 2025 | ICLR | 五维记忆能力评估框架 |
 | MemoryBench | 2025 | arXiv | procedural memory + 用户反馈模拟 |
 | MemoryAgentBench | 2025→2026 | ICLR | 增量注入 + Conflict Resolution |

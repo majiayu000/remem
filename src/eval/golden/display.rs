@@ -38,7 +38,7 @@ impl Display for GoldenEvalReport {
             if let Some(metrics) = query.metrics.as_ref() {
                 writeln!(
                     f,
-                    "  [{}] {:>4} | H@{}={:.2} MRR@10={:.2} P@{}={:.2} R@{}={:.2} nDCG@10={:.2} evidence@{}={:.2} | {} | {}",
+                    "  [{}] {:>4} | H@{}={:.2} MRR@10={:.2} P@{}={:.2} R@{}={:.2} nDCG@10={:.2} evidence@{}={:.2} | slice={} category={} | {}",
                     query.id,
                     query.status.label(),
                     self.k,
@@ -51,6 +51,7 @@ impl Display for GoldenEvalReport {
                     metrics.ndcg_at_10,
                     self.k,
                     metrics.evidence_recall_at_k,
+                    query.slice,
                     query.category,
                     query.query
                 )?;
@@ -65,12 +66,13 @@ impl Display for GoldenEvalReport {
             } else {
                 writeln!(
                     f,
-                    "  [{}] {:>4} | results={} expected_refs={} matched_refs={} | {} | {}",
+                    "  [{}] {:>4} | results={} expected_refs={} matched_refs={} | slice={} category={} | {}",
                     query.id,
                     query.status.label(),
                     query.result_count,
                     query.expected_refs,
                     query.matched_refs,
+                    query.slice,
                     query.category,
                     query.query
                 )?;
@@ -105,6 +107,25 @@ impl Display for GoldenEvalReport {
         writeln!(f)?;
         writeln!(f, "--- Answer/Judge Layer ---")?;
         writeln!(f, "  not run in deterministic golden retrieval eval")?;
+
+        if !self.by_slice.is_empty() {
+            writeln!(f)?;
+            writeln!(f, "--- By Slice ---")?;
+            for (slice, evaluation) in &self.by_slice {
+                if let Some(metrics) = evaluation.metrics.as_ref() {
+                    write_metrics(f, slice, metrics, self.k)?;
+                } else {
+                    writeln!(
+                        f,
+                        "  {}: scored=0 abstention={}/{} total={}",
+                        slice,
+                        evaluation.abstention_passed,
+                        evaluation.abstention_queries,
+                        evaluation.total_queries
+                    )?;
+                }
+            }
+        }
 
         if !self.by_category.is_empty() {
             writeln!(f)?;

@@ -15,6 +15,8 @@ pub struct GoldenQuery {
     pub id: String,
     pub query: String,
     pub category: String,
+    #[serde(default)]
+    pub slice: Option<String>,
     pub project: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
@@ -34,6 +36,13 @@ pub struct GoldenQuery {
 impl GoldenQuery {
     pub fn expects_abstention(&self) -> bool {
         self.expect_abstain || self.false_premise
+    }
+
+    pub fn slice_label(&self) -> &str {
+        self.slice
+            .as_deref()
+            .filter(|slice| !slice.trim().is_empty())
+            .unwrap_or(&self.category)
     }
 
     pub fn expected_refs(&self) -> Vec<EvidenceRef> {
@@ -135,6 +144,7 @@ pub struct GoldenEvalReport {
     pub abstention_queries: usize,
     pub abstention_passed: usize,
     pub overall: Option<MetricAverages>,
+    pub by_slice: BTreeMap<String, CategoryEvaluation>,
     pub by_category: BTreeMap<String, CategoryEvaluation>,
     pub queries: Vec<QueryEvaluation>,
 }
@@ -153,6 +163,7 @@ pub struct QueryEvaluation {
     pub id: String,
     pub query: String,
     pub category: String,
+    pub slice: String,
     pub status: QueryStatus,
     pub result_count: usize,
     pub retrieved_ids: Vec<i64>,

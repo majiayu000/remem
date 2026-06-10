@@ -2,6 +2,7 @@
 
 > 调研日期: 2026-03-25
 > 目标: 理解 Letta 用简单文件系统操作在 LoCoMo 上达到 74% 的原因，为 remem 提供改进方向
+> 当前状态: LoCoMo 在 remem 中仅作信息参考，不作为 CI / release gate；确定性门禁以 golden retrieval eval 为准。
 
 ---
 
