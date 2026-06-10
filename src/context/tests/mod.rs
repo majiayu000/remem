@@ -191,7 +191,7 @@ pub(super) fn insert_session_summary(
 
 pub(super) fn create_session_summary_schema(conn: &Connection) {
     conn.execute_batch(
-        "CREATE TABLE session_summaries (
+        "CREATE TABLE IF NOT EXISTS session_summaries (
             project TEXT,
             request TEXT,
             completed TEXT,
@@ -206,8 +206,39 @@ pub(super) fn create_session_summary_schema(conn: &Connection) {
             context_class TEXT,
             expires_at_epoch INTEGER,
             valid_from_epoch INTEGER,
-            valid_to_epoch INTEGER
+            valid_to_epoch INTEGER,
+            session_row_id INTEGER,
+            covered_from_event_id INTEGER,
+            covered_to_event_id INTEGER
         );",
     )
     .unwrap();
+}
+
+pub(super) fn create_workstream_schema(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workstreams (
+            id INTEGER PRIMARY KEY,
+            project TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL,
+            progress TEXT,
+            next_action TEXT,
+            blockers TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            completed_at_epoch INTEGER,
+            owner_scope TEXT,
+            owner_key TEXT,
+            target_project TEXT
+        );",
+    )
+    .unwrap();
+}
+
+pub(super) fn setup_context_schema(conn: &Connection) {
+    crate::memory::types::tests_helper::setup_memory_schema(conn);
+    create_session_summary_schema(conn);
+    create_workstream_schema(conn);
 }

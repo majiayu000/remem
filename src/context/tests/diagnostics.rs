@@ -1,4 +1,3 @@
-use crate::memory::types::tests_helper::setup_memory_schema;
 use rusqlite::{params, Connection};
 
 use super::super::host::HostKind;
@@ -6,7 +5,7 @@ use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::load_context_data;
 use super::super::render::{build_context_debug_trace, ContextRenderStats, SectionRenderStats};
 use super::super::types::{ContextRequest, LoadedContext};
-use super::{insert_memory, insert_owned_memory};
+use super::{insert_memory, insert_owned_memory, setup_context_schema};
 
 #[test]
 fn context_debug_reports_selected_ids_and_hidden_duplicate_groups() {
@@ -362,7 +361,7 @@ fn context_debug_reports_preference_current_view_state_key_groups() {
 
 fn setup_context_diagnostics_db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     conn
 }
 
