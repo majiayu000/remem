@@ -52,18 +52,16 @@ pub(super) fn load_context_data_with_policy(
 
     let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
         .unwrap_or_else(|e| {
-            crate::log::error(
-                "context",
-                &format!("failed to load recent summaries for {project}: {e}"),
-            );
+            let message = format!("failed to load recent summaries for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("sessions", message));
             Vec::new()
         });
     let workstreams =
         crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(|e| {
-            crate::log::error(
-                "context",
-                &format!("failed to load active workstreams for {project}: {e}"),
-            );
+            let message = format!("failed to load active workstreams for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("workstreams", message));
             Vec::new()
         });
 
@@ -738,6 +736,7 @@ fn query_summary_batch(
         "SELECT request, completed, created_at_epoch \
          FROM session_summaries \
          WHERE request IS NOT NULL AND request != '' \
+           AND session_row_id IS NULL \
            AND ((owner_scope = 'repo' AND owner_key = ?1) \
                 OR (owner_scope = 'repo' AND target_project = ?1) \
                 OR (owner_scope IS NULL AND project = ?1)) \
