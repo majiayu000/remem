@@ -237,6 +237,34 @@ fn query_recent_summaries_excludes_tool_and_domain_owned_rows() {
     assert_eq!(requests, vec!["Repo Stash session", "Legacy Stash session"]);
 }
 
+#[test]
+fn query_recent_summaries_excludes_capture_rollup_rows() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_session_summary_schema(&conn);
+    let project = "/tmp/remem";
+
+    insert_session_summary(
+        &conn,
+        project,
+        "Legacy user-facing summary",
+        Some("Legacy summary remains context visible"),
+        300,
+    );
+    conn.execute(
+        "INSERT INTO session_summaries
+         (project, request, completed, created_at_epoch, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES (?1, 'Captured event range 1..3', 'Capture rollup text', 301, 10, 1, 3)",
+        rusqlite::params![project],
+    )
+    .unwrap();
+
+    let summaries = query_recent_summaries(&conn, project, 10).unwrap();
+
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].request, "Legacy user-facing summary");
+}
+
 fn insert_owned_summary(
     conn: &Connection,
     project: &str,
