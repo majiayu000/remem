@@ -45,6 +45,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "raw_ingest_failures",
     "memory_embeddings",
     "dream_cluster_decisions",
+    "graph_file_nodes",
     "graph_edges",
 ];
 

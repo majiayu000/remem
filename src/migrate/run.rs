@@ -6,7 +6,7 @@ use super::state::{applied_versions, ensure_migration_table, mark_applied};
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
 
-pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
+pub fn run_migrations(conn: &Connection) -> Result<()> {
     ensure_migration_table(conn)?;
 
     conn.execute_batch("BEGIN IMMEDIATE")
@@ -103,7 +103,7 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             &format!("rebuilt search_context for {rebuilt} memories"),
         );
     }
-    if version == 31 {
+    if version == 31 || version == 33 || version == 34 {
         install_v031_state_delete_trigger(conn).with_context(|| {
             format!("migration v{version:03}_{name} failed to install graph edge cleanup triggers")
         })?;

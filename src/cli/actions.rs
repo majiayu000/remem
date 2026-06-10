@@ -23,9 +23,10 @@ pub(super) use model::run_model;
 pub(super) use pending::run_pending;
 pub(super) use preferences::run_preferences;
 pub(super) use query::{
-    run_backfill_entities, run_commit, run_raw, run_search, run_show, run_status, run_why,
+    run_backfill_entities, run_commit, run_current_state, run_raw, run_search, run_show,
+    run_status, run_why,
 };
-pub(super) use review::run_review;
+pub(super) use review::{run_graph_review, run_review};
 pub(super) use scope_cleanup::{
     run_archive, run_audit_scope, run_memory_cleanup, run_merge_preferences, run_reroute,
     RerouteCliRequest,

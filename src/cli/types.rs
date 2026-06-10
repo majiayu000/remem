@@ -143,6 +143,11 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ReviewAction,
     },
+    /// Review, approve, reject, defer, or inspect graph candidates.
+    GraphReview {
+        #[command(subcommand)]
+        action: GraphReviewAction,
+    },
     /// Auditably delete, reject, or stale curated memories by ID.
     Govern {
         /// Restrict governance to one project path.
@@ -339,6 +344,29 @@ pub(super) enum Commands {
         #[arg(long)]
         explain: bool,
         /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve the current memory for a stable state key.
+    Current {
+        /// Stable state key, such as a durable topic key.
+        state_key: String,
+        /// Restrict lookup to one project path. Defaults to repo-owned state plus global user state.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Restrict lookup to one memory type.
+        #[arg(long, alias = "type", short = 't')]
+        memory_type: Option<String>,
+        /// Explicit state-key owner scope, such as `repo` or `user`.
+        #[arg(long)]
+        owner_scope: Option<String>,
+        /// Explicit state-key owner key, such as a repo path or `user:default`.
+        #[arg(long)]
+        owner_key: Option<String>,
+        /// Resolve the state that applied at this Unix epoch.
+        #[arg(long)]
+        as_of_epoch: Option<i64>,
+        /// Emit a single JSON object with stable fields for scripts and MCP parity.
         #[arg(long)]
         json: bool,
     },
@@ -732,6 +760,32 @@ pub(in crate::cli) enum ReviewAction {
         memory_type: Option<String>,
         #[arg(long)]
         scope: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum GraphReviewAction {
+    List {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+    },
+    Inspect {
+        id: i64,
+    },
+    Approve {
+        id: i64,
+    },
+    Reject {
+        id: i64,
+        #[arg(long)]
+        reason: String,
+    },
+    Defer {
+        id: i64,
+        #[arg(long)]
+        reason: String,
     },
 }
 

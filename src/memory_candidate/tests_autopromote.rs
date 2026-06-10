@@ -75,7 +75,8 @@ async fn memory_candidate_auto_promotes_architecture_from_discovery_observation(
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let (memory_type, review_status): (String, String) = conn.query_row(
@@ -121,7 +122,8 @@ async fn memory_candidate_auto_promotes_discovery_from_feature_observation() -> 
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let review_status: String =
@@ -153,13 +155,19 @@ async fn memory_candidate_keeps_architecture_unsupported_by_bugfix_pending() -> 
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 0,
-            pending_review: 1
+            pending_review: 1,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
-    let review_status: String =
-        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
-            row.get(0)
-        })?;
+    let (review_status, block_reason): (String, Option<String>) = conn.query_row(
+        "SELECT review_status, auto_promote_block_reason FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
     assert_eq!(review_status, "pending_review");
+    assert_eq!(
+        block_reason.as_deref(),
+        Some("no_supporting_source_observation")
+    );
     Ok(())
 }

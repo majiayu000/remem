@@ -58,6 +58,7 @@ pub(crate) enum MemoryCandidateResult {
         candidates: usize,
         promoted: usize,
         pending_review: usize,
+        to_event_id: i64,
     },
 }
 
@@ -140,12 +141,14 @@ where
             return Ok(MemoryCandidateResult::Deferred { reason });
         }
         if response.contains("<no_candidates") {
+            enqueue_graph_followup(conn, task, batch.to_event_id)?;
             return Ok(MemoryCandidateResult::NoCandidates);
         }
         bail!("malformed memory_candidate output: no candidates parsed");
     }
 
     let result = persist_candidates(conn, task, &batch, &candidates)?;
+    enqueue_graph_followup(conn, task, batch.to_event_id)?;
     crate::log::info(
         "memory-candidate",
         &format!(
@@ -162,7 +165,22 @@ where
         candidates: result.candidates,
         promoted: result.promoted,
         pending_review: result.pending_review,
+        to_event_id: batch.to_event_id,
     })
+}
+
+fn enqueue_graph_followup(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    high_watermark_event_id: i64,
+) -> Result<()> {
+    db::enqueue_followup_extraction_task(
+        conn,
+        task,
+        db::ExtractionTaskKind::GraphCandidate,
+        high_watermark_event_id,
+    )?;
+    Ok(())
 }
 
 fn load_observation_batch(
@@ -403,6 +421,12 @@ fn persist_candidate_rows(
                 summary.promoted += 1;
             }
         } else {
+            let block_reason =
+                auto_promote_block_reason(candidate, auto_promote_batch, &route, &evidence_json);
+            tx.execute(
+                "UPDATE memory_candidates SET auto_promote_block_reason = ?1 WHERE id = ?2",
+                params![block_reason, candidate_id],
+            )?;
             crate::log::warn(
                 "memory-candidate",
                 &format!(
@@ -412,7 +436,7 @@ fn persist_candidate_rows(
                     candidate.scope,
                     candidate.risk_class,
                     candidate.confidence,
-                    auto_promote_block_reason(candidate, auto_promote_batch, &route, &evidence_json)
+                    block_reason
                 ),
             );
             summary.pending_review += 1;

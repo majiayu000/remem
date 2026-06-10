@@ -35,6 +35,7 @@ pub fn current_memory_id(
     owner_key: &str,
     memory_type: &str,
     state_key: &str,
+    now_epoch: i64,
 ) -> Result<Option<i64>> {
     conn.query_row(
         "SELECT m.id
@@ -46,8 +47,9 @@ pub fn current_memory_id(
            AND sk.state_key = ?4
            AND sk.state_status = 'active'
            AND m.status = 'active'
+           AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?5)
          LIMIT 1",
-        params![owner_scope, owner_key, memory_type, state_key],
+        params![owner_scope, owner_key, memory_type, state_key, now_epoch],
         |row| row.get(0),
     )
     .optional()
@@ -298,5 +300,32 @@ mod tests {
             "A short ambiguous note.",
         )
         .is_none());
+    }
+
+    #[test]
+    fn current_memory_id_excludes_expired_active_memory() -> Result<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        crate::memory::tests_helper::setup_memory_schema(&conn);
+        let project = "test/proj";
+        let state_key = "repo-test-proj-dev-server";
+        let memory_id = crate::memory::insert_memory(
+            &conn,
+            Some("s1"),
+            project,
+            Some(state_key),
+            "Dev server",
+            "Local dev server is currently running at localhost:3000.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET expires_at_epoch = ?1 WHERE id = ?2",
+            rusqlite::params![99_i64, memory_id],
+        )?;
+
+        let current = current_memory_id(&conn, "repo", project, "decision", state_key, 100)?;
+
+        assert_eq!(current, None);
+        Ok(())
     }
 }

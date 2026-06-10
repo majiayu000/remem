@@ -26,6 +26,7 @@ pub struct SystemStats {
     pub failed_extraction_tasks: i64,
     pub oldest_pending_extraction_epoch: Option<i64>,
     pub pending_memory_candidates: i64,
+    pub pending_graph_candidates: i64,
     pub pending_observations: i64,
     pub ready_pending_observations: i64,
     pub delayed_pending_observations: i64,
@@ -52,6 +53,14 @@ pub struct DailyActivityStats {
 pub struct ProjectCount {
     pub project: String,
     pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CandidatePromotionStat {
+    pub review_status: String,
+    pub block_reason: Option<String>,
+    pub total: i64,
+    pub last_7_days: i64,
 }
 
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
@@ -116,6 +125,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             [],
             |row| row.get(0),
         )?,
+        pending_graph_candidates: query_pending_graph_candidates(conn)?,
         pending_observations: conn.query_row(
             "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
             [],
@@ -259,6 +269,18 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
         .is_some())
 }
 
+fn query_pending_graph_candidates(conn: &Connection) -> Result<i64> {
+    if !table_exists(conn, "graph_candidates")? {
+        return Ok(0);
+    }
+    conn.query_row(
+		"SELECT COUNT(*) FROM graph_candidates WHERE review_status IN ('pending_review', 'deferred')",
+		[],
+		|row| row.get(0),
+	)
+    .map_err(Into::into)
+}
+
 pub fn query_daily_activity_stats(
     conn: &Connection,
     since_epoch: i64,
@@ -275,6 +297,31 @@ pub fn query_daily_activity_stats(
             |row| row.get(0),
         )?,
     })
+}
+
+pub fn query_candidate_promotion_stats(
+    conn: &Connection,
+    now_epoch: i64,
+) -> Result<Vec<CandidatePromotionStat>> {
+    let week_ago = now_epoch - 7 * 24 * 3600;
+    let mut stmt = conn.prepare(
+        "SELECT review_status,
+                auto_promote_block_reason,
+                COUNT(*) AS total,
+                SUM(CASE WHEN created_at_epoch >= ?1 THEN 1 ELSE 0 END) AS last_7_days
+         FROM memory_candidates
+         GROUP BY review_status, auto_promote_block_reason
+         ORDER BY total DESC, review_status ASC, auto_promote_block_reason ASC",
+    )?;
+    let rows = stmt.query_map(params![week_ago], |row| {
+        Ok(CandidatePromotionStat {
+            review_status: row.get(0)?,
+            block_reason: row.get(1)?,
+            total: row.get(2)?,
+            last_7_days: row.get(3)?,
+        })
+    })?;
+    collect_rows(rows)
 }
 
 pub fn query_top_projects(conn: &Connection, limit: i64) -> Result<Vec<ProjectCount>> {

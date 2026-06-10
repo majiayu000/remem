@@ -30,7 +30,8 @@ async fn memory_candidate_assigns_ttl_to_current_operational_state() -> Result<(
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let (candidate_expires, memory_expires, memory_valid_from): (i64, i64, i64) = conn.query_row(
@@ -98,7 +99,8 @@ async fn memory_candidate_refreshes_legacy_current_state_without_ttl() -> Result
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let rows = conn

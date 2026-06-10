@@ -4,10 +4,11 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_entities, run_cleanup, run_commit,
-    run_config, run_dream, run_encrypt, run_eval, run_eval_e2e, run_eval_governance,
-    run_eval_local, run_governance, run_import, run_memory_cleanup, run_merge_preferences,
-    run_model, run_pending, run_preferences, run_raw, run_reroute, run_review, run_search,
-    run_show, run_status, run_usage, run_why, GovernanceCliRequest, RerouteCliRequest,
+    run_config, run_current_state, run_dream, run_encrypt, run_eval, run_eval_e2e,
+    run_eval_governance, run_eval_local, run_governance, run_graph_review, run_import,
+    run_memory_cleanup, run_merge_preferences, run_model, run_pending, run_preferences, run_raw,
+    run_reroute, run_review, run_search, run_show, run_status, run_usage, run_why,
+    GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction, MemoryAction};
@@ -94,6 +95,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         },
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
+        Commands::GraphReview { action } => run_graph_review(action)?,
         Commands::Govern {
             project,
             action,
@@ -209,6 +211,23 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             include_stale,
             multi_hop,
             explain,
+            json,
+        )?,
+        Commands::Current {
+            state_key,
+            project,
+            memory_type,
+            owner_scope,
+            owner_key,
+            as_of_epoch,
+            json,
+        } => run_current_state(
+            &state_key,
+            project.as_deref(),
+            owner_scope.as_deref(),
+            owner_key.as_deref(),
+            memory_type.as_deref(),
+            as_of_epoch,
             json,
         )?,
         Commands::Raw { action } => run_raw(action)?,

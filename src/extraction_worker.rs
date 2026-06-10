@@ -4,10 +4,15 @@ use tokio::time::Duration;
 use crate::db;
 use crate::memory_candidate::MemoryCandidateResult;
 
+const DEPENDENCY_WAIT_RETRY_SECS: i64 = 300;
+
 #[derive(Debug, PartialEq, Eq)]
 enum ExtractionTaskOutcome {
     Deferred(String),
-    Done,
+    // to_event_id is the highest event id actually covered by processing;
+    // None means the full claim-time watermark range was covered.
+    Done { to_event_id: Option<i64> },
+    Waiting(String),
 }
 
 pub(crate) async fn run_next(
@@ -39,12 +44,12 @@ pub(crate) async fn run_next(
     .await;
     let conn = db::open_db()?;
     match timed {
-        Ok(Ok(ExtractionTaskOutcome::Done)) => {
+        Ok(Ok(ExtractionTaskOutcome::Done { to_event_id })) => {
             db::mark_extraction_task_done(
                 &conn,
                 task.id,
                 lease_owner,
-                task.high_watermark_event_id,
+                to_event_id.or(task.high_watermark_event_id),
             )?;
             crate::log::info("worker", &format!("done extraction id={}", task.id));
         }
@@ -58,6 +63,24 @@ pub(crate) async fn run_next(
                     task.id,
                     crate::db::truncate_str(&msg, 300),
                     backoff
+                ),
+            );
+        }
+        Ok(Ok(ExtractionTaskOutcome::Waiting(msg))) => {
+            db::wait_extraction_task(
+                &conn,
+                task.id,
+                lease_owner,
+                &msg,
+                DEPENDENCY_WAIT_RETRY_SECS,
+            )?;
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "extraction id={} waiting: {} (recheck in {}s)",
+                    task.id,
+                    crate::db::truncate_str(&msg, 300),
+                    DEPENDENCY_WAIT_RETRY_SECS
                 ),
             );
         }
@@ -93,15 +116,19 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
     match task.task_kind {
         db::ExtractionTaskKind::SessionRollup => {
             crate::session_rollup::process(task).await?;
-            Ok(ExtractionTaskOutcome::Done)
+            Ok(ExtractionTaskOutcome::Done { to_event_id: None })
         }
         db::ExtractionTaskKind::ObservationExtract => {
             crate::observation_extract::process(task).await?;
-            Ok(ExtractionTaskOutcome::Done)
+            Ok(ExtractionTaskOutcome::Done { to_event_id: None })
         }
         db::ExtractionTaskKind::MemoryCandidate => {
             let result = crate::memory_candidate::process(task).await?;
             Ok(memory_candidate_task_outcome(result))
+        }
+        db::ExtractionTaskKind::GraphCandidate => {
+            let result = crate::graph_candidate::process_graph_candidate_task(task).await?;
+            Ok(graph_candidate_task_outcome(result))
         }
         _ => Ok(ExtractionTaskOutcome::Deferred(format!(
             "extraction task kind '{}' is not implemented",
@@ -122,7 +149,38 @@ fn memory_candidate_task_outcome(result: MemoryCandidateResult) -> ExtractionTas
             );
             ExtractionTaskOutcome::Deferred(reason)
         }
-        _ => ExtractionTaskOutcome::Done,
+        MemoryCandidateResult::Written { to_event_id, .. } => ExtractionTaskOutcome::Done {
+            to_event_id: Some(to_event_id),
+        },
+        _ => ExtractionTaskOutcome::Done { to_event_id: None },
+    }
+}
+
+fn graph_candidate_task_outcome(
+    result: crate::graph_candidate::GraphCandidateResult,
+) -> ExtractionTaskOutcome {
+    match result {
+        crate::graph_candidate::GraphCandidateResult::Deferred { reason } => {
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "graph candidate extraction deferred by model: {}",
+                    crate::db::truncate_str(&reason, 300)
+                ),
+            );
+            ExtractionTaskOutcome::Deferred(reason)
+        }
+        crate::graph_candidate::GraphCandidateResult::Waiting { reason } => {
+            crate::log::warn(
+                "worker",
+                &format!(
+                    "graph candidate extraction waiting for dependency: {}",
+                    crate::db::truncate_str(&reason, 300)
+                ),
+            );
+            ExtractionTaskOutcome::Waiting(reason)
+        }
+        _ => ExtractionTaskOutcome::Done { to_event_id: None },
     }
 }
 
@@ -142,6 +200,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn done_outcome_carries_actual_covered_event_id_for_cursor_advance() {
+        let outcome = memory_candidate_task_outcome(MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: 3,
+        });
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Done {
+                to_event_id: Some(3)
+            },
+            "done must report the event id actually covered by processing, not the claim-time watermark snapshot"
+        );
+    }
+
+    #[test]
     fn memory_candidate_defer_preserves_range_for_reprocessing() {
         let outcome = memory_candidate_task_outcome(MemoryCandidateResult::Deferred {
             reason: "ambiguous conflict".to_string(),
@@ -150,6 +226,32 @@ mod tests {
         assert_eq!(
             outcome,
             ExtractionTaskOutcome::Deferred("ambiguous conflict".to_string())
+        );
+    }
+
+    #[test]
+    fn graph_candidate_defer_preserves_range_for_reprocessing() {
+        let outcome =
+            graph_candidate_task_outcome(crate::graph_candidate::GraphCandidateResult::Deferred {
+                reason: "ambiguous graph conflict".to_string(),
+            });
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Deferred("ambiguous graph conflict".to_string())
+        );
+    }
+
+    #[test]
+    fn graph_candidate_waiting_preserves_dependency_reason() {
+        let outcome =
+            graph_candidate_task_outcome(crate::graph_candidate::GraphCandidateResult::Waiting {
+                reason: "memory review pending".to_string(),
+            });
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Waiting("memory review pending".to_string())
         );
     }
 }

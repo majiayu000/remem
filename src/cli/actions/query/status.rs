@@ -34,6 +34,7 @@ fn load_status_report() -> Result<StatusReport> {
     let daily_stats = db::query_daily_activity_stats(&conn, today_start)?;
     let top_projects = db::query_top_projects(&conn, 5)?;
     let now = chrono::Utc::now().timestamp();
+    let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
 
     Ok(StatusReport {
         version,
@@ -67,6 +68,7 @@ fn load_status_report() -> Result<StatusReport> {
             extract_running: stats.processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
             pending_candidates: stats.pending_memory_candidates,
+            pending_graph_candidates: stats.pending_graph_candidates,
             oldest_task_epoch: stats.oldest_pending_extraction_epoch,
             oldest_task_age_secs: stats
                 .oldest_pending_extraction_epoch
@@ -95,6 +97,15 @@ fn load_status_report() -> Result<StatusReport> {
             heartbeat_age_secs: stats.worker_heartbeat_age_secs,
             owner: stats.worker_heartbeat_owner,
         },
+        candidate_promotion: candidate_promotion
+            .into_iter()
+            .map(|stat| CandidatePromotionStatus {
+                review_status: stat.review_status,
+                block_reason: stat.block_reason,
+                total: stat.total,
+                last_7_days: stat.last_7_days,
+            })
+            .collect(),
         today: DailyStatus {
             new_memories: daily_stats.memories,
             new_observations: daily_stats.observations,
@@ -156,6 +167,10 @@ fn print_status_report(report: &StatusReport) {
         "  Candidates:   {:>6}",
         report.capture_pipeline.pending_candidates
     );
+    println!(
+        "  Graph queue:  {:>6}",
+        report.capture_pipeline.pending_graph_candidates
+    );
     if let Some(age_secs) = report.capture_pipeline.oldest_task_age_secs {
         println!("  Oldest task:  {:>6}s", age_secs);
     }
@@ -171,6 +186,20 @@ fn print_status_report(report: &StatusReport) {
     println!("  Failed:       {:>6}", report.pending_observations.failed);
     if let Some(age_secs) = report.pending_observations.oldest_ready_age_secs {
         println!("  Oldest ready: {:>6}s", age_secs);
+    }
+    if !report.candidate_promotion.is_empty() {
+        println!();
+        println!("Candidate promotion:");
+        for stat in &report.candidate_promotion {
+            let label = match &stat.block_reason {
+                Some(reason) => format!("{} / {}", stat.review_status, reason),
+                None => stat.review_status.clone(),
+            };
+            println!(
+                "  {:<48} {:>6}  (7d: {})",
+                label, stat.total, stat.last_7_days
+            );
+        }
     }
     println!();
     println!("Jobs:");
@@ -238,6 +267,7 @@ pub(super) struct StatusReport {
     pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
     pub pending_observations: PendingObservationStatus,
+    pub candidate_promotion: Vec<CandidatePromotionStatus>,
     pub jobs: JobStatus,
     pub worker_daemon: WorkerDaemonStatus,
     pub today: DailyStatus,
@@ -279,6 +309,7 @@ pub(super) struct CapturePipelineStatus {
     pub extract_running: i64,
     pub extract_failed: i64,
     pub pending_candidates: i64,
+    pub pending_graph_candidates: i64,
     pub oldest_task_epoch: Option<i64>,
     pub oldest_task_age_secs: Option<i64>,
 }
@@ -292,6 +323,14 @@ pub(super) struct PendingObservationStatus {
     pub failed: i64,
     pub oldest_ready_epoch: Option<i64>,
     pub oldest_ready_age_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct CandidatePromotionStatus {
+    pub review_status: String,
+    pub block_reason: Option<String>,
+    pub total: i64,
+    pub last_7_days: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -358,6 +397,7 @@ mod tests {
                 extract_running: 7,
                 extract_failed: 8,
                 pending_candidates: 9,
+                pending_graph_candidates: 10,
                 oldest_task_epoch: Some(10),
                 oldest_task_age_secs: Some(11),
             },
@@ -370,6 +410,12 @@ mod tests {
                 oldest_ready_epoch: Some(17),
                 oldest_ready_age_secs: Some(18),
             },
+            candidate_promotion: vec![CandidatePromotionStatus {
+                review_status: "pending_review".to_string(),
+                block_reason: Some("no_supporting_source_observation".to_string()),
+                total: 41,
+                last_7_days: 6,
+            }],
             jobs: JobStatus {
                 pending: 19,
                 processing: 20,
@@ -421,7 +467,18 @@ mod tests {
             "/bad/raw.jsonl"
         );
         assert_eq!(parsed["capture_pipeline"]["extract_todo"], 6);
+        assert_eq!(parsed["capture_pipeline"]["pending_graph_candidates"], 10);
         assert_eq!(parsed["pending_observations"]["failed"], 16);
+        assert_eq!(
+            parsed["candidate_promotion"][0]["review_status"],
+            "pending_review"
+        );
+        assert_eq!(
+            parsed["candidate_promotion"][0]["block_reason"],
+            "no_supporting_source_observation"
+        );
+        assert_eq!(parsed["candidate_promotion"][0]["total"], 41);
+        assert_eq!(parsed["candidate_promotion"][0]["last_7_days"], 6);
         assert_eq!(parsed["worker_daemon"]["health"], "healthy");
         assert_eq!(parsed["top_projects"][0]["project"], "proj");
         Ok(())

@@ -36,7 +36,8 @@ async fn memory_candidate_existing_same_topic_same_text_becomes_noop() -> Result
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 0,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let review_status: String =
@@ -110,7 +111,8 @@ async fn memory_candidate_newer_same_topic_supersedes_old_memory() -> Result<()>
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let old_status: String = conn.query_row(

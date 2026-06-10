@@ -113,6 +113,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "compressed_observation_sources",
         "raw_ingest_failures",
         "memory_embeddings",
+        "graph_file_nodes",
         "graph_edges",
     ] {
         let exists: bool = conn
@@ -138,6 +139,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_raw_ingest_failures_project_recent",
         "idx_raw_ingest_failures_session",
         "idx_memory_embeddings_model",
+        "idx_graph_file_nodes_source",
         "idx_graph_edges_from",
         "idx_graph_edges_to",
         "idx_graph_edges_type",
