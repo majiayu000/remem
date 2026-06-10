@@ -15,6 +15,17 @@ impl HookStrategy {
         matches!(self, Self::ClaudeCode)
     }
 
+    fn include_pre_compact(self) -> bool {
+        matches!(self, Self::ClaudeCode)
+    }
+
+    fn session_start_matcher(self) -> Option<&'static str> {
+        match self {
+            Self::ClaudeCode => Some("startup|clear|compact"),
+            Self::Codex => None,
+        }
+    }
+
     fn include_observe(self) -> bool {
         matches!(self, Self::ClaudeCode)
     }
@@ -65,11 +76,15 @@ fn shell_quote(value: &str) -> String {
 pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Value {
     let mut hooks = serde_json::Map::new();
 
+    let mut session_start = json!({
+        "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "context"), "timeout": 15000 }]
+    });
+    if let Some(matcher) = strategy.session_start_matcher() {
+        session_start["matcher"] = json!(matcher);
+    }
     hooks.insert(
         "SessionStart".to_string(),
-        json!([{
-            "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "context"), "timeout": 15000 }]
-        }]),
+        Value::Array(vec![session_start]),
     );
 
     if strategy.include_session_init() {
@@ -87,6 +102,15 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
             json!([{
                 "matcher": strategy.observe_matcher(),
                 "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": strategy.observe_timeout_ms() }]
+            }]),
+        );
+    }
+
+    if strategy.include_pre_compact() {
+        hooks.insert(
+            "PreCompact".to_string(),
+            json!([{
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "summarize"), "timeout": 120000 }]
             }]),
         );
     }
