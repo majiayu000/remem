@@ -310,6 +310,14 @@ fn coalesce_extraction_task(
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN 'pending'
                  ELSE extraction_tasks.status
              END,
+             -- Reviving a terminal task resets its retry budget: the old
+             -- attempts counted a range the exhaust path already skipped, so
+             -- the new range must start with fresh attempts or it would fail
+             -- terminally on its first defer.
+             attempts = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN 0
+                 ELSE extraction_tasks.attempts
+             END,
              next_retry_epoch = CASE
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
                  ELSE extraction_tasks.next_retry_epoch

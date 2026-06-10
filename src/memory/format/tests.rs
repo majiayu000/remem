@@ -81,6 +81,43 @@ fn xml_escape_escapes_angle_and_amp() {
 }
 
 #[test]
+fn parse_observations_reads_and_clamps_confidence() {
+    let xml = r#"
+<observation>
+  <type>decision</type>
+  <title>Valid</title>
+  <confidence>0.42</confidence>
+</observation>
+<observation>
+  <type>decision</type>
+  <title>Above range</title>
+  <confidence>3.5</confidence>
+</observation>
+<observation>
+  <type>decision</type>
+  <title>Below range</title>
+  <confidence>-0.2</confidence>
+</observation>
+<observation>
+  <type>decision</type>
+  <title>Invalid</title>
+  <confidence>high</confidence>
+</observation>
+<observation>
+  <type>decision</type>
+  <title>Missing</title>
+</observation>
+"#;
+    let parsed = parse_observations(xml);
+    assert_eq!(parsed.len(), 5);
+    assert_eq!(parsed[0].confidence, Some(0.42));
+    assert_eq!(parsed[1].confidence, Some(1.0));
+    assert_eq!(parsed[2].confidence, Some(0.0));
+    assert_eq!(parsed[3].confidence, None);
+    assert_eq!(parsed[4].confidence, None);
+}
+
+#[test]
 fn parse_observations_defaults_invalid_type_and_filters_type_concept() {
     let xml = r#"
 <observation>
