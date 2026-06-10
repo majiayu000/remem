@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Changed
+- Added phase-0 extraction cursor integrity checks, model-provided confidence
+  handling, and promotion metrics for extraction review workflows.
 - Reframed project metadata and README docs around Claude Code and Codex as
   first-class hosts, including a Codex setup section and distribution channel
   guidance.
