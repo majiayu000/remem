@@ -117,7 +117,8 @@ async fn memory_candidate_auto_promotes_default_confidence_observation() -> Resu
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let review_status: String =
@@ -160,7 +161,8 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let (
@@ -275,7 +277,8 @@ async fn memory_candidate_routes_stash_repo_fact_to_repo_owner() -> Result<()> {
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 1,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let (project, owner_scope, owner_key): (String, String, String) = conn.query_row(
@@ -315,7 +318,8 @@ async fn memory_candidate_routes_codex_sandbox_fact_to_tool_review() -> Result<(
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 0,
-            pending_review: 1
+            pending_review: 1,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let (review_status, owner_scope, owner_key, context_class): (String, String, String, String) =
@@ -468,7 +472,8 @@ async fn memory_candidate_keeps_self_classified_unsupported_candidate_pending() 
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 0,
-            pending_review: 1
+            pending_review: 1,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let review_status: String =
@@ -502,7 +507,8 @@ async fn memory_candidate_accepts_procedure_but_keeps_it_pending_review() -> Res
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 0,
-            pending_review: 1
+            pending_review: 1,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let (memory_type, review_status): (String, String) = conn.query_row(
@@ -534,7 +540,8 @@ async fn memory_candidate_leaves_high_risk_candidate_pending_review() -> Result<
         MemoryCandidateResult::Written {
             candidates: 1,
             promoted: 0,
-            pending_review: 1
+            pending_review: 1,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let review_status: String =
@@ -572,7 +579,8 @@ async fn memory_candidate_duplicate_output_is_idempotent() -> Result<()> {
         MemoryCandidateResult::Written {
             candidates: 0,
             promoted: 0,
-            pending_review: 0
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
         }
     );
     let candidate_count: i64 =
