@@ -297,7 +297,13 @@ fn display_mcp_paths(paths: &[PathBuf]) -> String {
 fn expected_hook_events(host: &str) -> &'static [&'static str] {
     match host {
         "codex" => &["SessionStart", "Stop"],
-        _ => &["PostToolUse", "Stop", "SessionStart", "UserPromptSubmit"],
+        _ => &[
+            "PostToolUse",
+            "PreCompact",
+            "Stop",
+            "SessionStart",
+            "UserPromptSubmit",
+        ],
     }
 }
 
@@ -525,13 +531,13 @@ mod tests {
         .unwrap();
 
         let check = probe_hooks(HostProbe {
-            name: "codex",
+            name: "claude",
             hooks_path,
             mcp_paths: vec![dir.join("config.toml")],
         });
 
         assert!(matches!(check.status, Status::Warn));
-        assert!(check.detail.contains("1/2 registered"), "{}", check.detail);
+        assert!(check.detail.contains("1/5 registered"), "{}", check.detail);
     }
 
     #[test]

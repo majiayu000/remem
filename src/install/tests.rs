@@ -9,6 +9,7 @@ fn build_hooks_contains_expected_claude_commands() {
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context --host claude-code"
     );
+    assert_eq!(hooks["SessionStart"][0]["matcher"], "startup|clear|compact");
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
         "/tmp/remem session-init --host claude-code"
@@ -25,6 +26,10 @@ fn build_hooks_contains_expected_claude_commands() {
         hooks["Stop"][0]["hooks"][0]["command"],
         "/tmp/remem summarize --host claude-code"
     );
+    assert_eq!(
+        hooks["PreCompact"][0]["hooks"][0]["command"],
+        "/tmp/remem summarize --host claude-code"
+    );
 }
 
 #[test]
@@ -34,8 +39,10 @@ fn build_hooks_contains_expected_codex_commands() {
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context --host codex-cli"
     );
+    assert!(hooks["SessionStart"][0].get("matcher").is_none());
     assert!(hooks.get("UserPromptSubmit").is_none());
     assert!(hooks.get("PostToolUse").is_none());
+    assert!(hooks.get("PreCompact").is_none());
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "/tmp/remem summarize --host codex-cli"
