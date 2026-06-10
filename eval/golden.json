@@ -762,5 +762,357 @@
       ],
       "notes": "Requires linking the system owner fact to the team pager fact."
     }
+  ],
+  "corpus": [
+    {
+      "project": "synthetic/kestrelnook",
+      "topic_key": "kestrelnook-violet-rail-allowance",
+      "title": "Kestrelnook Violet Rail Allowance",
+      "content": "Mira Vale controls violet rail allowance for Project KestrelNook.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/lumenquay",
+      "topic_key": "lumenquay-orange-dock-window",
+      "title": "Lumenquay Orange Dock Window",
+      "content": "Toma Reed owns orange dock shutdown window for Project LumenQuay.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/cinderbloom",
+      "topic_key": "cinderbloom-gray-grove-pruning",
+      "title": "Cinderbloom Gray Grove Pruning",
+      "content": "Nia Sol runs gray grove pruning protocol for Project CinderBloom.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/brindleforge",
+      "topic_key": "brindleforge-blue-kiln-inspection",
+      "title": "Brindleforge Blue Kiln Inspection",
+      "content": "Oren Pike stores blue kiln inspection notes in Project BrindleForge.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/vellumspire",
+      "topic_key": "vellumspire-red-archive-allowance",
+      "title": "Vellumspire Red Archive Allowance",
+      "content": "Ivo Lane manages red archive allowance for Project VellumSpire.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/hollowspan",
+      "topic_key": "hollowspan-green-span-revert",
+      "title": "Hollowspan Green Span Revert",
+      "content": "Sana Holt guards green span revert plan for Project HollowSpan.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/paleravine",
+      "topic_key": "paleravine-white-ravine-handoff",
+      "title": "Paleravine White Ravine Handoff",
+      "content": "Pax Rune coordinates white ravine handoff for Project PaleRavine.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/copperoven",
+      "topic_key": "copperoven-copper-oven-alert",
+      "title": "Copperoven Copper Oven Alert",
+      "content": "Lina Moss controls copper oven alert for Project CopperOven.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/cyanward",
+      "topic_key": "cyanward-cyan-ward-schedule",
+      "title": "Cyanward Cyan Ward Schedule",
+      "content": "Miko Ash maintains cyan ward schedule for Project CyanWard.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/violetdome",
+      "topic_key": "violetdome-purple-observatory-authorization",
+      "title": "Violetdome Purple Observatory Authorization",
+      "content": "Vera Knox owns purple observatory authorization for Project VioletDome.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/kestrelnook",
+      "topic_key": "kestrelnook-nebulalatch-quorum-current",
+      "title": "Kestrelnook Nebulalatch Quorum Current",
+      "content": "current NebulaLatch quorum is 7; valid_from=2026-05-01; valid_until=2026-08-31",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/lumenquay",
+      "topic_key": "lumenquay-harbormint-signer-current",
+      "title": "Lumenquay Harbormint Signer Current",
+      "content": "current HarborMint signer is Toma Reed; valid_from=2026-04-15; valid_until=2026-07-15",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/cinderbloom",
+      "topic_key": "cinderbloom-grovecache-shard-current",
+      "title": "Cinderbloom Grovecache Shard Current",
+      "content": "current GroveCache shard is shard-19; valid_from=2026-06-01; valid_until=2026-09-01",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/brindleforge",
+      "topic_key": "brindleforge-kilnguard-threshold-current",
+      "title": "Brindleforge Kilnguard Threshold Current",
+      "content": "current KilnGuard threshold is 83C; valid_from=2026-05-20; valid_until=2026-10-01",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/vellumspire",
+      "topic_key": "vellumspire-archivefox-retention-current",
+      "title": "Vellumspire Archivefox Retention Current",
+      "content": "current ArchiveFox retention is 112 days; valid_from=2026-03-10; valid_until=2026-09-10",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/hollowspan",
+      "topic_key": "hollowspan-spandrift-owner-current",
+      "title": "Hollowspan Spandrift Owner Current",
+      "content": "current SpanDrift owner is Sana Holt; valid_from=2026-06-05; valid_until=2026-12-05",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/paleravine",
+      "topic_key": "paleravine-ravinerelay-region-current",
+      "title": "Paleravine Ravinerelay Region Current",
+      "content": "current RavineRelay region is north-iris; valid_from=2026-02-01; valid_until=2026-08-01",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/copperoven",
+      "topic_key": "copperoven-ovenbell-route-current",
+      "title": "Copperoven Ovenbell Route Current",
+      "content": "current OvenBell route is copper-bell-4; valid_from=2026-05-25; valid_until=2026-08-25",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/cyanward",
+      "topic_key": "cyanward-wardroster-source-current",
+      "title": "Cyanward Wardroster Source Current",
+      "content": "current WardRoster source is cyan-ledger; valid_from=2026-04-01; valid_until=2026-07-01",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/violetdome",
+      "topic_key": "violetdome-domepermit-approver-current",
+      "title": "Violetdome Domepermit Approver Current",
+      "content": "current DomePermit approver is Vera Knox; valid_from=2026-06-10; valid_until=2026-11-10",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/kestrelnook",
+      "topic_key": "kestrelnook-temporal-01",
+      "title": "Kestrelnook Temporal 01",
+      "content": "NightJar deployment completed at 2026-06-01T10:00:00Z.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/lumenquay",
+      "topic_key": "lumenquay-temporal-02",
+      "title": "Lumenquay Temporal 02",
+      "content": "HarborMint freeze blocker was cleared on 2026-05-28.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/cinderbloom",
+      "topic_key": "cinderbloom-temporal-03",
+      "title": "Cinderbloom Temporal 03",
+      "content": "GroveCache rotation follow-up opened on 2026-06-03.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/brindleforge",
+      "topic_key": "brindleforge-temporal-04",
+      "title": "Brindleforge Temporal 04",
+      "content": "KilnGuard audit week used evidence pack brimstone-42.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/vellumspire",
+      "topic_key": "vellumspire-temporal-05",
+      "title": "Vellumspire Temporal 05",
+      "content": "ArchiveFox cleanup finished with batch vellum-77.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/hollowspan",
+      "topic_key": "hollowspan-temporal-06",
+      "title": "Hollowspan Temporal 06",
+      "content": "SpanDrift cutover precheck selected bridge plan green-9.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/paleravine",
+      "topic_key": "paleravine-temporal-07",
+      "title": "Paleravine Temporal 07",
+      "content": "RavineRelay incident follow-up assigned owner Pax Rune.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/copperoven",
+      "topic_key": "copperoven-temporal-08",
+      "title": "Copperoven Temporal 08",
+      "content": "OvenBell maintenance window used alarm route copper-bell-4.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/cyanward",
+      "topic_key": "cyanward-temporal-09",
+      "title": "Cyanward Temporal 09",
+      "content": "WardRoster import succeeded with source cyan-ledger.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/violetdome",
+      "topic_key": "violetdome-temporal-10",
+      "title": "Violetdome Temporal 10",
+      "content": "DomePermit review approved observatory authorization purple-31.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/kestrelnook",
+      "topic_key": "kestrelnook-nebulalatch-owner",
+      "title": "Kestrelnook Nebulalatch Owner",
+      "content": "NebulaLatch is owned by Team Mica.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/kestrelnook",
+      "topic_key": "team-mica-pager",
+      "title": "Team Mica Pager",
+      "content": "Team Mica uses pager mica-17.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/lumenquay",
+      "topic_key": "lumenquay-harbormint-owner",
+      "title": "Lumenquay Harbormint Owner",
+      "content": "HarborMint is owned by Team Brine.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/lumenquay",
+      "topic_key": "team-brine-pager",
+      "title": "Team Brine Pager",
+      "content": "Team Brine uses pager brine-22.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/cinderbloom",
+      "topic_key": "cinderbloom-grovecache-owner",
+      "title": "Cinderbloom Grovecache Owner",
+      "content": "GroveCache is owned by Team Fern.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/cinderbloom",
+      "topic_key": "team-fern-pager",
+      "title": "Team Fern Pager",
+      "content": "Team Fern uses pager fern-09.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/brindleforge",
+      "topic_key": "brindleforge-kilnguard-owner",
+      "title": "Brindleforge Kilnguard Owner",
+      "content": "KilnGuard is owned by Team Ember.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/brindleforge",
+      "topic_key": "team-ember-pager",
+      "title": "Team Ember Pager",
+      "content": "Team Ember uses pager ember-41.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/vellumspire",
+      "topic_key": "vellumspire-archivefox-owner",
+      "title": "Vellumspire Archivefox Owner",
+      "content": "ArchiveFox is owned by Team Quill.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/vellumspire",
+      "topic_key": "team-quill-pager",
+      "title": "Team Quill Pager",
+      "content": "Team Quill uses pager quill-05.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/hollowspan",
+      "topic_key": "hollowspan-spandrift-owner",
+      "title": "Hollowspan Spandrift Owner",
+      "content": "SpanDrift is owned by Team Arch.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/hollowspan",
+      "topic_key": "team-arch-pager",
+      "title": "Team Arch Pager",
+      "content": "Team Arch uses pager arch-64.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/paleravine",
+      "topic_key": "paleravine-ravinerelay-owner",
+      "title": "Paleravine Ravinerelay Owner",
+      "content": "RavineRelay is owned by Team Mesa.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/paleravine",
+      "topic_key": "team-mesa-pager",
+      "title": "Team Mesa Pager",
+      "content": "Team Mesa uses pager mesa-13.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/copperoven",
+      "topic_key": "copperoven-ovenbell-owner",
+      "title": "Copperoven Ovenbell Owner",
+      "content": "OvenBell is owned by Team Hearth.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/copperoven",
+      "topic_key": "team-hearth-pager",
+      "title": "Team Hearth Pager",
+      "content": "Team Hearth uses pager hearth-28.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/cyanward",
+      "topic_key": "cyanward-wardroster-owner",
+      "title": "Cyanward Wardroster Owner",
+      "content": "WardRoster is owned by Team Aster.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/cyanward",
+      "topic_key": "team-aster-pager",
+      "title": "Team Aster Pager",
+      "content": "Team Aster uses pager aster-36.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/violetdome",
+      "topic_key": "violetdome-domepermit-owner",
+      "title": "Violetdome Domepermit Owner",
+      "content": "DomePermit is owned by Team Zenith.",
+      "memory_type": "discovery"
+    },
+    {
+      "project": "synthetic/violetdome",
+      "topic_key": "team-zenith-pager",
+      "title": "Team Zenith Pager",
+      "content": "Team Zenith uses pager zenith-88.",
+      "memory_type": "procedure"
+    }
   ]
 }

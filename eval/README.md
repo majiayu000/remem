@@ -24,7 +24,21 @@ Top-level fields:
 
 - `version`: schema version string.
 - `description`: human-readable dataset note.
+- `corpus`: optional fixture memories. When present, `remem eval` seeds these memories into an in-memory SQLite database and does not open the configured live database.
 - `queries`: array of query cases.
+
+Corpus memory fields:
+
+- `project`: project path or stable synthetic project id.
+- `topic_key`: optional stable topic key.
+- `title`: memory title.
+- `content`: memory text to seed.
+- `memory_type`: memory type, for example `decision`, `discovery`, or `procedure`.
+- `branch`: optional branch filter value.
+- `scope`: optional memory scope. Defaults to `project`.
+- `status`: optional lifecycle status. Defaults to `active`.
+- `files`: optional JSON-encoded file list.
+- `created_at_epoch`: optional fixed creation timestamp.
 
 Query fields:
 

@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, HashSet};
 
 use anyhow::{anyhow, Context, Result};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::types::{
     CategoryEvaluation, EvaluationLayers, EvidenceRef, GoldenDataset, GoldenEvalReport,
-    GoldenQuery, MetricSums, QueryEvaluation, QueryMetrics, QueryStatus,
+    GoldenMemory, GoldenQuery, MetricSums, QueryEvaluation, QueryMetrics, QueryStatus,
 };
 
 const RANK_K: usize = 10;
@@ -33,7 +33,30 @@ pub fn run_dataset_path(
     k: usize,
 ) -> Result<GoldenEvalReport> {
     let dataset = load_dataset(dataset_path)?;
-    evaluate_dataset(conn, &dataset, k)
+    run_dataset(conn, &dataset, k)
+}
+
+pub fn run_dataset(
+    conn: &Connection,
+    dataset: &GoldenDataset,
+    k: usize,
+) -> Result<GoldenEvalReport> {
+    if dataset.has_fixture_corpus() {
+        evaluate_dataset_with_fixture_corpus(dataset, k)
+    } else {
+        evaluate_dataset(conn, dataset, k)
+    }
+}
+
+pub fn evaluate_dataset_with_fixture_corpus(
+    dataset: &GoldenDataset,
+    k: usize,
+) -> Result<GoldenEvalReport> {
+    validate_dataset(dataset)?;
+    let conn = Connection::open_in_memory().context("open in-memory golden eval DB")?;
+    crate::migrate::run_migrations(&conn).context("migrate in-memory golden eval DB")?;
+    seed_fixture_corpus(&conn, &dataset.corpus)?;
+    evaluate_dataset(&conn, dataset, k)
 }
 
 pub fn evaluate_dataset(
@@ -139,6 +162,7 @@ fn validate_dataset(dataset: &GoldenDataset) -> Result<()> {
             "golden eval dataset must contain at least one query"
         ));
     }
+    validate_fixture_corpus(&dataset.corpus)?;
     let mut seen_ids = HashSet::new();
     for query in &dataset.queries {
         if query.id.trim().is_empty() {
@@ -186,7 +210,192 @@ fn validate_dataset(dataset: &GoldenDataset) -> Result<()> {
             }
         }
     }
+    validate_expected_refs_backed_by_corpus(dataset)?;
     Ok(())
+}
+
+fn validate_fixture_corpus(corpus: &[GoldenMemory]) -> Result<()> {
+    let mut seen_topic_keys = HashSet::new();
+    for (index, memory) in corpus.iter().enumerate() {
+        let label = corpus_memory_label(index, memory);
+        if memory.project.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} project must not be empty"
+            ));
+        }
+        if memory.title.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} title must not be empty"
+            ));
+        }
+        if memory.content.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} content must not be empty"
+            ));
+        }
+        if memory.memory_type.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} memory_type must not be empty"
+            ));
+        }
+        if memory.scope.trim().is_empty() {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} scope must not be empty"
+            ));
+        }
+        if !matches!(memory.status.as_str(), "active" | "stale" | "archived") {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} status must be active, stale, or archived"
+            ));
+        }
+        if memory
+            .branch
+            .as_deref()
+            .is_some_and(|branch| branch.trim().is_empty())
+        {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} branch must not be empty"
+            ));
+        }
+        if let Some(topic_key) = memory.topic_key.as_deref() {
+            if topic_key.trim().is_empty() {
+                return Err(anyhow!(
+                    "golden eval corpus memory {label} topic_key must not be empty"
+                ));
+            }
+            let key = (
+                memory.project.clone(),
+                memory.scope.clone(),
+                topic_key.to_string(),
+            );
+            if !seen_topic_keys.insert(key) {
+                return Err(anyhow!(
+                    "duplicate golden eval corpus topic_key {} for project {} scope {}",
+                    topic_key,
+                    memory.project,
+                    memory.scope
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_expected_refs_backed_by_corpus(dataset: &GoldenDataset) -> Result<()> {
+    if dataset.corpus.is_empty() {
+        return Ok(());
+    }
+
+    let fixture_memories: Vec<_> = dataset
+        .corpus
+        .iter()
+        .enumerate()
+        .map(|(index, memory)| fixture_memory_for_validation(index, memory))
+        .collect();
+
+    for query in &dataset.queries {
+        if query.expects_abstention() {
+            continue;
+        }
+        for expected_ref in query.expected_refs() {
+            let backed = fixture_memories.iter().any(|memory| {
+                corpus_memory_matches_query_filter(memory, query) && expected_ref.matches(memory)
+            });
+            if !backed {
+                return Err(anyhow!(
+                    "golden eval query {} expected evidence ref is not backed by fixture corpus: {:?}",
+                    query.id,
+                    expected_ref
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn fixture_memory_for_validation(index: usize, memory: &GoldenMemory) -> crate::memory::Memory {
+    crate::memory::Memory {
+        id: index as i64 + 1,
+        session_id: Some(format!("golden-eval-{}", index + 1)),
+        project: memory.project.clone(),
+        topic_key: memory.topic_key.clone(),
+        title: memory.title.clone(),
+        text: memory.content.clone(),
+        memory_type: memory.memory_type.clone(),
+        files: memory.files.clone(),
+        created_at_epoch: memory.created_at_epoch.unwrap_or(0),
+        updated_at_epoch: memory.created_at_epoch.unwrap_or(0),
+        status: memory.status.clone(),
+        branch: memory.branch.clone(),
+        scope: memory.scope.clone(),
+    }
+}
+
+fn corpus_memory_matches_query_filter(memory: &crate::memory::Memory, query: &GoldenQuery) -> bool {
+    if memory.status != "active" {
+        return false;
+    }
+    if let Some(project) = query.project.as_deref() {
+        if !crate::project_id::project_matches(Some(&memory.project), project) {
+            return false;
+        }
+    }
+    if let Some(branch) = query.branch.as_deref() {
+        if memory.branch.as_deref() != Some(branch) {
+            return false;
+        }
+    }
+    if let Some(memory_type) = query.memory_type.as_deref() {
+        if memory.memory_type != memory_type {
+            return false;
+        }
+    }
+    true
+}
+
+fn seed_fixture_corpus(conn: &Connection, corpus: &[GoldenMemory]) -> Result<()> {
+    for (index, memory) in corpus.iter().enumerate() {
+        let id = crate::memory::insert_memory_full(
+            conn,
+            Some("golden-eval"),
+            &memory.project,
+            memory.topic_key.as_deref(),
+            &memory.title,
+            &memory.content,
+            &memory.memory_type,
+            memory.files.as_deref(),
+            memory.branch.as_deref(),
+            &memory.scope,
+            memory.created_at_epoch,
+        )
+        .with_context(|| {
+            format!(
+                "seed golden eval corpus memory {}",
+                corpus_memory_label(index, memory)
+            )
+        })?;
+        if memory.status != "active" {
+            conn.execute(
+                "UPDATE memories SET status = ?1 WHERE id = ?2",
+                params![memory.status, id],
+            )
+            .with_context(|| {
+                format!(
+                    "set golden eval corpus memory {} status",
+                    corpus_memory_label(index, memory)
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn corpus_memory_label(index: usize, memory: &GoldenMemory) -> String {
+    memory
+        .topic_key
+        .as_deref()
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("#{}", index + 1))
 }
 
 fn evaluate_query(

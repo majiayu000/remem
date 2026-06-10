@@ -10,8 +10,13 @@ pub(in crate::cli) fn run_eval_local() -> Result<()> {
 }
 
 pub(in crate::cli) fn run_eval(dataset_path: &str, k: usize, json: bool) -> Result<()> {
-    let conn = db::open_db()?;
-    let report = crate::eval::golden::run_dataset_path(&conn, dataset_path, k)?;
+    let dataset = crate::eval::golden::load_dataset(dataset_path)?;
+    let report = if dataset.has_fixture_corpus() {
+        crate::eval::golden::evaluate_dataset_with_fixture_corpus(&dataset, k)?
+    } else {
+        let conn = db::open_db()?;
+        crate::eval::golden::evaluate_dataset(&conn, &dataset, k)?
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
