@@ -211,6 +211,92 @@ fn as_of_lookup_does_not_return_active_row_updated_after_cutoff() -> Result<()> 
 }
 
 #[test]
+fn as_of_history_excludes_memory_rows_updated_after_cutoff() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory_at(
+        &conn,
+        1,
+        "/repo",
+        "Original deploy target",
+        "Use staging.",
+        "stale",
+        10,
+        100,
+        Some(100),
+        Some(200),
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Current deploy target",
+        "Use production.",
+        "active",
+        10,
+        200,
+        Some(200),
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, reason, created_at_epoch)
+         VALUES ('supersedes', 1, 2, 10, 'replacement', 210)",
+        [],
+    )?;
+
+    let before_mutation = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(250),
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(
+        before_mutation.current.as_ref().map(|memory| memory.id),
+        Some(2)
+    );
+    assert_eq!(before_mutation.history.len(), 1);
+    assert_eq!(before_mutation.history[0].id, 1);
+    assert_eq!(before_mutation.history[0].title, "Original deploy target");
+    assert_eq!(before_mutation.history[0].status, "stale");
+
+    conn.execute(
+        "UPDATE memories
+         SET title = 'Future edited deploy target',
+             status = 'archived',
+             updated_at_epoch = 300
+         WHERE id = 1",
+        [],
+    )?;
+
+    let after_mutation = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(250),
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(
+        after_mutation.current.as_ref().map(|memory| memory.id),
+        Some(2)
+    );
+    assert!(after_mutation.history.is_empty());
+    assert_eq!(after_mutation.why.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn current_lookup_respects_memory_validity_window() -> Result<()> {
     let conn = current_state_test_conn()?;
     insert_state_key(&conn)?;

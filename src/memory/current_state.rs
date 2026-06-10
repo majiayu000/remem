@@ -471,7 +471,11 @@ fn load_history(
     ];
     let mut as_of_filter = String::new();
     if let Some(as_of_epoch) = as_of_epoch {
-        as_of_filter.push_str(" AND e.created_at_epoch <= ?4");
+        as_of_filter.push_str(
+            " AND e.created_at_epoch <= ?4
+           AND COALESCE(m.valid_from_epoch, m.created_at_epoch) <= ?4
+           AND m.updated_at_epoch <= ?4",
+        );
         params_vec.push(Box::new(as_of_epoch));
     }
     let sql = format!(

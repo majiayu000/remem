@@ -6,6 +6,10 @@
 - Added current-state queries over `memory_state_keys` for CLI and MCP callers,
   including compact history, conflict, edge-evidence, and as-of-time output.
 
+### Fixed
+- Fixed current-state as-of history so mutable historical memory rows updated
+  after the requested cutoff are not shown as if they were known then.
+
 ### Changed
 - Reframed project metadata and README docs around Claude Code and Codex as
   first-class hosts, including a Codex setup section and distribution channel
