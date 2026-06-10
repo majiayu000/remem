@@ -9,6 +9,7 @@ pub enum GraphNodeKind {
     Episode,
     State,
     Topic,
+    File,
 }
 
 impl GraphNodeKind {
@@ -20,6 +21,7 @@ impl GraphNodeKind {
             Self::Episode => "episode",
             Self::State => "state",
             Self::Topic => "topic",
+            Self::File => "file",
         }
     }
 }
@@ -61,6 +63,10 @@ impl GraphNodeRef {
     pub fn topic(id: i64) -> Result<Self> {
         Self::new(GraphNodeKind::Topic, id)
     }
+
+    pub fn file(id: i64) -> Result<Self> {
+        Self::new(GraphNodeKind::File, id)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +94,7 @@ pub enum GraphEdgeType {
     SplitFrom,
     ExtractedFrom,
     Mentions,
+    TouchesFile,
     HasState,
     HasTopic,
     SimilarTo,
@@ -106,6 +113,7 @@ impl GraphEdgeType {
             Self::SplitFrom => "split_from",
             Self::ExtractedFrom => "extracted_from",
             Self::Mentions => "mentions",
+            Self::TouchesFile => "touches_file",
             Self::HasState => "has_state",
             Self::HasTopic => "has_topic",
             Self::SimilarTo => "similar_to",
@@ -127,6 +135,7 @@ impl GraphEdgeType {
             | Self::SplitFrom
             | Self::ExtractedFrom
             | Self::Mentions
+            | Self::TouchesFile
             | Self::HasState
             | Self::HasTopic => GraphEdgeTrust::Trusted,
         }
@@ -156,6 +165,10 @@ impl GraphEdgeType {
                 matches!(from, GraphNodeKind::Memory | GraphNodeKind::Episode)
                     && matches!(to, GraphNodeKind::Entity)
             }
+            Self::TouchesFile => {
+                matches!(from, GraphNodeKind::Memory | GraphNodeKind::Episode)
+                    && matches!(to, GraphNodeKind::File)
+            }
             Self::HasState => {
                 matches!(from, GraphNodeKind::Memory) && matches!(to, GraphNodeKind::State)
             }
@@ -176,6 +189,7 @@ const fn same_graph_node_kind(left: GraphNodeKind, right: GraphNodeKind) -> bool
             | (GraphNodeKind::Episode, GraphNodeKind::Episode)
             | (GraphNodeKind::State, GraphNodeKind::State)
             | (GraphNodeKind::Topic, GraphNodeKind::Topic)
+            | (GraphNodeKind::File, GraphNodeKind::File)
     )
 }
 

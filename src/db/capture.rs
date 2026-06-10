@@ -8,6 +8,7 @@ pub enum ExtractionTaskKind {
     SessionRollup,
     ObservationExtract,
     MemoryCandidate,
+    GraphCandidate,
     RuleCandidate,
     IndexUpdate,
 }
@@ -18,6 +19,7 @@ impl ExtractionTaskKind {
             Self::SessionRollup => "session_rollup",
             Self::ObservationExtract => "observation_extract",
             Self::MemoryCandidate => "memory_candidate",
+            Self::GraphCandidate => "graph_candidate",
             Self::RuleCandidate => "rule_candidate",
             Self::IndexUpdate => "index_update",
         }
@@ -28,6 +30,7 @@ impl ExtractionTaskKind {
             "session_rollup" => Ok(Self::SessionRollup),
             "observation_extract" => Ok(Self::ObservationExtract),
             "memory_candidate" => Ok(Self::MemoryCandidate),
+            "graph_candidate" => Ok(Self::GraphCandidate),
             "rule_candidate" => Ok(Self::RuleCandidate),
             "index_update" => Ok(Self::IndexUpdate),
             _ => bail!("unknown extraction task kind: {raw}"),
@@ -39,6 +42,7 @@ impl ExtractionTaskKind {
             Self::SessionRollup => 10,
             Self::ObservationExtract => 20,
             Self::MemoryCandidate => 40,
+            Self::GraphCandidate => 50,
             Self::RuleCandidate => 60,
             Self::IndexUpdate => 80,
         }

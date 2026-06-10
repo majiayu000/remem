@@ -26,6 +26,7 @@ pub struct SystemStats {
     pub failed_extraction_tasks: i64,
     pub oldest_pending_extraction_epoch: Option<i64>,
     pub pending_memory_candidates: i64,
+    pub pending_graph_candidates: i64,
     pub pending_observations: i64,
     pub ready_pending_observations: i64,
     pub delayed_pending_observations: i64,
@@ -124,6 +125,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             [],
             |row| row.get(0),
         )?,
+        pending_graph_candidates: query_pending_graph_candidates(conn)?,
         pending_observations: conn.query_row(
             "SELECT COUNT(*) FROM pending_observations WHERE status = 'pending'",
             [],
@@ -265,6 +267,18 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
         )
         .optional()?
         .is_some())
+}
+
+fn query_pending_graph_candidates(conn: &Connection) -> Result<i64> {
+    if !table_exists(conn, "graph_candidates")? {
+        return Ok(0);
+    }
+    conn.query_row(
+		"SELECT COUNT(*) FROM graph_candidates WHERE review_status IN ('pending_review', 'deferred')",
+		[],
+		|row| row.get(0),
+	)
+    .map_err(Into::into)
 }
 
 pub fn query_daily_activity_stats(

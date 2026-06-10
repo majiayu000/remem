@@ -118,7 +118,9 @@ async fn memory_candidate_auto_promotes_default_confidence_observation() -> Resu
             candidates: 1,
             promoted: 1,
             pending_review: 0,
-            to_event_id: task.high_watermark_event_id.expect("task watermark")
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
         }
     );
     let review_status: String =
@@ -126,6 +128,43 @@ async fn memory_candidate_auto_promotes_default_confidence_observation() -> Resu
             row.get(0)
         })?;
     assert_eq!(review_status, "auto_promoted");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_completion_enqueues_graph_followup() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-graph-followup")?;
+    insert_source_observation(
+        &conn,
+        &task,
+        "Use the worker loop to process extraction tasks after observation extraction.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok(low_risk_candidate_xml())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
+        }
+    );
+    let graph_task_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM extraction_tasks
+         WHERE task_kind = 'graph_candidate'
+           AND status = 'pending'
+           AND high_watermark_event_id = ?1",
+        params![task.high_watermark_event_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(graph_task_count, 1);
     Ok(())
 }
 

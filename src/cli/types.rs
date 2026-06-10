@@ -143,6 +143,11 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ReviewAction,
     },
+    /// Review, approve, reject, defer, or inspect graph candidates.
+    GraphReview {
+        #[command(subcommand)]
+        action: GraphReviewAction,
+    },
     /// Auditably delete, reject, or stale curated memories by ID.
     Govern {
         /// Restrict governance to one project path.
@@ -755,6 +760,32 @@ pub(in crate::cli) enum ReviewAction {
         memory_type: Option<String>,
         #[arg(long)]
         scope: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum GraphReviewAction {
+    List {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+    },
+    Inspect {
+        id: i64,
+    },
+    Approve {
+        id: i64,
+    },
+    Reject {
+        id: i64,
+        #[arg(long)]
+        reason: String,
+    },
+    Defer {
+        id: i64,
+        #[arg(long)]
+        reason: String,
     },
 }
 

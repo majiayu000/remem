@@ -68,6 +68,7 @@ fn load_status_report() -> Result<StatusReport> {
             extract_running: stats.processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
             pending_candidates: stats.pending_memory_candidates,
+            pending_graph_candidates: stats.pending_graph_candidates,
             oldest_task_epoch: stats.oldest_pending_extraction_epoch,
             oldest_task_age_secs: stats
                 .oldest_pending_extraction_epoch
@@ -165,6 +166,10 @@ fn print_status_report(report: &StatusReport) {
     println!(
         "  Candidates:   {:>6}",
         report.capture_pipeline.pending_candidates
+    );
+    println!(
+        "  Graph queue:  {:>6}",
+        report.capture_pipeline.pending_graph_candidates
     );
     if let Some(age_secs) = report.capture_pipeline.oldest_task_age_secs {
         println!("  Oldest task:  {:>6}s", age_secs);
@@ -304,6 +309,7 @@ pub(super) struct CapturePipelineStatus {
     pub extract_running: i64,
     pub extract_failed: i64,
     pub pending_candidates: i64,
+    pub pending_graph_candidates: i64,
     pub oldest_task_epoch: Option<i64>,
     pub oldest_task_age_secs: Option<i64>,
 }
@@ -391,6 +397,7 @@ mod tests {
                 extract_running: 7,
                 extract_failed: 8,
                 pending_candidates: 9,
+                pending_graph_candidates: 10,
                 oldest_task_epoch: Some(10),
                 oldest_task_age_secs: Some(11),
             },
@@ -460,6 +467,7 @@ mod tests {
             "/bad/raw.jsonl"
         );
         assert_eq!(parsed["capture_pipeline"]["extract_todo"], 6);
+        assert_eq!(parsed["capture_pipeline"]["pending_graph_candidates"], 10);
         assert_eq!(parsed["pending_observations"]["failed"], 16);
         assert_eq!(
             parsed["candidate_promotion"][0]["review_status"],

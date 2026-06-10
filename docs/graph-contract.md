@@ -11,9 +11,9 @@ queries keep using it for replacement, merge, split, duplicate, conflict, and
 provenance summaries on durable memories.
 
 `graph_edges` is the first-class cross-node contract for future traversal. It
-can connect memory, entity, fact, episode, state, and topic nodes, but this PR
-only defines storage and Rust insertion types. Search, context injection, and
-retrieval ranking do not read `graph_edges` yet.
+can connect memory, entity, fact, episode, state, topic, and file nodes, but
+this PR only defines storage and Rust insertion types. Search, context
+injection, and retrieval ranking do not read `graph_edges` yet.
 
 ## Node References
 
@@ -27,6 +27,7 @@ Graph node references are typed by `(node_kind, node_id)`.
 | `episode` | `captured_events(id)` | Raw capture-ledger event used as episode evidence. |
 | `state` | `memory_state_keys(id)` | Stable mutable-memory state slot. |
 | `topic` | `topic_segments(id)` | Topic Loom segment for continuity/evidence. |
+| `file` | `graph_file_nodes(id)` | Project-scoped file path observed in evidence. |
 
 Rust code must construct refs through `GraphNodeRef` so invalid ids fail before
 SQL execution. The database also has insert/update triggers that reject missing
@@ -45,7 +46,7 @@ Migration `v031_graph_edges` creates `graph_edges`:
 | `from_node_kind` / `from_node_id` | Typed source node ref. |
 | `to_node_kind` / `to_node_id` | Typed target node ref. |
 | `source_event_ids` | JSON array of positive `captured_events.id` evidence. |
-| `source_candidate_id` | Candidate row that proposed the trusted edge. |
+| `source_candidate_id` | Candidate row that proposed the trusted edge; may point to a graph or memory candidate depending on the writer. |
 | `source_operation_id` | Operation log row that accepted/wrote the edge. |
 | `confidence` | Extractor/reviewer confidence, constrained to `0.0..=1.0`. |
 | `reason` | Human/auditable reason for the edge. |
@@ -70,6 +71,7 @@ same matrix that the schema enforces for raw SQL writers:
 | `supersedes`, `duplicates`, `conflicts`, `derived_from`, `merged_into`, `split_from` | Same node kind on both sides. |
 | `extracted_from` | `entity`, `fact`, `state`, or `topic` to `episode`. |
 | `mentions` | `memory` or `episode` to `entity`. |
+| `touches_file` | `memory` or `episode` to `file`. |
 | `has_state` | `memory` to `state`. |
 | `has_topic` | `memory` or `episode` to `topic`. |
 | `similar_to`, `candidate_hint`, `co_occurs_with` | Same node kind on both sides. |
@@ -88,6 +90,7 @@ Trusted graph edges:
 | `split_from` | Node was split from a broader source. |
 | `extracted_from` | Fact/entity/state/topic was extracted from episode evidence. |
 | `mentions` | Memory or episode mentions an entity. |
+| `touches_file` | Memory or episode touches a project file path. |
 | `has_state` | Memory belongs to a stable state key. |
 | `has_topic` | Memory or episode belongs to a topic segment. |
 

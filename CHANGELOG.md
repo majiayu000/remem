@@ -9,6 +9,9 @@
 ### Fixed
 - Fixed current-state as-of history so mutable historical memory rows updated
   after the requested cutoff are not shown as if they were known then.
+- Fixed graph-candidate review follow-ups so graph extraction only prompts for
+  promotable edge types, deferred graph candidates stay visible in status, and
+  graph tasks do not wait on memory tasks that already covered their range.
 
 ### Changed
 - Added phase-0 extraction cursor integrity checks, model-provided confidence

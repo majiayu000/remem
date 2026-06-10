@@ -526,6 +526,13 @@ password=hunter2"#,
             |row| row.get(0),
         )?;
         assert_eq!(pending_candidate_count, 1);
+        let pending_graph_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks
+             WHERE task_kind = 'graph_candidate'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pending_graph_count, 0);
         Ok(())
     }
 
