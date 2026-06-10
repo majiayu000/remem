@@ -42,6 +42,24 @@ fn extract_array(content: &str, array_name: &str, element_name: &str) -> Vec<Str
     results
 }
 
+/// Parse the optional `<confidence>` field. A missing field is normal model
+/// output and stays silent; a present-but-unparseable value (e.g. "very high")
+/// is logged at warn level before falling back, so silent quality degradation
+/// stays observable (the caller substitutes the default confidence).
+fn parse_confidence(content: &str) -> Option<f64> {
+    let raw = extract_field(content, "confidence")?;
+    match raw.parse::<f64>() {
+        Ok(value) if value.is_finite() => Some(value.clamp(0.0, 1.0)),
+        _ => {
+            crate::log::warn(
+                "observation-parse",
+                &format!("invalid <confidence> value {raw:?}; falling back to default"),
+            );
+            None
+        }
+    }
+}
+
 pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
     let mut observations = Vec::new();
     let mut pos = 0;
@@ -77,6 +95,7 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
             concepts,
             files_read: extract_array(content, "files_read", "file"),
             files_modified: extract_array(content, "files_modified", "file"),
+            confidence: parse_confidence(content),
         });
 
         pos = content_end + "</observation>".len();
