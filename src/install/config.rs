@@ -42,7 +42,24 @@ impl HookStrategy {
 }
 
 fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
-    format!("{} {} --host {}", bin, subcommand, strategy.runtime_host())
+    format!(
+        "{} {} --host {}",
+        shell_quote(bin),
+        subcommand,
+        strategy.runtime_host()
+    )
+}
+
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        return value.to_string();
+    }
+
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Value {

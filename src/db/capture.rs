@@ -78,12 +78,13 @@ pub fn record_captured_event(
 ) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
     let inserted_at = now;
-    let content_hash = exact_hash(input.content);
+    let sanitized_content = redact_capture_content(input.content);
+    let content_hash = exact_hash(&sanitized_content);
     let event_id = synthesize_event_id(input.event_type, &content_hash);
     let identity = upsert_identity(conn, input, now)?;
     let (content_text, content_blob_id, retention_class) =
-        store_content(conn, input.content, &content_hash, now)?;
-    let token_estimate = estimate_tokens(input.content);
+        store_content(conn, &sanitized_content, &content_hash, now)?;
+    let token_estimate = estimate_tokens(&sanitized_content);
 
     conn.execute(
         "INSERT INTO captured_events
@@ -357,6 +358,15 @@ fn estimate_tokens(content: &str) -> i64 {
     ((content.len() as i64) + 3) / 4
 }
 
+fn redact_capture_content(content: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
+        let redacted = crate::adapter::common::redact_sensitive_value(&value);
+        return serde_json::to_string(&redacted)
+            .unwrap_or_else(|_| crate::adapter::common::redact_sensitive_text(content));
+    }
+    crate::adapter::common::redact_sensitive_text(content)
+}
+
 fn compact_preview(content: &str, max_bytes: usize) -> String {
     let half = (max_bytes / 2).saturating_sub(128);
     let prefix = crate::db::truncate_str(content, half).to_string();
@@ -476,6 +486,83 @@ mod tests {
         assert_eq!(retention, "raw_compact");
         assert!(blob_id.is_some());
         assert_eq!(blob_count, 1);
+    }
+
+    #[test]
+    fn capture_redacts_sensitive_json_before_inline_storage() -> Result<()> {
+        let conn = setup_conn();
+        let content = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456' https://example.test",
+                "api_key": "sk-secret-value"
+            },
+            "tool_response": {
+                "stdout": "password=hunter2\nTOKEN=github_pat_secret"
+            }
+        })
+        .to_string();
+        let outcome = record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "claude-code",
+                session_id: "sess-redact",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &content,
+                task_kind: Some(ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+
+        let stored: String = conn.query_row(
+            "SELECT content_text FROM captured_events WHERE id = ?1",
+            params![outcome.event_row_id],
+            |row| row.get(0),
+        )?;
+        assert!(stored.contains("[REDACTED]"));
+        assert!(!stored.contains("sk-secret-value"));
+        assert!(!stored.contains("hunter2"));
+        assert!(!stored.contains("github_pat_secret"));
+        assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_redacts_sensitive_text_before_blob_storage() -> Result<()> {
+        let conn = setup_conn();
+        let mut content = "x".repeat(DIRECT_CONTENT_BYTES + 2048);
+        content.push_str("\nAuthorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456\n");
+        content.push_str("PASSWORD=hunter2\n");
+        let outcome = record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "claude-code",
+                session_id: "sess-redact-blob",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: &content,
+                task_kind: Some(ExtractionTaskKind::ObservationExtract),
+            },
+        )?;
+
+        let stored: String = conn.query_row(
+            "SELECT CAST(b.content_bytes AS TEXT)
+                 FROM captured_events e
+                 JOIN event_blobs b ON b.id = e.content_blob_id
+                 WHERE e.id = ?1",
+            params![outcome.event_row_id],
+            |row| row.get(0),
+        )?;
+        assert!(stored.contains("[REDACTED]"));
+        assert!(!stored.contains("hunter2"));
+        assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        Ok(())
     }
 
     #[test]

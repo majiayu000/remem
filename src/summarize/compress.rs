@@ -50,7 +50,7 @@ async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Res
         Err(err) => {
             crate::log::warn("compress", &format!("AI call failed: {}", err));
             timer.done(&format!("AI error: {}", err));
-            return Ok(());
+            return Err(err);
         }
     };
 

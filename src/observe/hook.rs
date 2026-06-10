@@ -128,8 +128,14 @@ fn record_capture_event(
         "files": summary.files_json.as_deref(),
         "exit_code": summary.exit_code,
         "tool_name": &event.tool_name,
-        "tool_input": event.tool_input.as_ref(),
-        "tool_response": event.tool_response.as_ref(),
+        "tool_input": event
+            .tool_input
+            .as_ref()
+            .map(crate::adapter::common::redact_sensitive_value),
+        "tool_response": event
+            .tool_response
+            .as_ref()
+            .map(crate::adapter::common::redact_sensitive_value),
         "git_branch": git_branch.as_deref(),
     })
     .to_string();

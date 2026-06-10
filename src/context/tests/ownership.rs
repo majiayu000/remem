@@ -1,19 +1,17 @@
 use rusqlite::Connection;
 
-use crate::memory::types::tests_helper::setup_memory_schema;
-
 use super::super::host::HostKind;
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::load_context_data_with_policy;
 use super::super::render::{build_context_debug_trace, build_context_stats_footer};
 use super::super::render::{ContextRenderStats, SectionRenderStats};
 use super::super::types::ContextRequest;
-use super::{insert_memory, insert_owned_memory};
+use super::{insert_memory, insert_owned_memory, setup_context_schema};
 
 #[test]
 fn startup_context_excludes_unrelated_tool_and_domain_memories() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let stash = "/Users/lifcc/Desktop/code/AI/tool/stash";
     let now = chrono::Utc::now().timestamp();
 
@@ -120,7 +118,7 @@ fn startup_context_excludes_unrelated_tool_and_domain_memories() {
 #[test]
 fn debug_trace_reports_owner_reasons_and_counts() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let stash = "/Users/lifcc/Desktop/code/AI/tool/stash";
     let now = chrono::Utc::now().timestamp();
 

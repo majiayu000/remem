@@ -1,12 +1,11 @@
 use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
-use crate::memory::types::tests_helper::setup_memory_schema;
 use rusqlite::Connection;
 
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::{load_context_data, load_context_data_with_policy};
 use super::super::render::{enforce_total_char_limit, enforce_total_char_limit_preserving_footer};
-use super::{insert_global_memory, insert_memory, insert_memory_with_branch};
+use super::{insert_global_memory, insert_memory, insert_memory_with_branch, setup_context_schema};
 
 #[test]
 fn load_context_data_logs_primary_memory_query_failures() {
@@ -32,7 +31,7 @@ fn load_context_data_logs_primary_memory_query_failures() {
 #[test]
 fn load_context_data_records_lesson_query_failures() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     conn.execute("DROP TABLE memory_lessons", []).unwrap();
     let policy = ContextPolicy::from_limits(ContextLimits::default());
 
@@ -47,9 +46,43 @@ fn load_context_data_records_lesson_query_failures() {
 }
 
 #[test]
+fn load_context_data_records_summary_query_failures() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_context_schema(&conn);
+    conn.execute("DROP TABLE session_summaries", []).unwrap();
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy, true);
+
+    assert!(loaded.summaries.is_empty());
+    assert_eq!(loaded.errors.len(), 1);
+    assert_eq!(loaded.errors[0].section, "sessions");
+    assert!(loaded.errors[0]
+        .message
+        .contains("failed to load recent summaries for /tmp/remem"));
+}
+
+#[test]
+fn load_context_data_records_workstream_query_failures() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_context_schema(&conn);
+    conn.execute("DROP TABLE workstreams", []).unwrap();
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy, true);
+
+    assert!(loaded.workstreams.is_empty());
+    assert_eq!(loaded.errors.len(), 1);
+    assert_eq!(loaded.errors[0].section, "workstreams");
+    assert!(loaded.errors[0]
+        .message
+        .contains("failed to load active workstreams for /tmp/remem"));
+}
+
+#[test]
 fn load_context_data_dedupes_generated_topic_keys_by_workstream_context() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
 
@@ -93,7 +126,7 @@ fn load_context_data_dedupes_generated_topic_keys_by_workstream_context() {
 #[test]
 fn load_context_data_clusters_contexts_by_pr_reference() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
 
@@ -131,7 +164,7 @@ fn load_context_data_clusters_contexts_by_pr_reference() {
 #[test]
 fn load_context_data_prefers_current_branch_within_dedup_cluster() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
 
@@ -173,7 +206,7 @@ fn load_context_data_prefers_current_branch_within_dedup_cluster() {
 #[test]
 fn load_context_data_keeps_current_branch_memories_before_limit() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
 
@@ -213,7 +246,7 @@ fn load_context_data_keeps_current_branch_memories_before_limit() {
 #[test]
 fn load_context_data_limits_memory_self_diagnostics_before_index_rendering() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
 
@@ -257,7 +290,7 @@ fn load_context_data_limits_memory_self_diagnostics_before_index_rendering() {
 #[test]
 fn load_context_data_excludes_preferences_from_main_memory_pool() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/computer";
     let now = chrono::Utc::now().timestamp();
 
@@ -313,7 +346,7 @@ fn load_context_data_excludes_preferences_from_main_memory_pool() {
 #[test]
 fn load_context_data_excludes_preferences_before_candidate_limit() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/computer";
     let now = chrono::Utc::now().timestamp();
 
@@ -369,7 +402,7 @@ fn load_context_data_excludes_preferences_before_candidate_limit() {
 #[test]
 fn load_context_data_excludes_deleted_and_rejected_memories() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/remem";
     let now = chrono::Utc::now().timestamp();
 
@@ -410,7 +443,7 @@ fn load_context_data_excludes_deleted_and_rejected_memories() {
 #[test]
 fn load_context_data_loads_lessons_separately_from_main_memory_pool() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/remem";
     let now = chrono::Utc::now().timestamp();
 
@@ -460,7 +493,7 @@ fn load_context_data_loads_lessons_separately_from_main_memory_pool() {
 #[test]
 fn load_context_data_filters_lessons_by_current_branch() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/remem";
 
     for (title, branch) in [
@@ -501,7 +534,7 @@ fn load_context_data_filters_lessons_by_current_branch() {
 #[test]
 fn load_context_data_filters_lessons_before_candidate_limit_and_keeps_core_memory() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/remem";
     let now = chrono::Utc::now().timestamp();
     let limits = ContextLimits {
@@ -560,7 +593,7 @@ fn load_context_data_filters_lessons_before_candidate_limit_and_keeps_core_memor
 #[test]
 fn load_context_data_excludes_global_non_preferences_from_main_memory_pool() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/remem";
     let now = chrono::Utc::now().timestamp();
 
@@ -600,7 +633,7 @@ fn load_context_data_excludes_global_non_preferences_from_main_memory_pool() {
 #[test]
 fn load_context_data_excludes_global_non_preferences_from_basename_search() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/remem";
     let now = chrono::Utc::now().timestamp();
     let limits = ContextLimits {
@@ -706,7 +739,7 @@ fn context_limits_new_memory_index_env_wins_over_legacy_alias() {
 #[test]
 fn load_context_data_keeps_core_candidates_when_index_limit_is_small() {
     let conn = Connection::open_in_memory().unwrap();
-    setup_memory_schema(&conn);
+    setup_context_schema(&conn);
     let project = "/tmp/vibeguard";
     let now = chrono::Utc::now().timestamp();
     let limits = ContextLimits {

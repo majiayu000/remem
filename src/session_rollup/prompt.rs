@@ -68,8 +68,9 @@ pub(super) fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange
             ));
         }
         prompt.push_str(">\n");
+        let redacted_content = crate::adapter::common::redact_sensitive_text(&event.content);
         prompt.push_str(&xml_escape_text(db::truncate_str(
-            &event.content,
+            &redacted_content,
             EVENT_CONTENT_LIMIT,
         )));
         prompt.push_str("\n</event>\n\n");
