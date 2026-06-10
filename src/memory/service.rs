@@ -7,6 +7,7 @@ mod search;
 mod tests;
 mod types;
 
+pub use crate::memory::current_state::{current_state, CurrentStateRequest, CurrentStateResult};
 pub use local_copy::{resolve_local_note_path, sanitize_segment};
 pub use save::{save_memory, LocalCopyError};
 pub use search::search_memories;

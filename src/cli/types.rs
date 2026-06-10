@@ -347,6 +347,29 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Resolve the current memory for a stable state key.
+    Current {
+        /// Stable state key, such as a durable topic key.
+        state_key: String,
+        /// Restrict lookup to one project path. Defaults to repo-owned state plus global user state.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Restrict lookup to one memory type.
+        #[arg(long, alias = "type", short = 't')]
+        memory_type: Option<String>,
+        /// Explicit state-key owner scope, such as `repo` or `user`.
+        #[arg(long)]
+        owner_scope: Option<String>,
+        /// Explicit state-key owner key, such as a repo path or `user:default`.
+        #[arg(long)]
+        owner_key: Option<String>,
+        /// Resolve the state that applied at this Unix epoch.
+        #[arg(long)]
+        as_of_epoch: Option<i64>,
+        /// Emit a single JSON object with stable fields for scripts and MCP parity.
+        #[arg(long)]
+        json: bool,
+    },
     /// Search raw archive rows from the terminal.
     Raw {
         #[command(subcommand)]

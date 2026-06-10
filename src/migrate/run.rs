@@ -6,7 +6,7 @@ use super::state::{applied_versions, ensure_migration_table, mark_applied};
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
 
-pub(crate) fn run_migrations(conn: &Connection) -> Result<()> {
+pub fn run_migrations(conn: &Connection) -> Result<()> {
     ensure_migration_table(conn)?;
 
     conn.execute_batch("BEGIN IMMEDIATE")

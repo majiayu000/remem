@@ -1,4 +1,4 @@
--- v033_graph_edge_file_nodes: add file graph nodes and touches_file edges.
+-- v034_graph_edge_file_nodes: add file graph nodes and touches_file edges.
 --
 -- v031 was already applied by earlier binaries, so this migration rebuilds the
 -- graph_edges table with the expanded typed contract instead of editing v031.

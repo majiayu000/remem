@@ -26,6 +26,24 @@ pub(super) struct SearchParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct CurrentStateParams {
+    #[schemars(description = "Stable state key, such as a durable topic key.")]
+    pub state_key: String,
+    #[schemars(
+        description = "Project name filter. Defaults to repo-owned state plus global user state."
+    )]
+    pub project: Option<String>,
+    #[schemars(description = "Memory type filter, e.g. decision or preference.")]
+    pub r#type: Option<String>,
+    #[schemars(description = "Explicit state-key owner scope, e.g. repo or user.")]
+    pub owner_scope: Option<String>,
+    #[schemars(description = "Explicit state-key owner key, e.g. a repo path or user:default.")]
+    pub owner_key: Option<String>,
+    #[schemars(description = "Resolve the state that applied at this Unix epoch.")]
+    pub as_of_epoch: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct TimelineParams {
     #[schemars(description = "Anchor observation ID")]
     pub anchor: Option<i64>,

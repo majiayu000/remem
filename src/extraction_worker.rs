@@ -9,7 +9,9 @@ const DEPENDENCY_WAIT_RETRY_SECS: i64 = 300;
 #[derive(Debug, PartialEq, Eq)]
 enum ExtractionTaskOutcome {
     Deferred(String),
-    Done,
+    // to_event_id is the highest event id actually covered by processing;
+    // None means the full claim-time watermark range was covered.
+    Done { to_event_id: Option<i64> },
     Waiting(String),
 }
 
@@ -42,12 +44,12 @@ pub(crate) async fn run_next(
     .await;
     let conn = db::open_db()?;
     match timed {
-        Ok(Ok(ExtractionTaskOutcome::Done)) => {
+        Ok(Ok(ExtractionTaskOutcome::Done { to_event_id })) => {
             db::mark_extraction_task_done(
                 &conn,
                 task.id,
                 lease_owner,
-                task.high_watermark_event_id,
+                to_event_id.or(task.high_watermark_event_id),
             )?;
             crate::log::info("worker", &format!("done extraction id={}", task.id));
         }
@@ -114,11 +116,11 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
     match task.task_kind {
         db::ExtractionTaskKind::SessionRollup => {
             crate::session_rollup::process(task).await?;
-            Ok(ExtractionTaskOutcome::Done)
+            Ok(ExtractionTaskOutcome::Done { to_event_id: None })
         }
         db::ExtractionTaskKind::ObservationExtract => {
             crate::observation_extract::process(task).await?;
-            Ok(ExtractionTaskOutcome::Done)
+            Ok(ExtractionTaskOutcome::Done { to_event_id: None })
         }
         db::ExtractionTaskKind::MemoryCandidate => {
             let result = crate::memory_candidate::process(task).await?;
@@ -147,7 +149,10 @@ fn memory_candidate_task_outcome(result: MemoryCandidateResult) -> ExtractionTas
             );
             ExtractionTaskOutcome::Deferred(reason)
         }
-        _ => ExtractionTaskOutcome::Done,
+        MemoryCandidateResult::Written { to_event_id, .. } => ExtractionTaskOutcome::Done {
+            to_event_id: Some(to_event_id),
+        },
+        _ => ExtractionTaskOutcome::Done { to_event_id: None },
     }
 }
 
@@ -175,7 +180,7 @@ fn graph_candidate_task_outcome(
             );
             ExtractionTaskOutcome::Waiting(reason)
         }
-        _ => ExtractionTaskOutcome::Done,
+        _ => ExtractionTaskOutcome::Done { to_event_id: None },
     }
 }
 
@@ -193,6 +198,24 @@ fn retry_backoff_secs(attempt: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn done_outcome_carries_actual_covered_event_id_for_cursor_advance() {
+        let outcome = memory_candidate_task_outcome(MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: 3,
+        });
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Done {
+                to_event_id: Some(3)
+            },
+            "done must report the event id actually covered by processing, not the claim-time watermark snapshot"
+        );
+    }
 
     #[test]
     fn memory_candidate_defer_preserves_range_for_reprocessing() {

@@ -1,4 +1,4 @@
--- v032_graph_candidates: governed graph candidate queue.
+-- v033_graph_candidates: governed graph candidate queue.
 --
 -- LLM output lands in graph_candidates first. Promotion writes to the typed
 -- graph_edges contract from v031, so model output cannot mutate the trusted
@@ -8,12 +8,7 @@ CREATE TABLE IF NOT EXISTS graph_candidates (
     id INTEGER PRIMARY KEY,
     project_id INTEGER REFERENCES projects(id),
     source_project TEXT NOT NULL,
-    candidate_type TEXT NOT NULL CHECK(candidate_type IN (
-        'entity_alias',
-        'claim',
-        'edge',
-        'state_relation'
-    )),
+    candidate_type TEXT NOT NULL CHECK(candidate_type = 'edge'),
     edge_type TEXT NOT NULL,
     from_ref TEXT NOT NULL,
     to_ref TEXT NOT NULL,

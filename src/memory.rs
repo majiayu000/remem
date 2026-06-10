@@ -1,4 +1,5 @@
 pub mod claims;
+pub mod current_state;
 pub mod dedup;
 pub mod edge;
 pub mod events;

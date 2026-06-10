@@ -9,6 +9,8 @@ use crate::memory::format::{parse_observations, xml_escape_text, ParsedObservati
 const OBSERVATION_EXTRACT_SYSTEM: &str = "\
 Extract durable observations from captured development-session events.
 Return zero or more <observation> blocks using the existing remem XML format.
+Each <observation> must include a <confidence> field with a value between 0.0 and 1.0
+reflecting how strongly the provided evidence supports the observation.
 If there is no durable information, return exactly <no_observations reason=\"...\"/>.
 Use only provided evidence; do not invent files, outcomes, decisions, or facts.";
 
@@ -262,7 +264,7 @@ fn persist_observations(
                 observation.obs_type,
                 text,
                 evidence_json,
-                DEFAULT_CONFIDENCE,
+                observation.confidence.unwrap_or(DEFAULT_CONFIDENCE),
                 obs_id
             ],
         )?;
@@ -406,6 +408,66 @@ mod tests {
         )?;
         assert_eq!(text, "cargo test fixed the failure");
         assert!(evidence.contains('1'));
+        assert_eq!(confidence, DEFAULT_CONFIDENCE);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observation_extract_stores_model_confidence() -> Result<()> {
+        let mut conn = setup_conn();
+        capture(&conn, "sess-conf", "cargo test fixed the failure")?;
+        let task = claim_extract_task(&mut conn)?;
+
+        process_with_extractor(&mut conn, &task, |_prompt| async {
+            Ok("<observation><type>discovery</type><narrative>cargo test fixed the failure</narrative><confidence>0.92</confidence></observation>".to_string())
+        })
+        .await?;
+
+        let confidence: f64 = conn.query_row(
+            "SELECT confidence FROM observations WHERE session_row_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(confidence, 0.92);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observation_extract_clamps_out_of_range_confidence() -> Result<()> {
+        let mut conn = setup_conn();
+        capture(&conn, "sess-conf-clamp", "cargo test fixed the failure")?;
+        let task = claim_extract_task(&mut conn)?;
+
+        process_with_extractor(&mut conn, &task, |_prompt| async {
+            Ok("<observation><type>discovery</type><narrative>cargo test fixed the failure</narrative><confidence>1.7</confidence></observation>".to_string())
+        })
+        .await?;
+
+        let confidence: f64 = conn.query_row(
+            "SELECT confidence FROM observations WHERE session_row_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(confidence, 1.0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observation_extract_invalid_confidence_falls_back_to_default() -> Result<()> {
+        let mut conn = setup_conn();
+        capture(&conn, "sess-conf-bad", "cargo test fixed the failure")?;
+        let task = claim_extract_task(&mut conn)?;
+
+        process_with_extractor(&mut conn, &task, |_prompt| async {
+            Ok("<observation><type>discovery</type><narrative>cargo test fixed the failure</narrative><confidence>very high</confidence></observation>".to_string())
+        })
+        .await?;
+
+        let confidence: f64 = conn.query_row(
+            "SELECT confidence FROM observations WHERE session_row_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?;
         assert_eq!(confidence, DEFAULT_CONFIDENCE);
         Ok(())
     }

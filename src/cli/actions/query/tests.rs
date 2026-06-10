@@ -1,4 +1,8 @@
 use crate::memory::{
+    current_state::{
+        CurrentStateAnswer, CurrentStateKeySummary, CurrentStateMemoryRef, CurrentStateResult,
+        CurrentStateWhy,
+    },
     edge::{MemoryEdgeReference, MemoryEdgeSummary},
     raw_archive::{insert_raw_message, RawMessage, ROLE_ASSISTANT, ROLE_USER, SOURCE_HOOK},
     service::{MultiHopMeta, SearchResultSet},
@@ -8,6 +12,7 @@ use crate::retrieval::search::{ChannelContribution, SearchExplain, SearchExplain
 use serde_json::Value;
 
 use super::{
+    current::render_current_state,
     raw::{
         build_raw_search_json, build_raw_search_request, render_raw_search_results,
         search_raw_archive,
@@ -216,6 +221,71 @@ fn cli_search_render_includes_explain_for_empty_results() {
     assert!(output.contains("remem search \"<query>\" --project /path/to/repo"));
     assert!(output.contains("Search explain:"));
     assert!(output.contains("fts_query: Some(\"\\\"needle\\\"\")"));
+}
+
+#[test]
+fn cli_current_state_render_is_compact_and_shows_conflict_evidence() {
+    let result = CurrentStateResult {
+        status: "unresolved_conflict".to_string(),
+        state_key: "deploy-target".to_string(),
+        as_of_epoch: None,
+        state: Some(CurrentStateKeySummary {
+            id: 10,
+            owner_scope: "repo".to_string(),
+            owner_key: "/repo".to_string(),
+            memory_type: "decision".to_string(),
+            state_key: "deploy-target".to_string(),
+            state_label: Some("deploy target".to_string()),
+            state_status: "active".to_string(),
+            current_memory_id: Some(2),
+        }),
+        matches: vec![],
+        current: Some(CurrentStateAnswer {
+            id: 2,
+            title: "Deploy target".to_string(),
+            text: "Use production.\nDetailed internal rationale should stay compact.".to_string(),
+            memory_type: "decision".to_string(),
+            topic_key: Some("deploy-target".to_string()),
+            project: "/repo".to_string(),
+            scope: "project".to_string(),
+            status: "active".to_string(),
+            updated_at_epoch: 0,
+        }),
+        conflicts: vec![CurrentStateMemoryRef {
+            id: 3,
+            title: "Deploy target conflict".to_string(),
+            memory_type: "decision".to_string(),
+            topic_key: Some("deploy-target".to_string()),
+            project: "/repo".to_string(),
+            status: "active".to_string(),
+            updated_at_epoch: 0,
+            relation: None,
+            reason: Some("operator conflict".to_string()),
+            evidence_event_ids: vec![7],
+            source_candidate_id: None,
+            source_operation_id: None,
+        }],
+        history: vec![],
+        facts: vec![],
+        why: vec![CurrentStateWhy {
+            edge_type: "conflicts".to_string(),
+            from_memory_id: Some(3),
+            to_memory_id: Some(2),
+            reason: Some("operator conflict".to_string()),
+            evidence_event_ids: vec![7],
+            source_candidate_id: None,
+            source_operation_id: None,
+            created_at_epoch: 0,
+        }],
+    };
+
+    let output = render_current_state(&result);
+
+    assert!(output.contains("Current state: unresolved_conflict"));
+    assert!(output.contains("[#2] Deploy target"));
+    assert!(output.contains("[#3] Deploy target conflict"));
+    assert!(output.contains("evidence=[7]"));
+    assert!(!output.contains("Detailed internal rationale"));
 }
 
 #[test]

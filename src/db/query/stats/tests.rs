@@ -1,13 +1,13 @@
 use rusqlite::Connection;
 
-use super::{DailyActivityStats, ProjectCount, SystemStats};
+use super::{CandidatePromotionStat, DailyActivityStats, ProjectCount, SystemStats};
 use crate::db::models::{
     AiUsageBreakdown, AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage,
 };
 use crate::db::query::{
     query_ai_usage_breakdown, query_ai_usage_source_totals, query_ai_usage_totals,
-    query_daily_activity_stats, query_daily_ai_usage, query_system_stats, query_top_projects,
-    query_weekly_ai_usage,
+    query_candidate_promotion_stats, query_daily_activity_stats, query_daily_ai_usage,
+    query_system_stats, query_top_projects, query_weekly_ai_usage,
 };
 
 fn setup_stats_schema(conn: &Connection) {
@@ -49,7 +49,9 @@ fn setup_stats_schema(conn: &Connection) {
         );
         CREATE TABLE memory_candidates (
             id INTEGER PRIMARY KEY,
-            review_status TEXT NOT NULL
+            review_status TEXT NOT NULL,
+            auto_promote_block_reason TEXT,
+            created_at_epoch INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE graph_candidates (
             id INTEGER PRIMARY KEY,
@@ -574,5 +576,53 @@ fn query_ai_usage_breakdown_exposes_project_executor_and_source() -> anyhow::Res
 
     let empty = query_ai_usage_breakdown(&conn, Some(jan_05_2026), None, 0)?;
     assert!(empty.is_empty());
+    Ok(())
+}
+
+#[test]
+fn query_candidate_promotion_stats_groups_by_status_and_block_reason() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+
+    let now = 10_000_000;
+    let recent = now - 1_000;
+    let old = now - 8 * 24 * 3600;
+    conn.execute_batch(&format!(
+        "INSERT INTO memory_candidates (review_status, auto_promote_block_reason, created_at_epoch) VALUES
+            ('auto_promoted', NULL, {recent}),
+            ('auto_promoted', NULL, {old}),
+            ('auto_promoted', NULL, {old}),
+            ('pending_review', 'no_supporting_source_observation', {recent}),
+            ('pending_review', 'no_supporting_source_observation', {recent}),
+            ('pending_review', 'no_supporting_source_observation', {old}),
+            ('pending_review', 'no_supporting_source_observation', {old}),
+            ('pending_review', 'confidence_below_threshold', {old});"
+    ))?;
+
+    let stats = query_candidate_promotion_stats(&conn, now)?;
+
+    assert_eq!(
+        stats,
+        vec![
+            CandidatePromotionStat {
+                review_status: "pending_review".to_string(),
+                block_reason: Some("no_supporting_source_observation".to_string()),
+                total: 4,
+                last_7_days: 2,
+            },
+            CandidatePromotionStat {
+                review_status: "auto_promoted".to_string(),
+                block_reason: None,
+                total: 3,
+                last_7_days: 1,
+            },
+            CandidatePromotionStat {
+                review_status: "pending_review".to_string(),
+                block_reason: Some("confidence_below_threshold".to_string()),
+                total: 1,
+                last_7_days: 0,
+            },
+        ]
+    );
     Ok(())
 }
