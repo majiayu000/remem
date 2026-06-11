@@ -137,8 +137,8 @@ pub(super) fn finalize_summary(
     Ok(())
 }
 
-pub(super) fn sync_native_memory(cwd: &str, project: &str) {
-    if let Err(err) = crate::context::claude_memory::sync_to_claude_memory(cwd, project) {
+pub(super) fn sync_native_memory(conn: &rusqlite::Connection, cwd: &str, project: &str) {
+    if let Err(err) = crate::context::claude_memory::sync_to_claude_memory(conn, cwd, project) {
         crate::log::warn(
             "summary-job",
             &format!("claude memory sync failed: {}", err),

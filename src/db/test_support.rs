@@ -97,3 +97,15 @@ pub fn cleanup_temp_db_files(path: &std::path::Path) {
     let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
 }
+
+pub fn runtime_connection() -> anyhow::Result<rusqlite::Connection> {
+    crate::db::open_db()
+}
+
+pub fn reset_runtime_connection_open_count() {
+    crate::db::core::reset_configured_connection_open_count();
+}
+
+pub fn runtime_connection_open_count() -> usize {
+    crate::db::core::configured_connection_open_count()
+}

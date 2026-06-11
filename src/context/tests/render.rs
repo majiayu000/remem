@@ -3,10 +3,12 @@ use crate::workstream::{WorkStream, WorkStreamStatus};
 
 use super::super::host::HostKind;
 use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
+use super::super::invocation::ContextInvocation;
 use super::super::policy::ContextLimits;
 use super::super::render::{
     append_context_gate_debug_trace, build_context_header, build_context_stats_footer,
-    empty_context_output, render_context_output, ContextRenderStats, SectionRenderStats,
+    empty_context_output, generate_context_for_test, render_context_output, ContextRenderStats,
+    SectionRenderStats,
 };
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
@@ -541,7 +543,7 @@ fn codex_colored_header_aligns_rows_under_hook_context_value() {
 #[test]
 fn render_context_output_exposes_lesson_query_failures() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-lesson-error");
-    let conn = crate::db::open_db().unwrap();
+    let conn = crate::db::test_support::runtime_connection().unwrap();
     conn.execute("DROP TABLE memory_lessons", []).unwrap();
     drop(conn);
 
@@ -564,6 +566,34 @@ fn render_context_output_exposes_lesson_query_failures() {
         .output
         .contains("- lessons: failed to load lessons for /tmp/remem"));
     assert!(!rendered.output.contains("No previous sessions found."));
+}
+
+#[test]
+fn strict_context_pipeline_opens_one_database_connection() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-single-db-open");
+    let setup = crate::db::test_support::runtime_connection()?;
+    drop(setup);
+
+    crate::db::test_support::reset_runtime_connection_open_count();
+    let cwd = data_dir.path.to_string_lossy().to_string();
+    let transcript_path = data_dir.path.join("transcript.jsonl");
+    let invocation = ContextInvocation {
+        cwd: cwd.clone(),
+        project: crate::db::project_from_cwd(&cwd),
+        session_id: Some("sess-single-db-open".to_string()),
+        transcript_path: Some(transcript_path.to_string_lossy().to_string()),
+        source: Some("session_start".to_string()),
+        host: HostKind::CodexCli,
+        use_colors: false,
+        debug: false,
+        force: false,
+        gate_mode: Some("strict".to_string()),
+    };
+
+    generate_context_for_test(invocation, true)?;
+
+    assert_eq!(crate::db::test_support::runtime_connection_open_count(), 1);
+    Ok(())
 }
 
 fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {

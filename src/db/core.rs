@@ -1,11 +1,31 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 
 thread_local! {
     static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+static CONFIGURED_CONNECTION_OPENS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_configured_connection_open_count() {
+    CONFIGURED_CONNECTION_OPENS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn configured_connection_open_count() -> usize {
+    CONFIGURED_CONNECTION_OPENS.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+fn record_configured_connection_open() {
+    CONFIGURED_CONNECTION_OPENS.fetch_add(1, Ordering::SeqCst);
 }
 
 pub(crate) fn with_data_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
@@ -86,6 +106,19 @@ pub fn open_db() -> Result<Connection> {
     Ok(conn)
 }
 
+pub fn open_db_no_migrate() -> Result<Connection> {
+    let path = db_path();
+    let key = super::crypto::require_cipher_key_or_plaintext_override()?;
+    if !path.exists() {
+        anyhow::bail!("database not found: {}", path.display());
+    }
+
+    let conn = open_configured_existing_read_write_connection(&path, key.as_deref())?;
+    crate::retrieval::vector::load_vec_extension(&conn)?;
+    crate::migrate::ensure_schema_current(&conn)?;
+    Ok(conn)
+}
+
 pub fn open_db_read_only() -> Result<Connection> {
     let path = db_path();
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
@@ -99,6 +132,31 @@ pub fn open_db_read_only() -> Result<Connection> {
 pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Result<Connection> {
     let conn = Connection::open(path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
+    #[cfg(test)]
+    record_configured_connection_open();
+
+    super::crypto::configure_cipher(&conn, key)?;
+
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+    )?;
+    Ok(conn)
+}
+
+pub(crate) fn open_configured_existing_read_write_connection(
+    path: &Path,
+    key: Option<&str>,
+) -> Result<Connection> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE).with_context(
+        || {
+            format!(
+                "Failed to open existing database read-write: {}",
+                path.display()
+            )
+        },
+    )?;
+    #[cfg(test)]
+    record_configured_connection_open();
 
     super::crypto::configure_cipher(&conn, key)?;
 
@@ -114,6 +172,8 @@ pub(crate) fn open_configured_read_only_connection(
 ) -> Result<Connection> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("Failed to open database read-only: {}", path.display()))?;
+    #[cfg(test)]
+    record_configured_connection_open();
 
     super::crypto::configure_cipher(&conn, key)?;
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
@@ -250,6 +310,173 @@ mod tests {
 
         assert_eq!(marker_exists, 1);
         assert_eq!(migrations_exists, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_does_not_create_missing_database() {
+        let test_dir = ScopedTestDataDir::new("no-migrate-missing");
+        test_dir.remove_db_files();
+
+        let err = open_db_no_migrate().expect_err("missing database should fail");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("database not found"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !test_dir.path.exists(),
+            "no-migrate open must not create data dir"
+        );
+        assert!(
+            !test_dir.db_path().exists(),
+            "no-migrate open must not create database file"
+        );
+    }
+
+    #[test]
+    fn open_db_no_migrate_refuses_plaintext_without_explicit_override() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("no-migrate-cipher-fail-closed");
+        let conn = crate::db::open_db()?;
+        drop(conn);
+        std::env::remove_var(ALLOW_PLAINTEXT_ENV);
+
+        let err = crate::db::open_db_no_migrate()
+            .expect_err("no-migrate open must enforce the plaintext guard");
+
+        let message = err.to_string();
+        assert!(message.contains("SQLCipher key"), "got: {message}");
+        assert!(
+            test_dir.db_path().exists(),
+            "no-migrate guard must not remove the existing database"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_opens_current_schema_read_write() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("no-migrate-current-rw");
+        let setup = crate::db::open_db()?;
+        drop(setup);
+
+        let conn = crate::db::open_db_no_migrate()?;
+        conn.execute(
+            "CREATE TABLE no_migrate_rw_probe(id INTEGER PRIMARY KEY)",
+            [],
+        )?;
+        conn.execute("INSERT INTO no_migrate_rw_probe(id) VALUES (1)", [])?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM no_migrate_rw_probe", [], |row| {
+            row.get(0)
+        })?;
+
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_does_not_run_migrations() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("no-migrate-no-migration");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = Connection::open(test_dir.db_path())?;
+        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(setup);
+
+        let err = crate::db::open_db_no_migrate().expect_err("stale schema should fail");
+
+        assert!(
+            err.to_string().contains("schema is not initialized"),
+            "unexpected error: {err:#}"
+        );
+        let check = Connection::open(test_dir.db_path())?;
+        let migrations_exists: i64 = check.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_schema_migrations'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(migrations_exists, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_rejects_older_schema_without_migrating() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("no-migrate-older-schema");
+        let setup = crate::db::open_db()?;
+        let latest = crate::migrate::latest_schema_version();
+        setup.execute(
+            "DELETE FROM _schema_migrations WHERE version = ?1",
+            [latest],
+        )?;
+        drop(setup);
+
+        let err = crate::db::open_db_no_migrate()
+            .expect_err("older schema should require foreground migration");
+
+        assert!(
+            err.to_string().contains("requires schema"),
+            "unexpected error: {err:#}"
+        );
+        let check = Connection::open(crate::db::db_path())?;
+        let latest_rows: i64 = check.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations WHERE version = ?1",
+            [latest],
+            |row| row.get(0),
+        )?;
+        assert_eq!(latest_rows, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_rejects_incomplete_schema_without_migrating() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("no-migrate-incomplete-schema");
+        let setup = crate::db::open_db()?;
+        let latest = crate::migrate::latest_schema_version();
+        let missing = latest - 1;
+        setup.execute(
+            "DELETE FROM _schema_migrations WHERE version = ?1",
+            [missing],
+        )?;
+        drop(setup);
+
+        let err = crate::db::open_db_no_migrate()
+            .expect_err("incomplete schema should require foreground migration");
+
+        assert!(
+            err.to_string().contains("missing migration"),
+            "unexpected error: {err:#}"
+        );
+        let check = Connection::open(crate::db::db_path())?;
+        let (missing_rows, latest_rows): (i64, i64) = check.query_row(
+            "SELECT
+                SUM(CASE WHEN version = ?1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN version = ?2 THEN 1 ELSE 0 END)
+             FROM _schema_migrations",
+            (missing, latest),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(missing_rows, 0);
+        assert_eq!(latest_rows, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_rejects_newer_schema_without_migrating() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("no-migrate-newer-schema");
+        let setup = crate::db::open_db()?;
+        let latest = crate::migrate::latest_schema_version();
+        setup.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, 'future-test', 0)",
+            [latest + 1],
+        )?;
+        drop(setup);
+
+        let err = crate::db::open_db_no_migrate().expect_err("newer schema should fail closed");
+
+        assert!(
+            err.to_string().contains("only knows up to"),
+            "unexpected error: {err:#}"
+        );
         Ok(())
     }
 

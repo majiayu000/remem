@@ -47,6 +47,7 @@ struct GateRow {
 }
 
 pub(super) fn apply_context_gate(
+    conn: &rusqlite::Connection,
     invocation: &ContextInvocation,
     output: String,
 ) -> ContextGateDecision {
@@ -81,19 +82,9 @@ pub(super) fn apply_context_gate(
     let hash = context_fingerprint(&output);
     let key = injection_key(invocation);
     let now = chrono::Utc::now().timestamp();
-    let conn = match crate::db::open_db() {
-        Ok(conn) => conn,
-        Err(error) => {
-            crate::log::error(
-                "context-gate",
-                &format!("fail_open reason=open_db error={}", error),
-            );
-            return decision(output, ContextGateAction::FailOpen, "open_db");
-        }
-    };
 
-    cleanup_old_rows(&conn, now);
-    let row = match load_gate_row(&conn, invocation.host.as_env_value(), &key) {
+    cleanup_old_rows(conn, now);
+    let row = match load_gate_row(conn, invocation.host.as_env_value(), &key) {
         Ok(row) => row,
         Err(error) => {
             crate::log::warn(
@@ -106,7 +97,7 @@ pub(super) fn apply_context_gate(
 
     let Some(row) = row else {
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -131,7 +122,7 @@ pub(super) fn apply_context_gate(
 
     if invocation.force {
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -155,7 +146,7 @@ pub(super) fn apply_context_gate(
     }
     if source_requires_fresh_emission(invocation.source.as_deref()) {
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -185,7 +176,7 @@ pub(super) fn apply_context_gate(
             } else {
                 "same_hash"
             };
-            return match record_suppression(&conn, invocation, &key, now) {
+            return match record_suppression(conn, invocation, &key, now) {
                 Ok(()) => {
                     log_gate("suppress", invocation, &key, reason, &hash);
                     gate_decision(
@@ -201,7 +192,7 @@ pub(super) fn apply_context_gate(
             };
         }
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -225,7 +216,7 @@ pub(super) fn apply_context_gate(
     }
 
     if mode == ContextGateMode::Strict {
-        return match record_suppression(&conn, invocation, &key, now) {
+        return match record_suppression(conn, invocation, &key, now) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "strict", &hash);
                 gate_decision(
@@ -253,7 +244,7 @@ pub(super) fn apply_context_gate(
         };
 
     match upsert_emit_row(
-        &conn,
+        conn,
         invocation,
         &key,
         &hash,
