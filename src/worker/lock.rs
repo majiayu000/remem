@@ -2,39 +2,27 @@ use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use fs2::FileExt;
 
 pub(super) struct WorkerLockGuard {
     file: File,
-    #[cfg(not(unix))]
-    path: PathBuf,
 }
 
 pub(super) fn acquire_worker_singleton() -> Result<Option<WorkerLockGuard>> {
-    let path = worker_lock_path();
+    let path = worker_lock_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create worker lock directory {}", parent.display()))?;
     }
 
-    #[cfg(unix)]
-    {
-        acquire_unix_lock(path)
-    }
-
-    #[cfg(not(unix))]
-    {
-        acquire_fallback_lock(path)
-    }
+    acquire_file_lock(path)
 }
 
-pub(super) fn worker_lock_path() -> PathBuf {
-    crate::db::data_dir().join("worker.lock")
+pub(super) fn worker_lock_path() -> Result<PathBuf> {
+    Ok(crate::db::absolute_data_dir()?.join("worker.lock"))
 }
 
-#[cfg(unix)]
-fn acquire_unix_lock(path: PathBuf) -> Result<Option<WorkerLockGuard>> {
-    use std::os::fd::AsRawFd;
-
+fn acquire_file_lock(path: PathBuf) -> Result<Option<WorkerLockGuard>> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -42,57 +30,30 @@ fn acquire_unix_lock(path: PathBuf) -> Result<Option<WorkerLockGuard>> {
         .truncate(false)
         .open(&path)
         .with_context(|| format!("open worker lock {}", path.display()))?;
-    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if result == 0 {
-        return Ok(Some(WorkerLockGuard { file }));
-    }
 
-    let error = std::io::Error::last_os_error();
-    match error.raw_os_error() {
-        Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN => Ok(None),
-        _ => Err(error).with_context(|| format!("lock worker singleton {}", path.display())),
-    }
-}
-
-#[cfg(not(unix))]
-fn acquire_fallback_lock(path: PathBuf) -> Result<Option<WorkerLockGuard>> {
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(file) => Ok(Some(WorkerLockGuard { file, path })),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("create worker lock {}", path.display())),
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(WorkerLockGuard { file })),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("lock worker singleton {}", path.display()))
+        }
     }
 }
 
 impl Drop for WorkerLockGuard {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-
-            let result = unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
-            if result != 0 {
-                let error = std::io::Error::last_os_error();
-                crate::log::warn(
-                    "worker",
-                    &format!("unlock worker singleton failed: {}", error),
-                );
-            }
-        }
-
-        #[cfg(not(unix))]
-        {
-            if let Err(error) = std::fs::remove_file(&self.path) {
-                crate::log::warn(
-                    "worker",
-                    &format!("remove worker singleton lock failed: {}", error),
-                );
-            }
+        if let Err(error) = self.file.unlock() {
+            crate::log::warn(
+                "worker",
+                &format!("unlock worker singleton failed: {}", error),
+            );
         }
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Barrier,
@@ -111,10 +72,31 @@ mod tests {
         };
 
         assert!(acquire_worker_singleton()?.is_none());
-        assert_eq!(worker_lock_path(), data_dir.path.join("worker.lock"));
+        assert_eq!(worker_lock_path()?, data_dir.path.join("worker.lock"));
 
         drop(first);
         assert!(acquire_worker_singleton()?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn worker_lock_path_absolutizes_relative_data_dir() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-lock-relative-data-dir");
+        let relative = PathBuf::from(format!(
+            ".remem-worker-lock-relative-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        if relative.exists() {
+            std::fs::remove_dir_all(&relative)?;
+        }
+        std::env::set_var("REMEM_DATA_DIR", &relative);
+        let expected = std::env::current_dir()?.join(&relative).join("worker.lock");
+
+        assert_eq!(worker_lock_path()?, expected);
+        if relative.exists() {
+            std::fs::remove_dir_all(relative)?;
+        }
         Ok(())
     }
 

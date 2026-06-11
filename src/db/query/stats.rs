@@ -75,7 +75,7 @@ pub struct CandidatePromotionStat {
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
     let raw_ingest = query_raw_ingest_failure_stats(conn)?;
-    let worker_heartbeat = crate::db::worker::latest_worker_heartbeat(conn)?;
+    let worker_heartbeat = crate::db::worker::latest_daemon_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_daemon_worker_heartbeat(
         conn,
         crate::db::worker::WORKER_HEARTBEAT_HEALTH_SECS,

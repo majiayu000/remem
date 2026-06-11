@@ -294,6 +294,36 @@ fn query_system_stats_and_related_views_share_one_definition() {
 }
 
 #[test]
+fn query_system_stats_reports_daemon_heartbeat_not_once() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO worker_heartbeats (owner, pid, started_at_epoch, updated_at_epoch)
+         VALUES ('worker-daemon-stats', ?1, ?2, ?2)",
+        (i64::from(std::process::id()), now - 10),
+    )?;
+    conn.execute(
+        "INSERT INTO worker_heartbeats (owner, pid, started_at_epoch, updated_at_epoch)
+         VALUES ('worker-once-stats', ?1, ?2, ?2)",
+        (i64::from(std::process::id()), now),
+    )?;
+
+    let system = query_system_stats(&conn)?;
+
+    assert!(system.worker_daemon_healthy);
+    assert_eq!(
+        system.worker_heartbeat_owner.as_deref(),
+        Some("worker-daemon-stats")
+    );
+    assert!(
+        system.worker_heartbeat_age_secs.unwrap_or_default() >= 10,
+        "reported age should come from daemon heartbeat"
+    );
+    Ok(())
+}
+
+#[test]
 fn query_system_stats_defaults_raw_ingest_failures_when_table_is_absent() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_stats_schema(&conn);

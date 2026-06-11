@@ -229,6 +229,7 @@ fn spawn_worker_once() -> Result<()> {
         .arg("worker")
         .arg("--once")
         .current_dir(&worker_dir)
+        .env("REMEM_DATA_DIR", &worker_dir)
         .env("REMEM_STDERR_TO_LOG", "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -238,7 +239,19 @@ fn spawn_worker_once() -> Result<()> {
 }
 
 fn stable_worker_dir() -> std::path::PathBuf {
-    let data_dir = crate::db::data_dir();
+    let data_dir = match crate::db::absolute_data_dir() {
+        Ok(path) => path,
+        Err(err) => {
+            crate::log::warn(
+                "summarize",
+                &format!(
+                    "failed to resolve worker dir from REMEM_DATA_DIR: {}; falling back to temp dir",
+                    err
+                ),
+            );
+            return std::env::temp_dir();
+        }
+    };
     if let Err(err) = std::fs::create_dir_all(&data_dir) {
         crate::log::warn(
             "summarize",
@@ -535,6 +548,25 @@ mod tests {
 
         assert_eq!(got, data_dir.path);
         assert!(got.is_dir());
+    }
+
+    #[test]
+    fn stable_worker_dir_absolutizes_relative_data_dir() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-worker-relative-dir");
+        let relative = std::path::PathBuf::from(format!(
+            ".remem-summary-worker-relative-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::env::set_var("REMEM_DATA_DIR", &relative);
+
+        let got = stable_worker_dir();
+
+        assert_eq!(got, std::env::current_dir()?.join(&relative));
+        assert!(got.is_absolute());
+        assert!(got.is_dir());
+        std::fs::remove_dir_all(relative)?;
+        Ok(())
     }
 
     #[test]
