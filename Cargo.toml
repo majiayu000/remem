@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.5.25"
+version = "0.5.26"
 edition = "2021"
 description = "Persistent memory for Claude Code and Codex — single binary, automatic context"
 license = "MIT"
