@@ -15,8 +15,9 @@ const {
   pluginDataDir,
   pluginRoot
 } = require("../../scripts/remem-runtime");
+const { governancePreviewArgs } = require("./governance");
+const { toolDescriptors, UI_RESOURCE } = require("./tools");
 
-const UI_RESOURCE = "ui://remem/dashboard.html";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5577;
 const JSON_LIMIT_BYTES = 1_000_000;
@@ -370,6 +371,17 @@ function createBackend(options = {}) {
       );
       return activationSummary(result.stdout || result.stderr || "");
     },
+    async governancePreview(input) {
+      const { args, requested } = governancePreviewArgs(input);
+      const result = await runRememJson(args, {
+        allowDownload: false,
+        timeoutMs: 20000
+      });
+      return {
+        ...result,
+        requested
+      };
+    },
     stop() {
       api.stop?.();
     }
@@ -452,113 +464,6 @@ function setupActivation(name, error) {
   };
 }
 
-function toolDescriptors() {
-  return [
-    {
-      name: "remem_dashboard",
-      title: "Remem Dashboard",
-      description: "Render Remem runtime, memory health, search, save, and activation state.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          project: { type: "string" }
-        },
-        additionalProperties: false
-      },
-      outputSchema: {
-        type: "object",
-        properties: {
-          expected_version: { type: "string" },
-          plugin_data: { type: "string" }
-        },
-        additionalProperties: true
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: {
-        ui: { resourceUri: UI_RESOURCE, visibility: ["model", "app"] },
-        "openai/outputTemplate": UI_RESOURCE,
-        "openai/widgetAccessible": true,
-        "openai/toolInvocation/invoking": "Loading Remem",
-        "openai/toolInvocation/invoked": "Remem ready"
-      }
-    },
-    {
-      name: "remem_search",
-      title: "Search Remem",
-      description: "Search curated Remem memories and raw archive fallback rows.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string" },
-          project: { type: "string" },
-          type: { type: "string" },
-          limit: { type: "number" },
-          offset: { type: "number" },
-          include_stale: { type: "boolean" },
-          multi_hop: { type: "boolean" }
-        },
-        required: ["query"],
-        additionalProperties: false
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: {
-        ui: { visibility: ["model", "app"] },
-        "openai/widgetAccessible": true
-      }
-    },
-    {
-      name: "remem_get_memory",
-      title: "Get Remem Memory",
-      description: "Fetch full details for a selected Remem memory by ID.",
-      inputSchema: {
-        type: "object",
-        properties: { id: { type: "number" } },
-        required: ["id"],
-        additionalProperties: false
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: {
-        ui: { visibility: ["model", "app"] },
-        "openai/widgetAccessible": true
-      }
-    },
-    {
-      name: "remem_save_memory",
-      title: "Save Remem Memory",
-      description: "Explicitly save one durable Remem memory.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          text: { type: "string" },
-          title: { type: "string" },
-          project: { type: "string" },
-          memory_type: { type: "string" },
-          topic_key: { type: "string" },
-          scope: { type: "string" }
-        },
-        required: ["text"],
-        additionalProperties: false
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-      _meta: {
-        ui: { visibility: ["model", "app"] },
-        "openai/widgetAccessible": true
-      }
-    },
-    {
-      name: "remem_activation_plan",
-      title: "Remem Activation Plan",
-      description: "Preview Codex hook activation without writing config.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: {
-        ui: { visibility: ["model", "app"] },
-        "openai/widgetAccessible": true
-      }
-    }
-  ];
-}
-
 async function callTool(backend, name, args = {}) {
   if (name === "remem_dashboard") {
     const snapshot = await buildSnapshot(backend);
@@ -588,6 +493,13 @@ async function callTool(backend, name, args = {}) {
     const result = await backend.activationPlan();
     return toolResult("Activation plan generated without writing config.", result);
   }
+  if (name === "remem_governance_preview") {
+    const result = await backend.governancePreview(args);
+    return toolResult(
+      `Governance dry-run found ${result.affected?.length ?? 0} affected memory result(s).`,
+      result
+    );
+  }
   throw Object.assign(new Error(`Unknown tool: ${name}`), { code: -32602 });
 }
 
@@ -609,7 +521,7 @@ async function handleJsonRpc(backend, message) {
       protocolVersion: message.params?.protocolVersion || "2025-06-18",
       capabilities: { tools: {}, resources: {} },
       serverInfo: { name: "remem-app", version: expectedVersion() },
-      instructions: "Use Remem to inspect project memory, search details, save explicit durable memories, and preview hook activation."
+      instructions: "Use Remem to inspect project memory, search details, save explicit durable memories, preview governance, and preview hook activation."
     };
   }
   if (method === "tools/list") return { tools: toolDescriptors() };
@@ -686,6 +598,10 @@ function createServer(options = {}) {
       if (req.method === "POST" && url.pathname === "/api/save") {
         assertLocalPostAllowed(req);
         return jsonResponse(res, 201, await backend.save(await readJsonBody(req)));
+      }
+      if (req.method === "POST" && url.pathname === "/api/governance-preview") {
+        assertLocalPostAllowed(req);
+        return jsonResponse(res, 200, await backend.governancePreview(await readJsonBody(req)));
       }
       if (req.method === "POST" && url.pathname === "/mcp") {
         assertLocalPostAllowed(req);

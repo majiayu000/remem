@@ -20,9 +20,7 @@
       font-family: Avenir Next, ui-sans-serif, system-ui, sans-serif;
       letter-spacing: 0;
     }
-
     * { box-sizing: border-box; }
-
     body {
       margin: 0;
       background: var(--paper);
@@ -30,12 +28,10 @@
       font-size: 14px;
       line-height: 1.45;
     }
-
     button, input, textarea, select {
       font: inherit;
       letter-spacing: 0;
     }
-
     button {
       border: 1px solid var(--line);
       background: #fff;
@@ -45,11 +41,9 @@
       padding: 6px 10px;
       cursor: pointer;
     }
-
     button:hover { border-color: #9fb0ad; }
     button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
     button.icon { width: 34px; padding: 0; }
-
     input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
@@ -59,12 +53,10 @@
       padding: 8px 9px;
       min-height: 34px;
     }
-
     textarea {
       min-height: 92px;
       resize: vertical;
     }
-
     .shell {
       min-height: 100vh;
       display: grid;
@@ -72,7 +64,6 @@
       background:
         linear-gradient(90deg, #f4f6f5 0, #f4f6f5 320px, #fff 320px);
     }
-
     .rail {
       border-right: 1px solid var(--line);
       padding: 18px;
@@ -80,7 +71,6 @@
       flex-direction: column;
       gap: 16px;
     }
-
     .main {
       padding: 18px;
       display: grid;
@@ -88,13 +78,11 @@
       gap: 16px;
       min-width: 0;
     }
-
     .brand {
       display: flex;
       align-items: center;
       gap: 10px;
     }
-
     .mark {
       width: 34px;
       height: 34px;
@@ -106,30 +94,24 @@
       font-weight: 800;
       border: 1px solid #c7ddd6;
     }
-
     h1, h2, h3, p { margin: 0; }
     h1 { font-size: 18px; font-weight: 700; }
     h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
     h3 { font-size: 14px; font-weight: 700; }
-
     .subtle { color: var(--muted); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
-
     .stack { display: flex; flex-direction: column; gap: 10px; }
     .row { display: flex; align-items: center; gap: 8px; }
     .row.spread { justify-content: space-between; }
-
     .section {
       border-top: 1px solid var(--line);
       padding-top: 13px;
     }
-
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
     }
-
     .stat {
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -138,14 +120,12 @@
       box-shadow: var(--shadow);
       min-height: 70px;
     }
-
     .stat .value {
       font-size: 24px;
       line-height: 1.1;
       font-weight: 750;
       margin-top: 3px;
     }
-
     .pill {
       display: inline-flex;
       align-items: center;
@@ -160,11 +140,9 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-
     .pill.ok { color: var(--green); border-color: #bddad1; background: #eef8f4; }
     .pill.warn { color: var(--amber); border-color: #ead2a9; background: #fff7e8; }
     .pill.bad { color: var(--red); border-color: #e7bcbc; background: #fff0f0; }
-
     .tabs {
       display: inline-grid;
       grid-auto-flow: column;
@@ -175,33 +153,28 @@
       background: var(--panel);
       width: fit-content;
     }
-
     .tab {
       border: 0;
       background: transparent;
       min-height: 30px;
       padding: 5px 10px;
     }
-
     .tab.active {
       background: #fff;
       box-shadow: var(--shadow);
     }
-
     .toolbar {
       display: grid;
       grid-template-columns: 1fr 160px auto;
       gap: 8px;
       align-items: center;
     }
-
     .content-grid {
       display: grid;
       grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
       gap: 14px;
       min-height: 0;
     }
-
     .panel {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -210,7 +183,6 @@
       overflow: hidden;
       box-shadow: var(--shadow);
     }
-
     .panel-head {
       min-height: 44px;
       padding: 11px 12px;
@@ -221,12 +193,10 @@
       justify-content: space-between;
       gap: 8px;
     }
-
     .panel-body {
       padding: 12px;
       overflow: auto;
     }
-
     .results {
       padding: 0;
       margin: 0;
@@ -234,24 +204,20 @@
       display: flex;
       flex-direction: column;
     }
-
     .result {
       border-bottom: 1px solid var(--line);
       padding: 11px 12px;
       cursor: pointer;
       background: #fff;
     }
-
     .result:hover { background: #f7faf8; }
     .result.active { border-left: 3px solid var(--green); padding-left: 9px; background: #f1f7f4; }
-
     .result-title {
       display: flex;
       justify-content: space-between;
       gap: 8px;
       font-weight: 700;
     }
-
     .preview {
       color: var(--muted);
       margin-top: 4px;
@@ -260,7 +226,6 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
-
     .detail-text {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -268,15 +233,12 @@
       padding-top: 10px;
       margin-top: 10px;
     }
-
     .form-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
-
     .form-grid .wide { grid-column: 1 / -1; }
-
     .message {
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -284,13 +246,11 @@
       background: var(--panel);
       color: var(--muted);
     }
-
     .message.error {
       border-color: #e7bcbc;
       background: #fff0f0;
       color: var(--red);
     }
-
     pre {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -302,9 +262,7 @@
       max-height: 280px;
       overflow: auto;
     }
-
     .hidden { display: none !important; }
-
     @media (max-width: 860px) {
       .shell { grid-template-columns: 1fr; background: #fff; }
       .rail { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -324,7 +282,6 @@
           <p class="subtle">Project memory control surface</p>
         </div>
       </div>
-
       <section class="section stack">
         <div class="row spread">
           <h2>Runtime</h2>
@@ -332,7 +289,6 @@
         </div>
         <div id="runtime-status" class="stack"></div>
       </section>
-
       <section class="section stack">
         <h2>Memory Store</h2>
         <div class="stat-grid">
@@ -342,23 +298,21 @@
           <div class="stat"><p class="subtle">Queue</p><div class="value" id="count-queue">0</div></div>
         </div>
       </section>
-
       <section class="section stack">
         <h2>Activation</h2>
         <div id="activation-summary" class="stack"></div>
       </section>
     </aside>
-
     <main class="main">
       <div class="row spread">
         <div class="tabs" role="tablist">
           <button class="tab active" data-view="search">Search</button>
           <button class="tab" data-view="save">Save</button>
+          <button class="tab" data-view="governance">Governance</button>
           <button class="tab" data-view="activation">Activation</button>
         </div>
         <span class="pill" id="health-pill">Loading</span>
       </div>
-
       <section id="search-view" class="stack">
         <div class="toolbar">
           <input id="search-query" placeholder="Search project memory">
@@ -389,7 +343,6 @@
           </section>
         </div>
       </section>
-
       <section id="save-view" class="panel hidden">
         <div class="panel-head"><h3>Save Explicit Memory</h3></div>
         <div class="panel-body stack">
@@ -429,7 +382,44 @@
           <div id="save-result" class="message hidden"></div>
         </div>
       </section>
-
+      <section id="governance-view" class="panel hidden">
+        <div class="panel-head"><h3>Governance Preview</h3></div>
+        <div class="panel-body stack">
+          <div class="message">Dry-run only. This preview never mutates memory rows.</div>
+          <div class="form-grid">
+            <label>Action
+              <select id="govern-action">
+                <option value="stale">Stale</option>
+                <option value="reject">Reject</option>
+                <option value="delete">Delete</option>
+              </select>
+            </label>
+            <label>Limit
+              <input id="govern-limit" type="number" min="1" max="200" value="50">
+            </label>
+            <label class="wide">Memory IDs
+              <input id="govern-ids" placeholder="7, 12, 42">
+            </label>
+            <label class="wide">Project
+              <input id="govern-project" placeholder="/path/to/repo">
+            </label>
+            <label class="wide">Query selector
+              <input id="govern-query" placeholder="old migration plan">
+            </label>
+            <label>Type
+              <input id="govern-type" placeholder="decision">
+            </label>
+            <label>Status
+              <input id="govern-status" placeholder="active">
+            </label>
+          </div>
+          <div class="row spread">
+            <span class="subtle">IDs or a selector are required.</span>
+            <button class="primary" id="govern-button">Preview</button>
+          </div>
+          <div id="govern-result" class="message hidden"></div>
+        </div>
+      </section>
       <section id="activation-view" class="panel hidden">
         <div class="panel-head">
           <h3>Activation Plan</h3>
@@ -442,19 +432,15 @@
       </section>
     </main>
   </div>
-
   <script>
     const state = { snapshot: null, results: [], selected: null };
     const $ = (id) => document.getElementById(id);
-
     function cls(value, truthy) {
       value.classList.toggle("hidden", !truthy);
     }
-
     function valueAt(object, path, fallback = 0) {
       return path.split(".").reduce((acc, key) => acc && acc[key], object) ?? fallback;
     }
-
     async function request(route, options = {}) {
       if (canCallHostTool(route)) {
         return requestViaHostTool(route, options);
@@ -466,32 +452,28 @@
       }
       return payload;
     }
-
     function canCallHostTool(route) {
       return typeof window.openai?.callTool === "function" && String(route).startsWith("/api/");
     }
-
     async function requestViaHostTool(route, options = {}) {
       const method = String(options.method || "GET").toUpperCase();
       const url = new URL(route, "http://remem.local");
       const result = await callHostTool(apiToolName(url.pathname, method), apiToolArgs(url, method, options));
       return result?.structuredContent ?? result;
     }
-
     async function callHostTool(name, args) {
       if (!name) throw new Error("No host tool is available for this action");
       return window.openai.callTool(name, args);
     }
-
     function apiToolName(pathname, method) {
       if (method === "GET" && pathname === "/api/status") return "remem_dashboard";
       if (method === "GET" && pathname === "/api/search") return "remem_search";
       if (method === "GET" && pathname === "/api/memory") return "remem_get_memory";
       if (method === "GET" && pathname === "/api/activation-plan") return "remem_activation_plan";
       if (method === "POST" && pathname === "/api/save") return "remem_save_memory";
+      if (method === "POST" && pathname === "/api/governance-preview") return "remem_governance_preview";
       return null;
     }
-
     function apiToolArgs(url, method, options) {
       if (method === "GET" && url.pathname === "/api/search") {
         return {
@@ -510,22 +492,22 @@
       if (method === "POST" && url.pathname === "/api/save") {
         return JSON.parse(options.body || "{}");
       }
+      if (method === "POST" && url.pathname === "/api/governance-preview") {
+        return JSON.parse(options.body || "{}");
+      }
       return {};
     }
-
     function numericParam(params, key, fallback) {
       const value = params.get(key);
       if (value === null || value === "") return fallback;
       const number = Number(value);
       return Number.isFinite(number) ? number : fallback;
     }
-
     function booleanParam(params, key) {
       const value = params.get(key);
       if (value === null || value === "") return undefined;
       return value === "true" || value === "1";
     }
-
     function renderRuntime(snapshot) {
       const runtime = snapshot.runtime || {};
       const selected = runtime.selected || runtime.pathMatch;
@@ -539,7 +521,6 @@
         <div class="mono">${escapeHtml(snapshot.plugin_data || runtime.pluginData || "")}</div>
       `;
     }
-
     function renderCounts(status) {
       $("count-memories").textContent = valueAt(status, "totals.memories");
       $("count-observations").textContent = valueAt(status, "totals.observations");
@@ -549,7 +530,6 @@
         valueAt(status, "jobs.pending");
       $("count-queue").textContent = queue;
     }
-
     function renderActivation(activation) {
       const stateClass = activation?.mentions_hooks ? "warn" : "ok";
       $("activation-summary").innerHTML = `
@@ -558,7 +538,6 @@
       `;
       $("activation-plan").textContent = activation?.plan_text || "";
     }
-
     function renderHealth(snapshot) {
       const doctor = snapshot.doctor || {};
       const failed = Number(doctor.fails || 0);
@@ -567,7 +546,6 @@
       pill.className = `pill ${failed ? "bad" : warned ? "warn" : "ok"}`;
       pill.textContent = failed ? `${failed} failing check(s)` : warned ? `${warned} warning(s)` : "Healthy";
     }
-
     async function refresh() {
       try {
         state.snapshot = await request("/api/status");
@@ -581,7 +559,6 @@
         $("health-pill").textContent = "Error";
       }
     }
-
     async function runSearch() {
       const query = $("search-query").value.trim();
       if (!query) return;
@@ -599,7 +576,6 @@
       $("result-count").textContent = `${state.results.length}`;
       renderResults();
     }
-
     function searchResults(payload) {
       const memories = (payload.data || []).map((item) => ({
         ...item,
@@ -621,7 +597,6 @@
       }));
       return memories.concat(rawHits);
     }
-
     function renderResults() {
       const results = $("results");
       if (!state.results.length) {
@@ -638,7 +613,6 @@
         </li>
       `).join("");
     }
-
     async function selectResult(id) {
       document.querySelectorAll(".result").forEach((node) => {
         node.classList.toggle("active", node.dataset.id === String(id));
@@ -676,7 +650,6 @@
         </div>
       `;
     }
-
     async function saveMemory() {
       const text = $("save-text").value.trim();
       const target = $("save-result");
@@ -708,22 +681,63 @@
         target.className = "message error";
       }
     }
-
     async function refreshPlan() {
       $("activation-plan").textContent = "Generating...";
       const plan = await request("/api/activation-plan");
       renderActivation(plan);
     }
-
+    function governancePayload() {
+      const ids = $("govern-ids").value
+        .split(/[,\s]+/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map(Number);
+      if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+        throw new Error("Memory IDs must be positive integers.");
+      }
+      return {
+        action: $("govern-action").value,
+        ids,
+        project: $("govern-project").value.trim() || undefined,
+        query: $("govern-query").value.trim() || undefined,
+        memory_type: $("govern-type").value.trim() || undefined,
+        status: $("govern-status").value.trim() || undefined,
+        limit: Number($("govern-limit").value || 50),
+        actor: "codex-remem-app"
+      };
+    }
+    async function previewGovernance() {
+      const target = $("govern-result");
+      target.textContent = "Previewing...";
+      target.className = "message";
+      try {
+        const preview = await request("/api/governance-preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(governancePayload())
+        });
+        const affected = preview.affected || [];
+        target.className = "message";
+        target.innerHTML = `
+          <div><strong>${affected.length}</strong> affected memory result(s); dry_run=${escapeHtml(preview.dry_run)}</div>
+          ${affected.map((item) => `
+            <div class="detail-text mono">#${escapeHtml(item.id)} ${escapeHtml(item.previous_status)} -> ${escapeHtml(item.new_status)} ${escapeHtml(item.title || "")}</div>
+          `).join("")}
+        `;
+      } catch (error) {
+        target.textContent = error.message;
+        target.className = "message error";
+      }
+    }
     function switchView(name) {
       document.querySelectorAll(".tab").forEach((tab) => {
         tab.classList.toggle("active", tab.dataset.view === name);
       });
       cls($("search-view"), name === "search");
       cls($("save-view"), name === "save");
+      cls($("governance-view"), name === "governance");
       cls($("activation-view"), name === "activation");
     }
-
     function escapeHtml(value) {
       return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -732,7 +746,6 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
     }
-
     function receiveHostResult(event) {
       const message = event.data;
       if (!message || message.method !== "ui/notifications/tool-result") return;
@@ -744,7 +757,6 @@
       renderActivation(data.activation || {});
       renderHealth(data);
     }
-
     window.addEventListener("message", receiveHostResult);
     $("refresh").addEventListener("click", refresh);
     $("search-button").addEventListener("click", () => runSearch().catch((error) => {
@@ -758,13 +770,13 @@
       if (item?.dataset.id) selectResult(item.dataset.id);
     });
     $("save-button").addEventListener("click", saveMemory);
+    $("govern-button").addEventListener("click", previewGovernance);
     $("plan-button").addEventListener("click", () => refreshPlan().catch((error) => {
       $("activation-plan").textContent = error.message;
     }));
     document.querySelectorAll(".tab").forEach((tab) => {
       tab.addEventListener("click", () => switchView(tab.dataset.view));
     });
-
     refresh();
   </script>
 </body>

@@ -14,6 +14,7 @@ const {
   toolDescriptors,
   UI_RESOURCE
 } = require("./server");
+const { governancePreviewArgs } = require("./governance");
 const pluginManifest = require("../../.codex-plugin/plugin.json");
 
 function fakeBackend() {
@@ -103,6 +104,22 @@ function fakeBackend() {
     async activationPlan() {
       return activationSummary("Would write Codex hooks\nWould update MCP config\n");
     },
+    async governancePreview(input) {
+      return {
+        dry_run: true,
+        action: input.action || "stale",
+        reason: input.reason || null,
+        requested: input,
+        affected: [
+          {
+            id: Number(input.ids?.[0] || 7),
+            title: "Old decision",
+            previous_status: "active",
+            new_status: "stale"
+          }
+        ]
+      };
+    },
     stop() {}
   };
 }
@@ -137,7 +154,8 @@ test("widget-callable tools are exposed to the app surface", () => {
     "remem_search",
     "remem_get_memory",
     "remem_save_memory",
-    "remem_activation_plan"
+    "remem_activation_plan",
+    "remem_governance_preview"
   ]) {
     const descriptor = toolDescriptors().find((tool) => tool.name === name);
     assert.deepEqual(descriptor._meta.ui.visibility, ["model", "app"]);
@@ -152,6 +170,7 @@ test("JSON-RPC tools/list and dashboard call return structured content", async (
     params: {}
   });
   assert.ok(tools.tools.some((tool) => tool.name === "remem_save_memory"));
+  assert.ok(tools.tools.some((tool) => tool.name === "remem_governance_preview"));
 
   const result = await handleJsonRpc(fakeBackend(), {
     id: 2,
@@ -186,6 +205,14 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
       body: JSON.stringify({ text: "Remember this.", memory_type: "decision" })
     }).then((response) => response.json());
     assert.equal(save.id, 9);
+
+    const preview = await fetch(`${base}/api/governance-preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ action: "stale", ids: [7], project: "/tmp/remem" })
+    }).then((response) => response.json());
+    assert.equal(preview.dry_run, true);
+    assert.equal(preview.affected[0].id, 7);
   });
 });
 
@@ -195,6 +222,11 @@ test("HTTP write routes reject cross-site browser requests", async () => {
   backend.save = async () => {
     saves += 1;
     return { id: 9 };
+  };
+  let previews = 0;
+  backend.governancePreview = async () => {
+    previews += 1;
+    return { dry_run: true, affected: [] };
   };
 
   await withServer(async (base) => {
@@ -222,9 +254,17 @@ test("HTTP write routes reject cross-site browser requests", async () => {
       })
     });
     assert.equal(mcpSave.status, 403);
+
+    const apiGovernance = await fetch(`${base}/api/governance-preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://attacker.example" },
+      body: JSON.stringify({ action: "delete", ids: [7] })
+    });
+    assert.equal(apiGovernance.status, 403);
   }, backend);
 
   assert.equal(saves, 0);
+  assert.equal(previews, 0);
 });
 
 test("widget renders raw archive fallback results", async () => {
@@ -247,7 +287,54 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /remem_get_memory/);
     assert.match(widget, /remem_save_memory/);
     assert.match(widget, /remem_activation_plan/);
+    assert.match(widget, /remem_governance_preview/);
+    assert.match(widget, /\/api\/governance-preview/);
   });
+});
+
+test("governance preview args are always dry-run JSON CLI calls", () => {
+  const { args, requested } = governancePreviewArgs({
+    action: "delete",
+    ids: [7, "8"],
+    project: "/tmp/remem",
+    query: "old plan",
+    memory_type: "decision",
+    status: "active",
+    limit: 12,
+    actor: "codex-remem-app"
+  });
+
+  assert.deepEqual(args, [
+    "govern",
+    "--action",
+    "delete",
+    "--dry-run",
+    "--json",
+    "--project",
+    "/tmp/remem",
+    "--actor",
+    "codex-remem-app",
+    "--query",
+    "old plan",
+    "--memory-type",
+    "decision",
+    "--status",
+    "active",
+    "--limit",
+    "12",
+    "--offset",
+    "0",
+    "7",
+    "8"
+  ]);
+  assert.equal(requested.action, "delete");
+  assert.deepEqual(requested.ids, [7, 8]);
+});
+
+test("governance preview rejects unsafe or empty requests before CLI execution", () => {
+  assert.throws(() => governancePreviewArgs({ action: "archive", ids: [7] }), /delete, reject, or stale/);
+  assert.throws(() => governancePreviewArgs({ action: "stale" }), /requires memory IDs or a selector/);
+  assert.throws(() => governancePreviewArgs({ action: "stale", ids: [null] }), /Expected integer/);
 });
 
 test("API proxy clears failed readiness so later requests can retry", async () => {
