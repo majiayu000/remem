@@ -77,7 +77,7 @@ fn search_request_from_params_preserves_filters() {
 }
 
 #[tokio::test]
-async fn search_handler_hides_archived_memories_by_default() -> anyhow::Result<()> {
+async fn search_handler_hides_inactive_memories_by_default() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-search-default-active");
     let conn = db::open_db()?;
 
@@ -91,6 +91,16 @@ async fn search_handler_hides_archived_memories_by_default() -> anyhow::Result<(
         "decision",
         None,
     )?;
+    let stale_id = memory::insert_memory(
+        &conn,
+        Some("session-stale"),
+        "proj-a",
+        None,
+        "aurora stale",
+        "aurora stale memory",
+        "decision",
+        None,
+    )?;
     let archived_id = memory::insert_memory(
         &conn,
         Some("session-archived"),
@@ -100,6 +110,10 @@ async fn search_handler_hides_archived_memories_by_default() -> anyhow::Result<(
         "aurora hidden memory",
         "decision",
         None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET status = 'stale' WHERE id = ?1",
+        params![stale_id],
     )?;
     conn.execute(
         "UPDATE memories SET status = 'archived' WHERE id = ?1",

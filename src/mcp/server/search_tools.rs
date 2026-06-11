@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn search_hides_archived_memories_by_default() -> Result<()> {
+    fn search_hides_inactive_memories_by_default() -> Result<()> {
         let _dir = ScopedTestDataDir::new("mcp-search-default-active");
         let conn = crate::db::open_db()?;
         let active_id = memory::insert_memory(
@@ -302,6 +302,16 @@ mod tests {
             "decision",
             None,
         )?;
+        let stale_id = memory::insert_memory(
+            &conn,
+            Some("session-stale"),
+            "/repo",
+            Some("aurora-stale"),
+            "Aurora stale memory",
+            "The aurora stale decision is hidden by default.",
+            "decision",
+            None,
+        )?;
         let archived_id = memory::insert_memory(
             &conn,
             Some("session-archived"),
@@ -311,6 +321,10 @@ mod tests {
             "The aurora archived decision is hidden by default.",
             "decision",
             None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            rusqlite::params![stale_id],
         )?;
         conn.execute(
             "UPDATE memories SET status = 'archived' WHERE id = ?1",
