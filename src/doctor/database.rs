@@ -234,7 +234,11 @@ pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {
         );
     }
 
-    if stats.retrieval_eligible == 0 && stats.active_memories == 0 && stats.captured_events == 0 {
+    if stats.total == 0
+        && stats.retrieval_eligible == 0
+        && stats.active_memories == 0
+        && stats.captured_events == 0
+    {
         return Check::new(
             "Temporal facts",
             Status::Ok,

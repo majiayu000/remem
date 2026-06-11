@@ -7,7 +7,7 @@ use crate::db::models::{
 use crate::db::query::{
     query_ai_usage_breakdown, query_ai_usage_source_totals, query_ai_usage_totals,
     query_candidate_promotion_stats, query_daily_activity_stats, query_daily_ai_usage,
-    query_system_stats, query_top_projects, query_weekly_ai_usage,
+    query_memory_facts_stats, query_system_stats, query_top_projects, query_weekly_ai_usage,
 };
 
 fn setup_stats_schema(conn: &Connection) {
@@ -16,7 +16,8 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY,
             project TEXT NOT NULL,
             status TEXT NOT NULL,
-            created_at_epoch INTEGER NOT NULL
+            created_at_epoch INTEGER NOT NULL,
+            expires_at_epoch INTEGER
         );
         CREATE TABLE observations (
             id INTEGER PRIMARY KEY,
@@ -41,6 +42,12 @@ fn setup_stats_schema(conn: &Connection) {
         );
         CREATE TABLE captured_events (
             id INTEGER PRIMARY KEY
+        );
+        CREATE TABLE memory_facts (
+            id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            valid_from_epoch INTEGER,
+            source_memory_id INTEGER
         );
         CREATE TABLE capture_drop_events (
             id INTEGER PRIMARY KEY,
@@ -134,6 +141,20 @@ fn query_system_stats_and_related_views_share_one_definition() {
         [],
     )
     .expect("second active memory insert should succeed");
+    if let Err(err) = conn.execute(
+        "INSERT INTO memories (project, status, created_at_epoch, expires_at_epoch)
+         VALUES ('gamma', 'active', 310, strftime('%s', 'now') - 1)",
+        [],
+    ) {
+        panic!("expired active memory insert should succeed: {err}");
+    }
+    if let Err(err) = conn.execute(
+        "INSERT INTO memories (project, status, created_at_epoch, expires_at_epoch)
+         VALUES ('delta', 'active', 320, CAST(strftime('%s', 'now') AS INTEGER) + 3600)",
+        [],
+    ) {
+        panic!("future-expiring active memory insert should succeed: {err}");
+    }
     conn.execute(
         "INSERT INTO observations (project, status, created_at_epoch) VALUES ('alpha', 'active', 220)",
         [],
@@ -252,7 +273,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
     assert_eq!(
         system,
         SystemStats {
-            active_memories: 2,
+            active_memories: 3,
             active_observations: 1,
             session_summaries: 1,
             raw_messages: 0,
@@ -302,7 +323,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
     assert_eq!(
         daily,
         DailyActivityStats {
-            memories: 2,
+            memories: 4,
             observations: 1,
         }
     );
@@ -319,8 +340,43 @@ fn query_system_stats_and_related_views_share_one_definition() {
                 project: "beta".to_string(),
                 count: 1,
             },
+            ProjectCount {
+                project: "delta".to_string(),
+                count: 1,
+            },
         ]
     );
+}
+
+#[test]
+fn query_memory_facts_stats_excludes_expired_source_memories() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+
+    conn.execute_batch(
+        "INSERT INTO memories (id, project, status, created_at_epoch, expires_at_epoch)
+         VALUES
+            (1, 'alpha', 'active', 100, NULL),
+            (2, 'alpha', 'active', 110, CAST(strftime('%s', 'now') AS INTEGER) + 3600),
+            (3, 'alpha', 'active', 120, CAST(strftime('%s', 'now') AS INTEGER) - 1),
+            (4, 'alpha', 'archived', 130, NULL);
+         INSERT INTO memory_facts (status, valid_from_epoch, source_memory_id)
+         VALUES
+            ('active', 100, 1),
+            ('active', 110, 2),
+            ('active', 120, 3),
+            ('active', 130, 4),
+            ('active', NULL, 1),
+            ('stale', 140, 1);",
+    )?;
+
+    let stats = query_memory_facts_stats(&conn)?;
+
+    assert!(stats.table_exists);
+    assert_eq!(stats.total, 6);
+    assert_eq!(stats.active_memories, 2);
+    assert_eq!(stats.retrieval_eligible, 2);
+    Ok(())
 }
 
 #[test]
