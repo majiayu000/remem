@@ -21,11 +21,12 @@ struct SupportWindow {
 const SUPPORT_RISK_TOKENS: &[&str] = &[
     "allow", "allowed", "allows", "cannot", "cant", "could", "couldn", "delete", "deleted",
     "deletes", "deny", "denied", "denies", "didn", "disable", "disabled", "disables", "doesn", "don",
-    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "hadn", "hasn",
+    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "failure", "failures", "hadn", "hasn",
     "haven", "if", "ignore", "ignored", "ignores", "isn", "may", "might", "must", "never",
-    "no", "not", "prevent", "prevented", "prevents", "reject", "rejected", "rejects",
-    "remove", "removed", "removes", "should", "shouldn", "skip", "skipped", "skips",
-    "succeed", "succeeded", "succeeds", "success", "unless", "wasn", "weren", "without",
+    "no", "not", "pass", "passed", "passes", "passing", "plan", "planned", "planning", "plans",
+    "prevent", "prevented", "prevents", "reject", "rejected", "rejects",
+    "remove", "removed", "removes", "shall", "should", "shouldn", "skip", "skipped", "skips",
+    "succeed", "succeeded", "succeeds", "success", "unless", "wasn", "weren", "will", "without",
     "won", "wouldn",
 ];
 
@@ -187,13 +188,14 @@ fn support_token(token: &str) -> Option<SupportToken> {
     if is_support_stop_token(token) {
         return None;
     }
-    let required = is_required_support_identifier(token);
-    if !required && token.chars().count() < SUPPORT_TOKEN_MIN_CHARS {
+    let required_identifier = is_required_support_identifier(token);
+    if !required_identifier && token.chars().count() < SUPPORT_TOKEN_MIN_CHARS {
         return None;
     }
+    let text = normalize_support_token(token);
     Some(SupportToken {
-        text: normalize_support_token(token),
-        required,
+        required: required_identifier || !is_optional_support_token(&text),
+        text,
     })
 }
 
@@ -202,6 +204,10 @@ fn is_required_support_identifier(token: &str) -> bool {
         token,
         "api" | "cli" | "db" | "jwt" | "llm" | "mcp" | "sql" | "ssh" | "ssl" | "tls" | "ui"
     )
+}
+
+fn is_optional_support_token(token: &str) -> bool {
+    matches!(token, "review")
 }
 
 fn normalize_support_token(token: &str) -> String {

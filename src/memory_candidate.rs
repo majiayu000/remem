@@ -645,3 +645,5 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
 pub(super) mod tests;
 #[cfg(test)]
 mod tests_autopromote;
+#[cfg(test)]
+mod tests_autopromote_safety;
