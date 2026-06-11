@@ -7,8 +7,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::database::{
-    check_database, check_disk_space, check_pending_queue, check_raw_archive_ingest,
-    check_temporal_facts, check_worker_daemon,
+    check_capture_audit, check_database, check_disk_space, check_pending_queue,
+    check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
 };
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::native_memory::check_native_memory_sync;
@@ -84,6 +84,9 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_checks(&mut checks, &mut on_check, check_mcp)?;
     push_check(&mut checks, &mut on_check, || {
         check_raw_archive_ingest(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_capture_audit(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_temporal_facts(shared_db.conn())

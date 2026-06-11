@@ -21,6 +21,11 @@ pub struct SystemStats {
     pub latest_raw_ingest_failure_path: Option<String>,
     pub latest_raw_ingest_failure_message: Option<String>,
     pub captured_events: i64,
+    pub capture_audit_events: i64,
+    pub latest_capture_audit_epoch: Option<i64>,
+    pub latest_capture_audit_reason: Option<String>,
+    pub latest_capture_audit_detail: Option<String>,
+    pub capture_audit_reasons: Vec<CaptureAuditReasonStat>,
     pub pending_extraction_tasks: i64,
     pub processing_extraction_tasks: i64,
     pub failed_extraction_tasks: i64,
@@ -53,6 +58,12 @@ pub struct MemoryFactsStats {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaptureAuditReasonStat {
+    pub reason: String,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyActivityStats {
     pub memories: i64,
     pub observations: i64,
@@ -75,6 +86,7 @@ pub struct CandidatePromotionStat {
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
     let raw_ingest = query_raw_ingest_failure_stats(conn)?;
+    let capture_audit = query_capture_audit_stats(conn)?;
     let worker_heartbeat = crate::db::worker::latest_daemon_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_daemon_worker_heartbeat(
         conn,
@@ -109,6 +121,11 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         captured_events: conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| {
             row.get(0)
         })?,
+        capture_audit_events: capture_audit.total,
+        latest_capture_audit_epoch: capture_audit.latest_epoch,
+        latest_capture_audit_reason: capture_audit.latest_reason,
+        latest_capture_audit_detail: capture_audit.latest_detail,
+        capture_audit_reasons: capture_audit.reasons,
         pending_extraction_tasks: conn.query_row(
             "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'pending'",
             [],
@@ -249,6 +266,68 @@ pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
         retrieval_eligible,
         active_memories,
         captured_events,
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+struct CaptureAuditStats {
+    total: i64,
+    latest_epoch: Option<i64>,
+    latest_reason: Option<String>,
+    latest_detail: Option<String>,
+    reasons: Vec<CaptureAuditReasonStat>,
+}
+
+fn query_capture_audit_stats(conn: &Connection) -> Result<CaptureAuditStats> {
+    if !table_exists(conn, "capture_audit_events")? {
+        return Ok(CaptureAuditStats::default());
+    }
+
+    let total = conn.query_row("SELECT COUNT(*) FROM capture_audit_events", [], |row| {
+        row.get(0)
+    })?;
+    let latest = conn
+        .query_row(
+            "SELECT created_at_epoch, reason, detail
+             FROM capture_audit_events
+             ORDER BY created_at_epoch DESC, id DESC
+             LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let reasons = {
+        let mut stmt = conn.prepare(
+            "SELECT reason, COUNT(*) AS total
+             FROM capture_audit_events
+             GROUP BY reason
+             ORDER BY total DESC, reason ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(CaptureAuditReasonStat {
+                reason: row.get(0)?,
+                total: row.get(1)?,
+            })
+        })?;
+        collect_rows(rows)?
+    };
+    let (latest_epoch, latest_reason, latest_detail) = match latest {
+        Some((epoch, reason, detail)) => (Some(epoch), Some(reason), detail),
+        None => (None, None, None),
+    };
+
+    Ok(CaptureAuditStats {
+        total,
+        latest_epoch,
+        latest_reason,
+        latest_detail,
+        reasons,
     })
 }
 

@@ -6,8 +6,8 @@ use crate::db::test_support::{
 use crate::{db, memory};
 
 use super::database::{
-    check_database, check_pending_queue, check_raw_archive_ingest, check_temporal_facts,
-    check_worker_daemon,
+    check_capture_audit, check_database, check_pending_queue, check_raw_archive_ingest,
+    check_temporal_facts, check_worker_daemon,
 };
 use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
@@ -279,6 +279,38 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
     assert!(check.detail.contains("1 failure"), "{}", check.detail);
     assert!(check.detail.contains("read_error"), "{}", check.detail);
     assert!(check.detail.contains("/bad/path.jsonl"), "{}", check.detail);
+    Ok(())
+}
+
+#[test]
+fn check_capture_audit_warns_on_recorded_drops() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-audit");
+    let conn = db::open_db()?;
+    db::record_capture_audit_event(
+        &conn,
+        &db::CaptureAuditInput {
+            host: Some("codex-cli"),
+            adapter: Some("codex-cli"),
+            session_id: Some("session-a"),
+            project: Some("proj-a"),
+            cwd: Some("proj-a"),
+            tool_name: Some("Bash"),
+            reason: "bash_skipped",
+            detail: Some("codex bash observe disabled"),
+            payload: None,
+        },
+    )?;
+
+    let check = check_capture_audit(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(check.detail.contains("1 audited drop"), "{}", check.detail);
+    assert!(check.detail.contains("bash_skipped=1"), "{}", check.detail);
+    assert!(
+        check.detail.contains("codex bash observe disabled"),
+        "{}",
+        check.detail
+    );
     Ok(())
 }
 

@@ -1,6 +1,8 @@
 use rusqlite::Connection;
 
-use super::{CandidatePromotionStat, DailyActivityStats, ProjectCount, SystemStats};
+use super::{
+    CandidatePromotionStat, CaptureAuditReasonStat, DailyActivityStats, ProjectCount, SystemStats,
+};
 use crate::db::models::{
     AiUsageBreakdown, AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage,
 };
@@ -41,6 +43,12 @@ fn setup_stats_schema(conn: &Connection) {
         );
         CREATE TABLE captured_events (
             id INTEGER PRIMARY KEY
+        );
+        CREATE TABLE capture_audit_events (
+            id INTEGER PRIMARY KEY,
+            created_at_epoch INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            detail TEXT
         );
         CREATE TABLE extraction_tasks (
             id INTEGER PRIMARY KEY,
@@ -142,6 +150,18 @@ fn query_system_stats_and_related_views_share_one_definition() {
     conn.execute("INSERT INTO captured_events (id) VALUES (1)", [])
         .expect("captured event insert should succeed");
     conn.execute(
+        "INSERT INTO capture_audit_events (created_at_epoch, reason, detail)
+         VALUES (170, 'bash_skipped', 'codex bash observe disabled')",
+        [],
+    )
+    .expect("capture audit insert should succeed");
+    conn.execute(
+        "INSERT INTO capture_audit_events (created_at_epoch, reason, detail)
+         VALUES (175, 'unclassified', 'missing file_path')",
+        [],
+    )
+    .expect("second capture audit insert should succeed");
+    conn.execute(
         "INSERT INTO extraction_tasks (status, created_at_epoch) VALUES ('pending', 90)",
         [],
     )
@@ -241,6 +261,20 @@ fn query_system_stats_and_related_views_share_one_definition() {
             latest_raw_ingest_failure_path: Some("/bad/transcript.jsonl".to_string()),
             latest_raw_ingest_failure_message: Some("bad jsonl".to_string()),
             captured_events: 1,
+            capture_audit_events: 2,
+            latest_capture_audit_epoch: Some(175),
+            latest_capture_audit_reason: Some("unclassified".to_string()),
+            latest_capture_audit_detail: Some("missing file_path".to_string()),
+            capture_audit_reasons: vec![
+                CaptureAuditReasonStat {
+                    reason: "bash_skipped".to_string(),
+                    total: 1,
+                },
+                CaptureAuditReasonStat {
+                    reason: "unclassified".to_string(),
+                    total: 1,
+                },
+            ],
             pending_extraction_tasks: 1,
             processing_extraction_tasks: 1,
             failed_extraction_tasks: 1,
@@ -335,6 +369,21 @@ fn query_system_stats_defaults_raw_ingest_failures_when_table_is_absent() -> any
     assert_eq!(system.raw_ingest_parse_errors, 0);
     assert_eq!(system.raw_ingest_insert_errors, 0);
     assert_eq!(system.latest_raw_ingest_failure_epoch, None);
+    Ok(())
+}
+
+#[test]
+fn query_system_stats_defaults_capture_audit_when_table_is_absent() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    conn.execute("DROP TABLE capture_audit_events", [])?;
+
+    let system = query_system_stats(&conn)?;
+
+    assert_eq!(system.capture_audit_events, 0);
+    assert_eq!(system.latest_capture_audit_epoch, None);
+    assert_eq!(system.latest_capture_audit_reason, None);
+    assert!(system.capture_audit_reasons.is_empty());
     Ok(())
 }
 

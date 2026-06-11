@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 use super::parse::parse_native_memory_frontmatter;
@@ -14,10 +14,8 @@ pub(super) fn sync_native_memory(
         return Ok(());
     }
 
-    let content = match std::fs::read_to_string(file_path) {
-        Ok(content) => content,
-        Err(_) => return Ok(()),
-    };
+    let content = std::fs::read_to_string(file_path)
+        .with_context(|| format!("read native memory file {}", file_path))?;
     let (title, memory_type, body) = parse_native_memory_frontmatter(&content);
     if body.trim().is_empty() {
         return Ok(());
@@ -47,6 +45,37 @@ pub(super) fn sync_native_memory(
         &format!("synced native memory: {} → project={}", filename, project),
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_native_memory;
+    use crate::db::{self, test_support::ScopedTestDataDir};
+
+    #[test]
+    fn sync_native_memory_ignores_non_native_path() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("native-non-memory");
+        let conn = db::open_db()?;
+
+        sync_native_memory(&conn, "sess", "/tmp/remem/notes.md", None)?;
+        Ok(())
+    }
+
+    #[test]
+    fn sync_native_memory_reports_native_read_error() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("native-read-error");
+        let conn = db::open_db()?;
+        let err = sync_native_memory(
+            &conn,
+            "sess",
+            "/tmp/.claude/projects/remem/memory/missing.md",
+            None,
+        )
+        .expect_err("missing native memory file should error");
+
+        assert!(err.to_string().contains("read native memory file"));
+        Ok(())
+    }
 }
 
 fn is_native_memory_markdown(file_path: &str) -> bool {

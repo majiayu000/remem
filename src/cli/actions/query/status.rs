@@ -25,6 +25,7 @@ fn load_status_report() -> Result<StatusReport> {
         .len();
     let version = crate::build_info::version_label();
     let stats = db::query_system_stats(&conn)?;
+    let capture_spill = crate::observe::capture_spill_stats()?;
 
     let today_start = chrono::Local::now()
         .date_naive()
@@ -64,6 +65,27 @@ fn load_status_report() -> Result<StatusReport> {
         },
         capture_pipeline: CapturePipelineStatus {
             captured: stats.captured_events,
+            audited_drops: stats.capture_audit_events,
+            audit_reasons: stats
+                .capture_audit_reasons
+                .into_iter()
+                .map(|reason| CaptureAuditReasonStatus {
+                    reason: reason.reason,
+                    total: reason.total,
+                })
+                .collect(),
+            latest_audit_epoch: stats.latest_capture_audit_epoch,
+            latest_audit_age_secs: stats
+                .latest_capture_audit_epoch
+                .map(|epoch| now.saturating_sub(epoch)),
+            latest_audit_reason: stats.latest_capture_audit_reason,
+            latest_audit_detail: stats.latest_capture_audit_detail,
+            spill_files: capture_spill.pending_files,
+            spill_bytes: capture_spill.pending_bytes,
+            latest_spill_epoch: capture_spill.latest_epoch,
+            latest_spill_age_secs: capture_spill
+                .latest_epoch
+                .map(|epoch| now.saturating_sub(epoch)),
             extract_todo: stats.pending_extraction_tasks,
             extract_running: stats.processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
@@ -151,6 +173,23 @@ fn print_status_report(report: &StatusReport) {
     println!();
     println!("Capture pipeline:");
     println!("  Captured:     {:>6}", report.capture_pipeline.captured);
+    println!(
+        "  Audit drops:  {:>6}",
+        report.capture_pipeline.audited_drops
+    );
+    println!("  Spill files:  {:>6}", report.capture_pipeline.spill_files);
+    if let Some(reason) = &report.capture_pipeline.latest_audit_reason {
+        println!("  Latest drop:  {}", reason);
+    }
+    if let Some(age_secs) = report.capture_pipeline.latest_audit_age_secs {
+        println!("  Drop age:     {:>6}s", age_secs);
+    }
+    if let Some(age_secs) = report.capture_pipeline.latest_spill_age_secs {
+        println!("  Spill age:    {:>6}s", age_secs);
+    }
+    for reason in &report.capture_pipeline.audit_reasons {
+        println!("  Drop {:<13} {:>6}", reason.reason, reason.total);
+    }
     println!(
         "  Extract todo: {:>6}",
         report.capture_pipeline.extract_todo
@@ -305,6 +344,16 @@ pub(super) struct RawArchiveStatus {
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct CapturePipelineStatus {
     pub captured: i64,
+    pub audited_drops: i64,
+    pub audit_reasons: Vec<CaptureAuditReasonStatus>,
+    pub latest_audit_epoch: Option<i64>,
+    pub latest_audit_age_secs: Option<i64>,
+    pub latest_audit_reason: Option<String>,
+    pub latest_audit_detail: Option<String>,
+    pub spill_files: i64,
+    pub spill_bytes: i64,
+    pub latest_spill_epoch: Option<i64>,
+    pub latest_spill_age_secs: Option<i64>,
     pub extract_todo: i64,
     pub extract_running: i64,
     pub extract_failed: i64,
@@ -312,6 +361,12 @@ pub(super) struct CapturePipelineStatus {
     pub pending_graph_candidates: i64,
     pub oldest_task_epoch: Option<i64>,
     pub oldest_task_age_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct CaptureAuditReasonStatus {
+    pub reason: String,
+    pub total: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -393,6 +448,19 @@ mod tests {
             },
             capture_pipeline: CapturePipelineStatus {
                 captured: 5,
+                audited_drops: 2,
+                audit_reasons: vec![CaptureAuditReasonStatus {
+                    reason: "bash_skipped".to_string(),
+                    total: 2,
+                }],
+                latest_audit_epoch: Some(30),
+                latest_audit_age_secs: Some(31),
+                latest_audit_reason: Some("bash_skipped".to_string()),
+                latest_audit_detail: Some("codex bash observe disabled".to_string()),
+                spill_files: 1,
+                spill_bytes: 2048,
+                latest_spill_epoch: Some(32),
+                latest_spill_age_secs: Some(33),
                 extract_todo: 6,
                 extract_running: 7,
                 extract_failed: 8,
@@ -467,6 +535,12 @@ mod tests {
             "/bad/raw.jsonl"
         );
         assert_eq!(parsed["capture_pipeline"]["extract_todo"], 6);
+        assert_eq!(parsed["capture_pipeline"]["audited_drops"], 2);
+        assert_eq!(
+            parsed["capture_pipeline"]["audit_reasons"][0]["reason"],
+            "bash_skipped"
+        );
+        assert_eq!(parsed["capture_pipeline"]["spill_files"], 1);
         assert_eq!(parsed["capture_pipeline"]["pending_graph_candidates"], 10);
         assert_eq!(parsed["pending_observations"]["failed"], 16);
         assert_eq!(

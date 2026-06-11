@@ -151,6 +151,76 @@ pub(super) fn check_raw_archive_ingest(conn: Option<&Connection>) -> Check {
     Check::new("Raw archive ingest", Status::Warn, detail)
 }
 
+pub(super) fn check_capture_audit(conn: Option<&Connection>) -> Check {
+    let spill = match crate::observe::capture_spill_stats() {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check::new(
+                "Capture audit",
+                Status::Warn,
+                format!("cannot load capture spill stats: {}", err),
+            );
+        }
+    };
+    let Some(conn) = conn else {
+        if spill.pending_files > 0 {
+            return Check::new(
+                "Capture audit",
+                Status::Warn,
+                format!(
+                    "cannot open database; {} pending spill file(s), {} bytes",
+                    spill.pending_files, spill.pending_bytes
+                ),
+            );
+        }
+        return Check::new("Capture audit", Status::Warn, "cannot open database");
+    };
+
+    let stats = match db::query_system_stats(conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check::new(
+                "Capture audit",
+                Status::Warn,
+                format!("cannot load capture audit stats: {}", err),
+            );
+        }
+    };
+
+    if stats.capture_audit_events == 0 && spill.pending_files == 0 {
+        return Check::new(
+            "Capture audit",
+            Status::Ok,
+            "no capture drops or spill files",
+        );
+    }
+
+    let mut detail = format!(
+        "{} audited drop(s), {} pending spill file(s), {} spill bytes",
+        stats.capture_audit_events, spill.pending_files, spill.pending_bytes
+    );
+    if !stats.capture_audit_reasons.is_empty() {
+        let reasons = stats
+            .capture_audit_reasons
+            .into_iter()
+            .map(|reason| format!("{}={}", reason.reason, reason.total))
+            .collect::<Vec<_>>()
+            .join(", ");
+        detail.push_str(&format!("; reasons: {reasons}"));
+    }
+    if let Some(reason) = stats.latest_capture_audit_reason {
+        detail.push_str(&format!("; latest={reason}"));
+    }
+    if let Some(latest_detail) = stats.latest_capture_audit_detail {
+        detail.push_str(&format!(
+            " ({})",
+            crate::db::truncate_str(&latest_detail, 160)
+        ));
+    }
+
+    Check::new("Capture audit", Status::Warn, detail)
+}
+
 pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {
     let Some(conn) = conn else {
         return Check::new("Temporal facts", Status::Warn, "cannot open database");

@@ -61,6 +61,18 @@ pub struct CaptureEventInput<'a> {
     pub task_kind: Option<ExtractionTaskKind>,
 }
 
+pub struct CaptureAuditInput<'a> {
+    pub host: Option<&'a str>,
+    pub adapter: Option<&'a str>,
+    pub session_id: Option<&'a str>,
+    pub project: Option<&'a str>,
+    pub cwd: Option<&'a str>,
+    pub tool_name: Option<&'a str>,
+    pub reason: &'a str,
+    pub detail: Option<&'a str>,
+    pub payload: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureEventOutcome {
     pub event_row_id: i64,
@@ -80,11 +92,21 @@ pub fn record_captured_event(
     conn: &Connection,
     input: &CaptureEventInput<'_>,
 ) -> Result<CaptureEventOutcome> {
+    record_captured_event_with_id(conn, input, None)
+}
+
+pub fn record_captured_event_with_id(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
     let inserted_at = now;
     let sanitized_content = redact_capture_content(input.content);
     let content_hash = exact_hash(&sanitized_content);
-    let event_id = synthesize_event_id(input.event_type, &content_hash);
+    let event_id = event_id_override
+        .map(ToString::to_string)
+        .unwrap_or_else(|| synthesize_event_id(input.event_type, &content_hash));
     let identity = upsert_identity(conn, input, now)?;
     let (content_text, content_blob_id, retention_class) =
         store_content(conn, &sanitized_content, &content_hash, now)?;
@@ -141,6 +163,48 @@ pub fn record_captured_event(
         event_id,
         extraction_task_id,
     })
+}
+
+pub fn record_capture_audit_event(conn: &Connection, input: &CaptureAuditInput<'_>) -> Result<i64> {
+    if input.reason.trim().is_empty() {
+        bail!("capture audit reason must not be empty");
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let (content_hash, payload_preview) = input
+        .payload
+        .map(|payload| {
+            let redacted = redact_capture_content(payload);
+            (
+                Some(exact_hash(&redacted)),
+                Some(crate::db::truncate_str(&redacted, 4096).to_string()),
+            )
+        })
+        .unwrap_or((None, None));
+    let detail = input
+        .detail
+        .map(|detail| crate::db::truncate_str(detail, 512).to_string());
+
+    conn.execute(
+        "INSERT INTO capture_audit_events
+         (created_at_epoch, host, adapter, session_id, project, cwd, tool_name,
+          reason, detail, content_hash, payload_preview)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            now,
+            input.host,
+            input.adapter,
+            input.session_id,
+            input.project,
+            input.cwd,
+            input.tool_name,
+            input.reason,
+            detail,
+            content_hash,
+            payload_preview
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
 }
 
 fn upsert_identity(
@@ -349,6 +413,11 @@ fn coalesce_extraction_task(
 
 fn exact_hash(content: &str) -> String {
     format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
+}
+
+pub fn stable_capture_event_id(event_type: &str, content: &str) -> String {
+    let sanitized_content = redact_capture_content(content);
+    format!("{}-{}", event_type, exact_hash(&sanitized_content))
 }
 
 fn synthesize_event_id(event_type: &str, content_hash: &str) -> String {
@@ -589,5 +658,69 @@ mod tests {
         .expect_err("unknown host should fail closed");
 
         assert!(err.to_string().contains("invalid capture host"));
+    }
+
+    #[test]
+    fn capture_audit_redacts_sensitive_payload() -> Result<()> {
+        let conn = setup_conn();
+        let payload = serde_json::json!({
+            "tool_input": {
+                "api_key": "sk-secret-value",
+                "command": "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'"
+            },
+            "tool_response": {
+                "stdout": "password=hunter2"
+            }
+        })
+        .to_string();
+
+        let row_id = record_capture_audit_event(
+            &conn,
+            &CaptureAuditInput {
+                host: Some("codex-cli"),
+                adapter: Some("codex-cli"),
+                session_id: Some("sess-audit"),
+                project: Some("/tmp/remem"),
+                cwd: Some("/tmp/remem"),
+                tool_name: Some("Bash"),
+                reason: "bash_skipped",
+                detail: Some("codex bash observe disabled"),
+                payload: Some(&payload),
+            },
+        )?;
+
+        let (reason, preview): (String, String) = conn.query_row(
+            "SELECT reason, payload_preview FROM capture_audit_events WHERE id = ?1",
+            params![row_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(reason, "bash_skipped");
+        assert!(preview.contains("[REDACTED]"));
+        assert!(!preview.contains("sk-secret-value"));
+        assert!(!preview.contains("hunter2"));
+        assert!(!preview.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_audit_rejects_empty_reason() {
+        let conn = setup_conn();
+        let err = record_capture_audit_event(
+            &conn,
+            &CaptureAuditInput {
+                host: None,
+                adapter: None,
+                session_id: None,
+                project: None,
+                cwd: None,
+                tool_name: None,
+                reason: " ",
+                detail: None,
+                payload: None,
+            },
+        )
+        .expect_err("empty reason should fail closed");
+
+        assert!(err.to_string().contains("reason must not be empty"));
     }
 }

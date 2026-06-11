@@ -115,6 +115,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_embeddings",
         "graph_file_nodes",
         "graph_edges",
+        "capture_audit_events",
     ] {
         let exists: bool = conn
             .query_row(
@@ -143,6 +144,8 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_graph_edges_from",
         "idx_graph_edges_to",
         "idx_graph_edges_type",
+        "idx_capture_audit_reason_created",
+        "idx_capture_audit_project_created",
     ] {
         let exists: bool = conn
             .query_row(
