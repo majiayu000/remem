@@ -44,6 +44,15 @@ pub struct SystemStats {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryFactsStats {
+    pub table_exists: bool,
+    pub total: i64,
+    pub retrieval_eligible: i64,
+    pub active_memories: i64,
+    pub captured_events: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyActivityStats {
     pub memories: i64,
     pub observations: i64,
@@ -193,6 +202,53 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         worker_daemon_healthy,
         worker_heartbeat_owner: worker_heartbeat.map(|heartbeat| heartbeat.owner),
         worker_heartbeat_age_secs,
+    })
+}
+
+pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
+    let memory_facts_exists = table_exists(conn, "memory_facts")?;
+    let memories_exists = table_exists(conn, "memories")?;
+    let captured_events_exists = table_exists(conn, "captured_events")?;
+    let total = if memory_facts_exists {
+        conn.query_row("SELECT COUNT(*) FROM memory_facts", [], |row| row.get(0))?
+    } else {
+        0
+    };
+    let retrieval_eligible = if memory_facts_exists && memories_exists {
+        conn.query_row(
+            "SELECT COUNT(*)
+             FROM memory_facts f
+             JOIN memories m ON m.id = f.source_memory_id
+             WHERE f.status = 'active'
+               AND f.valid_from_epoch IS NOT NULL
+               AND m.status = 'active'
+               AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > strftime('%s', 'now'))",
+            [],
+            |row| row.get(0),
+        )?
+    } else {
+        0
+    };
+    let active_memories = if memories_exists {
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+            [],
+            |row| row.get(0),
+        )?
+    } else {
+        0
+    };
+    let captured_events = if captured_events_exists {
+        conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?
+    } else {
+        0
+    };
+    Ok(MemoryFactsStats {
+        table_exists: memory_facts_exists,
+        total,
+        retrieval_eligible,
+        active_memories,
+        captured_events,
     })
 }
 

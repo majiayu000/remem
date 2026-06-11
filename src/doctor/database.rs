@@ -167,6 +167,69 @@ pub(super) fn check_raw_archive_ingest() -> Check {
     }
 }
 
+pub(super) fn check_temporal_facts() -> Check {
+    let conn = match db::open_db_read_only() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return Check {
+                name: "Temporal facts",
+                status: Status::Warn,
+                detail: "cannot open database".to_string(),
+            };
+        }
+    };
+
+    let stats = match db::query_memory_facts_stats(&conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check {
+                name: "Temporal facts",
+                status: Status::Warn,
+                detail: format!("cannot load fact stats: {}", err),
+            };
+        }
+    };
+
+    if !stats.table_exists {
+        return Check {
+            name: "Temporal facts",
+            status: Status::Ok,
+            detail: "memory_facts table not present; temporal retrieval uses created_at fallback"
+                .to_string(),
+        };
+    }
+
+    if stats.retrieval_eligible == 0 && stats.active_memories == 0 && stats.captured_events == 0 {
+        return Check {
+            name: "Temporal facts",
+            status: Status::Ok,
+            detail:
+                "memory_facts table is empty because this store has no memories or captured events yet"
+                    .to_string(),
+        };
+    }
+
+    if stats.retrieval_eligible == 0 {
+        return Check {
+            name: "Temporal facts",
+            status: Status::Warn,
+            detail: format!(
+                "temporal retrieval can read memory_facts, but 0 of {} fact row(s) are linked active event-time facts; production fact extraction is not populating retrievable facts yet",
+                stats.total
+            ),
+        };
+    }
+
+    Check {
+        name: "Temporal facts",
+        status: Status::Ok,
+        detail: format!(
+            "{} linked active memory fact(s) available for event-time retrieval",
+            stats.retrieval_eligible
+        ),
+    }
+}
+
 pub(super) fn check_worker_daemon() -> Check {
     let conn = match db::open_db_read_only() {
         Ok(conn) => conn,
