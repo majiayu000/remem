@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::adapter::{EventSummary, ParsedHookEvent};
 
@@ -39,12 +39,16 @@ impl CaptureSpillRecordCompat {
             version: self.version,
             event_id: self.event_id.unwrap_or(fallback_event_id),
             host: self.host,
-            event: self.event,
-            summary: self.summary,
+            event: sanitize_event(&self.event),
+            summary: sanitize_summary(&self.summary),
             failure_reason: self
                 .failure_reason
                 .unwrap_or_else(|| SPILL_REASON_DB_OPEN_FAILED.to_string()),
-            db_error: self.db_error,
+            db_error: crate::db::truncate_str(
+                &crate::db::capture::redact_capture_content(&self.db_error),
+                1000,
+            )
+            .to_string(),
             created_at_epoch: self.created_at_epoch,
         }
     }
@@ -142,29 +146,9 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
         .enumerate()
     {
         match parse_spill_record(line, line_index) {
-            Ok(record) => match super::hook::record_observed_event_with_id(
-                conn,
-                &record.host,
-                &record.event_id,
-                &record.event,
-                &record.summary,
-            ) {
-                Ok(event_id) => {
-                    crate::db::record_capture_drop(
-                        conn,
-                        &crate::db::CaptureDropInput {
-                            host: Some(&record.host),
-                            session_id: Some(&record.event.session_id),
-                            project: Some(&record.event.project),
-                            tool_name: Some(&record.event.tool_name),
-                            reason: &record.failure_reason,
-                            detail: Some(&record.db_error),
-                            spill_path: Some(&path.display().to_string()),
-                            recovered_event_id: Some(event_id),
-                        },
-                    )?;
-                    replayed += 1;
-                }
+            Ok(record) => match replay_spill_record(conn, &path, &record) {
+                Ok(true) => replayed += 1,
+                Ok(false) => {}
                 Err(error) => append_failed_spill_record(&failed_path, &record, &error)?,
             },
             Err(error) => append_failed_spill_line(&failed_path, line, &error)?,
@@ -189,6 +173,43 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
         );
     }
     Ok(replayed)
+}
+
+fn replay_spill_record(
+    conn: &Connection,
+    spill_path: &Path,
+    record: &CaptureSpillRecord,
+) -> Result<bool> {
+    if recovered_spill_exists(conn, record)? {
+        return Ok(false);
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .context("start capture spill replay transaction")?;
+    let event_id = super::hook::record_observed_event_with_id(
+        &tx,
+        &record.host,
+        &record.event_id,
+        &record.event,
+        &record.summary,
+    )?;
+    crate::db::record_capture_drop(
+        &tx,
+        &crate::db::CaptureDropInput {
+            host: Some(&record.host),
+            session_id: Some(&record.event.session_id),
+            project: Some(&record.event.project),
+            tool_name: Some(&record.event.tool_name),
+            reason: &record.failure_reason,
+            detail: Some(&record.db_error),
+            spill_path: Some(&spill_path.display().to_string()),
+            recovered_event_id: Some(event_id),
+        },
+    )?;
+    tx.commit()
+        .context("commit capture spill replay transaction")?;
+    Ok(true)
 }
 
 fn append_failed_spill_line(path: &PathBuf, line: &str, error: &anyhow::Error) -> Result<()> {
@@ -259,6 +280,32 @@ fn sanitize_summary(summary: &EventSummary) -> EventSummary {
 fn parse_spill_record(line: &str, line_index: usize) -> Result<CaptureSpillRecord> {
     let record: CaptureSpillRecordCompat = serde_json::from_str(line)?;
     Ok(record.into_record(legacy_spill_event_id(line, line_index)))
+}
+
+fn recovered_spill_exists(conn: &Connection, record: &CaptureSpillRecord) -> Result<bool> {
+    let exists = conn
+        .query_row(
+            "SELECT 1
+             FROM captured_events captured
+             JOIN hosts ON hosts.id = captured.host_id
+             JOIN capture_drop_events drop_event
+               ON drop_event.recovered_event_id = captured.id
+             WHERE hosts.name = ?1
+               AND captured.session_id = ?2
+               AND captured.event_id = ?3
+               AND drop_event.reason = ?4
+             LIMIT 1",
+            rusqlite::params![
+                &record.host,
+                &record.event.session_id,
+                &record.event_id,
+                &record.failure_reason
+            ],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(exists)
 }
 
 fn legacy_spill_event_id(line: &str, line_index: usize) -> String {
@@ -382,7 +429,85 @@ mod tests {
         assert_eq!(replayed, 2);
         let captured: i64 =
             conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
+        let events: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;
         assert_eq!(captured, 2);
+        assert_eq!(events, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_identical_spill_retry_appends_partial_second_legacy_event() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-identical-partial-retry");
+        let err = anyhow::anyhow!("database is locked");
+        let event = ParsedHookEvent {
+            session_id: "session-identical-partial".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Edit".to_string(),
+            tool_input: Some(serde_json::json!({"file_path": "/tmp/remem/src/lib.rs"})),
+            tool_response: Some(serde_json::json!({"ok": true})),
+        };
+        let summary = EventSummary {
+            event_type: "file_edit".to_string(),
+            summary: "Edited src/lib.rs".to_string(),
+            detail: None,
+            files_json: Some("[\"src/lib.rs\"]".to_string()),
+            exit_code: None,
+        };
+        spill_capture_event(
+            "codex-cli",
+            "tool_result-identical-partial-a",
+            &event,
+            &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
+            &err,
+        )?;
+        spill_capture_event(
+            "codex-cli",
+            "tool_result-identical-partial-b",
+            &event,
+            &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
+            &err,
+        )?;
+        let conn = db::open_db()?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_second_legacy_event
+             BEFORE INSERT ON events
+             WHEN (SELECT COUNT(*) FROM events WHERE session_id = 'session-identical-partial') >= 1
+             BEGIN
+                 SELECT RAISE(FAIL, 'legacy events blocked');
+             END;",
+        )?;
+
+        assert_eq!(replay_spilled_capture_events(&conn)?, 1);
+        let partial_captured: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-identical-partial'",
+            [],
+            |row| row.get(0),
+        )?;
+        let partial_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'session-identical-partial'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(partial_captured, 1);
+        assert_eq!(partial_events, 1);
+
+        conn.execute_batch("DROP TRIGGER fail_second_legacy_event;")?;
+        assert_eq!(replay_spilled_capture_events(&conn)?, 1);
+        let replayed_captured: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-identical-partial'",
+            [],
+            |row| row.get(0),
+        )?;
+        let replayed_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'session-identical-partial'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(replayed_captured, 2);
+        assert_eq!(replayed_events, 2);
         Ok(())
     }
 
@@ -402,12 +527,12 @@ mod tests {
             },
             "summary": {
                 "event_type": "file_edit",
-                "summary": "Edited src/lib.rs",
-                "detail": null,
+                "summary": "Edited src/lib.rs with ghp_abcdefghijklmnopqrstuvwxyz123456",
+                "detail": "password=hunter2",
                 "files_json": "[\"src/lib.rs\"]",
                 "exit_code": null
             },
-            "db_error": "database is locked",
+            "db_error": "database token=github_pat_secret",
             "created_at_epoch": 1700000000
         });
         let path = crate::db::data_dir().join("capture-spill.jsonl");
@@ -426,6 +551,22 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(captured, 1);
+        let replayed_event: (String, String) = conn.query_row(
+            "SELECT summary, detail FROM events WHERE session_id = 'session-legacy-spill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let drop_detail: String = conn.query_row(
+            "SELECT detail FROM capture_drop_events WHERE session_id = 'session-legacy-spill'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(replayed_event.0.contains("[REDACTED]"));
+        assert!(!replayed_event
+            .0
+            .contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        assert!(!replayed_event.1.contains("hunter2"));
+        assert!(!drop_detail.contains("github_pat_secret"));
         assert!(!path.exists());
         Ok(())
     }
@@ -481,7 +622,7 @@ mod tests {
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(partial_captures, 1);
+        assert_eq!(partial_captures, 0);
         assert_eq!(partial_events, 0);
         let failed_spill = std::fs::read_to_string(&path)?;
         assert!(failed_spill.contains(r#""event_id":"tool_result-legacy-spill-1-"#));

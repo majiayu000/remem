@@ -196,7 +196,7 @@ pub(super) fn check_capture_drops(conn: Option<&Connection>) -> Check {
     );
     if stats.unrecovered_capture_spills > 0 {
         detail.push_str(&format!(
-            ", {} unrecovered DB-open spill(s)",
+            ", {} unrecovered capture spill(s)",
             stats.unrecovered_capture_spills
         ));
     }

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use rusqlite::OptionalExtension;
 
 use crate::db;
 
@@ -138,14 +137,7 @@ pub(super) fn record_observed_event_with_id(
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> Result<i64> {
-    record_observed_event(
-        conn,
-        capture_host,
-        event_id,
-        event,
-        summary,
-        LegacyEventInsert::Deduplicate,
-    )
+    record_observed_event(conn, capture_host, event_id, event, summary)
 }
 
 fn record_live_observed_event_with_id(
@@ -155,19 +147,7 @@ fn record_live_observed_event_with_id(
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> Result<i64> {
-    record_observed_event(
-        conn,
-        capture_host,
-        event_id,
-        event,
-        summary,
-        LegacyEventInsert::Append,
-    )
-}
-
-enum LegacyEventInsert {
-    Append,
-    Deduplicate,
+    record_observed_event(conn, capture_host, event_id, event, summary)
 }
 
 fn record_observed_event(
@@ -176,25 +156,19 @@ fn record_observed_event(
     event_id: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
-    legacy_insert: LegacyEventInsert,
 ) -> Result<i64> {
     let capture_event_id =
         record_capture_event_with_id(conn, capture_host, event_id, event, summary)?;
-    match legacy_insert {
-        LegacyEventInsert::Append => {
-            crate::memory::insert_event(
-                conn,
-                &event.session_id,
-                &event.project,
-                &summary.event_type,
-                &summary.summary,
-                summary.detail.as_deref(),
-                summary.files_json.as_deref(),
-                summary.exit_code,
-            )?;
-        }
-        LegacyEventInsert::Deduplicate => insert_memory_event_once(conn, event, summary)?,
-    }
+    crate::memory::insert_event(
+        conn,
+        &event.session_id,
+        &event.project,
+        &summary.event_type,
+        &summary.summary,
+        summary.detail.as_deref(),
+        summary.files_json.as_deref(),
+        summary.exit_code,
+    )?;
 
     crate::log::info(
         "observe",
@@ -220,50 +194,6 @@ fn record_observed_event(
     }
 
     Ok(capture_event_id)
-}
-
-fn insert_memory_event_once(
-    conn: &rusqlite::Connection,
-    event: &crate::adapter::ParsedHookEvent,
-    summary: &crate::adapter::EventSummary,
-) -> Result<()> {
-    let exists = conn
-        .query_row(
-            "SELECT 1 FROM events
-             WHERE session_id = ?1
-               AND project = ?2
-               AND event_type = ?3
-               AND summary = ?4
-               AND COALESCE(detail, '') = COALESCE(?5, '')
-               AND COALESCE(files, '') = COALESCE(?6, '')
-               AND COALESCE(exit_code, -2147483648) = COALESCE(?7, -2147483648)
-             LIMIT 1",
-            rusqlite::params![
-                &event.session_id,
-                &event.project,
-                &summary.event_type,
-                &summary.summary,
-                summary.detail.as_deref(),
-                summary.files_json.as_deref(),
-                summary.exit_code
-            ],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some();
-    if !exists {
-        crate::memory::insert_event(
-            conn,
-            &event.session_id,
-            &event.project,
-            &summary.event_type,
-            &summary.summary,
-            summary.detail.as_deref(),
-            summary.files_json.as_deref(),
-            summary.exit_code,
-        )?;
-    }
-    Ok(())
 }
 
 fn detect_adapter_for_host(

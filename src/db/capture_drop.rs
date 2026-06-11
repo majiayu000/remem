@@ -58,14 +58,18 @@ pub fn query_capture_drop_stats(conn: &Connection) -> Result<CaptureDropStats> {
         "SELECT COUNT(*)
          FROM capture_drop_events
          WHERE reason NOT IN ('adapter_skip', 'codex_bash_disabled', 'bash_read_only')
-           AND NOT (reason = 'db_open_failed' AND recovered_event_id IS NOT NULL)",
+           AND NOT (
+               reason IN ('db_open_failed', 'capture_persistence_failed')
+               AND recovered_event_id IS NOT NULL
+           )",
         [],
         |row| row.get(0),
     )?;
     let unrecovered_spills = conn.query_row(
         "SELECT COUNT(*)
          FROM capture_drop_events
-         WHERE reason = 'db_open_failed' AND recovered_event_id IS NULL",
+         WHERE reason IN ('db_open_failed', 'capture_persistence_failed')
+           AND recovered_event_id IS NULL",
         [],
         |row| row.get(0),
     )?;
@@ -174,6 +178,49 @@ mod tests {
         assert_eq!(stats.unrecovered_spills, 1);
         assert_eq!(stats.latest_reason.as_deref(), Some("adapter_skip"));
         assert_eq!(stats.latest_detail.as_deref(), Some("read-only tool"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_drop_stats_treat_recovered_persistence_spills_as_non_actionable(
+    ) -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE captured_events (id INTEGER PRIMARY KEY);")?;
+        conn.execute_batch(include_str!("../migrations/v036_capture_drop_events.sql"))?;
+        conn.execute("INSERT INTO captured_events (id) VALUES (42)", [])?;
+
+        record_capture_drop(
+            &conn,
+            &CaptureDropInput {
+                host: Some("codex-cli"),
+                session_id: Some("session-recovered"),
+                project: Some("/repo"),
+                tool_name: Some("Edit"),
+                reason: "capture_persistence_failed",
+                detail: Some("events insert failed"),
+                spill_path: Some("/tmp/spill.jsonl"),
+                recovered_event_id: Some(42),
+            },
+        )?;
+        record_capture_drop(
+            &conn,
+            &CaptureDropInput {
+                host: Some("codex-cli"),
+                session_id: Some("session-open"),
+                project: Some("/repo"),
+                tool_name: Some("Edit"),
+                reason: "capture_persistence_failed",
+                detail: Some("events still blocked"),
+                spill_path: Some("/tmp/spill.jsonl"),
+                recovered_event_id: None,
+            },
+        )?;
+
+        let stats = query_capture_drop_stats(&conn)?;
+
+        assert_eq!(stats.total, 2);
+        assert_eq!(stats.actionable, 1);
+        assert_eq!(stats.unrecovered_spills, 1);
         Ok(())
     }
 

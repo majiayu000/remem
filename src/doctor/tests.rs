@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 use crate::db::test_support::{
     reset_runtime_connection_open_count, runtime_connection_open_count, ScopedTestDataDir,
@@ -41,6 +41,26 @@ impl Drop for ScopedCipherKeyEnv {
     }
 }
 
+fn insert_tool_capture(
+    conn: &Connection,
+    session_id: &str,
+    task_kind: Option<db::ExtractionTaskKind>,
+) -> anyhow::Result<db::CaptureEventOutcome> {
+    db::record_captured_event(
+        conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id,
+            project: "proj-a",
+            cwd: None,
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some("Bash"),
+            content: r#"{"tool_name":"test"}"#,
+            task_kind,
+        },
+    )
+}
 #[test]
 fn check_database_reports_shared_active_memory_count() {
     let _test_dir = ScopedTestDataDir::new("doctor-db");
@@ -213,19 +233,10 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         "UPDATE jobs SET state = 'failed' WHERE id = ?1",
         params![failed_job_id],
     )?;
-    let capture = db::record_captured_event(
+    let capture = insert_tool_capture(
         &conn,
-        &db::CaptureEventInput {
-            host: "codex-cli",
-            session_id: "session-5",
-            project: "proj-a",
-            cwd: None,
-            event_type: "tool_result",
-            role: None,
-            tool_name: Some("Bash"),
-            content: r#"{"tool_name":"Bash"}"#,
-            task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
-        },
+        "session-5",
+        Some(db::ExtractionTaskKind::ObservationExtract),
     )?;
     let extraction_task_id = capture
         .extraction_task_id
@@ -337,6 +348,36 @@ fn check_capture_drops_is_ok_for_expected_hook_skips() -> anyhow::Result<()> {
     assert_eq!(check.icon(), "ok");
     assert!(
         check.detail.contains("1 expected hook skip/drop event"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_capture_drops_is_ok_for_recovered_persistence_spills() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-drops-recovered-persistence");
+    let conn = db::open_db()?;
+    let recovered_capture = insert_tool_capture(&conn, "session-a", None)?;
+    db::record_capture_drop(
+        &conn,
+        &db::CaptureDropInput {
+            host: Some("codex-cli"),
+            session_id: Some("session-a"),
+            project: Some("proj-a"),
+            tool_name: Some("Edit"),
+            reason: "capture_persistence_failed",
+            detail: Some("events insert failed"),
+            spill_path: Some("/tmp/capture-spill.jsonl"),
+            recovered_event_id: Some(recovered_capture.event_row_id),
+        },
+    )?;
+
+    let check = check_capture_drops(Some(&conn));
+
+    assert_eq!(check.icon(), "ok");
+    assert!(
+        check.detail.contains("no actionable capture drops"),
         "{}",
         check.detail
     );
