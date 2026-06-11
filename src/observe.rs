@@ -2,6 +2,7 @@ mod hook;
 mod native;
 mod parse;
 mod path;
+mod spill;
 #[cfg(test)]
 mod tests;
 

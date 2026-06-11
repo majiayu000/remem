@@ -21,6 +21,11 @@ pub struct SystemStats {
     pub latest_raw_ingest_failure_path: Option<String>,
     pub latest_raw_ingest_failure_message: Option<String>,
     pub captured_events: i64,
+    pub capture_drop_events: i64,
+    pub unrecovered_capture_spills: i64,
+    pub latest_capture_drop_epoch: Option<i64>,
+    pub latest_capture_drop_reason: Option<String>,
+    pub latest_capture_drop_detail: Option<String>,
     pub pending_extraction_tasks: i64,
     pub processing_extraction_tasks: i64,
     pub failed_extraction_tasks: i64,
@@ -75,6 +80,7 @@ pub struct CandidatePromotionStat {
 pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
     let raw_ingest = query_raw_ingest_failure_stats(conn)?;
+    let capture_drop = crate::db::query_capture_drop_stats(conn)?;
     let worker_heartbeat = crate::db::worker::latest_daemon_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_daemon_worker_heartbeat(
         conn,
@@ -109,6 +115,11 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         captured_events: conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| {
             row.get(0)
         })?,
+        capture_drop_events: capture_drop.total,
+        unrecovered_capture_spills: capture_drop.unrecovered_spills,
+        latest_capture_drop_epoch: capture_drop.latest_epoch,
+        latest_capture_drop_reason: capture_drop.latest_reason,
+        latest_capture_drop_detail: capture_drop.latest_detail,
         pending_extraction_tasks: conn.query_row(
             "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'pending'",
             [],

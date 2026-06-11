@@ -158,6 +158,50 @@ pub(super) fn check_raw_archive_ingest(conn: Option<&Connection>) -> Check {
     Check::new("Raw archive ingest", Status::Warn, detail)
 }
 
+pub(super) fn check_capture_drops(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new("Capture drops", Status::Warn, "cannot open database");
+    };
+
+    let stats = match db::query_system_stats(conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check::new(
+                "Capture drops",
+                Status::Warn,
+                format!("cannot load capture drop stats: {}", err),
+            );
+        }
+    };
+
+    if stats.capture_drop_events == 0 {
+        return Check::new(
+            "Capture drops",
+            Status::Ok,
+            "0 recorded hook skips or drops",
+        );
+    }
+
+    let mut detail = format!(
+        "{} recorded hook skip/drop event(s)",
+        stats.capture_drop_events
+    );
+    if stats.unrecovered_capture_spills > 0 {
+        detail.push_str(&format!(
+            ", {} unrecovered DB-open spill(s)",
+            stats.unrecovered_capture_spills
+        ));
+    }
+    if let Some(reason) = stats.latest_capture_drop_reason {
+        detail.push_str(&format!(", latest reason={reason}"));
+    }
+    if let Some(drop_detail) = stats.latest_capture_drop_detail {
+        detail.push_str(&format!(", detail={}", db::truncate_str(&drop_detail, 160)));
+    }
+
+    Check::new("Capture drops", Status::Warn, detail)
+}
+
 pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {
     let Some(conn) = conn else {
         return Check::new("Temporal facts", Status::Warn, "cannot open database");

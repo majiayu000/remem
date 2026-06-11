@@ -42,6 +42,19 @@ fn setup_stats_schema(conn: &Connection) {
         CREATE TABLE captured_events (
             id INTEGER PRIMARY KEY
         );
+        CREATE TABLE capture_drop_events (
+            id INTEGER PRIMARY KEY,
+            host_id TEXT,
+            session_id TEXT,
+            project TEXT,
+            tool_name TEXT,
+            reason TEXT NOT NULL,
+            detail TEXT,
+            spill_path TEXT,
+            recovered_event_id INTEGER,
+            created_at_epoch INTEGER NOT NULL,
+            recovered_at_epoch INTEGER
+        );
         CREATE TABLE extraction_tasks (
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
@@ -142,6 +155,14 @@ fn query_system_stats_and_related_views_share_one_definition() {
     conn.execute("INSERT INTO captured_events (id) VALUES (1)", [])
         .expect("captured event insert should succeed");
     conn.execute(
+        "INSERT INTO capture_drop_events
+         (host_id, session_id, project, tool_name, reason, detail, created_at_epoch)
+         VALUES ('codex-cli', 'session-drop', 'alpha', 'Bash', 'codex_bash_disabled',
+                 'Codex Bash capture disabled', 170)",
+        [],
+    )
+    .expect("capture drop insert should succeed");
+    conn.execute(
         "INSERT INTO extraction_tasks (status, created_at_epoch) VALUES ('pending', 90)",
         [],
     )
@@ -241,6 +262,11 @@ fn query_system_stats_and_related_views_share_one_definition() {
             latest_raw_ingest_failure_path: Some("/bad/transcript.jsonl".to_string()),
             latest_raw_ingest_failure_message: Some("bad jsonl".to_string()),
             captured_events: 1,
+            capture_drop_events: 1,
+            unrecovered_capture_spills: 0,
+            latest_capture_drop_epoch: Some(170),
+            latest_capture_drop_reason: Some("codex_bash_disabled".to_string()),
+            latest_capture_drop_detail: Some("Codex Bash capture disabled".to_string()),
             pending_extraction_tasks: 1,
             processing_extraction_tasks: 1,
             failed_extraction_tasks: 1,
@@ -335,6 +361,21 @@ fn query_system_stats_defaults_raw_ingest_failures_when_table_is_absent() -> any
     assert_eq!(system.raw_ingest_parse_errors, 0);
     assert_eq!(system.raw_ingest_insert_errors, 0);
     assert_eq!(system.latest_raw_ingest_failure_epoch, None);
+    Ok(())
+}
+
+#[test]
+fn query_system_stats_defaults_capture_drops_when_table_is_absent() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    conn.execute("DROP TABLE capture_drop_events", [])?;
+
+    let system = query_system_stats(&conn)?;
+
+    assert_eq!(system.capture_drop_events, 0);
+    assert_eq!(system.unrecovered_capture_spills, 0);
+    assert_eq!(system.latest_capture_drop_epoch, None);
+    assert_eq!(system.latest_capture_drop_reason, None);
     Ok(())
 }
 

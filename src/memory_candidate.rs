@@ -594,6 +594,10 @@ fn contains_auto_promote_unsafe_marker(text: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
+pub(crate) fn contains_unsafe_memory_marker(text: &str) -> bool {
+    contains_auto_promote_unsafe_marker(text)
+}
+
 fn normalize_evidence_text(text: &str) -> String {
     text.split_whitespace()
         .collect::<Vec<_>>()

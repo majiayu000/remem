@@ -64,6 +64,14 @@ fn load_status_report() -> Result<StatusReport> {
         },
         capture_pipeline: CapturePipelineStatus {
             captured: stats.captured_events,
+            dropped: stats.capture_drop_events,
+            unrecovered_spills: stats.unrecovered_capture_spills,
+            latest_drop_epoch: stats.latest_capture_drop_epoch,
+            latest_drop_age_secs: stats
+                .latest_capture_drop_epoch
+                .map(|epoch| now.saturating_sub(epoch)),
+            latest_drop_reason: stats.latest_capture_drop_reason,
+            latest_drop_detail: stats.latest_capture_drop_detail,
             extract_todo: stats.pending_extraction_tasks,
             extract_running: stats.processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
@@ -151,6 +159,19 @@ fn print_status_report(report: &StatusReport) {
     println!();
     println!("Capture pipeline:");
     println!("  Captured:     {:>6}", report.capture_pipeline.captured);
+    println!("  Dropped:      {:>6}", report.capture_pipeline.dropped);
+    if report.capture_pipeline.dropped > 0 {
+        println!(
+            "  Spill open:   {:>6}",
+            report.capture_pipeline.unrecovered_spills
+        );
+        if let Some(reason) = &report.capture_pipeline.latest_drop_reason {
+            println!("  Latest drop:  {}", reason);
+        }
+        if let Some(age_secs) = report.capture_pipeline.latest_drop_age_secs {
+            println!("  Drop age:     {:>6}s", age_secs);
+        }
+    }
     println!(
         "  Extract todo: {:>6}",
         report.capture_pipeline.extract_todo
@@ -306,6 +327,12 @@ pub(super) struct RawArchiveStatus {
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct CapturePipelineStatus {
     pub captured: i64,
+    pub dropped: i64,
+    pub unrecovered_spills: i64,
+    pub latest_drop_epoch: Option<i64>,
+    pub latest_drop_age_secs: Option<i64>,
+    pub latest_drop_reason: Option<String>,
+    pub latest_drop_detail: Option<String>,
     pub extract_todo: i64,
     pub extract_running: i64,
     pub extract_failed: i64,
@@ -394,6 +421,12 @@ mod tests {
             },
             capture_pipeline: CapturePipelineStatus {
                 captured: 5,
+                dropped: 0,
+                unrecovered_spills: 0,
+                latest_drop_epoch: None,
+                latest_drop_age_secs: None,
+                latest_drop_reason: None,
+                latest_drop_detail: None,
                 extract_todo: 6,
                 extract_running: 7,
                 extract_failed: 0,

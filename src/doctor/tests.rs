@@ -6,8 +6,8 @@ use crate::db::test_support::{
 use crate::{db, memory};
 
 use super::database::{
-    check_database, check_pending_queue, check_raw_archive_ingest, check_temporal_facts,
-    check_worker_daemon,
+    check_capture_drops, check_database, check_pending_queue, check_raw_archive_ingest,
+    check_temporal_facts, check_worker_daemon,
 };
 use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
@@ -309,6 +309,36 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
     assert!(check.detail.contains("1 failure"), "{}", check.detail);
     assert!(check.detail.contains("read_error"), "{}", check.detail);
     assert!(check.detail.contains("/bad/path.jsonl"), "{}", check.detail);
+    Ok(())
+}
+
+#[test]
+fn check_capture_drops_warns_on_recorded_hook_drops() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-drops");
+    let conn = db::open_db()?;
+    db::record_capture_drop(
+        &conn,
+        &db::CaptureDropInput {
+            host: Some("codex-cli"),
+            session_id: Some("session-a"),
+            project: Some("proj-a"),
+            tool_name: Some("Bash"),
+            reason: "codex_bash_disabled",
+            detail: Some("Codex Bash capture disabled"),
+            spill_path: None,
+            recovered_event_id: None,
+        },
+    )?;
+
+    let check = check_capture_drops(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(check.detail.contains("1 recorded"), "{}", check.detail);
+    assert!(
+        check.detail.contains("latest reason=codex_bash_disabled"),
+        "{}",
+        check.detail
+    );
     Ok(())
 }
 
