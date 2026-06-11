@@ -23,6 +23,10 @@ pub(super) struct SearchParams {
         description = "Enable multi-hop search (default false). When true, performs entity graph expansion: finds entities in first-hop results, then searches for memories mentioning those entities. Use for questions that span multiple topics/people, e.g. 'What do Melanie\\'s kids like?' or 'What events has Caroline participated in?'"
     )]
     pub multi_hop: Option<bool>,
+    #[schemars(
+        description = "Include retrieval scoring and visibility explanation for standard search (default false). Not supported with multi_hop=true."
+    )]
+    pub explain: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
