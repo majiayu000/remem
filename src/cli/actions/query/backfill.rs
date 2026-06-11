@@ -60,3 +60,26 @@ where
     );
     Ok(())
 }
+
+pub(in crate::cli) fn run_backfill_embeddings(limit: i64) -> Result<()> {
+    let conn = db::open_db()?;
+    let limit = limit.max(1);
+    println!("Backfilling up to {limit} missing memory embeddings...");
+
+    let backfilled = crate::retrieval::vector::backfill_missing_memory_embeddings(&conn, limit)?;
+    let remaining = count_missing_embeddings(&conn).unwrap_or(0);
+    println!("Done. {backfilled} embeddings backfilled, {remaining} remaining.");
+    Ok(())
+}
+
+fn count_missing_embeddings(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories m
+         LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+         WHERE e.memory_id IS NULL
+           AND m.status IN ('active', 'stale', 'archived')",
+        [],
+        |row| row.get(0),
+    )?)
+}

@@ -4,6 +4,8 @@ use sha2::{Digest, Sha256};
 
 pub const EMBEDDING_DIMENSIONS: usize = 768;
 pub const DEFAULT_EMBEDDING_MODEL: &str = "remem-local-feature-hash-v1";
+pub const VECTOR_SEARCH_CANDIDATE_LIMIT: usize = 4_096;
+const VECTOR_SEARCH_MIN_CANDIDATES: usize = 512;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VectorHit {
@@ -15,6 +17,7 @@ pub struct VectorHit {
 pub struct VectorSearchOutcome {
     pub hits: Vec<VectorHit>,
     pub disabled_reason: Option<String>,
+    pub candidates_scanned: usize,
 }
 
 impl VectorSearchOutcome {
@@ -22,13 +25,20 @@ impl VectorSearchOutcome {
         Self {
             hits: vec![],
             disabled_reason: Some(reason.into()),
+            candidates_scanned: 0,
         }
     }
 
     pub fn ready(hits: Vec<VectorHit>) -> Self {
+        let candidates_scanned = hits.len();
+        Self::ready_with_scan_count(hits, candidates_scanned)
+    }
+
+    pub fn ready_with_scan_count(hits: Vec<VectorHit>, candidates_scanned: usize) -> Self {
         Self {
             hits,
             disabled_reason: None,
+            candidates_scanned,
         }
     }
 }
@@ -51,14 +61,7 @@ pub fn load_vec_extension(_conn: &Connection) -> Result<()> {
 }
 
 pub fn ensure_vec_table(conn: &Connection) -> Result<()> {
-    create_embedding_table(conn)?;
-    loop {
-        let backfilled = backfill_missing_memory_embeddings(conn, 1_000)?;
-        if backfilled < 1_000 {
-            break;
-        }
-    }
-    Ok(())
+    create_embedding_table(conn)
 }
 
 pub fn upsert_embedding(conn: &Connection, memory_id: i64, embedding: &[f32]) -> Result<()> {
@@ -249,13 +252,18 @@ pub fn vector_search_filtered(
     if let Some(memory_type) = filters.memory_type {
         conditions.push(format!("m.memory_type = ?{idx}"));
         param_values.push(Box::new(memory_type.to_string()));
+        idx += 1;
     }
+    let candidate_limit = vector_candidate_limit(limit);
+    param_values.push(Box::new(candidate_limit as i64));
 
     let sql = format!(
         "SELECT m.id, e.embedding, e.dimensions
          FROM memory_embeddings e
          JOIN memories m ON m.id = e.memory_id
-         WHERE {}",
+         WHERE {}
+         ORDER BY m.updated_at_epoch DESC, m.id DESC
+         LIMIT ?{idx}",
         conditions.join(" AND ")
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -269,6 +277,7 @@ pub fn vector_search_filtered(
     })?;
     let candidates = crate::db::query::collect_rows(rows)?;
 
+    let candidates_scanned = candidates.len();
     let mut hits = Vec::new();
     for (memory_id, blob, dimensions) in candidates {
         let embedding = decode_embedding(&blob, dimensions)
@@ -286,7 +295,14 @@ pub fn vector_search_filtered(
             .then_with(|| a.memory_id.cmp(&b.memory_id))
     });
     hits.truncate(limit);
-    Ok(VectorSearchOutcome::ready(hits))
+    Ok(VectorSearchOutcome::ready_with_scan_count(
+        hits,
+        candidates_scanned,
+    ))
+}
+
+fn vector_candidate_limit(limit: usize) -> usize {
+    limit.clamp(VECTOR_SEARCH_MIN_CANDIDATES, VECTOR_SEARCH_CANDIDATE_LIMIT)
 }
 
 pub fn find_similar_observations(
@@ -718,7 +734,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_vec_table_backfills_all_statuses_across_batches() -> Result<()> {
+    fn explicit_embedding_backfill_covers_all_statuses_across_batches() -> Result<()> {
         let conn = setup_conn()?;
         for id in 1..=1_002 {
             let status = match id {
@@ -735,6 +751,8 @@ mod tests {
         }
 
         ensure_vec_table(&conn)?;
+        assert_eq!(backfill_missing_memory_embeddings(&conn, 1_000)?, 1_000);
+        assert_eq!(backfill_missing_memory_embeddings(&conn, 1_000)?, 2);
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM memory_embeddings", [], |row| {
             row.get(0)

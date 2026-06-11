@@ -452,6 +452,12 @@ pub(super) enum Commands {
     EvalLocal,
     /// Backfill entity records for existing memories.
     BackfillEntities,
+    /// Backfill missing vector embeddings for existing memories.
+    BackfillEmbeddings {
+        /// Maximum missing memory rows to backfill in this run.
+        #[arg(long, default_value_t = 1000)]
+        limit: i64,
+    },
     /// Encrypt the local database or migrate its key format.
     Encrypt {
         /// Migrate an existing legacy passphrase key file to raw-key format.

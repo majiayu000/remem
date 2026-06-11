@@ -3,12 +3,12 @@ use anyhow::Result;
 use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
-    run_admin, run_archive, run_audit_scope, run_backfill_entities, run_cleanup, run_commit,
-    run_config, run_current_state, run_dream, run_encrypt, run_eval, run_eval_e2e,
-    run_eval_governance, run_eval_local, run_governance, run_graph_review, run_import,
-    run_memory_cleanup, run_merge_preferences, run_model, run_pending, run_preferences, run_raw,
-    run_reroute, run_review, run_search, run_show, run_status, run_timeline, run_usage, run_why,
-    run_workstreams, GovernanceCliRequest, RerouteCliRequest,
+    run_admin, run_archive, run_audit_scope, run_backfill_embeddings, run_backfill_entities,
+    run_cleanup, run_commit, run_config, run_current_state, run_dream, run_encrypt, run_eval,
+    run_eval_e2e, run_eval_governance, run_eval_local, run_governance, run_graph_review,
+    run_import, run_memory_cleanup, run_merge_preferences, run_model, run_pending, run_preferences,
+    run_raw, run_reroute, run_review, run_search, run_show, run_status, run_timeline, run_usage,
+    run_why, run_workstreams, GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction, MemoryAction};
@@ -254,6 +254,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::EvalGovernance { k, json } => run_eval_governance(k, json)?,
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
+        Commands::BackfillEmbeddings { limit } => run_backfill_embeddings(limit)?,
         Commands::Encrypt { rekey_raw } => run_encrypt(rekey_raw)?,
         Commands::Api { port } => api::run_api_server(port).await?,
         Commands::Dream {

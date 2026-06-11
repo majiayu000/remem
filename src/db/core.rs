@@ -301,6 +301,31 @@ mod tests {
     }
 
     #[test]
+    fn open_db_does_not_backfill_missing_vector_embeddings() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("open-no-vector-backfill");
+        let conn = crate::db::open_db()?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (1, '/repo', 'Vector row', 'Open must not backfill this row.', 'decision', 1, 1, 'active')",
+            [],
+        )?;
+        drop(conn);
+
+        let reopened = crate::db::open_db()?;
+        let count: i64 =
+            reopened.query_row("SELECT COUNT(*) FROM memory_embeddings", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(count, 0);
+        assert_eq!(
+            crate::retrieval::vector::backfill_missing_memory_embeddings(&reopened, 10)?,
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
     fn open_db_read_only_does_not_run_migrations() -> Result<()> {
         let _test_dir = ScopedTestDataDir::new("readonly-no-migration");
         let path = crate::db::db_path();
