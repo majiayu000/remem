@@ -9,6 +9,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const VERSION_RE = /remem\s+([0-9]+\.[0-9]+\.[0-9]+(?:[-+][^\s]+)?)\s+\(schema v([0-9]+)\)/;
+const REMOTE_MANIFEST_BYTES = 1_000_000;
 
 function binaryName() {
   return process.platform === "win32" ? "remem.exe" : "remem";
@@ -245,6 +246,10 @@ function readReleaseManifest(options = {}) {
   return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 }
 
+function defaultReleaseBaseUrl(expected) {
+  return `https://github.com/majiayu000/remem/releases/download/v${expected}`;
+}
+
 function platformKey() {
   const platform = os.platform();
   const arch = os.arch();
@@ -255,19 +260,90 @@ function platformKey() {
   throw new Error(`Unsupported platform: ${platform}/${arch}`);
 }
 
-function releaseAssetForCurrentPlatform(options = {}) {
-  const manifest = readReleaseManifest(options);
-  if (!manifest) return null;
-  const expected = expectedVersion(options);
-  const release = manifest.versions && manifest.versions[expected];
+function readJsonFromHttps(url, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, (response) => {
+      if (
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        response.headers.location
+      ) {
+        response.resume();
+        if (redirects >= 5) {
+          reject(new Error(`Too many redirects while downloading ${url}`));
+          return;
+        }
+        const next = new URL(response.headers.location, url).toString();
+        resolve(readJsonFromHttps(next, redirects + 1));
+        return;
+      }
+
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`Download failed with HTTP ${response.statusCode}: ${url}`));
+        return;
+      }
+
+      let size = 0;
+      const chunks = [];
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > REMOTE_MANIFEST_BYTES) {
+          request.destroy(new Error(`Remote manifest exceeds ${REMOTE_MANIFEST_BYTES} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (error) {
+          reject(new Error(`Invalid remote manifest JSON: ${error.message}`));
+        }
+      });
+    });
+    request.on("error", reject);
+  });
+}
+
+async function fetchReleaseManifest(url, options = {}) {
+  if (options.fetchJson) return options.fetchJson(url);
+  return readJsonFromHttps(url);
+}
+
+function releaseEntry(manifest, expected) {
+  const versions = manifest && manifest.versions;
+  if (!versions || typeof versions !== "object") return null;
+  const release = versions[expected];
+  if (!release || typeof release !== "object") return null;
+  return release;
+}
+
+function releaseAssetFromManifest(manifest, expected, key, fallbackBaseUrl) {
+  const release = releaseEntry(manifest, expected);
   if (!release) return null;
-  const asset = release.assets && release.assets[platformKey()];
+  const asset = release.assets && release.assets[key];
   if (!asset) return null;
-  const baseUrl = release.base_url || `https://github.com/majiayu000/remem/releases/download/v${expected}`;
+  const baseUrl = release.base_url || fallbackBaseUrl || defaultReleaseBaseUrl(expected);
   return {
     ...asset,
-    url: asset.url || `${baseUrl}/${asset.file}`
+    url: asset.url || `${baseUrl.replace(/\/$/, "")}/${asset.file}`
   };
+}
+
+async function releaseAssetForCurrentPlatform(options = {}) {
+  const expected = expectedVersion(options);
+  const key = platformKey();
+  const manifest = readReleaseManifest(options);
+  const localRelease = releaseEntry(manifest, expected);
+  const localBaseUrl = localRelease?.base_url || defaultReleaseBaseUrl(expected);
+  const localAsset = releaseAssetFromManifest(manifest, expected, key, localBaseUrl);
+  if (localAsset || options.remoteManifest === false) return localAsset;
+  if (!localRelease?.base_url) return null;
+
+  const remoteManifestUrl = `${localRelease.base_url.replace(/\/$/, "")}/remem-releases.json`;
+  const remoteManifest = await fetchReleaseManifest(remoteManifestUrl, options);
+  return releaseAssetFromManifest(remoteManifest, expected, key, localRelease.base_url);
 }
 
 function download(url, dest, redirects = 0) {
@@ -310,7 +386,7 @@ function sha256(file) {
 }
 
 async function downloadRuntime(options = {}) {
-  const asset = releaseAssetForCurrentPlatform(options);
+  const asset = await releaseAssetForCurrentPlatform(options);
   if (!asset) {
     throw new Error(
       `No checked release asset is available for remem ${expectedVersion(options)} on ${platformKey()}`
@@ -550,6 +626,7 @@ module.exports = {
   pathCandidates,
   pluginDataDir,
   pluginRoot,
+  releaseAssetForCurrentPlatform,
   repoCandidates,
   repoRoot,
   runRemem,

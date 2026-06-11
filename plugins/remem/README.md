@@ -46,10 +46,13 @@ node plugins/remem/scripts/remem-runtime.js install
 node plugins/remem/scripts/remem-runtime.js status
 ```
 
-Release download support is intentionally checksum-gated. Until a matching
-release manifest exists for the plugin version, fresh installs outside a local
-checkout must provide `REMEM_BINARY` or use a published plugin build that
-includes checked runtime assets.
+Release download support is intentionally checksum-gated. The release workflow
+uploads platform tarballs, `SHA256SUMS`, and a release-hosted
+`remem-releases.json` manifest with exact asset checksums. The checked-in
+manifest only needs the version and `base_url`; when its asset map is empty, the
+runtime manager fetches the release-hosted manifest before downloading a binary.
+Fresh installs outside a local checkout must provide `REMEM_BINARY` until a
+matching GitHub release has those checked assets.
 
 CI enforces that `Cargo.toml`, `Cargo.lock`,
 `.codex-plugin/plugin.json`, and `runtimes/remem-releases.json` carry the same
