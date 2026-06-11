@@ -213,7 +213,7 @@ fn legacy_hook_host_from_env() -> Option<String> {
 }
 
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
-    Ok(db::healthy_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
+    Ok(db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
 }
 
 fn spawn_worker_once() -> Result<()> {
@@ -491,6 +491,26 @@ mod tests {
             !should_spawn_worker_once(&conn).expect("daemon check should run"),
             "healthy heartbeat should skip worker --once fallback"
         );
+    }
+
+    #[test]
+    fn healthy_once_worker_does_not_skip_stop_spawn() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-healthy-once-worker");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-once-test",
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )?;
+
+        assert!(
+            should_spawn_worker_once(&conn)?,
+            "healthy worker --once heartbeat should not suppress Stop fallback"
+        );
+        Ok(())
     }
 
     #[test]
