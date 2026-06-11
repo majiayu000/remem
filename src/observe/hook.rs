@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::db;
 
 use super::native::sync_native_memory;
+use super::spill::{record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event};
 
 pub async fn session_init(host: Option<&str>) -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
@@ -45,23 +46,67 @@ pub async fn observe(host: Option<&str>) -> Result<()> {
 
 async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
     let Some((adapter, event)) = detect_adapter_for_host(input, host) else {
+        record_capture_drop_lossy(
+            host.map(crate::runtime_config::normalize_host).as_deref(),
+            None,
+            "adapter_mismatch",
+            Some("no capture adapter matched hook input"),
+        );
         return Ok(());
     };
-    if adapter.should_skip(&event) || should_skip_bash_event(adapter, &event) {
+    let capture_host = host
+        .map(crate::runtime_config::normalize_host)
+        .unwrap_or_else(|| adapter.name().to_string());
+    if let Some(reason) = event_skip_reason(adapter, &event) {
+        record_capture_drop_lossy(
+            Some(&capture_host),
+            Some(&event),
+            reason,
+            skip_detail(&event),
+        );
         return Ok(());
     }
 
     let Some(summary) = adapter.classify_event(&event) else {
+        record_capture_drop_lossy(
+            Some(&capture_host),
+            Some(&event),
+            "unclassified_event",
+            Some("adapter did not produce a capture summary"),
+        );
         return Ok(());
     };
 
-    let conn = db::open_db()?;
-    let capture_host = host
-        .map(crate::runtime_config::normalize_host)
-        .unwrap_or_else(|| adapter.name().to_string());
-    record_capture_event(&conn, &capture_host, &event, &summary)?;
+    let conn = match db::open_db() {
+        Ok(conn) => conn,
+        Err(error) => {
+            let path = spill_capture_event(&capture_host, &event, &summary, &error)?;
+            crate::log::error(
+                "observe",
+                &format!(
+                    "database open failed; spilled capture event to {}: {}",
+                    path.display(),
+                    error
+                ),
+            );
+            return Err(error);
+        }
+    };
+    replay_spilled_capture_events(&conn)?;
+    record_observed_event(&conn, &capture_host, &event, &summary)?;
+
+    Ok(())
+}
+
+pub(super) fn record_observed_event(
+    conn: &rusqlite::Connection,
+    capture_host: &str,
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+) -> Result<i64> {
+    let capture_event_id = record_capture_event(conn, capture_host, event, summary)?;
     crate::memory::insert_event(
-        &conn,
+        conn,
         &event.session_id,
         &event.project,
         &summary.event_type,
@@ -87,14 +132,14 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
             .and_then(|value| value["file_path"].as_str())
         {
             if let Err(error) =
-                sync_native_memory(&conn, &event.session_id, file_path, branch.as_deref())
+                sync_native_memory(conn, &event.session_id, file_path, branch.as_deref())
             {
                 crate::log::warn("observe", &format!("native memory sync failed: {}", error));
             }
         }
     }
 
-    Ok(())
+    Ok(capture_event_id)
 }
 
 fn detect_adapter_for_host(
@@ -119,7 +164,7 @@ fn record_capture_event(
     host: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
-) -> Result<()> {
+) -> Result<i64> {
     let git_branch = event.cwd.as_deref().and_then(db::detect_git_branch);
     let content = serde_json::json!({
         "summary": &summary.summary,
@@ -139,7 +184,7 @@ fn record_capture_event(
         "git_branch": git_branch.as_deref(),
     })
     .to_string();
-    db::record_captured_event(
+    let outcome = db::record_captured_event(
         conn,
         &db::CaptureEventInput {
             host,
@@ -153,26 +198,42 @@ fn record_capture_event(
             task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
         },
     )?;
-    Ok(())
+    Ok(outcome.event_row_id)
 }
 
-fn should_skip_bash_event(
+fn event_skip_reason(
     adapter: &dyn crate::adapter::ToolAdapter,
     event: &crate::adapter::ParsedHookEvent,
-) -> bool {
+) -> Option<&'static str> {
+    if adapter.should_skip(event) {
+        return Some("adapter_skip");
+    }
     if event.tool_name != "Bash" {
-        return false;
+        return None;
     }
 
     if adapter.name() == "codex-cli" && !codex_bash_observe_enabled() {
-        return true;
+        return Some("codex_bash_disabled");
     }
 
-    event
+    if event
         .tool_input
         .as_ref()
         .and_then(|value| value["command"].as_str())
         .is_some_and(|command| adapter.should_skip_bash(command))
+    {
+        return Some("bash_read_only");
+    }
+
+    None
+}
+
+fn skip_detail(event: &crate::adapter::ParsedHookEvent) -> Option<&str> {
+    event
+        .tool_input
+        .as_ref()
+        .and_then(|value| value["command"].as_str())
+        .map(|command| db::truncate_str(command, 240))
 }
 
 fn codex_bash_observe_enabled() -> bool {
@@ -188,7 +249,7 @@ mod tests {
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{observe_input, record_capture_event, session_init_event, should_skip_bash_event};
+    use super::{event_skip_reason, observe_input, record_capture_event, session_init_event};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -208,7 +269,37 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock should acquire");
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
-        assert!(should_skip_bash_event(&CodexAdapter, &codex_bash_event()));
+        assert_eq!(
+            event_skip_reason(&CodexAdapter, &codex_bash_event()),
+            Some("codex_bash_disabled")
+        );
+    }
+
+    #[tokio::test]
+    async fn observe_records_codex_bash_skip_in_drop_ledger() -> anyhow::Result<()> {
+        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+        unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
+        let _test_dir = ScopedTestDataDir::new("observe-codex-bash-drop");
+        let input = serde_json::json!({
+            "session_id": "sess-bash-skip",
+            "cwd": "/tmp/remem",
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" },
+            "tool_result": { "exitCode": 0 }
+        })
+        .to_string();
+
+        observe_input(&input, Some("codex-cli")).await?;
+
+        let conn = db::open_db()?;
+        let reason: String = conn.query_row(
+            "SELECT reason FROM capture_drop_events WHERE session_id = ?1",
+            ["sess-bash-skip"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(reason, "codex_bash_disabled");
+        Ok(())
     }
 
     #[test]
@@ -216,10 +307,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock should acquire");
         unsafe { std::env::set_var("REMEM_ENABLE_CODEX_BASH_OBSERVE", "1") };
         let event = codex_bash_event();
-        let skipped = should_skip_bash_event(&CodexAdapter, &event);
+        let skipped = event_skip_reason(&CodexAdapter, &event);
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
-        assert!(!skipped);
+        assert_eq!(skipped, None);
     }
 
     #[test]

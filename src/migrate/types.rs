@@ -180,6 +180,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "context_injection_data_version",
         sql: include_str!("../migrations/v035_context_injection_data_version.sql"),
     },
+    Migration {
+        version: 36,
+        name: "capture_drop_events",
+        sql: include_str!("../migrations/v036_capture_drop_events.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

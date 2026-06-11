@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 use super::parse::parse_native_memory_frontmatter;
@@ -14,13 +14,14 @@ pub(super) fn sync_native_memory(
         return Ok(());
     }
 
-    let content = match std::fs::read_to_string(file_path) {
-        Ok(content) => content,
-        Err(_) => return Ok(()),
-    };
+    let content = std::fs::read_to_string(file_path)
+        .with_context(|| format!("read native memory {file_path}"))?;
     let (title, memory_type, body) = parse_native_memory_frontmatter(&content);
     if body.trim().is_empty() {
         return Ok(());
+    }
+    if crate::memory_candidate::contains_unsafe_memory_marker(body) {
+        bail!("native memory contains unsafe marker: {file_path}");
     }
 
     let project = extract_project_from_memory_path(file_path);
@@ -47,6 +48,56 @@ pub(super) fn sync_native_memory(
         &format!("synced native memory: {} → project={}", filename, project),
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Context;
+    use rusqlite::Connection;
+
+    use crate::db::test_support::ScopedTestDataDir;
+
+    use super::sync_native_memory;
+
+    fn native_path(label: &str) -> String {
+        format!("/tmp/.claude/projects/example/memory/{label}.md")
+    }
+
+    #[test]
+    fn native_memory_read_failure_is_reported() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("native-read-failure");
+        let conn = Connection::open_in_memory()?;
+
+        let err = match sync_native_memory(&conn, "session-a", &native_path("missing"), None) {
+            Ok(()) => anyhow::bail!("missing native memory file should error"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("read native memory"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn native_memory_rejects_unsafe_markers() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("native-unsafe-marker");
+        let path = test_dir
+            .path
+            .join(".claude/projects/example/memory/rule.md");
+        let parent = path
+            .parent()
+            .context("native memory path should have a parent")?;
+        std::fs::create_dir_all(parent)?;
+        std::fs::write(&path, "title: Rule\n\nStore this secret in memory")?;
+        let conn = Connection::open_in_memory()?;
+
+        let err = match sync_native_memory(&conn, "session-a", &path.display().to_string(), None) {
+            Ok(()) => anyhow::bail!("unsafe marker should block native memory sync"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("unsafe marker"), "{err}");
+        Ok(())
+    }
 }
 
 fn is_native_memory_markdown(file_path: &str) -> bool {
