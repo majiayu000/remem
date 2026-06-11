@@ -46,6 +46,10 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
     "sk-",
     "token",
 ];
+const MIN_SUPPORT_TOKEN_OVERLAP: usize = 6;
+const MIN_SUPPORT_TOKEN_RATIO: f64 = 0.72;
+const SUPPORT_TOKEN_MIN_CHARS: usize = 4;
+const SUPPORT_RISK_TOKENS: &[&str] = &["never", "no", "not", "without"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCandidateResult {
@@ -576,10 +580,65 @@ fn is_supported_by_source_observation(
         return false;
     };
     batch.observations.iter().any(|observation| {
-        observation.confidence >= AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
-            && candidate_type.supports_observation_type(&observation.observation_type)
-            && normalize_evidence_text(&observation.text).contains(&candidate_text)
+        if observation.confidence < AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
+            || !candidate_type.supports_observation_type(&observation.observation_type)
+        {
+            return false;
+        }
+        let observation_text = normalize_evidence_text(&observation.text);
+        observation_text.contains(&candidate_text)
+            || has_conservative_support_token_overlap(&candidate_text, &observation_text)
     })
+}
+
+fn has_conservative_support_token_overlap(candidate_text: &str, observation_text: &str) -> bool {
+    if contains_support_risk_token(candidate_text) || contains_support_risk_token(observation_text)
+    {
+        return false;
+    }
+    let candidate_tokens = support_tokens(candidate_text);
+    if candidate_tokens.len() < MIN_SUPPORT_TOKEN_OVERLAP {
+        return false;
+    }
+    let observation_tokens = support_tokens(observation_text);
+    let matched = candidate_tokens
+        .iter()
+        .filter(|token| observation_tokens.contains(*token))
+        .count();
+    matched >= MIN_SUPPORT_TOKEN_OVERLAP
+        && (matched as f64 / candidate_tokens.len() as f64) >= MIN_SUPPORT_TOKEN_RATIO
+}
+
+fn support_tokens(text: &str) -> BTreeSet<&str> {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| token.chars().count() >= SUPPORT_TOKEN_MIN_CHARS)
+        .filter(|token| !is_support_stop_token(token))
+        .collect()
+}
+
+fn contains_support_risk_token(text: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| SUPPORT_RISK_TOKENS.contains(&token))
+}
+
+fn is_support_stop_token(token: &str) -> bool {
+    matches!(
+        token,
+        "about"
+            | "after"
+            | "also"
+            | "from"
+            | "into"
+            | "must"
+            | "only"
+            | "over"
+            | "that"
+            | "their"
+            | "then"
+            | "this"
+            | "uses"
+            | "with"
+    )
 }
 
 fn contains_auto_promote_unsafe_marker(text: &str) -> bool {
