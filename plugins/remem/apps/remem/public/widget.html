@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Remem Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1d2428;
+      --muted: #6f777b;
+      --line: #d9e0de;
+      --panel: #f7f8f6;
+      --paper: #ffffff;
+      --blue: #2364aa;
+      --green: #178260;
+      --amber: #a76518;
+      --red: #b73535;
+      --shadow: 0 1px 2px rgba(22, 30, 33, 0.08);
+      font-family: Avenir Next, ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    button, input, textarea, select {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 6px;
+      min-height: 34px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: #9fb0ad; }
+    button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+    button.icon { width: 34px; padding: 0; }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 9px;
+      min-height: 34px;
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) 1fr;
+      background:
+        linear-gradient(90deg, #f4f6f5 0, #f4f6f5 320px, #fff 320px);
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .main {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      background: #e6f1ed;
+      color: var(--green);
+      font-weight: 800;
+      border: 1px solid #c7ddd6;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 18px; font-weight: 700; }
+    h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+    h3 { font-size: 14px; font-weight: 700; }
+
+    .subtle { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    .row { display: flex; align-items: center; gap: 8px; }
+    .row.spread { justify-content: space-between; }
+
+    .section {
+      border-top: 1px solid var(--line);
+      padding-top: 13px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--paper);
+      padding: 10px;
+      box-shadow: var(--shadow);
+      min-height: 70px;
+    }
+
+    .stat .value {
+      font-size: 24px;
+      line-height: 1.1;
+      font-weight: 750;
+      margin-top: 3px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 100%;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .pill.ok { color: var(--green); border-color: #bddad1; background: #eef8f4; }
+    .pill.warn { color: var(--amber); border-color: #ead2a9; background: #fff7e8; }
+    .pill.bad { color: var(--red); border-color: #e7bcbc; background: #fff0f0; }
+
+    .tabs {
+      display: inline-grid;
+      grid-auto-flow: column;
+      gap: 2px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 2px;
+      background: var(--panel);
+      width: fit-content;
+    }
+
+    .tab {
+      border: 0;
+      background: transparent;
+      min-height: 30px;
+      padding: 5px 10px;
+    }
+
+    .tab.active {
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 160px auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+      gap: 14px;
+      min-height: 0;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      min-width: 0;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      min-height: 44px;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfb;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .panel-body {
+      padding: 12px;
+      overflow: auto;
+    }
+
+    .results {
+      padding: 0;
+      margin: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .result {
+      border-bottom: 1px solid var(--line);
+      padding: 11px 12px;
+      cursor: pointer;
+      background: #fff;
+    }
+
+    .result:hover { background: #f7faf8; }
+    .result.active { border-left: 3px solid var(--green); padding-left: 9px; background: #f1f7f4; }
+
+    .result-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    .preview {
+      color: var(--muted);
+      margin-top: 4px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .detail-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      margin-top: 10px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .form-grid .wide { grid-column: 1 / -1; }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background: var(--panel);
+      color: var(--muted);
+    }
+
+    .message.error {
+      border-color: #e7bcbc;
+      background: #fff0f0;
+      color: var(--red);
+    }
+
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background: #f8f9f8;
+      max-height: 280px;
+      overflow: auto;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 860px) {
+      .shell { grid-template-columns: 1fr; background: #fff; }
+      .rail { border-right: 0; border-bottom: 1px solid var(--line); }
+      .toolbar { grid-template-columns: 1fr; }
+      .content-grid { grid-template-columns: 1fr; }
+      .form-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="mark">R</div>
+        <div>
+          <h1>Remem</h1>
+          <p class="subtle">Project memory control surface</p>
+        </div>
+      </div>
+
+      <section class="section stack">
+        <div class="row spread">
+          <h2>Runtime</h2>
+          <button class="icon" id="refresh" title="Refresh">↻</button>
+        </div>
+        <div id="runtime-status" class="stack"></div>
+      </section>
+
+      <section class="section stack">
+        <h2>Memory Store</h2>
+        <div class="stat-grid">
+          <div class="stat"><p class="subtle">Memories</p><div class="value" id="count-memories">0</div></div>
+          <div class="stat"><p class="subtle">Observations</p><div class="value" id="count-observations">0</div></div>
+          <div class="stat"><p class="subtle">Raw Archive</p><div class="value" id="count-raw">0</div></div>
+          <div class="stat"><p class="subtle">Queue</p><div class="value" id="count-queue">0</div></div>
+        </div>
+      </section>
+
+      <section class="section stack">
+        <h2>Activation</h2>
+        <div id="activation-summary" class="stack"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <div class="row spread">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-view="search">Search</button>
+          <button class="tab" data-view="save">Save</button>
+          <button class="tab" data-view="activation">Activation</button>
+        </div>
+        <span class="pill" id="health-pill">Loading</span>
+      </div>
+
+      <section id="search-view" class="stack">
+        <div class="toolbar">
+          <input id="search-query" placeholder="Search project memory">
+          <select id="search-type">
+            <option value="">All types</option>
+            <option value="decision">Decision</option>
+            <option value="bugfix">Bugfix</option>
+            <option value="architecture">Architecture</option>
+            <option value="discovery">Discovery</option>
+            <option value="preference">Preference</option>
+          </select>
+          <button class="primary" id="search-button">Search</button>
+        </div>
+        <div class="content-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Compact Results</h3>
+              <span class="subtle" id="result-count">0</span>
+            </div>
+            <ul class="results" id="results"></ul>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h3>Detail</h3>
+              <span class="pill" id="detail-type">No selection</span>
+            </div>
+            <div class="panel-body" id="detail"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="save-view" class="panel hidden">
+        <div class="panel-head"><h3>Save Explicit Memory</h3></div>
+        <div class="panel-body stack">
+          <div class="form-grid">
+            <label>Type
+              <select id="save-type">
+                <option value="decision">Decision</option>
+                <option value="bugfix">Bugfix</option>
+                <option value="architecture">Architecture</option>
+                <option value="discovery">Discovery</option>
+                <option value="preference">Preference</option>
+              </select>
+            </label>
+            <label>Scope
+              <select id="save-scope">
+                <option value="project">Project</option>
+                <option value="global">Global</option>
+              </select>
+            </label>
+            <label class="wide">Title
+              <input id="save-title" placeholder="Short durable title">
+            </label>
+            <label class="wide">Topic key
+              <input id="save-topic" placeholder="kebab-case-topic-key">
+            </label>
+            <label class="wide">Project
+              <input id="save-project" placeholder="/path/to/repo, optional">
+            </label>
+            <label class="wide">Memory text
+              <textarea id="save-text" placeholder="What should future sessions remember?"></textarea>
+            </label>
+          </div>
+          <div class="row spread">
+            <span class="subtle">Writes through Remem API; no hook config is changed.</span>
+            <button class="primary" id="save-button">Save</button>
+          </div>
+          <div id="save-result" class="message hidden"></div>
+        </div>
+      </section>
+
+      <section id="activation-view" class="panel hidden">
+        <div class="panel-head">
+          <h3>Activation Plan</h3>
+          <button id="plan-button">Regenerate</button>
+        </div>
+        <div class="panel-body stack">
+          <div class="message">This preview runs the same hooks-only dry run used by the plugin. It does not write Codex config or trust hooks.</div>
+          <pre id="activation-plan"></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const state = { snapshot: null, results: [], selected: null };
+    const $ = (id) => document.getElementById(id);
+
+    function cls(value, truthy) {
+      value.classList.toggle("hidden", !truthy);
+    }
+
+    function valueAt(object, path, fallback = 0) {
+      return path.split(".").reduce((acc, key) => acc && acc[key], object) ?? fallback;
+    }
+
+    async function request(route, options = {}) {
+      if (canCallHostTool(route)) {
+        return requestViaHostTool(route, options);
+      }
+      const response = await fetch(route, options);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error?.message || `Request failed with ${response.status}`);
+      }
+      return payload;
+    }
+
+    function canCallHostTool(route) {
+      return typeof window.openai?.callTool === "function" && String(route).startsWith("/api/");
+    }
+
+    async function requestViaHostTool(route, options = {}) {
+      const method = String(options.method || "GET").toUpperCase();
+      const url = new URL(route, "http://remem.local");
+      const result = await callHostTool(apiToolName(url.pathname, method), apiToolArgs(url, method, options));
+      return result?.structuredContent ?? result;
+    }
+
+    async function callHostTool(name, args) {
+      if (!name) throw new Error("No host tool is available for this action");
+      return window.openai.callTool(name, args);
+    }
+
+    function apiToolName(pathname, method) {
+      if (method === "GET" && pathname === "/api/status") return "remem_dashboard";
+      if (method === "GET" && pathname === "/api/search") return "remem_search";
+      if (method === "GET" && pathname === "/api/memory") return "remem_get_memory";
+      if (method === "GET" && pathname === "/api/activation-plan") return "remem_activation_plan";
+      if (method === "POST" && pathname === "/api/save") return "remem_save_memory";
+      return null;
+    }
+
+    function apiToolArgs(url, method, options) {
+      if (method === "GET" && url.pathname === "/api/search") {
+        return {
+          query: url.searchParams.get("query") || "",
+          project: url.searchParams.get("project") || undefined,
+          type: url.searchParams.get("type") || undefined,
+          limit: numericParam(url.searchParams, "limit", 12),
+          offset: numericParam(url.searchParams, "offset", 0),
+          include_stale: booleanParam(url.searchParams, "include_stale"),
+          multi_hop: booleanParam(url.searchParams, "multi_hop")
+        };
+      }
+      if (method === "GET" && url.pathname === "/api/memory") {
+        return { id: Number(url.searchParams.get("id")) };
+      }
+      if (method === "POST" && url.pathname === "/api/save") {
+        return JSON.parse(options.body || "{}");
+      }
+      return {};
+    }
+
+    function numericParam(params, key, fallback) {
+      const value = params.get(key);
+      if (value === null || value === "") return fallback;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : fallback;
+    }
+
+    function booleanParam(params, key) {
+      const value = params.get(key);
+      if (value === null || value === "") return undefined;
+      return value === "true" || value === "1";
+    }
+
+    function renderRuntime(snapshot) {
+      const runtime = snapshot.runtime || {};
+      const selected = runtime.selected || runtime.pathMatch;
+      const selectedOk = Boolean(runtime.selected);
+      const binarySource = selected?.source || "needs setup";
+      $("runtime-status").innerHTML = `
+        <span class="pill ${selectedOk ? "ok" : "warn"}">${escapeHtml(binarySource)}</span>
+        <div class="mono">${escapeHtml(selected?.path || runtime.managedBinary || "No runtime found")}</div>
+        <div class="subtle">version ${escapeHtml(selected?.version || snapshot.expected_version || "unknown")} · schema ${escapeHtml(String(selected?.schemaVersion || "-"))}</div>
+        <div class="subtle">plugin data</div>
+        <div class="mono">${escapeHtml(snapshot.plugin_data || runtime.pluginData || "")}</div>
+      `;
+    }
+
+    function renderCounts(status) {
+      $("count-memories").textContent = valueAt(status, "totals.memories");
+      $("count-observations").textContent = valueAt(status, "totals.observations");
+      $("count-raw").textContent = valueAt(status, "totals.raw_messages");
+      const queue = valueAt(status, "capture_pipeline.extract_todo") +
+        valueAt(status, "pending_observations.ready") +
+        valueAt(status, "jobs.pending");
+      $("count-queue").textContent = queue;
+    }
+
+    function renderActivation(activation) {
+      const stateClass = activation?.mentions_hooks ? "warn" : "ok";
+      $("activation-summary").innerHTML = `
+        <span class="pill ${stateClass}">${activation?.mentions_hooks ? "hooks preview" : "no hook plan"}</span>
+        <div class="subtle">${activation?.line_count || 0} dry-run line(s)</div>
+      `;
+      $("activation-plan").textContent = activation?.plan_text || "";
+    }
+
+    function renderHealth(snapshot) {
+      const doctor = snapshot.doctor || {};
+      const failed = Number(doctor.fails || 0);
+      const warned = Number(doctor.warns || 0);
+      const pill = $("health-pill");
+      pill.className = `pill ${failed ? "bad" : warned ? "warn" : "ok"}`;
+      pill.textContent = failed ? `${failed} failing check(s)` : warned ? `${warned} warning(s)` : "Healthy";
+    }
+
+    async function refresh() {
+      try {
+        state.snapshot = await request("/api/status");
+        renderRuntime(state.snapshot);
+        renderCounts(state.snapshot.status || {});
+        renderActivation(state.snapshot.activation || {});
+        renderHealth(state.snapshot);
+      } catch (error) {
+        $("runtime-status").innerHTML = `<div class="message error">${escapeHtml(error.message)}</div>`;
+        $("health-pill").className = "pill bad";
+        $("health-pill").textContent = "Error";
+      }
+    }
+
+    async function runSearch() {
+      const query = $("search-query").value.trim();
+      if (!query) return;
+      const params = new URLSearchParams({
+        query,
+        limit: "12",
+        include_stale: "true"
+      });
+      const type = $("search-type").value;
+      if (type) params.set("type", type);
+      $("results").innerHTML = `<li class="result"><span class="subtle">Searching...</span></li>`;
+      $("detail").innerHTML = "";
+      const payload = await request(`/api/search?${params.toString()}`);
+      state.results = searchResults(payload);
+      $("result-count").textContent = `${state.results.length}`;
+      renderResults();
+    }
+
+    function searchResults(payload) {
+      const memories = (payload.data || []).map((item) => ({
+        ...item,
+        result_kind: "memory",
+        result_id: String(item.id)
+      }));
+      const rawHits = (payload.raw_hits || []).map((item) => ({
+        ...item,
+        id: `raw-${item.id}`,
+        raw_id: item.id,
+        result_kind: "raw_archive",
+        result_id: `raw-${item.id}`,
+        title: `${item.role || "raw"} message from raw archive`,
+        content: item.preview || "",
+        memory_type: "raw archive",
+        status: "raw",
+        scope: item.source || "",
+        project: item.project || ""
+      }));
+      return memories.concat(rawHits);
+    }
+
+    function renderResults() {
+      const results = $("results");
+      if (!state.results.length) {
+        results.innerHTML = `<li class="result"><span class="subtle">No memories found</span></li>`;
+        return;
+      }
+      results.innerHTML = state.results.map((item) => `
+        <li class="result" data-id="${escapeHtml(item.result_id || item.id)}">
+          <div class="result-title">
+            <span>${escapeHtml(item.title || `Memory ${item.id}`)}</span>
+            <span class="pill">${escapeHtml(item.memory_type || item.type || "memory")}</span>
+          </div>
+          <div class="preview">${escapeHtml(item.content || item.preview || "")}</div>
+        </li>
+      `).join("");
+    }
+
+    async function selectResult(id) {
+      document.querySelectorAll(".result").forEach((node) => {
+        node.classList.toggle("active", node.dataset.id === String(id));
+      });
+      $("detail").innerHTML = `<div class="message">Loading memory ${id}...</div>`;
+      const cached = state.results.find((item) => String(item.result_id || item.id) === String(id));
+      if (cached?.result_kind === "raw_archive") {
+        state.selected = cached;
+        $("detail-type").textContent = "raw archive";
+        $("detail").innerHTML = `
+          <div class="stack">
+            <h3>${escapeHtml(cached.title)}</h3>
+            <div class="row">
+              <span class="pill">${escapeHtml(cached.role || "")}</span>
+              <span class="pill">${escapeHtml(cached.source || "")}</span>
+            </div>
+            <div class="subtle mono">${escapeHtml(cached.project || "")}</div>
+            <div class="detail-text">${escapeHtml(cached.preview || cached.content || "")}</div>
+          </div>
+        `;
+        return;
+      }
+      const item = await request(`/api/memory?id=${encodeURIComponent(id)}`);
+      state.selected = item;
+      $("detail-type").textContent = item.memory_type || "memory";
+      $("detail").innerHTML = `
+        <div class="stack">
+          <h3>${escapeHtml(item.title || `Memory ${item.id}`)}</h3>
+          <div class="row">
+            <span class="pill">${escapeHtml(item.status || "")}</span>
+            <span class="pill">${escapeHtml(item.scope || "")}</span>
+          </div>
+          <div class="subtle mono">${escapeHtml(item.project || "")}</div>
+          <div class="detail-text">${escapeHtml(item.content || "")}</div>
+        </div>
+      `;
+    }
+
+    async function saveMemory() {
+      const text = $("save-text").value.trim();
+      const target = $("save-result");
+      if (!text) {
+        target.textContent = "Memory text is required.";
+        target.className = "message error";
+        return;
+      }
+      const payload = {
+        text,
+        title: $("save-title").value.trim() || undefined,
+        project: $("save-project").value.trim() || undefined,
+        topic_key: $("save-topic").value.trim() || undefined,
+        memory_type: $("save-type").value,
+        scope: $("save-scope").value
+      };
+      target.textContent = "Saving...";
+      target.className = "message";
+      try {
+        const saved = await request("/api/save", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        target.textContent = `Saved memory ${saved.id} (${saved.operation}).`;
+        target.className = "message";
+      } catch (error) {
+        target.textContent = error.message;
+        target.className = "message error";
+      }
+    }
+
+    async function refreshPlan() {
+      $("activation-plan").textContent = "Generating...";
+      const plan = await request("/api/activation-plan");
+      renderActivation(plan);
+    }
+
+    function switchView(name) {
+      document.querySelectorAll(".tab").forEach((tab) => {
+        tab.classList.toggle("active", tab.dataset.view === name);
+      });
+      cls($("search-view"), name === "search");
+      cls($("save-view"), name === "save");
+      cls($("activation-view"), name === "activation");
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function receiveHostResult(event) {
+      const message = event.data;
+      if (!message || message.method !== "ui/notifications/tool-result") return;
+      const data = message.params?.structuredContent;
+      if (!data) return;
+      state.snapshot = data;
+      renderRuntime(data);
+      renderCounts(data.status || {});
+      renderActivation(data.activation || {});
+      renderHealth(data);
+    }
+
+    window.addEventListener("message", receiveHostResult);
+    $("refresh").addEventListener("click", refresh);
+    $("search-button").addEventListener("click", () => runSearch().catch((error) => {
+      $("results").innerHTML = `<li class="result"><span class="message error">${escapeHtml(error.message)}</span></li>`;
+    }));
+    $("search-query").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") runSearch();
+    });
+    $("results").addEventListener("click", (event) => {
+      const item = event.target.closest(".result");
+      if (item?.dataset.id) selectResult(item.dataset.id);
+    });
+    $("save-button").addEventListener("click", saveMemory);
+    $("plan-button").addEventListener("click", () => refreshPlan().catch((error) => {
+      $("activation-plan").textContent = error.message;
+    }));
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => switchView(tab.dataset.view));
+    });
+
+    refresh();
+  </script>
+</body>
+</html>
