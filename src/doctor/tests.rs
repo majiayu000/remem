@@ -9,7 +9,35 @@ use super::database::{
 };
 use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
-use super::schema::check_schema_migration;
+use super::schema::{check_key_format, check_schema_migration};
+
+struct ScopedCipherKeyEnv {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl ScopedCipherKeyEnv {
+    fn remove() -> Self {
+        let previous = std::env::var_os("REMEM_CIPHER_KEY");
+        std::env::remove_var("REMEM_CIPHER_KEY");
+        Self { previous }
+    }
+
+    fn set(value: String) -> Self {
+        let previous = std::env::var_os("REMEM_CIPHER_KEY");
+        std::env::set_var("REMEM_CIPHER_KEY", value);
+        Self { previous }
+    }
+}
+
+impl Drop for ScopedCipherKeyEnv {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.as_ref() {
+            std::env::set_var("REMEM_CIPHER_KEY", previous);
+        } else {
+            std::env::remove_var("REMEM_CIPHER_KEY");
+        }
+    }
+}
 
 #[test]
 fn check_database_reports_shared_active_memory_count() {
@@ -51,6 +79,53 @@ fn check_database_reports_shared_active_memory_count() {
     assert!(check
         .detail
         .contains(&format!("{} memories", stats.active_memories)));
+}
+
+#[test]
+fn check_key_format_warns_for_legacy_key() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("doctor-key-format-legacy");
+    let _env = ScopedCipherKeyEnv::remove();
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.path.join(".key"), "3".repeat(64))?;
+
+    let check = check_key_format();
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check.detail.contains("remem encrypt --rekey-raw"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_key_format_accepts_raw_key() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("doctor-key-format-raw");
+    let _env = ScopedCipherKeyEnv::remove();
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.path.join(".key"), format!("v2:{}", "4".repeat(64)))?;
+
+    let check = check_key_format();
+    assert_eq!(check.icon(), "ok");
+    assert!(check.detail.contains("raw-key"), "{}", check.detail);
+    Ok(())
+}
+
+#[test]
+fn check_key_format_reports_effective_env_key() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("doctor-key-format-env");
+    let _env = ScopedCipherKeyEnv::set(format!("v2:{}", "6".repeat(64)));
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.path.join(".key"), "3".repeat(64))?;
+
+    let check = check_key_format();
+    assert_eq!(check.icon(), "ok");
+    assert!(
+        check.detail.contains("REMEM_CIPHER_KEY"),
+        "{}",
+        check.detail
+    );
+    Ok(())
 }
 
 #[test]

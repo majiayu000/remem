@@ -109,7 +109,7 @@ pub fn open_db() -> Result<Connection> {
         }
     }
 
-    let conn = open_configured_connection(&path, key.as_deref())?;
+    let conn = open_configured_connection(&path, key.as_ref())?;
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::run_migrations(&conn)?;
     crate::retrieval::vector::ensure_vec_table(&conn)?;
@@ -123,7 +123,7 @@ pub fn open_db_no_migrate() -> Result<Connection> {
         anyhow::bail!("database not found: {}", path.display());
     }
 
-    let conn = open_configured_existing_read_write_connection(&path, key.as_deref())?;
+    let conn = open_configured_existing_read_write_connection(&path, key.as_ref())?;
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::ensure_schema_current(&conn)?;
     Ok(conn)
@@ -136,10 +136,13 @@ pub fn open_db_read_only() -> Result<Connection> {
         anyhow::bail!("database not found: {}", path.display());
     }
 
-    open_configured_read_only_connection(&path, key.as_deref())
+    open_configured_read_only_connection(&path, key.as_ref())
 }
 
-pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Result<Connection> {
+pub(crate) fn open_configured_connection(
+    path: &Path,
+    key: Option<&super::crypto::CipherKey>,
+) -> Result<Connection> {
     let conn = Connection::open(path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
     #[cfg(test)]
@@ -155,7 +158,7 @@ pub(crate) fn open_configured_connection(path: &Path, key: Option<&str>) -> Resu
 
 pub(crate) fn open_configured_existing_read_write_connection(
     path: &Path,
-    key: Option<&str>,
+    key: Option<&super::crypto::CipherKey>,
 ) -> Result<Connection> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE).with_context(
         || {
@@ -178,7 +181,7 @@ pub(crate) fn open_configured_existing_read_write_connection(
 
 pub(crate) fn open_configured_read_only_connection(
     path: &Path,
-    key: Option<&str>,
+    key: Option<&super::crypto::CipherKey>,
 ) -> Result<Connection> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("Failed to open database read-only: {}", path.display()))?;

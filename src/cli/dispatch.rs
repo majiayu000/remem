@@ -252,7 +252,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::EvalGovernance { k, json } => run_eval_governance(k, json)?,
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
-        Commands::Encrypt => run_encrypt()?,
+        Commands::Encrypt { rekey_raw } => run_encrypt(rekey_raw)?,
         Commands::Api { port } => api::run_api_server(port).await?,
         Commands::Dream {
             project,

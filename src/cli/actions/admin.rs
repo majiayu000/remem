@@ -115,6 +115,17 @@ mod tests {
         .expect("seed encrypted test db");
     }
 
+    fn create_raw_key_encrypted_test_db(path: &Path, key: &str) -> Result<()> {
+        let conn = Connection::open(path)?;
+        crate::db::configure_cipher(&conn, Some(&crate::db::CipherKey::Raw(key.to_string())))
+            .context("apply raw test key")?;
+        conn.execute_batch(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT); \
+             INSERT INTO t(id, v) VALUES (42, 'hello-raw');",
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn default_backup_path_uses_timestamp() {
         let dt = Local.with_ymd_and_hms(2026, 5, 8, 14, 30, 45).unwrap();
@@ -165,6 +176,26 @@ mod tests {
             .query_row("SELECT v FROM t WHERE id = 42", [], |row| row.get(0))
             .unwrap();
         assert_eq!(v, "hello-encrypted");
+    }
+
+    #[test]
+    fn backup_copies_raw_key_encrypted_source_with_cipher_key() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("admin-raw-key-backup");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let key = "5".repeat(64);
+        std::fs::write(test_dir.path.join(".key"), format!("v2:{key}"))?;
+        let src = test_dir.db_path();
+        let dst = test_dir.path.join("backup.sqlite");
+        create_raw_key_encrypted_test_db(&src, &key)?;
+
+        backup_db(&src, &dst)?;
+
+        let restored = Connection::open(&dst)?;
+        crate::db::configure_cipher(&restored, Some(&crate::db::CipherKey::Raw(key)))?;
+        let v: String =
+            restored.query_row("SELECT v FROM t WHERE id = 42", [], |row| row.get(0))?;
+        assert_eq!(v, "hello-raw");
+        Ok(())
     }
 
     #[test]

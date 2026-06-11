@@ -173,9 +173,9 @@ fn clone_database(src: &Connection, dst: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-fn clone_cipher_key_for_source(src: &Connection) -> Result<Option<String>> {
+fn clone_cipher_key_for_source(src: &Connection) -> Result<Option<crate::db::CipherKey>> {
     if source_database_looks_encrypted(src)? {
-        return Ok(crate::db::load_cipher_key());
+        return crate::db::load_cipher_key();
     }
     Ok(None)
 }

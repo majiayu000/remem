@@ -439,8 +439,12 @@ pub(super) enum Commands {
     EvalLocal,
     /// Backfill entity records for existing memories.
     BackfillEntities,
-    /// Encrypt the local database if encryption is configured.
-    Encrypt,
+    /// Encrypt the local database or migrate its key format.
+    Encrypt {
+        /// Migrate an existing legacy passphrase key file to raw-key format.
+        #[arg(long)]
+        rekey_raw: bool,
+    },
     /// Run the local HTTP API server.
     Api {
         /// Loopback port for the HTTP API.
