@@ -8,7 +8,7 @@ use super::invocation::ContextInvocation;
 
 mod delta;
 
-const DEFAULT_GATE_HOSTS: &str = "codex-cli";
+const DEFAULT_GATE_HOSTS: &str = "codex-cli,claude-code";
 const DEFAULT_SUPPRESSED_SOURCES: &str = "compact";
 const DEFAULT_FALLBACK_COOLDOWN_SECS: i64 = 900;
 const DEFAULT_RETENTION_DAYS: i64 = 30;

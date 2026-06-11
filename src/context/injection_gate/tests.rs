@@ -25,6 +25,12 @@ fn gate_invocation(session_id: Option<&str>) -> ContextInvocation {
     }
 }
 
+fn claude_gate_invocation(session_id: Option<&str>) -> ContextInvocation {
+    let mut invocation = gate_invocation(session_id);
+    invocation.host = HostKind::ClaudeCode;
+    invocation
+}
+
 #[test]
 fn fingerprint_ignores_header_timestamp() {
     let a = "# [/tmp/remem] context 2026-05-25 1:00pm\nBody\n";
@@ -247,6 +253,61 @@ fn compact_source_force_bypasses_suppression() {
     assert_eq!(forced.action, ContextGateAction::EmittedFull);
     assert_eq!(forced.reason, "first_or_forced");
     assert_eq!(forced.output, output);
+}
+
+#[test]
+fn claude_code_resume_suppresses_same_session_same_hash_by_default() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-claude-resume");
+    let invocation = claude_gate_invocation(Some("claude-session-1"));
+    let output = "# [/tmp/remem] context now\nBody\n".to_string();
+
+    let first = apply_context_gate(&invocation, output.clone());
+    assert_eq!(first.action, ContextGateAction::EmittedFull);
+    assert_eq!(first.reason, "first_or_forced");
+    assert_eq!(first.output, output);
+    assert!(first
+        .key
+        .as_deref()
+        .is_some_and(|key| key.contains("claude-session-1")));
+
+    let second = apply_context_gate(&invocation, output);
+    assert_eq!(second.action, ContextGateAction::Suppressed);
+    assert_eq!(second.reason, "same_hash");
+    assert!(second.output.is_empty());
+}
+
+#[test]
+fn claude_code_compact_session_start_suppresses_same_hash_by_default() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-claude-compact");
+    let mut invocation = claude_gate_invocation(Some("claude-session-compact"));
+    let output = "# [/tmp/remem] context now\nBody\n".to_string();
+
+    let first = apply_context_gate(&invocation, output.clone());
+    assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+    invocation.source = Some("compact".to_string());
+    let second = apply_context_gate(&invocation, output);
+    assert_eq!(second.action, ContextGateAction::Suppressed);
+    assert_eq!(second.reason, "suppressed_source");
+    assert!(second.output.is_empty());
+}
+
+#[test]
+fn unknown_host_remains_ungated_by_default() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-unknown-host");
+    let mut invocation = gate_invocation(Some("unknown-session"));
+    invocation.host = HostKind::Unknown;
+    let output = "# [/tmp/remem] context now\nBody\n".to_string();
+
+    let first = apply_context_gate(&invocation, output.clone());
+    assert_eq!(first.action, ContextGateAction::Bypassed);
+    assert_eq!(first.reason, "host_not_gated");
+    assert_eq!(first.output, output);
+
+    let second = apply_context_gate(&invocation, output.clone());
+    assert_eq!(second.action, ContextGateAction::Bypassed);
+    assert_eq!(second.reason, "host_not_gated");
+    assert_eq!(second.output, output);
 }
 
 #[test]
