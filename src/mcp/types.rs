@@ -24,7 +24,7 @@ pub(super) struct SearchParams {
     )]
     pub multi_hop: Option<bool>,
     #[schemars(
-        description = "Include retrieval scoring and visibility explanation (default false)"
+        description = "Include retrieval scoring and visibility explanation for standard search (default false). Not supported with multi_hop=true."
     )]
     pub explain: Option<bool>,
 }

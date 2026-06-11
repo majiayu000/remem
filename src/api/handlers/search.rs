@@ -35,6 +35,15 @@ pub(in crate::api) async fn handle_search(
     State(_state): State<DbState>,
     Query(params): Query<SearchParams>,
 ) -> impl IntoResponse {
+    if params.multi_hop.unwrap_or(false) && params.explain.unwrap_or(false) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_search_request",
+            "explain is not supported with multi_hop search yet; set multi_hop=false or explain=false",
+        )
+        .into_response();
+    }
+
     let conn = match open_request_db() {
         Ok(conn) => conn,
         Err(response) => return response,
@@ -117,6 +126,14 @@ mod tests {
         }
     }
 
+    fn multi_hop_explain_params() -> SearchParams {
+        SearchParams {
+            multi_hop: Some(true),
+            explain: Some(true),
+            ..base_search_params(None)
+        }
+    }
+
     #[test]
     fn search_request_from_params_keeps_explain_default_false() {
         let request = search_request_from_params(base_search_params(None));
@@ -165,6 +182,29 @@ mod tests {
         assert_eq!(
             explain_json["explain"]["results"][0]["memory_id"],
             memory_id
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handle_search_rejects_multi_hop_explain() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("api-search-explain-multi-hop");
+
+        let response = handle_search(State(DbState), Query(multi_hop_explain_params()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let json: Value = serde_json::from_slice(&body)?;
+
+        assert_eq!(json["error"]["code"], "invalid_search_request");
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("multi_hop"),
+            "{}",
+            json
         );
         Ok(())
     }

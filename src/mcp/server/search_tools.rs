@@ -49,6 +49,13 @@ impl MemoryServer {
         const TOOL: &str = "search";
         let start = std::time::Instant::now();
         let requested_multi_hop = params.multi_hop.unwrap_or(false);
+        let requested_explain = params.explain.unwrap_or(false);
+        if requested_multi_hop && requested_explain {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "explain is not supported with multi_hop search yet; set multi_hop=false or explain=false",
+            ));
+        }
         crate::log::info(
             "mcp",
             &format!(
@@ -74,7 +81,7 @@ impl MemoryServer {
                     .unwrap_or_else(service::default_include_stale),
                 branch: params.branch.clone(),
                 multi_hop: requested_multi_hop,
-                explain: params.explain.unwrap_or(false),
+                explain: requested_explain,
             };
             let search_set = service::search_memories(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
@@ -218,6 +225,14 @@ mod tests {
         }
     }
 
+    fn multi_hop_explain_params() -> SearchParams {
+        SearchParams {
+            multi_hop: Some(true),
+            explain: Some(true),
+            ..base_search_params(None)
+        }
+    }
+
     #[test]
     fn search_emits_explain_only_when_requested() -> Result<()> {
         let _dir = ScopedTestDataDir::new("mcp-search-explain");
@@ -251,6 +266,28 @@ mod tests {
         assert_eq!(
             explain_json["explain"]["results"][0]["memory_id"],
             memory_id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn search_rejects_multi_hop_explain() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("mcp-search-explain-multi-hop");
+        let server = MemoryServer::new()?;
+
+        let err = server
+            .search(Parameters(multi_hop_explain_params()))
+            .expect_err("multi-hop explain should be rejected");
+        let json: Value = serde_json::from_str(&err.to_string())?;
+
+        assert_eq!(json["error"]["code"], "invalid_request");
+        assert!(
+            json["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("multi_hop"),
+            "{}",
+            json
         );
         Ok(())
     }
