@@ -172,6 +172,41 @@ async fn memory_candidate_auto_promotes_condensed_candidate_from_token_overlap()
 }
 
 #[tokio::test]
+async fn memory_candidate_auto_promotes_later_duplicate_support_window() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-later-duplicate-overlap")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The worker lifecycle initializes queues and refreshes indexes before the worker lifecycle records auto promote block reasons in memory candidate diagnostics.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-auto-promote-later-window</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Worker lifecycle records auto promote block reasons for memory candidate diagnostics.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "auto_promoted");
+    Ok(())
+}
+
+#[tokio::test]
 async fn memory_candidate_keeps_weak_overlap_pending_with_block_reason() -> Result<()> {
     let mut conn = setup_conn();
     let task = setup_task(&mut conn, "sess-candidate-weak-overlap")?;
@@ -339,6 +374,76 @@ async fn memory_candidate_keeps_uncertain_overlap_pending() -> Result<()> {
 
     let result = process_with_generator(&mut conn, &task, |_prompt| async {
         Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-uncertain-overlap</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Ingestion worker promotes summarized memory candidates because source evidence support validation passes.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_keeps_prescriptive_modal_overlap_pending() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-prescriptive-overlap")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The ingestion worker must persist durable memory candidates from summarized observations.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-prescriptive-overlap</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Ingestion worker persists durable memory candidates from summarized observations.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_keeps_conditional_overlap_pending() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-conditional-overlap")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "If the ingestion worker persists durable memory candidates from summarized observations, the dashboard reports them.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-conditional-overlap</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Ingestion worker persists durable memory candidates from summarized observations.</text></memory_candidate>".to_string())
     })
     .await?;
 
