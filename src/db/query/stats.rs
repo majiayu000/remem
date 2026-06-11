@@ -241,7 +241,10 @@ pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
              WHERE f.status = 'active'
                AND f.valid_from_epoch IS NOT NULL
                AND m.status = 'active'
-               AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > strftime('%s', 'now'))",
+               AND (
+                 m.expires_at_epoch IS NULL
+                 OR m.expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
+               )",
             [],
             |row| row.get(0),
         )?

@@ -7,7 +7,7 @@ use crate::db::models::{
 use crate::db::query::{
     query_ai_usage_breakdown, query_ai_usage_source_totals, query_ai_usage_totals,
     query_candidate_promotion_stats, query_daily_activity_stats, query_daily_ai_usage,
-    query_system_stats, query_top_projects, query_weekly_ai_usage,
+    query_memory_facts_stats, query_system_stats, query_top_projects, query_weekly_ai_usage,
 };
 
 fn setup_stats_schema(conn: &Connection) {
@@ -42,6 +42,12 @@ fn setup_stats_schema(conn: &Connection) {
         );
         CREATE TABLE captured_events (
             id INTEGER PRIMARY KEY
+        );
+        CREATE TABLE memory_facts (
+            id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            valid_from_epoch INTEGER,
+            source_memory_id INTEGER
         );
         CREATE TABLE capture_drop_events (
             id INTEGER PRIMARY KEY,
@@ -340,6 +346,37 @@ fn query_system_stats_and_related_views_share_one_definition() {
             },
         ]
     );
+}
+
+#[test]
+fn query_memory_facts_stats_excludes_expired_source_memories() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+
+    conn.execute_batch(
+        "INSERT INTO memories (id, project, status, created_at_epoch, expires_at_epoch)
+         VALUES
+            (1, 'alpha', 'active', 100, NULL),
+            (2, 'alpha', 'active', 110, CAST(strftime('%s', 'now') AS INTEGER) + 3600),
+            (3, 'alpha', 'active', 120, CAST(strftime('%s', 'now') AS INTEGER) - 1),
+            (4, 'alpha', 'archived', 130, NULL);
+         INSERT INTO memory_facts (status, valid_from_epoch, source_memory_id)
+         VALUES
+            ('active', 100, 1),
+            ('active', 110, 2),
+            ('active', 120, 3),
+            ('active', 130, 4),
+            ('active', NULL, 1),
+            ('stale', 140, 1);",
+    )?;
+
+    let stats = query_memory_facts_stats(&conn)?;
+
+    assert!(stats.table_exists);
+    assert_eq!(stats.total, 6);
+    assert_eq!(stats.active_memories, 2);
+    assert_eq!(stats.retrieval_eligible, 2);
+    Ok(())
 }
 
 #[test]
