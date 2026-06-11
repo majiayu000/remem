@@ -17,6 +17,34 @@ struct CaptureSpillRecord {
     created_at_epoch: i64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct CaptureSpillRecordCompat {
+    version: u32,
+    event_id: Option<String>,
+    host: String,
+    event: ParsedHookEvent,
+    summary: EventSummary,
+    db_error: String,
+    created_at_epoch: i64,
+}
+
+impl From<CaptureSpillRecordCompat> for CaptureSpillRecord {
+    fn from(record: CaptureSpillRecordCompat) -> Self {
+        let content = legacy_spill_event_content(&record.event, &record.summary);
+        Self {
+            version: record.version,
+            event_id: record
+                .event_id
+                .unwrap_or_else(|| crate::db::unique_capture_event_id("tool_result", &content)),
+            host: record.host,
+            event: record.event,
+            summary: record.summary,
+            db_error: record.db_error,
+            created_at_epoch: record.created_at_epoch,
+        }
+    }
+}
+
 pub(super) fn record_capture_drop_lossy(
     host: Option<&str>,
     event: Option<&ParsedHookEvent>,
@@ -102,7 +130,7 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
     }
 
     for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<CaptureSpillRecord>(line) {
+        match parse_spill_record(line) {
             Ok(record) => match super::hook::record_observed_event_with_id(
                 conn,
                 &record.host,
@@ -128,7 +156,7 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
                 }
                 Err(error) => append_failed_spill(&failed_path, line, &error)?,
             },
-            Err(error) => append_failed_spill(&failed_path, line, &error.into())?,
+            Err(error) => append_failed_spill(&failed_path, line, &error)?,
         }
     }
 
@@ -195,6 +223,31 @@ fn sanitize_summary(summary: &EventSummary) -> EventSummary {
         files_json: summary.files_json.clone(),
         exit_code: summary.exit_code,
     }
+}
+
+fn parse_spill_record(line: &str) -> Result<CaptureSpillRecord> {
+    let record: CaptureSpillRecordCompat = serde_json::from_str(line)?;
+    Ok(record.into())
+}
+
+fn legacy_spill_event_content(event: &ParsedHookEvent, summary: &EventSummary) -> String {
+    serde_json::json!({
+        "summary": &summary.summary,
+        "event_type": &summary.event_type,
+        "detail": summary.detail.as_deref(),
+        "files": summary.files_json.as_deref(),
+        "exit_code": summary.exit_code,
+        "tool_name": &event.tool_name,
+        "tool_input": event
+            .tool_input
+            .as_ref()
+            .map(crate::adapter::common::redact_sensitive_value),
+        "tool_response": event
+            .tool_response
+            .as_ref()
+            .map(crate::adapter::common::redact_sensitive_value),
+    })
+    .to_string()
 }
 
 fn spill_path() -> PathBuf {
@@ -297,6 +350,50 @@ mod tests {
         let captured: i64 =
             conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
         assert_eq!(captured, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_legacy_spill_without_event_id() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-legacy-replay");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "host": "codex-cli",
+            "event": {
+                "session_id": "session-legacy-spill",
+                "cwd": "/tmp/remem",
+                "project": "/tmp/remem",
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "/tmp/remem/src/lib.rs"},
+                "tool_response": {"ok": true}
+            },
+            "summary": {
+                "event_type": "file_edit",
+                "summary": "Edited src/lib.rs",
+                "detail": null,
+                "files_json": "[\"src/lib.rs\"]",
+                "exit_code": null
+            },
+            "db_error": "database is locked",
+            "created_at_epoch": 1700000000
+        });
+        let path = crate::db::data_dir().join("capture-spill.jsonl");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, format!("{legacy}\n"))?;
+        let conn = db::open_db()?;
+
+        let replayed = replay_spilled_capture_events(&conn)?;
+
+        assert_eq!(replayed, 1);
+        let captured: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-legacy-spill'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(captured, 1);
+        assert!(!path.exists());
         Ok(())
     }
 
