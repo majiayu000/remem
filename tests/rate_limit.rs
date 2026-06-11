@@ -193,20 +193,22 @@ fn search_offset_applies_to_memory_pages() -> Result<()> {
 }
 
 #[test]
-fn search_include_stale_controls_archived_memories() -> Result<()> {
+fn search_include_stale_controls_inactive_memories() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn)?;
 
     insert_memory_row(&conn, 1, "proj", "archived", 300, "archived", None)?;
-    insert_memory_row(&conn, 2, "proj", "active", 200, "active", None)?;
+    insert_memory_row(&conn, 2, "proj", "stale", 250, "stale", None)?;
+    insert_memory_row(&conn, 3, "proj", "active", 200, "active", None)?;
 
     let active_only = search::search(&conn, None, Some("proj"), None, 10, 0, false)?;
     assert_eq!(active_only.len(), 1);
     assert_eq!(active_only[0].title, "active");
 
     let with_archived = search::search(&conn, None, Some("proj"), None, 10, 0, true)?;
-    assert_eq!(with_archived.len(), 2);
+    assert_eq!(with_archived.len(), 3);
     assert_eq!(with_archived[0].title, "archived");
+    assert_eq!(with_archived[1].title, "stale");
     Ok(())
 }
 

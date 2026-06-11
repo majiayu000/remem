@@ -236,6 +236,13 @@ mod tests {
         }
     }
 
+    fn default_visibility_search_params() -> SearchParams {
+        SearchParams {
+            include_stale: None,
+            ..base_search_params(None)
+        }
+    }
+
     fn multi_hop_explain_params() -> SearchParams {
         SearchParams {
             multi_hop: Some(true),
@@ -278,6 +285,61 @@ mod tests {
             explain_json["explain"]["results"][0]["memory_id"],
             memory_id
         );
+        Ok(())
+    }
+
+    #[test]
+    fn search_hides_inactive_memories_by_default() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("mcp-search-default-active");
+        let conn = crate::db::open_db()?;
+        let active_id = memory::insert_memory(
+            &conn,
+            Some("session-active"),
+            "/repo",
+            Some("aurora-active"),
+            "Aurora active memory",
+            "The aurora active decision remains visible.",
+            "decision",
+            None,
+        )?;
+        let stale_id = memory::insert_memory(
+            &conn,
+            Some("session-stale"),
+            "/repo",
+            Some("aurora-stale"),
+            "Aurora stale memory",
+            "The aurora stale decision is hidden by default.",
+            "decision",
+            None,
+        )?;
+        let archived_id = memory::insert_memory(
+            &conn,
+            Some("session-archived"),
+            "/repo",
+            Some("aurora-archived"),
+            "Aurora archived memory",
+            "The aurora archived decision is hidden by default.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            rusqlite::params![stale_id],
+        )?;
+        conn.execute(
+            "UPDATE memories SET status = 'archived' WHERE id = ?1",
+            rusqlite::params![archived_id],
+        )?;
+        drop(conn);
+
+        let server = MemoryServer::new()?;
+        let response = server
+            .search(Parameters(default_visibility_search_params()))
+            .map_err(anyhow::Error::msg)?;
+        let json: Value = serde_json::from_str(&response)?;
+
+        assert_eq!(json["results"].as_array().map(Vec::len), Some(1));
+        assert_eq!(json["results"][0]["id"], active_id);
         Ok(())
     }
 

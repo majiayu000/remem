@@ -13,10 +13,10 @@ pub struct SearchRequest {
 
 /// Canonical default for `include_stale` across every adapter (MCP, REST, CLI).
 ///
-/// Stale memories are kept by default so callers see the full history. Adapters
-/// that want curated-only results must opt in by passing `Some(false)`.
+/// Default search returns only current curated memories. Callers that need
+/// stale or archived history must opt in explicitly.
 pub fn default_include_stale() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone)]
