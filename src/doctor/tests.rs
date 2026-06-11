@@ -4,7 +4,8 @@ use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
 use super::database::{
-    check_database, check_pending_queue, check_raw_archive_ingest, check_worker_daemon,
+    check_database, check_pending_queue, check_raw_archive_ingest, check_temporal_facts,
+    check_worker_daemon,
 };
 use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
@@ -207,6 +208,60 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
     assert!(check.detail.contains("1 failure"), "{}", check.detail);
     assert!(check.detail.contains("read_error"), "{}", check.detail);
     assert!(check.detail.contains("/bad/path.jsonl"), "{}", check.detail);
+    Ok(())
+}
+
+#[test]
+fn check_temporal_facts_warns_when_fact_table_is_empty() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-empty");
+    let conn = db::open_db()?;
+    let stats = db::query_memory_facts_stats(&conn)?;
+    drop(conn);
+
+    assert!(stats.table_exists);
+    assert_eq!(stats.total, 0);
+
+    let check = check_temporal_facts();
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check
+            .detail
+            .contains("temporal retrieval can read memory_facts"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("production fact extraction is not populating"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_temporal_facts_is_ok_when_fact_table_has_rows() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-present");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_event_ids, confidence, status, created_at_epoch,
+          updated_at_epoch)
+         VALUES ('proj-a', 'deploy', 'affects_project', 'prod', ?1, NULL,
+                 ?1, '[]', 0.9, 'active', ?1, ?1)",
+        params![chrono::Utc::now().timestamp()],
+    )?;
+    drop(conn);
+
+    let check = check_temporal_facts();
+    assert_eq!(check.icon(), "ok");
+    assert!(
+        check.detail.contains("1 memory fact(s) available"),
+        "{}",
+        check.detail
+    );
     Ok(())
 }
 

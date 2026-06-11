@@ -167,6 +167,56 @@ pub(super) fn check_raw_archive_ingest() -> Check {
     }
 }
 
+pub(super) fn check_temporal_facts() -> Check {
+    let conn = match db::open_db_read_only() {
+        Ok(conn) => conn,
+        Err(_) => {
+            return Check {
+                name: "Temporal facts",
+                status: Status::Warn,
+                detail: "cannot open database".to_string(),
+            };
+        }
+    };
+
+    let stats = match db::query_memory_facts_stats(&conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check {
+                name: "Temporal facts",
+                status: Status::Warn,
+                detail: format!("cannot load fact stats: {}", err),
+            };
+        }
+    };
+
+    if !stats.table_exists {
+        return Check {
+            name: "Temporal facts",
+            status: Status::Ok,
+            detail: "memory_facts table not present; temporal retrieval uses created_at fallback"
+                .to_string(),
+        };
+    }
+
+    if stats.total == 0 {
+        return Check {
+            name: "Temporal facts",
+            status: Status::Warn,
+            detail: "temporal retrieval can read memory_facts, but the table is empty; production fact extraction is not populating event-time facts yet".to_string(),
+        };
+    }
+
+    Check {
+        name: "Temporal facts",
+        status: Status::Ok,
+        detail: format!(
+            "{} memory fact(s) available for event-time retrieval",
+            stats.total
+        ),
+    }
+}
+
 pub(super) fn check_worker_daemon() -> Check {
     let conn = match db::open_db_read_only() {
         Ok(conn) => conn,

@@ -44,6 +44,12 @@ pub struct SystemStats {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryFactsStats {
+    pub table_exists: bool,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyActivityStats {
     pub memories: i64,
     pub observations: i64,
@@ -193,6 +199,19 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         worker_daemon_healthy,
         worker_heartbeat_owner: worker_heartbeat.map(|heartbeat| heartbeat.owner),
         worker_heartbeat_age_secs,
+    })
+}
+
+pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
+    let table_exists = table_exists(conn, "memory_facts")?;
+    let total = if table_exists {
+        conn.query_row("SELECT COUNT(*) FROM memory_facts", [], |row| row.get(0))?
+    } else {
+        0
+    };
+    Ok(MemoryFactsStats {
+        table_exists,
+        total,
     })
 }
 

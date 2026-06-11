@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use super::database::{
     check_database, check_disk_space, check_pending_queue, check_raw_archive_ingest,
-    check_worker_daemon,
+    check_temporal_facts, check_worker_daemon,
 };
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::native_memory::check_native_memory_sync;
@@ -55,6 +55,7 @@ fn collect_checks() -> Vec<Check> {
     checks.extend(check_hooks());
     checks.extend(check_mcp());
     checks.push(check_raw_archive_ingest());
+    checks.push(check_temporal_facts());
     checks.push(check_worker_daemon());
     checks.push(check_pending_queue());
     checks.push(check_native_memory_sync());
