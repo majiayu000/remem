@@ -610,16 +610,19 @@ fn has_conservative_support_token_overlap(candidate_text: &str, observation_text
     if candidate_tokens.len() < MIN_SUPPORT_TOKEN_OVERLAP {
         return false;
     }
-    let observation_tokens = support_tokens(observation_text);
-    let Some((matched, start, end)) =
-        ordered_support_window(&candidate_tokens, &observation_tokens)
-    else {
-        return false;
-    };
-    let window_len = end.saturating_sub(start) + 1;
-    matched >= MIN_SUPPORT_TOKEN_OVERLAP
-        && (matched as f64 / candidate_tokens.len() as f64) >= MIN_SUPPORT_TOKEN_RATIO
-        && window_len <= candidate_tokens.len() + MAX_SUPPORT_TOKEN_WINDOW_EXTRA
+    support_token_segments(observation_text)
+        .into_iter()
+        .any(|observation_tokens| {
+            let Some((matched, start, end)) =
+                ordered_support_window(&candidate_tokens, &observation_tokens)
+            else {
+                return false;
+            };
+            let window_len = end.saturating_sub(start) + 1;
+            matched >= MIN_SUPPORT_TOKEN_OVERLAP
+                && (matched as f64 / candidate_tokens.len() as f64) >= MIN_SUPPORT_TOKEN_RATIO
+                && window_len <= candidate_tokens.len() + MAX_SUPPORT_TOKEN_WINDOW_EXTRA
+        })
 }
 
 fn ordered_support_window(
@@ -649,6 +652,58 @@ fn support_tokens(text: &str) -> Vec<String> {
         .filter(|token| !is_support_stop_token(token))
         .map(normalize_support_token)
         .collect()
+}
+
+fn support_token_segments(text: &str) -> Vec<Vec<String>> {
+    let mut segments = Vec::new();
+    let mut current = Vec::new();
+    let mut token = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            token.push(ch.to_ascii_lowercase());
+            continue;
+        }
+        flush_support_segment_token(&mut token, &mut current, &mut segments);
+        if is_support_clause_boundary_char(ch) {
+            finish_support_segment(&mut current, &mut segments);
+        }
+    }
+    flush_support_segment_token(&mut token, &mut current, &mut segments);
+    finish_support_segment(&mut current, &mut segments);
+    segments
+}
+
+fn flush_support_segment_token(
+    token: &mut String,
+    current: &mut Vec<String>,
+    segments: &mut Vec<Vec<String>>,
+) {
+    if token.is_empty() {
+        return;
+    }
+    if is_support_clause_boundary_token(token) {
+        finish_support_segment(current, segments);
+    } else if token.chars().count() >= SUPPORT_TOKEN_MIN_CHARS && !is_support_stop_token(token) {
+        current.push(normalize_support_token(token));
+    }
+    token.clear();
+}
+
+fn finish_support_segment(current: &mut Vec<String>, segments: &mut Vec<Vec<String>>) {
+    if !current.is_empty() {
+        segments.push(std::mem::take(current));
+    }
+}
+
+fn is_support_clause_boundary_char(ch: char) -> bool {
+    matches!(ch, '.' | ';' | ':' | '?' | '!')
+}
+
+fn is_support_clause_boundary_token(token: &str) -> bool {
+    matches!(
+        token,
+        "although" | "and" | "but" | "however" | "though" | "whereas" | "while"
+    )
 }
 
 fn normalize_support_token(token: &str) -> String {
