@@ -20,7 +20,7 @@ use apply::{
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
 pub(super) use route::{route_candidate, CandidateRoute};
-use support::has_conservative_support_token_overlap;
+use support::has_conservative_source_support;
 
 const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
@@ -583,8 +583,7 @@ fn is_supported_by_source_observation(
             return false;
         }
         let observation_text = normalize_evidence_text(&observation.text);
-        observation_text.contains(&candidate_text)
-            || has_conservative_support_token_overlap(&candidate_text, &observation_text)
+        has_conservative_source_support(&candidate_text, &observation_text)
     })
 }
 
@@ -645,3 +644,5 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
 pub(super) mod tests;
 #[cfg(test)]
 mod tests_autopromote;
+#[cfg(test)]
+mod tests_autopromote_safety;

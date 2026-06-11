@@ -9,27 +9,20 @@ struct SupportToken {
     required: bool,
 }
 
-#[derive(Clone, Copy)]
-struct SupportWindow {
-    matched: usize,
-    required_matched: usize,
-    start: usize,
-    end: usize,
-}
-
 #[rustfmt::skip]
 const SUPPORT_RISK_TOKENS: &[&str] = &[
     "allow", "allowed", "allows", "cannot", "cant", "could", "couldn", "delete", "deleted",
     "deletes", "deny", "denied", "denies", "didn", "disable", "disabled", "disables", "doesn", "don",
-    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "hadn", "hasn",
+    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "failure", "failures", "hadn", "hasn",
     "haven", "if", "ignore", "ignored", "ignores", "isn", "may", "might", "must", "never",
-    "no", "not", "prevent", "prevented", "prevents", "reject", "rejected", "rejects",
-    "remove", "removed", "removes", "should", "shouldn", "skip", "skipped", "skips",
-    "succeed", "succeeded", "succeeds", "success", "unless", "wasn", "weren", "without",
+    "no", "not", "pass", "passed", "passes", "passing", "plan", "planned", "planning", "plans",
+    "prevent", "prevented", "prevents", "reject", "rejected", "rejects",
+    "remove", "removed", "removes", "shall", "should", "shouldn", "skip", "skipped", "skips",
+    "succeed", "succeeded", "succeeds", "success", "unless", "wasn", "weren", "will", "without",
     "won", "wouldn",
 ];
 
-pub(super) fn has_conservative_support_token_overlap(
+pub(super) fn has_conservative_source_support(
     candidate_text: &str,
     observation_text: &str,
 ) -> bool {
@@ -37,6 +30,11 @@ pub(super) fn has_conservative_support_token_overlap(
     {
         return false;
     }
+    observation_text.contains(candidate_text)
+        || has_conservative_support_token_overlap(candidate_text, observation_text)
+}
+
+fn has_conservative_support_token_overlap(candidate_text: &str, observation_text: &str) -> bool {
     let candidate_tokens = support_tokens(candidate_text);
     if candidate_tokens.len() < MIN_SUPPORT_TOKEN_OVERLAP {
         return false;
@@ -48,21 +46,18 @@ pub(super) fn has_conservative_support_token_overlap(
     support_token_segments(observation_text)
         .into_iter()
         .any(|observation_tokens| {
-            ordered_support_window(&candidate_tokens, &observation_tokens).is_some_and(|window| {
-                window.matched >= MIN_SUPPORT_TOKEN_OVERLAP
-                    && window.required_matched == candidate_required
-                    && (window.matched as f64 / candidate_tokens.len() as f64)
-                        >= MIN_SUPPORT_TOKEN_RATIO
-            })
+            has_ordered_support_window(&candidate_tokens, &observation_tokens, candidate_required)
         })
 }
 
-fn ordered_support_window(
+fn has_ordered_support_window(
     candidate_tokens: &[SupportToken],
     observation_tokens: &[SupportToken],
-) -> Option<SupportWindow> {
-    let first_candidate = candidate_tokens.first()?;
-    let mut best = None;
+    candidate_required: usize,
+) -> bool {
+    let Some(first_candidate) = candidate_tokens.first() else {
+        return false;
+    };
     for (candidate_start, observation) in observation_tokens.iter().enumerate() {
         if observation.text != first_candidate.text {
             continue;
@@ -91,23 +86,14 @@ fn ordered_support_window(
         }
         let window_len = end.saturating_sub(candidate_start) + 1;
         if window_len <= candidate_tokens.len() + MAX_SUPPORT_TOKEN_WINDOW_EXTRA
-            && best
-                .map(|best| is_better_support_window(matched, candidate_start, end, best))
-                .unwrap_or(true)
+            && matched >= MIN_SUPPORT_TOKEN_OVERLAP
+            && required_matched == candidate_required
+            && (matched as f64 / candidate_tokens.len() as f64) >= MIN_SUPPORT_TOKEN_RATIO
         {
-            best = Some(SupportWindow {
-                matched,
-                required_matched,
-                start: candidate_start,
-                end,
-            });
+            return true;
         }
     }
-    best
-}
-
-fn is_better_support_window(matched: usize, start: usize, end: usize, best: SupportWindow) -> bool {
-    matched > best.matched || (matched == best.matched && end - start < best.end - best.start)
+    false
 }
 
 fn support_tokens(text: &str) -> Vec<SupportToken> {
@@ -187,21 +173,40 @@ fn support_token(token: &str) -> Option<SupportToken> {
     if is_support_stop_token(token) {
         return None;
     }
-    let required = is_required_support_identifier(token);
-    if !required && token.chars().count() < SUPPORT_TOKEN_MIN_CHARS {
+    let required_identifier = is_required_support_identifier(token);
+    if !required_identifier && token.chars().count() < SUPPORT_TOKEN_MIN_CHARS {
         return None;
     }
+    let text = normalize_support_token(token);
     Some(SupportToken {
-        text: normalize_support_token(token),
-        required,
+        required: required_identifier || !is_optional_support_token(&text),
+        text,
     })
 }
 
 fn is_required_support_identifier(token: &str) -> bool {
     matches!(
         token,
-        "api" | "cli" | "db" | "jwt" | "llm" | "mcp" | "sql" | "ssh" | "ssl" | "tls" | "ui"
+        "aes"
+            | "api"
+            | "cli"
+            | "db"
+            | "jwt"
+            | "kms"
+            | "llm"
+            | "mcp"
+            | "rsa"
+            | "s3"
+            | "sql"
+            | "ssh"
+            | "ssl"
+            | "tls"
+            | "ui"
     )
+}
+
+fn is_optional_support_token(token: &str) -> bool {
+    matches!(token, "review")
 }
 
 fn normalize_support_token(token: &str) -> String {

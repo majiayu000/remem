@@ -6,7 +6,7 @@ use crate::db;
 use super::tests::{setup_conn, setup_task};
 use super::{process_with_generator, MemoryCandidateResult};
 
-fn insert_source_observation_typed(
+pub(super) fn insert_source_observation_typed(
     conn: &Connection,
     task: &db::ExtractionTask,
     observation_type: &str,
