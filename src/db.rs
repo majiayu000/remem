@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod capture_drop;
 pub mod core;
 pub mod crypto;
 mod extraction;
@@ -15,6 +16,7 @@ pub mod usage;
 pub mod worker;
 
 pub use capture::*;
+pub use capture_drop::*;
 pub use core::*;
 pub use crypto::*;
 pub use extraction::*;

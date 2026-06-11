@@ -5,6 +5,7 @@ pub mod codex;
 pub(crate) mod common;
 
 /// Normalized event parsed from a hook's raw JSON input.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParsedHookEvent {
     pub session_id: String,
     pub cwd: Option<String>,
@@ -15,6 +16,7 @@ pub struct ParsedHookEvent {
 }
 
 /// Structured event summary extracted from a tool call.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EventSummary {
     pub event_type: String,
     pub summary: String,
