@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use toml_edit::{value, DocumentMut, Item, Table};
 
+#[cfg(test)]
+mod migration_tests;
 mod model;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
@@ -49,6 +51,16 @@ pub struct HostRuntimeConfig {
     pub context_gate: Option<String>,
     pub context_color: bool,
     pub capture_adapter: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyClaudeGateMigration {
+    pub config_path: PathBuf,
+    pub host: String,
+    pub old_gate: Option<String>,
+    pub new_gate: Option<String>,
+    pub changed: bool,
+    pub dry_run: bool,
 }
 
 pub fn config_path() -> PathBuf {
@@ -111,6 +123,33 @@ pub fn set_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
     current[leaf] = cli_value(raw_value);
     write_config_doc(&path, &doc)?;
     Ok(path)
+}
+
+pub fn migrate_legacy_claude_context_gate(dry_run: bool) -> Result<LegacyClaudeGateMigration> {
+    let path = config_path();
+    let mut doc = read_config_doc_or_default()?;
+    ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
+
+    let old_gate = context_gate_from_doc(&doc, CLAUDE_HOST);
+    let changed = old_gate
+        .as_deref()
+        .is_some_and(|gate| gate.eq_ignore_ascii_case("off"));
+
+    if changed {
+        set_host_context_gate(&mut doc, CLAUDE_HOST, "auto")?;
+        if !dry_run {
+            write_config_doc(&path, &doc)?;
+        }
+    }
+
+    Ok(LegacyClaudeGateMigration {
+        config_path: path,
+        host: CLAUDE_HOST.to_string(),
+        old_gate,
+        new_gate: context_gate_from_doc(&doc, CLAUDE_HOST),
+        changed,
+        dry_run,
+    })
 }
 
 pub fn normalize_host(raw: &str) -> String {
@@ -285,6 +324,24 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
             set_str_if_missing(table, "capture_adapter", host);
         }
     }
+    Ok(())
+}
+
+fn context_gate_from_doc(doc: &DocumentMut, host: &str) -> Option<String> {
+    doc.get("memory_ai")
+        .and_then(Item::as_table)
+        .and_then(|table| table.get("hosts"))
+        .and_then(Item::as_table)
+        .and_then(|hosts| hosts.get(host))
+        .and_then(Item::as_table)
+        .and_then(|table| optional_str(table, "context_gate"))
+}
+
+fn set_host_context_gate(doc: &mut DocumentMut, host: &str, gate: &str) -> Result<()> {
+    let memory_ai = top_table_mut(doc, "memory_ai")?;
+    let hosts = child_table_mut(memory_ai, "hosts")?;
+    let table = child_table_mut(hosts, host)?;
+    table["context_gate"] = value(gate);
     Ok(())
 }
 
