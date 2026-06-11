@@ -3,7 +3,10 @@ use anyhow::Result;
 use crate::db;
 
 use super::native::sync_native_memory;
-use super::spill::{record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event};
+use super::spill::{
+    record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event,
+    SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+};
 
 pub async fn session_init(host: Option<&str>) -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
@@ -77,10 +80,19 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
         return Ok(());
     };
 
+    let content = capture_event_content(&event, &summary);
+    let event_id = db::unique_capture_event_id("tool_result", &content);
     let conn = match db::open_db() {
         Ok(conn) => conn,
         Err(error) => {
-            let path = spill_capture_event(&capture_host, &event, &summary, &error)?;
+            let path = spill_capture_event(
+                &capture_host,
+                &event_id,
+                &event,
+                &summary,
+                SPILL_REASON_DB_OPEN_FAILED,
+                &error,
+            )?;
             crate::log::error(
                 "observe",
                 &format!(
@@ -93,18 +105,79 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
         }
     };
     replay_spilled_capture_events(&conn)?;
-    record_observed_event(&conn, &capture_host, &event, &summary)?;
+    if let Err(error) =
+        record_live_observed_event_with_id(&conn, &capture_host, &event_id, &event, &summary)
+    {
+        let path = spill_capture_event(
+            &capture_host,
+            &event_id,
+            &event,
+            &summary,
+            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+            &error,
+        )?;
+        let spill_path = path.display().to_string();
+        if let Err(drop_error) = crate::db::record_capture_drop(
+            &conn,
+            &crate::db::CaptureDropInput {
+                host: Some(&capture_host),
+                session_id: Some(&event.session_id),
+                project: Some(&event.project),
+                tool_name: Some(&event.tool_name),
+                reason: SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+                detail: Some(&error.to_string()),
+                spill_path: Some(&spill_path),
+                recovered_event_id: None,
+            },
+        ) {
+            crate::log::warn(
+                "observe",
+                &format!("capture persistence drop ledger write failed: {drop_error}"),
+            );
+        }
+        crate::log::error(
+            "observe",
+            &format!(
+                "capture persistence failed; spilled capture event to {}: {}",
+                path.display(),
+                error
+            ),
+        );
+        return Err(error);
+    }
 
     Ok(())
 }
 
-pub(super) fn record_observed_event(
+pub(super) fn record_observed_event_with_id(
     conn: &rusqlite::Connection,
     capture_host: &str,
+    event_id: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> Result<i64> {
-    let capture_event_id = record_capture_event(conn, capture_host, event, summary)?;
+    record_observed_event(conn, capture_host, event_id, event, summary)
+}
+
+fn record_live_observed_event_with_id(
+    conn: &rusqlite::Connection,
+    capture_host: &str,
+    event_id: &str,
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+) -> Result<i64> {
+    record_observed_event(conn, capture_host, event_id, event, summary)
+}
+
+fn record_observed_event(
+    conn: &rusqlite::Connection,
+    capture_host: &str,
+    event_id: &str,
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+) -> Result<i64> {
+    let capture_event_id =
+        record_capture_event_with_id(conn, capture_host, event_id, event, summary)?;
     crate::memory::insert_event(
         conn,
         &event.session_id,
@@ -159,14 +232,50 @@ fn detect_adapter_for_host(
         .or_else(|| crate::adapter::detect_adapter(input))
 }
 
+#[cfg(test)]
 fn record_capture_event(
     conn: &rusqlite::Connection,
     host: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> Result<i64> {
+    let content = capture_event_content(event, summary);
+    let event_id = db::unique_capture_event_id("tool_result", &content);
+    record_capture_event_with_id(conn, host, &event_id, event, summary)
+}
+
+fn record_capture_event_with_id(
+    conn: &rusqlite::Connection,
+    host: &str,
+    event_id: &str,
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+) -> Result<i64> {
+    let content = capture_event_content(event, summary);
+    let outcome = db::record_captured_event_with_id(
+        conn,
+        &db::CaptureEventInput {
+            host,
+            session_id: &event.session_id,
+            project: &event.project,
+            cwd: event.cwd.as_deref(),
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some(&event.tool_name),
+            content: &content,
+            task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
+        },
+        Some(event_id),
+    )?;
+    Ok(outcome.event_row_id)
+}
+
+fn capture_event_content(
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+) -> String {
     let git_branch = event.cwd.as_deref().and_then(db::detect_git_branch);
-    let content = serde_json::json!({
+    serde_json::json!({
         "summary": &summary.summary,
         "event_type": &summary.event_type,
         "detail": summary.detail.as_deref(),
@@ -183,22 +292,7 @@ fn record_capture_event(
             .map(crate::adapter::common::redact_sensitive_value),
         "git_branch": git_branch.as_deref(),
     })
-    .to_string();
-    let outcome = db::record_captured_event(
-        conn,
-        &db::CaptureEventInput {
-            host,
-            session_id: &event.session_id,
-            project: &event.project,
-            cwd: event.cwd.as_deref(),
-            event_type: "tool_result",
-            role: None,
-            tool_name: Some(&event.tool_name),
-            content: &content,
-            task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
-        },
-    )?;
-    Ok(outcome.event_row_id)
+    .to_string()
 }
 
 fn event_skip_reason(
@@ -249,7 +343,11 @@ mod tests {
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{event_skip_reason, observe_input, record_capture_event, session_init_event};
+    use super::super::spill::spill_capture_event;
+    use super::{
+        event_skip_reason, observe_input, record_capture_event, session_init_event,
+        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+    };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -425,5 +523,192 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&project_dir);
         test_result
+    }
+
+    #[tokio::test]
+    async fn observe_appends_legacy_events_for_identical_normal_events() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("observe-identical-normal-events");
+        let project_dir = std::env::temp_dir().join(format!(
+            "remem-observe-duplicates-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&project_dir)?;
+        let input = serde_json::json!({
+            "session_id": "sess-identical-normal",
+            "cwd": project_dir,
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/lib.rs"},
+            "tool_response": {"content": "edited"}
+        })
+        .to_string();
+
+        let test_result = async {
+            observe_input(&input, Some("claude-code")).await?;
+            observe_input(&input, Some("claude-code")).await?;
+
+            let conn = db::open_db()?;
+            let captured_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM captured_events WHERE session_id = 'sess-identical-normal'",
+                [],
+                |row| row.get(0),
+            )?;
+            let legacy_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id = 'sess-identical-normal'",
+                [],
+                |row| row.get(0),
+            )?;
+
+            anyhow::ensure!(captured_count == 2, "expected two captured events");
+            anyhow::ensure!(legacy_count == 2, "expected two legacy events");
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        std::fs::remove_dir_all(&project_dir)?;
+        test_result
+    }
+
+    #[tokio::test]
+    async fn observe_spills_persistence_failure_and_replays_capture_once() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("observe-persist-failure-spill");
+        let failing_input = serde_json::json!({
+            "session_id": "sess-persist-fail",
+            "cwd": "/tmp/remem",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/lib.rs"},
+            "tool_response": {"content": "edited"}
+        })
+        .to_string();
+
+        let conn = db::open_db()?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_events_insert
+             BEFORE INSERT ON events
+             BEGIN
+                 SELECT RAISE(FAIL, 'events blocked');
+             END;",
+        )?;
+        drop(conn);
+
+        let err = observe_input(&failing_input, Some("claude-code"))
+            .await
+            .expect_err("event insert failure should spill");
+        assert!(err.to_string().contains("events blocked"), "{err}");
+        assert!(crate::db::data_dir().join("capture-spill.jsonl").exists());
+
+        let conn = db::open_db()?;
+        let partial_captures: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        let partial_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(partial_captures, 1);
+        assert_eq!(partial_events, 0);
+        let partial_drop: (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COUNT(recovered_event_id)
+             FROM capture_drop_events
+             WHERE session_id = 'sess-persist-fail'
+               AND reason = 'capture_persistence_failed'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let partial_stats = db::query_system_stats(&conn)?;
+        assert_eq!(partial_drop, (1, 0));
+        assert_eq!(partial_stats.actionable_capture_drops, 1);
+        assert_eq!(partial_stats.unrecovered_capture_spills, 1);
+        conn.execute_batch("DROP TRIGGER fail_events_insert;")?;
+        drop(conn);
+
+        let replay_trigger = serde_json::json!({
+            "session_id": "sess-replay-trigger",
+            "cwd": "/tmp/remem",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/other.rs"},
+            "tool_response": {"content": "edited"}
+        })
+        .to_string();
+        observe_input(&replay_trigger, Some("claude-code")).await?;
+
+        let conn = db::open_db()?;
+        let replayed_captures: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        let replayed_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(replayed_captures, 1);
+        assert_eq!(replayed_events, 1);
+        let replayed_drop: (String, Option<i64>) = conn.query_row(
+            "SELECT reason, recovered_event_id
+             FROM capture_drop_events
+             WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let replayed_stats = db::query_system_stats(&conn)?;
+        assert_eq!(replayed_drop.0, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED);
+        assert!(replayed_drop.1.is_some());
+        assert_eq!(replayed_stats.actionable_capture_drops, 0);
+        assert_eq!(replayed_stats.unrecovered_capture_spills, 0);
+        assert!(!crate::db::data_dir().join("capture-spill.jsonl").exists());
+
+        let replayed_event_id: String = conn.query_row(
+            "SELECT event_id FROM captured_events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        let replayed_summary = conn.query_row(
+            "SELECT event_type, summary, detail, files, exit_code
+             FROM events
+             WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| {
+                Ok(EventSummary {
+                    event_type: row.get(0)?,
+                    summary: row.get(1)?,
+                    detail: row.get(2)?,
+                    files_json: row.get(3)?,
+                    exit_code: row.get(4)?,
+                })
+            },
+        )?;
+        drop(conn);
+
+        let replayed_event = ParsedHookEvent {
+            session_id: "sess-persist-fail".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Edit".to_string(),
+            tool_input: Some(serde_json::json!({"file_path": "src/lib.rs"})),
+            tool_response: Some(serde_json::json!({"content": "edited"})),
+        };
+        spill_capture_event(
+            "claude-code",
+            &replayed_event_id,
+            &replayed_event,
+            &replayed_summary,
+            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+            &anyhow::anyhow!("retry same partial capture"),
+        )?;
+        observe_input(&replay_trigger, Some("claude-code")).await?;
+
+        let conn = db::open_db()?;
+        let retry_replayed_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(retry_replayed_events, 1);
+        Ok(())
     }
 }
