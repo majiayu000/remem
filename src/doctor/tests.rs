@@ -283,8 +283,8 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
 }
 
 #[test]
-fn check_capture_audit_warns_on_recorded_drops() -> anyhow::Result<()> {
-    let _test_dir = ScopedTestDataDir::new("doctor-capture-audit");
+fn check_capture_audit_stays_ok_for_expected_filter_events() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-audit-expected");
     let conn = db::open_db()?;
     db::record_capture_audit_event(
         &conn,
@@ -303,11 +303,75 @@ fn check_capture_audit_warns_on_recorded_drops() -> anyhow::Result<()> {
 
     let check = check_capture_audit(Some(&conn));
 
-    assert_eq!(check.icon(), "WARN");
-    assert!(check.detail.contains("1 audited drop"), "{}", check.detail);
-    assert!(check.detail.contains("bash_skipped=1"), "{}", check.detail);
+    assert_eq!(check.icon(), "ok");
     assert!(
-        check.detail.contains("codex bash observe disabled"),
+        check.detail.contains("1 expected capture filter event"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_capture_audit_warns_on_actionable_drops() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-audit-actionable");
+    let conn = db::open_db()?;
+    db::record_capture_audit_event(
+        &conn,
+        &db::CaptureAuditInput {
+            host: Some("claude-code"),
+            adapter: Some("claude-code"),
+            session_id: Some("session-a"),
+            project: Some("proj-a"),
+            cwd: Some("proj-a"),
+            tool_name: Some("Edit"),
+            reason: "unclassified",
+            detail: Some("missing file_path"),
+            payload: None,
+        },
+    )?;
+
+    let check = check_capture_audit(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check.detail.contains("1 actionable drop"),
+        "{}",
+        check.detail
+    );
+    assert!(check.detail.contains("unclassified=1"), "{}", check.detail);
+    assert!(
+        check.detail.contains("missing file_path"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_capture_audit_warns_on_adapter_mismatch() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-audit-adapter-mismatch");
+    let conn = db::open_db()?;
+    db::record_capture_audit_event(
+        &conn,
+        &db::CaptureAuditInput {
+            host: Some("codex-cli"),
+            adapter: None,
+            session_id: None,
+            project: None,
+            cwd: None,
+            tool_name: None,
+            reason: "adapter_mismatch",
+            detail: Some("observe hook input did not match a known adapter"),
+            payload: None,
+        },
+    )?;
+
+    let check = check_capture_audit(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check.detail.contains("adapter_mismatch=1"),
         "{}",
         check.detail
     );

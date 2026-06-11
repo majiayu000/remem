@@ -181,9 +181,10 @@ pub fn record_capture_audit_event(conn: &Connection, input: &CaptureAuditInput<'
             )
         })
         .unwrap_or((None, None));
-    let detail = input
-        .detail
-        .map(|detail| crate::db::truncate_str(detail, 512).to_string());
+    let detail = input.detail.map(|detail| {
+        let redacted = redact_capture_content(detail);
+        crate::db::truncate_str(&redacted, 512).to_string()
+    });
 
     conn.execute(
         "INSERT INTO capture_audit_events
@@ -415,9 +416,17 @@ fn exact_hash(content: &str) -> String {
     format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
 }
 
-pub fn stable_capture_event_id(event_type: &str, content: &str) -> String {
+pub fn unique_capture_event_id(event_type: &str, content: &str) -> String {
     let sanitized_content = redact_capture_content(content);
-    format!("{}-{}", event_type, exact_hash(&sanitized_content))
+    let nanos = chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() * 1_000_000_000);
+    format!(
+        "{}-{}-{}",
+        event_type,
+        nanos,
+        exact_hash(&sanitized_content)
+    )
 }
 
 fn synthesize_event_id(event_type: &str, content_hash: &str) -> String {
@@ -431,7 +440,7 @@ fn estimate_tokens(content: &str) -> i64 {
     ((content.len() as i64) + 3) / 4
 }
 
-fn redact_capture_content(content: &str) -> String {
+pub(crate) fn redact_capture_content(content: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
         let redacted = crate::adapter::common::redact_sensitive_value(&value);
         return serde_json::to_string(&redacted)
@@ -722,5 +731,36 @@ mod tests {
         .expect_err("empty reason should fail closed");
 
         assert!(err.to_string().contains("reason must not be empty"));
+    }
+
+    #[test]
+    fn capture_audit_redacts_sensitive_detail() -> Result<()> {
+        let conn = setup_conn();
+
+        let row_id = record_capture_audit_event(
+            &conn,
+            &CaptureAuditInput {
+                host: Some("codex-cli"),
+                adapter: Some("codex-cli"),
+                session_id: Some("sess-audit-detail"),
+                project: Some("/tmp/remem"),
+                cwd: None,
+                tool_name: Some("Bash"),
+                reason: "bash_skipped",
+                detail: Some(
+                    "adapter skipped bash command: curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'",
+                ),
+                payload: None,
+            },
+        )?;
+
+        let detail: String = conn.query_row(
+            "SELECT detail FROM capture_audit_events WHERE id = ?1",
+            params![row_id],
+            |row| row.get(0),
+        )?;
+        assert!(detail.contains("[REDACTED]"));
+        assert!(!detail.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        Ok(())
     }
 }

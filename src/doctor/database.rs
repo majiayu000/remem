@@ -187,17 +187,27 @@ pub(super) fn check_capture_audit(conn: Option<&Connection>) -> Check {
         }
     };
 
-    if stats.capture_audit_events == 0 && spill.pending_files == 0 {
+    let actionable_audit_events = stats
+        .capture_audit_reasons
+        .iter()
+        .filter(|reason| capture_audit_reason_is_actionable(&reason.reason))
+        .map(|reason| reason.total)
+        .sum::<i64>();
+
+    if actionable_audit_events == 0 && spill.pending_files == 0 {
         return Check::new(
             "Capture audit",
             Status::Ok,
-            "no capture drops or spill files",
+            format!(
+                "{} expected capture filter event(s), no actionable drops or spill files",
+                stats.capture_audit_events
+            ),
         );
     }
 
     let mut detail = format!(
-        "{} audited drop(s), {} pending spill file(s), {} spill bytes",
-        stats.capture_audit_events, spill.pending_files, spill.pending_bytes
+        "{} actionable drop(s), {} total audited event(s), {} pending spill file(s), {} spill bytes",
+        actionable_audit_events, stats.capture_audit_events, spill.pending_files, spill.pending_bytes
     );
     if !stats.capture_audit_reasons.is_empty() {
         let reasons = stats
@@ -219,6 +229,10 @@ pub(super) fn check_capture_audit(conn: Option<&Connection>) -> Check {
     }
 
     Check::new("Capture audit", Status::Warn, detail)
+}
+
+fn capture_audit_reason_is_actionable(reason: &str) -> bool {
+    !matches!(reason, "tool_skipped" | "bash_skipped" | "spill_replayed")
 }
 
 pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {

@@ -48,6 +48,7 @@ pub(super) struct ReplayCaptureSpillStats {
 const SPILL_SCHEMA_VERSION: u8 = 1;
 
 pub(super) fn write_capture_spill(
+    event_id: &str,
     host: &str,
     adapter: &str,
     event: &crate::adapter::ParsedHookEvent,
@@ -55,12 +56,18 @@ pub(super) fn write_capture_spill(
     content: &str,
     db_error: &str,
 ) -> Result<CaptureSpillWrite> {
-    let event_id = crate::db::stable_capture_event_id("tool_result", content);
     let now = chrono::Utc::now().timestamp();
+    let redacted_content = crate::db::capture::redact_capture_content(content);
+    let redacted_summary = crate::db::capture::redact_capture_content(&summary.summary);
+    let redacted_detail = summary
+        .detail
+        .as_ref()
+        .map(|detail| crate::db::capture::redact_capture_content(detail));
+    let redacted_error = crate::db::capture::redact_capture_content(db_error);
     let record = CaptureSpillRecord {
         schema_version: SPILL_SCHEMA_VERSION,
         created_at_epoch: now,
-        event_id: event_id.clone(),
+        event_id: event_id.to_string(),
         host: host.to_string(),
         adapter: adapter.to_string(),
         session_id: event.session_id.clone(),
@@ -69,13 +76,13 @@ pub(super) fn write_capture_spill(
         event_type: "tool_result".to_string(),
         role: None,
         tool_name: Some(event.tool_name.clone()),
-        content: content.to_string(),
+        content: redacted_content,
         summary_event_type: summary.event_type.clone(),
-        summary: summary.summary.clone(),
-        summary_detail: summary.detail.clone(),
+        summary: redacted_summary,
+        summary_detail: redacted_detail,
         summary_files_json: summary.files_json.clone(),
         summary_exit_code: summary.exit_code,
-        db_error: crate::db::truncate_str(db_error, 512).to_string(),
+        db_error: crate::db::truncate_str(&redacted_error, 512).to_string(),
     };
     let dir = capture_spill_dir();
     std::fs::create_dir_all(&dir)
@@ -83,12 +90,22 @@ pub(super) fn write_capture_spill(
     let path = dir.join(format!(
         "observe-{}-{}.json",
         now,
-        sanitize_file_component(&event_id)
+        sanitize_file_component(event_id)
     ));
     let bytes = serde_json::to_vec_pretty(&record)?;
-    std::fs::write(&path, bytes)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(&bytes)
+        })
         .with_context(|| format!("write capture spill {}", path.display()))?;
-    Ok(CaptureSpillWrite { path, event_id })
+    Ok(CaptureSpillWrite {
+        path,
+        event_id: event_id.to_string(),
+    })
 }
 
 pub(crate) fn capture_spill_stats() -> Result<CaptureSpillStats> {
@@ -325,7 +342,9 @@ mod tests {
         })
         .to_string();
 
+        let event_id = db::unique_capture_event_id("tool_result", &content);
         let written = write_capture_spill(
+            &event_id,
             "claude-code",
             "claude-code",
             &event,
@@ -352,6 +371,109 @@ mod tests {
         assert_eq!(captured, 1);
         assert_eq!(events, 1);
         assert_eq!(replayed, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_identical_spills_get_distinct_files() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-distinct");
+        let event = ParsedHookEvent {
+            session_id: "sess-spill-distinct".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Edit".to_string(),
+            tool_input: Some(serde_json::json!({ "file_path": "src/lib.rs" })),
+            tool_response: None,
+        };
+        let summary = EventSummary {
+            event_type: "file_edit".to_string(),
+            summary: "Edit src/lib.rs".to_string(),
+            detail: None,
+            files_json: Some(r#"["src/lib.rs"]"#.to_string()),
+            exit_code: None,
+        };
+        let content = serde_json::json!({
+            "summary": summary.summary,
+            "tool_name": event.tool_name,
+            "tool_input": event.tool_input,
+        })
+        .to_string();
+
+        let first_id = db::unique_capture_event_id("tool_result", &content);
+        let second_id = db::unique_capture_event_id("tool_result", &content);
+        let first = write_capture_spill(
+            &first_id,
+            "claude-code",
+            "claude-code",
+            &event,
+            &summary,
+            &content,
+            "db",
+        )?;
+        let second = write_capture_spill(
+            &second_id,
+            "claude-code",
+            "claude-code",
+            &event,
+            &summary,
+            &content,
+            "db",
+        )?;
+
+        assert_ne!(first.event_id, second.event_id);
+        assert_ne!(first.path, second.path);
+        assert_eq!(capture_spill_stats()?.pending_files, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_spill_redacts_free_form_fields() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-redacts");
+        let event = ParsedHookEvent {
+            session_id: "sess-spill-redact".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: Some(serde_json::json!({
+                "command": "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'"
+            })),
+            tool_response: Some(serde_json::json!({
+                "stderr": "password=hunter2"
+            })),
+        };
+        let summary = EventSummary {
+            event_type: "bash".to_string(),
+            summary: "Run `curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'`"
+                .to_string(),
+            detail: Some("password=hunter2".to_string()),
+            files_json: None,
+            exit_code: Some(1),
+        };
+        let content = serde_json::json!({
+            "summary": summary.summary,
+            "detail": summary.detail,
+            "tool_name": event.tool_name,
+            "tool_input": event.tool_input,
+            "tool_response": event.tool_response,
+        })
+        .to_string();
+        let event_id = db::unique_capture_event_id("tool_result", &content);
+
+        let written = write_capture_spill(
+            &event_id,
+            "codex-cli",
+            "codex-cli",
+            &event,
+            &summary,
+            &content,
+            "database token=github_pat_secret",
+        )?;
+        let stored = std::fs::read_to_string(written.path)?;
+
+        assert!(stored.contains("[REDACTED]"));
+        assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        assert!(!stored.contains("hunter2"));
+        assert!(!stored.contains("github_pat_secret"));
         Ok(())
     }
 }

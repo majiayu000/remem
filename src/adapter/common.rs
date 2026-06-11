@@ -423,6 +423,10 @@ fn redact_token(token: &str) -> &str {
         || trimmed.starts_with("ghp_")
         || trimmed.starts_with("github_pat_")
         || trimmed.starts_with("xoxb-")
+        || trimmed.contains("sk-")
+        || trimmed.contains("ghp_")
+        || trimmed.contains("github_pat_")
+        || trimmed.contains("xoxb-")
         || (trimmed.len() >= 32
             && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
             && trimmed.chars().any(|ch| ch.is_ascii_digit()))
