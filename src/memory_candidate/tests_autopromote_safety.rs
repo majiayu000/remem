@@ -158,3 +158,132 @@ async fn memory_candidate_keeps_future_tense_observation_pending() -> Result<()>
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn memory_candidate_keeps_exact_future_tense_candidate_pending() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-exact-future-tense")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The ingestion worker will persist durable memory candidates from summarized observations.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-exact-future-tense</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>The ingestion worker will persist durable memory candidates from summarized observations.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let (review_status, block_reason): (String, Option<String>) = conn.query_row(
+        "SELECT review_status, auto_promote_block_reason FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(
+        block_reason.as_deref(),
+        Some("no_supporting_source_observation")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_requires_support_for_short_security_modifiers() -> Result<()> {
+    for modifier in ["AES", "KMS", "RSA", "S3"] {
+        assert_short_security_modifier_pending(modifier).await?;
+    }
+    Ok(())
+}
+
+async fn assert_short_security_modifier_pending(modifier: &str) -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(
+        &mut conn,
+        &format!(
+            "sess-candidate-short-security-modifier-{}",
+            modifier.to_ascii_lowercase()
+        ),
+    )?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "API gateway stores JWT auth keys inside the Redis cache layer for operator login flows.",
+    )?;
+
+    let topic_key = format!("discovery-{}-jwt-cache", modifier.to_ascii_lowercase());
+    let response = format!(
+        "<memory_candidate><scope>project</scope><type>discovery</type><topic_key>{topic_key}</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>API gateway stores {modifier} JWT auth keys in Redis cache layer.</text></memory_candidate>"
+    );
+    let result = process_with_generator(&mut conn, &task, |_prompt| async { Ok(response) }).await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let (review_status, block_reason): (String, Option<String>) = conn.query_row(
+        "SELECT review_status, auto_promote_block_reason FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(
+        block_reason.as_deref(),
+        Some("no_supporting_source_observation")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_auto_promotes_later_required_support_window() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-later-required-window")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The worker lifecycle records auto promote block reasons in memory candidate review notes, the worker lifecycle records auto promote block reasons in memory candidate diagnostics.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-later-required-window</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Worker lifecycle records auto promote block reasons for memory candidate review diagnostics.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "auto_promoted");
+    Ok(())
+}
