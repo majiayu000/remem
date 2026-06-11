@@ -13,7 +13,7 @@ struct SupportToken {
 const SUPPORT_RISK_TOKENS: &[&str] = &[
     "allow", "allowed", "allows", "cannot", "cant", "could", "couldn", "delete", "deleted",
     "deletes", "deny", "denied", "denies", "didn", "disable", "disabled", "disables", "doesn", "don",
-    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "failure", "failures", "hadn", "hasn",
+    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "hadn", "hasn",
     "haven", "if", "ignore", "ignored", "ignores", "isn", "may", "might", "must", "never",
     "no", "not", "pass", "passed", "passes", "passing", "plan", "planned", "planning", "plans",
     "prevent", "prevented", "prevents", "reject", "rejected", "rejects",
@@ -26,12 +26,17 @@ pub(super) fn has_conservative_source_support(
     candidate_text: &str,
     observation_text: &str,
 ) -> bool {
-    if contains_support_risk_token(candidate_text) || contains_support_risk_token(observation_text)
-    {
+    if contains_support_risk_token(candidate_text) {
         return false;
     }
-    observation_text.contains(candidate_text)
+    has_conservative_exact_support(candidate_text, observation_text)
         || has_conservative_support_token_overlap(candidate_text, observation_text)
+}
+
+fn has_conservative_exact_support(candidate_text: &str, observation_text: &str) -> bool {
+    support_sentence_segments(observation_text)
+        .into_iter()
+        .any(|segment| !contains_support_risk_token(&segment) && segment.contains(candidate_text))
 }
 
 fn has_conservative_support_token_overlap(candidate_text: &str, observation_text: &str) -> bool {
@@ -43,11 +48,25 @@ fn has_conservative_support_token_overlap(candidate_text: &str, observation_text
         .iter()
         .filter(|token| token.required)
         .count();
-    support_token_segments(observation_text)
+    support_text_segments(observation_text)
         .into_iter()
-        .any(|observation_tokens| {
-            has_ordered_support_window(&candidate_tokens, &observation_tokens, candidate_required)
+        .any(|segment| {
+            !contains_support_risk_token(&segment)
+                && has_conservative_support_token_overlap_segment(
+                    &candidate_tokens,
+                    &segment,
+                    candidate_required,
+                )
         })
+}
+
+fn has_conservative_support_token_overlap_segment(
+    candidate_tokens: &[SupportToken],
+    observation_text: &str,
+    candidate_required: usize,
+) -> bool {
+    let observation_tokens = support_tokens(observation_text);
+    has_ordered_support_window(candidate_tokens, &observation_tokens, candidate_required)
 }
 
 fn has_ordered_support_window(
@@ -102,49 +121,69 @@ fn support_tokens(text: &str) -> Vec<SupportToken> {
         .collect()
 }
 
-fn support_token_segments(text: &str) -> Vec<Vec<SupportToken>> {
+fn support_sentence_segments(text: &str) -> Vec<String> {
     let mut segments = Vec::new();
-    let mut current = Vec::new();
-    let mut token = String::new();
-    for ch in text.chars() {
-        if ch.is_ascii_alphanumeric() {
-            token.push(ch.to_ascii_lowercase());
-            continue;
-        }
-        flush_support_segment_token(&mut token, &mut current, &mut segments);
-        if is_support_clause_boundary_char(ch) {
-            finish_support_segment(&mut current, &mut segments);
+    let mut segment_start = 0;
+    for (index, ch) in text.char_indices() {
+        if is_support_sentence_boundary_char(ch) {
+            push_support_text_segment(text, segment_start, index + ch.len_utf8(), &mut segments);
+            segment_start = index + ch.len_utf8();
         }
     }
-    flush_support_segment_token(&mut token, &mut current, &mut segments);
-    finish_support_segment(&mut current, &mut segments);
+    push_support_text_segment(text, segment_start, text.len(), &mut segments);
     segments
 }
 
-fn flush_support_segment_token(
-    token: &mut String,
-    current: &mut Vec<SupportToken>,
-    segments: &mut Vec<Vec<SupportToken>>,
-) {
-    if token.is_empty() {
-        return;
+fn support_text_segments(text: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut segment_start = 0;
+    let mut token_start = None;
+    for (index, ch) in text.char_indices() {
+        if ch.is_ascii_alphanumeric() {
+            if token_start.is_none() {
+                token_start = Some(index);
+            }
+        } else {
+            if let Some(start) = token_start.take() {
+                let token = text[start..index].to_ascii_lowercase();
+                if is_support_clause_boundary_token(&token) {
+                    push_support_text_segment(text, segment_start, start, &mut segments);
+                    segment_start = index + ch.len_utf8();
+                }
+            }
+            if is_support_clause_boundary_char(ch) {
+                push_support_text_segment(text, segment_start, index, &mut segments);
+                segment_start = index + ch.len_utf8();
+            }
+        }
     }
-    if is_support_clause_boundary_token(token) {
-        finish_support_segment(current, segments);
-    } else if let Some(token) = support_token(token) {
-        current.push(token);
+    if let Some(start) = token_start {
+        let token = text[start..].to_ascii_lowercase();
+        if is_support_clause_boundary_token(&token) {
+            push_support_text_segment(text, segment_start, start, &mut segments);
+            segment_start = text.len();
+        }
     }
-    token.clear();
+    push_support_text_segment(text, segment_start, text.len(), &mut segments);
+    segments
 }
 
-fn finish_support_segment(current: &mut Vec<SupportToken>, segments: &mut Vec<Vec<SupportToken>>) {
-    if !current.is_empty() {
-        segments.push(std::mem::take(current));
+fn push_support_text_segment(text: &str, start: usize, end: usize, segments: &mut Vec<String>) {
+    if start >= end {
+        return;
+    }
+    let segment = text[start..end].trim();
+    if !segment.is_empty() {
+        segments.push(segment.to_string());
     }
 }
 
 fn is_support_clause_boundary_char(ch: char) -> bool {
     matches!(ch, '.' | ';' | ':' | '?' | '!')
+}
+
+fn is_support_sentence_boundary_char(ch: char) -> bool {
+    matches!(ch, '.' | ';' | '?' | '!')
 }
 
 fn is_support_clause_boundary_token(token: &str) -> bool {

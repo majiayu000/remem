@@ -45,6 +45,76 @@ async fn memory_candidate_keeps_failure_pass_polarity_pending() -> Result<()> {
 }
 
 #[tokio::test]
+async fn memory_candidate_auto_promotes_exact_fact_with_unrelated_risk_segment() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-unrelated-risk-segment")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "No migration is needed. The extraction worker uses one writer SQLite connection for memory writes.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-exact-supported-risk-segment</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>The extraction worker uses one writer SQLite connection for memory writes.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "auto_promoted");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_auto_promotes_exact_failure_diagnostic_fact() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-exact-failure-diagnostic")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "Source evidence validation failures are visible in memory candidate diagnostics.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-exact-failure-diagnostic</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Source evidence validation failures are visible in memory candidate diagnostics.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "auto_promoted");
+    Ok(())
+}
+
+#[tokio::test]
 async fn memory_candidate_requires_support_for_security_modifier() -> Result<()> {
     let mut conn = setup_conn();
     let task = setup_task(&mut conn, "sess-candidate-security-modifier")?;
