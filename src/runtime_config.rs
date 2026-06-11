@@ -268,7 +268,7 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
         }
         CLAUDE_HOST => {
             set_str_if_missing(table, "memory_profile", "claude");
-            set_str_if_missing(table, "context_gate", "off");
+            set_str_if_missing(table, "context_gate", "auto");
             set_bool_if_missing(table, "context_color", true);
             set_str_if_missing(table, "capture_adapter", CLAUDE_HOST);
         }
@@ -552,6 +552,107 @@ mod tests {
             assert_eq!(host.capture_adapter, CODEX_HOST);
         });
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn claude_host_defaults_to_context_gate_auto() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context");
+        with_config_path(&path, || -> Result<()> {
+            init_config()?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("auto"));
+            assert!(host.context_color);
+            assert_eq!(host.capture_adapter, CLAUDE_HOST);
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn init_config_preserves_explicit_claude_context_gate_off() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context-init-explicit-off");
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(
+                &path,
+                "[memory_ai.hosts.claude-code]\nmemory_profile = \"claude\"\ncontext_gate = \"off\"\n",
+            )?;
+            init_config()?;
+            let text = std::fs::read_to_string(&path)?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("off"));
+            assert!(text.contains("context_gate = \"off\""), "{text}");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn ensure_config_for_hosts_preserves_explicit_claude_context_gate_off() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context-ensure-explicit-off");
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(
+                &path,
+                "[memory_ai.hosts.claude-code]\nmemory_profile = \"claude\"\ncontext_gate = \"off\"\n",
+            )?;
+            ensure_config_for_hosts(&[CLAUDE_HOST])?;
+            let text = std::fs::read_to_string(&path)?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("off"));
+            assert!(text.contains("context_gate = \"off\""), "{text}");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn unrelated_config_set_preserves_explicit_claude_context_gate_off() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context-set-explicit-off");
+        with_config_path(&path, || -> Result<()> {
+            init_config()?;
+            set_config_value("memory_ai.hosts.claude-code.context_gate", "off")?;
+            set_config_value("memory_ai.profiles.codex.model", "custom-mini")?;
+            let text = std::fs::read_to_string(&path)?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+            let profile = resolve_memory_ai_profile(MemoryAiSelection {
+                host: Some(CODEX_HOST),
+                profile: None,
+            })?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("off"));
+            assert_eq!(profile.model.as_deref(), Some("custom-mini"));
+            assert!(text.contains("context_gate = \"off\""), "{text}");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn claude_host_resolve_preserves_explicit_context_gate_off() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context-explicit-off");
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(
+                &path,
+                "[memory_ai.hosts.claude-code]\nmemory_profile = \"claude\"\ncontext_gate = \"off\"\n",
+            )?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("off"));
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 
     #[test]
