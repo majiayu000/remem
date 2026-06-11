@@ -1,7 +1,12 @@
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use toml_edit::DocumentMut;
 
+use super::hook_validation::{
+    event_has_expected_remem_hook, event_has_remem_subcommand_hook, expected_hook_command,
+    expected_hook_events, expected_hook_executable_from_hooks, extract_remem_command_path,
+    hook_command_strings,
+};
 use super::types::{Check, Status};
 
 pub(super) fn check_binary() -> Check {
@@ -161,12 +166,18 @@ fn probe_hooks(probe: HostProbe) -> Check {
     };
 
     let events = expected_hook_events(probe.name);
+    let expected_executable = expected_hook_executable(&doc, &probe);
     let found = events
         .iter()
-        .filter(|event| event_has_remem_hook(&doc, event))
+        .filter(|event| {
+            expected_executable
+                .as_deref()
+                .and_then(|executable| expected_hook_command(probe.name, event, executable))
+                .is_some_and(|expected| event_has_expected_remem_hook(&doc, event, expected))
+        })
         .count();
     let deprecated_codex_observe =
-        probe.name == "codex" && event_has_remem_observe_hook(&doc, "PostToolUse");
+        probe.name == "codex" && event_has_remem_subcommand_hook(&doc, "PostToolUse", "observe");
     let legacy_policy = has_legacy_hook_policy(&doc);
 
     if found == events.len() {
@@ -290,19 +301,6 @@ fn display_mcp_paths(paths: &[PathBuf]) -> String {
         .join(" or ")
 }
 
-fn expected_hook_events(host: &str) -> &'static [&'static str] {
-    match host {
-        "codex" => &["SessionStart", "Stop"],
-        _ => &[
-            "PostToolUse",
-            "PreCompact",
-            "Stop",
-            "SessionStart",
-            "UserPromptSubmit",
-        ],
-    }
-}
-
 fn probe_mcp_path<'a>(
     host: &str,
     path: &'a PathBuf,
@@ -349,6 +347,13 @@ fn configured_mcp_paths(probe: &HostProbe) -> Vec<PathBuf> {
     paths
 }
 
+fn expected_hook_executable(doc: &Value, probe: &HostProbe) -> Option<PathBuf> {
+    configured_mcp_paths(probe)
+        .into_iter()
+        .next()
+        .or_else(|| expected_hook_executable_from_hooks(doc, probe.name).map(PathBuf::from))
+}
+
 fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
     let Some(content) = std::fs::read_to_string(path).ok() else {
         return Vec::new();
@@ -378,39 +383,6 @@ fn codex_remem_mcp_command(doc: &DocumentMut) -> Option<&str> {
         .and_then(|command| command.as_str())
 }
 
-fn hook_command_strings(doc: &Value) -> impl Iterator<Item = &str> {
-    doc.get("hooks")
-        .and_then(|hooks| hooks.as_object())
-        .into_iter()
-        .flat_map(|hooks| hooks.values())
-        .filter_map(|entries| entries.as_array())
-        .flatten()
-        .filter_map(|entry| entry.get("hooks").and_then(|hooks| hooks.as_array()))
-        .flatten()
-        .filter_map(|hook| hook.get("command").and_then(|command| command.as_str()))
-}
-
-fn extract_remem_command_path(command: &str) -> Option<&str> {
-    command
-        .split_whitespace()
-        .map(trim_shell_quotes)
-        .find(|token| is_remem_command_token(token))
-}
-
-fn trim_shell_quotes(token: &str) -> &str {
-    token.trim_matches(|c| c == '"' || c == '\'')
-}
-
-fn is_remem_command_token(token: &str) -> bool {
-    if token.contains('=') && !token.contains('/') && !token.contains('\\') {
-        return false;
-    }
-    Path::new(token)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| stem == "remem")
-}
-
 fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut unique = Vec::new();
     for path in paths {
@@ -419,50 +391,6 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
         }
     }
     unique
-}
-
-fn event_has_remem_hook(doc: &Value, event: &str) -> bool {
-    doc.get("hooks")
-        .and_then(|hooks| hooks.get(event))
-        .and_then(|entries| entries.as_array())
-        .into_iter()
-        .flatten()
-        .any(entry_has_remem_hook)
-}
-
-fn entry_has_remem_hook(entry: &Value) -> bool {
-    entry
-        .get("hooks")
-        .and_then(|hooks| hooks.as_array())
-        .into_iter()
-        .flatten()
-        .any(|hook| {
-            hook.get("command")
-                .and_then(|command| command.as_str())
-                .is_some_and(|command| command.contains("remem"))
-        })
-}
-
-fn event_has_remem_observe_hook(doc: &Value, event: &str) -> bool {
-    doc.get("hooks")
-        .and_then(|hooks| hooks.get(event))
-        .and_then(|entries| entries.as_array())
-        .into_iter()
-        .flatten()
-        .any(entry_has_remem_observe_hook)
-}
-
-fn entry_has_remem_observe_hook(entry: &Value) -> bool {
-    entry
-        .get("hooks")
-        .and_then(|hooks| hooks.as_array())
-        .into_iter()
-        .flatten()
-        .any(|hook| {
-            hook.get("command")
-                .and_then(|command| command.as_str())
-                .is_some_and(|command| command.contains("remem") && command.contains(" observe"))
-        })
 }
 
 fn has_legacy_hook_policy(doc: &Value) -> bool {
@@ -510,34 +438,39 @@ mod tests {
     }
 
     #[test]
-    fn probe_hooks_requires_remem_on_each_event() {
+    fn probe_hooks_requires_remem_on_each_event() -> anyhow::Result<()> {
         let dir = temp_path("doctor-hooks");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
             &hooks_path,
             r#"{
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host claude-code" }] }],
     "Stop": [{ "hooks": [{ "command": "other-tool summarize" }] }],
     "PostToolUse": [{ "hooks": [{ "command": "other-tool observe" }] }],
     "UserPromptSubmit": [{ "hooks": [{ "command": "other-tool init" }] }]
   }
 }"#,
-        )
-        .unwrap();
+        )?;
+        let mcp_path = dir.join("claude.json");
+        std::fs::write(
+            &mcp_path,
+            r#"{ "mcpServers": { "remem": { "command": "/tmp/remem" } } }"#,
+        )?;
 
         let check = probe_hooks(HostProbe {
             name: "claude",
             hooks_path,
-            mcp_paths: vec![dir.join("config.toml")],
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Warn));
         assert!(check.detail.contains("1/5 registered"), "{}", check.detail);
+        Ok(())
     }
 
     #[test]
-    fn probe_hooks_accepts_codex_strategy() {
+    fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
         let dir = temp_path("doctor-codex-hooks");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
@@ -548,21 +481,92 @@ mod tests {
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
-        )
-        .unwrap();
+        )?;
+        let missing_mcp_check = probe_hooks(HostProbe {
+            name: "codex",
+            hooks_path: hooks_path.clone(),
+            mcp_paths: vec![dir.join("missing.toml")],
+        });
+        assert!(matches!(missing_mcp_check.status, Status::Ok));
+
+        let mismatched_mcp_path = dir.join("mismatch.toml");
+        std::fs::write(
+            &mismatched_mcp_path,
+            "[mcp_servers.remem]\ncommand = \"/configured/remem\"\n",
+        )?;
+        let mismatched_mcp_check = probe_hooks(HostProbe {
+            name: "codex",
+            hooks_path: hooks_path.clone(),
+            mcp_paths: vec![mismatched_mcp_path],
+        });
+        assert!(matches!(mismatched_mcp_check.status, Status::Fail));
+
+        let mcp_path = dir.join("config.toml");
+        std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
         let check = probe_hooks(HostProbe {
             name: "codex",
             hooks_path,
-            mcp_paths: vec![dir.join("config.toml")],
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Ok));
         assert!(check.detail.contains("2/2 registered"), "{}", check.detail);
+        Ok(())
     }
 
     #[test]
-    fn probe_hooks_warns_on_codex_posttool_observe() {
+    fn probe_hooks_rejects_wrong_remem_subcommands_and_hosts() -> anyhow::Result<()> {
+        let cases = [
+            (
+                "doctor-codex-wrong-subcommands",
+                r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem status --host codex-cli" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }]
+  }
+}"#,
+            ),
+            (
+                "doctor-codex-wrong-hosts",
+                r#"{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host claude-code" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host claude-code" }] }]
+  }
+}"#,
+            ),
+        ];
+
+        for (label, content) in cases {
+            let dir = temp_path(label);
+            let hooks_path = dir.join("hooks.json");
+            std::fs::write(&hooks_path, content)?;
+            let mcp_path = dir.join("config.toml");
+            std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
+
+            let check = probe_hooks(HostProbe {
+                name: "codex",
+                hooks_path,
+                mcp_paths: vec![mcp_path],
+            });
+
+            assert!(
+                matches!(check.status, Status::Fail),
+                "{label}: {}",
+                check.detail
+            );
+            assert!(
+                check.detail.contains("no remem hooks"),
+                "{label}: {}",
+                check.detail
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn probe_hooks_warns_on_codex_posttool_observe() -> anyhow::Result<()> {
         let dir = temp_path("doctor-codex-observe-warning");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
@@ -570,17 +574,18 @@ mod tests {
             r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
-    "PostToolUse": [{ "hooks": [{ "command": "/tmp/remem observe --host codex-cli" }] }],
+    "PostToolUse": [{ "hooks": [{ "command": "/stale/remem observe --host codex-cli" }] }],
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
-        )
-        .unwrap();
+        )?;
+        let mcp_path = dir.join("config.toml");
+        std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
         let check = probe_hooks(HostProbe {
             name: "codex",
             hooks_path,
-            mcp_paths: vec![dir.join("config.toml")],
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Warn));
@@ -589,6 +594,7 @@ mod tests {
             "{}",
             check.detail
         );
+        Ok(())
     }
 
     #[test]
@@ -673,7 +679,7 @@ command = "/mcp/bin/remem"
             extract_remem_command_path(
                 "REMEM_CONTEXT_HOST=codex-cli '/opt/remem/bin/remem' context --color"
             ),
-            Some("/opt/remem/bin/remem")
+            Some("/opt/remem/bin/remem".to_string())
         );
         assert_eq!(extract_remem_command_path("NOTE=remem echo ok"), None);
     }
@@ -717,8 +723,8 @@ command = "/tmp/remem"
             codex_dir.join("hooks.json"),
             r#"{
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context" }] }],
-    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize" }] }]
+    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
+    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
         )
