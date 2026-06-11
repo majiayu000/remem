@@ -60,6 +60,8 @@ jobs:
         run: |
           cd artifacts
           find . -name '*.tar.gz' -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Generate plugin runtime manifest
+        run: python3 scripts/ci/generate_plugin_release_manifest.py "${GITHUB_REF_NAME#v}" artifacts artifacts/remem-releases.json
       - name: Create Release
         uses: softprops/action-gh-release@v3.0.0
         with:
@@ -67,6 +69,7 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/SHA256SUMS
+            artifacts/remem-releases.json
 
   publish-crate:
     needs: release

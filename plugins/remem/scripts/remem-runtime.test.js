@@ -16,6 +16,7 @@ const {
   inspectRuntime,
   managedBinaryPath,
   pluginDataDir,
+  releaseAssetForCurrentPlatform,
   runRememAsync,
   runtimeMetadataPath,
   shouldCodesignRuntime
@@ -126,6 +127,75 @@ test("installRuntime honors no-download fallback", async () => {
       assert.doesNotMatch(error.message, /No checked release asset/);
       return true;
     }
+  );
+});
+
+test("release asset resolver uses release-hosted manifest when local assets are empty", async () => {
+  const fx = fixture();
+  writeJson(path.join(fx.pluginRoot, "runtimes", "remem-releases.json"), {
+    versions: {
+      "0.5.17": {
+        base_url: "https://example.test/remem/releases/download/v0.5.17",
+        assets: {}
+      }
+    }
+  });
+  const sha = "a".repeat(64);
+
+  const asset = await releaseAssetForCurrentPlatform({
+    ...fx,
+    fetchJson: async (url) => {
+      assert.equal(url, "https://example.test/remem/releases/download/v0.5.17/remem-releases.json");
+      return {
+        versions: {
+          "0.5.17": {
+            assets: {
+              "darwin-arm64": { file: "remem-darwin-arm64.tar.gz", sha256: sha },
+              "darwin-x64": { file: "remem-darwin-x64.tar.gz", sha256: sha },
+              "linux-arm64": { file: "remem-linux-arm64.tar.gz", sha256: sha },
+              "linux-x64": { file: "remem-linux-x64.tar.gz", sha256: sha }
+            }
+          }
+        }
+      };
+    }
+  });
+
+  assert.match(asset.file, /^remem-(darwin|linux)-/);
+  assert.equal(asset.sha256, sha);
+  assert.match(asset.url, /^https:\/\/example\.test\/remem\/releases\/download\/v0\.5\.17\/remem-/);
+});
+
+test("release download rejects remote manifest assets without valid checksums", async () => {
+  const fx = fixture();
+  writeJson(path.join(fx.pluginRoot, "runtimes", "remem-releases.json"), {
+    versions: {
+      "0.5.17": {
+        base_url: "https://example.test/remem/releases/download/v0.5.17",
+        assets: {}
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      ensureRuntime({
+        ...fx,
+        allowDownload: true,
+        fetchJson: async () => ({
+          versions: {
+            "0.5.17": {
+              assets: {
+                "linux-x64": { file: "remem-linux-x64.tar.gz", sha256: "not-a-sha" },
+                "linux-arm64": { file: "remem-linux-arm64.tar.gz", sha256: "not-a-sha" },
+                "darwin-x64": { file: "remem-darwin-x64.tar.gz", sha256: "not-a-sha" },
+                "darwin-arm64": { file: "remem-darwin-arm64.tar.gz", sha256: "not-a-sha" }
+              }
+            }
+          }
+        })
+      }),
+    /missing a valid sha256/
   );
 });
 
