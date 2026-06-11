@@ -49,7 +49,12 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
 const MIN_SUPPORT_TOKEN_OVERLAP: usize = 6;
 const MIN_SUPPORT_TOKEN_RATIO: f64 = 0.72;
 const SUPPORT_TOKEN_MIN_CHARS: usize = 4;
-const SUPPORT_RISK_TOKENS: &[&str] = &["never", "no", "not", "without"];
+const SUPPORT_RISK_TOKENS: &[&str] = &[
+    "allow", "allowed", "allows", "delete", "deleted", "deletes", "deny", "denied", "denies",
+    "disable", "disabled", "disables", "enable", "enabled", "enables", "ignore", "ignored",
+    "ignores", "never", "no", "not", "remove", "removed", "removes", "skip", "skipped", "skips",
+    "without",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCandidateResult {
