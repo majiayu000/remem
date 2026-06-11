@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use toml_edit::DocumentMut;
 
 use super::hook_validation::{
-    event_has_expected_remem_hook, event_has_remem_subcommand_hook, extract_remem_command_path,
-    hook_command_strings, ExpectedHookCommand,
+    event_has_expected_remem_hook, event_has_remem_subcommand_hook, expected_hook_command,
+    expected_hook_events, extract_remem_command_path, hook_command_strings, runtime_host,
 };
 use super::types::{Check, Status};
 
@@ -165,20 +165,26 @@ fn probe_hooks(probe: HostProbe) -> Check {
     };
 
     let events = expected_hook_events(probe.name);
+    let expected_executable = expected_hook_executable(&probe);
     let found = events
         .iter()
         .filter(|event| {
-            expected_hook_command(probe.name, event)
+            expected_executable
+                .as_deref()
+                .and_then(|executable| expected_hook_command(probe.name, event, executable))
                 .is_some_and(|expected| event_has_expected_remem_hook(&doc, event, expected))
         })
         .count();
     let deprecated_codex_observe = probe.name == "codex"
-        && event_has_remem_subcommand_hook(
-            &doc,
-            "PostToolUse",
-            "observe",
-            runtime_host(probe.name),
-        );
+        && expected_executable.as_deref().is_some_and(|executable| {
+            event_has_remem_subcommand_hook(
+                &doc,
+                "PostToolUse",
+                executable,
+                "observe",
+                runtime_host(probe.name),
+            )
+        });
     let legacy_policy = has_legacy_hook_policy(&doc);
 
     if found == events.len() {
@@ -302,40 +308,6 @@ fn display_mcp_paths(paths: &[PathBuf]) -> String {
         .join(" or ")
 }
 
-fn expected_hook_events(host: &str) -> &'static [&'static str] {
-    match host {
-        "codex" => &["SessionStart", "Stop"],
-        _ => &[
-            "PostToolUse",
-            "PreCompact",
-            "Stop",
-            "SessionStart",
-            "UserPromptSubmit",
-        ],
-    }
-}
-
-fn runtime_host(host: &str) -> &'static str {
-    match host {
-        "codex" => "codex-cli",
-        _ => "claude-code",
-    }
-}
-
-fn expected_hook_command(host: &str, event: &str) -> Option<ExpectedHookCommand> {
-    let subcommand = match event {
-        "PostToolUse" => "observe",
-        "PreCompact" | "Stop" => "summarize",
-        "SessionStart" => "context",
-        "UserPromptSubmit" => "session-init",
-        _ => return None,
-    };
-    Some(ExpectedHookCommand {
-        subcommand,
-        host: runtime_host(host),
-    })
-}
-
 fn probe_mcp_path<'a>(
     host: &str,
     path: &'a PathBuf,
@@ -380,6 +352,14 @@ fn configured_mcp_paths(probe: &HostProbe) -> Vec<PathBuf> {
         }
     }
     paths
+}
+
+fn expected_hook_executable(probe: &HostProbe) -> Option<PathBuf> {
+    configured_mcp_paths(probe)
+        .into_iter()
+        .next()
+        .or_else(|| std::env::var_os("REMEM_INSTALL_BINARY").map(PathBuf::from))
+        .or_else(|| std::env::current_exe().ok())
 }
 
 fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
@@ -466,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_hooks_requires_remem_on_each_event() {
+    fn probe_hooks_requires_remem_on_each_event() -> anyhow::Result<()> {
         let dir = temp_path("doctor-hooks");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
@@ -479,21 +459,26 @@ mod tests {
     "UserPromptSubmit": [{ "hooks": [{ "command": "other-tool init" }] }]
   }
 }"#,
-        )
-        .unwrap();
+        )?;
+        let mcp_path = dir.join("claude.json");
+        std::fs::write(
+            &mcp_path,
+            r#"{ "mcpServers": { "remem": { "command": "/tmp/remem" } } }"#,
+        )?;
 
         let check = probe_hooks(HostProbe {
             name: "claude",
             hooks_path,
-            mcp_paths: vec![dir.join("config.toml")],
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Warn));
         assert!(check.detail.contains("1/5 registered"), "{}", check.detail);
+        Ok(())
     }
 
     #[test]
-    fn probe_hooks_accepts_codex_strategy() {
+    fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
         let dir = temp_path("doctor-codex-hooks");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
@@ -504,17 +489,19 @@ mod tests {
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
-        )
-        .unwrap();
+        )?;
+        let mcp_path = dir.join("config.toml");
+        std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
         let check = probe_hooks(HostProbe {
             name: "codex",
             hooks_path,
-            mcp_paths: vec![dir.join("config.toml")],
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Ok));
         assert!(check.detail.contains("2/2 registered"), "{}", check.detail);
+        Ok(())
     }
 
     #[test]
@@ -566,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_hooks_warns_on_codex_posttool_observe() {
+    fn probe_hooks_warns_on_codex_posttool_observe() -> anyhow::Result<()> {
         let dir = temp_path("doctor-codex-observe-warning");
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
@@ -578,13 +565,14 @@ mod tests {
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
-        )
-        .unwrap();
+        )?;
+        let mcp_path = dir.join("config.toml");
+        std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
         let check = probe_hooks(HostProbe {
             name: "codex",
             hooks_path,
-            mcp_paths: vec![dir.join("config.toml")],
+            mcp_paths: vec![mcp_path],
         });
 
         assert!(matches!(check.status, Status::Warn));
@@ -593,6 +581,7 @@ mod tests {
             "{}",
             check.detail
         );
+        Ok(())
     }
 
     #[test]

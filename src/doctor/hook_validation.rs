@@ -2,19 +2,60 @@ use serde_json::Value;
 use std::path::Path;
 
 #[derive(Clone, Copy)]
-pub(super) struct ExpectedHookCommand {
+pub(super) struct ExpectedHookCommand<'a> {
+    pub executable: &'a Path,
     pub subcommand: &'static str,
     pub host: &'static str,
+}
+
+pub(super) fn expected_hook_events(host: &str) -> &'static [&'static str] {
+    match host {
+        "codex" => &["SessionStart", "Stop"],
+        _ => &[
+            "PostToolUse",
+            "PreCompact",
+            "Stop",
+            "SessionStart",
+            "UserPromptSubmit",
+        ],
+    }
+}
+
+pub(super) fn runtime_host(host: &str) -> &'static str {
+    match host {
+        "codex" => "codex-cli",
+        _ => "claude-code",
+    }
+}
+
+pub(super) fn expected_hook_command<'a>(
+    host: &str,
+    event: &str,
+    executable: &'a Path,
+) -> Option<ExpectedHookCommand<'a>> {
+    let subcommand = match event {
+        "PostToolUse" => "observe",
+        "PreCompact" | "Stop" => "summarize",
+        "SessionStart" => "context",
+        "UserPromptSubmit" => "session-init",
+        _ => return None,
+    };
+    Some(ExpectedHookCommand {
+        executable,
+        subcommand,
+        host: runtime_host(host),
+    })
 }
 
 pub(super) fn event_has_expected_remem_hook(
     doc: &Value,
     event: &str,
-    expected: ExpectedHookCommand,
+    expected: ExpectedHookCommand<'_>,
 ) -> bool {
     hook_commands_for_event(doc, event).any(|command| {
         parse_remem_invocation(command).is_some_and(|invocation| {
-            invocation.subcommand.as_deref() == Some(expected.subcommand)
+            Path::new(&invocation.executable) == expected.executable
+                && invocation.subcommand.as_deref() == Some(expected.subcommand)
                 && invocation.host.as_deref() == Some(expected.host)
         })
     })
@@ -23,12 +64,14 @@ pub(super) fn event_has_expected_remem_hook(
 pub(super) fn event_has_remem_subcommand_hook(
     doc: &Value,
     event: &str,
+    executable: &Path,
     subcommand: &str,
     host: &str,
 ) -> bool {
     hook_commands_for_event(doc, event).any(|command| {
         parse_remem_invocation(command).is_some_and(|invocation| {
-            invocation.subcommand.as_deref() == Some(subcommand)
+            Path::new(&invocation.executable) == executable
+                && invocation.subcommand.as_deref() == Some(subcommand)
                 && invocation.host.as_deref() == Some(host)
         })
     })
@@ -222,5 +265,29 @@ mod tests {
         assert!(parse_remem_invocation("NOTE=remem echo ok").is_none());
         assert!(parse_remem_invocation("echo remem context --host codex-cli").is_none());
         assert!(parse_remem_invocation("/bin/sh -c 'remem context --host codex-cli'").is_none());
+    }
+
+    #[test]
+    fn expected_hook_requires_exact_executable_path() {
+        let doc = serde_json::json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "command": "/wrong/stale/remem context --host codex-cli"
+                    }]
+                }]
+            }
+        });
+        let Some(expected) =
+            expected_hook_command("codex", "SessionStart", Path::new("/expected/bin/remem"))
+        else {
+            panic!("known hook event should build expected command");
+        };
+
+        assert!(!event_has_expected_remem_hook(
+            &doc,
+            "SessionStart",
+            expected
+        ));
     }
 }
