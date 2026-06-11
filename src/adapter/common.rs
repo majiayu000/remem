@@ -419,14 +419,7 @@ fn is_sensitive_key(key: &str) -> bool {
 fn redact_token(token: &str) -> &str {
     let trimmed =
         token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
-    if trimmed.starts_with("sk-")
-        || trimmed.starts_with("ghp_")
-        || trimmed.starts_with("github_pat_")
-        || trimmed.starts_with("xoxb-")
-        || trimmed.contains("sk-")
-        || trimmed.contains("ghp_")
-        || trimmed.contains("github_pat_")
-        || trimmed.contains("xoxb-")
+    if contains_prefixed_secret(trimmed)
         || (trimmed.len() >= 32
             && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
             && trimmed.chars().any(|ch| ch.is_ascii_digit()))
@@ -435,6 +428,36 @@ fn redact_token(token: &str) -> &str {
     } else {
         token
     }
+}
+
+fn contains_prefixed_secret(token: &str) -> bool {
+    [("sk-", 8), ("ghp_", 8), ("github_pat_", 4), ("xoxb-", 8)]
+        .iter()
+        .any(|(prefix, min_suffix_len)| {
+            contains_prefixed_secret_with(token, prefix, *min_suffix_len)
+        })
+}
+
+fn contains_prefixed_secret_with(token: &str, prefix: &str, min_suffix_len: usize) -> bool {
+    token.match_indices(prefix).any(|(index, _)| {
+        has_secret_prefix_boundary(token, index)
+            && key_like_suffix_len(&token[index + prefix.len()..]) >= min_suffix_len
+    })
+}
+
+fn has_secret_prefix_boundary(token: &str, index: usize) -> bool {
+    index == 0
+        || token[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
+}
+
+fn key_like_suffix_len(suffix: &str) -> usize {
+    suffix
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+        .count()
 }
 
 fn is_read_only_polling_cmd(cmd_lower: &str) -> bool {

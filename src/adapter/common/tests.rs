@@ -1,6 +1,9 @@
 use crate::db::test_support::ScopedTestDataDir;
 
-use super::{event_summary, parse_tool_hook, should_skip_bash_command, should_skip_tool};
+use super::{
+    event_summary, parse_tool_hook, redact_and_truncate, redact_token, should_skip_bash_command,
+    should_skip_tool,
+};
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
     let log_path = scoped.path.join("remem.log");
@@ -142,4 +145,32 @@ fn noisy_commands_still_skip() {
     assert!(should_skip_bash_command("ps aux | grep remem"));
     assert!(should_skip_bash_command("rg event_summary"));
     assert!(should_skip_bash_command("find . -name '*.rs'"));
+}
+
+#[test]
+fn redaction_keeps_benign_words_containing_secret_prefix_fragments() {
+    let text = "flask-app disk-backed risk-aware task-sketch";
+
+    assert_eq!(redact_and_truncate(text, 200), text);
+    assert_eq!(redact_token("--name=flask-app"), "--name=flask-app");
+    assert_eq!(redact_token("disk-backed-cache"), "disk-backed-cache");
+}
+
+#[test]
+fn redaction_catches_key_prefixes_after_shell_and_json_punctuation() {
+    assert_eq!(redact_token("sk-proj-12345678"), "[REDACTED]");
+    assert_eq!(redact_token("--api-key=sk-proj-12345678"), "[REDACTED]");
+    assert_eq!(
+        redact_token(r#""token":"ghp_1234567890abcdef""#),
+        "[REDACTED]"
+    );
+    assert_eq!(
+        redact_token("token='github_pat_1234567890_abcdEFGH'"),
+        "[REDACTED]"
+    );
+    assert_eq!(redact_token("github_pat_secret"), "[REDACTED]");
+    assert_eq!(
+        redact_token("Authorization=Bearer:xoxb-1234567890-abcdefghi"),
+        "[REDACTED]"
+    );
 }
