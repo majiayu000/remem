@@ -7,8 +7,8 @@ use super::actions::{
     run_config, run_current_state, run_dream, run_encrypt, run_eval, run_eval_e2e,
     run_eval_governance, run_eval_local, run_governance, run_graph_review, run_import,
     run_memory_cleanup, run_merge_preferences, run_model, run_pending, run_preferences, run_raw,
-    run_reroute, run_review, run_search, run_show, run_status, run_usage, run_why,
-    GovernanceCliRequest, RerouteCliRequest,
+    run_reroute, run_review, run_search, run_show, run_status, run_timeline, run_usage, run_why,
+    run_workstreams, GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction, MemoryAction};
@@ -236,6 +236,8 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             json,
         )?,
         Commands::Raw { action } => run_raw(action)?,
+        Commands::Timeline { action } => run_timeline(action)?,
+        Commands::Workstreams { action } => run_workstreams(action)?,
         Commands::Commit { action } => run_commit(action)?,
         Commands::Show { id, json } => run_show(id, json)?,
         Commands::Why {

@@ -2,6 +2,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 pub(in crate::cli) use super::config_types::ConfigAction;
+pub(in crate::cli) use super::query_types::{
+    CommitAction, RawAction, RawRole, TimelineAction, WorkstreamAction, WorkstreamStatusArg,
+};
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -379,6 +382,16 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: RawAction,
     },
+    /// Inspect chronological observations and project timeline reports.
+    Timeline {
+        #[command(subcommand)]
+        action: TimelineAction,
+    },
+    /// List or manually update tracked workstreams.
+    Workstreams {
+        #[command(subcommand)]
+        action: WorkstreamAction,
+    },
     /// Look up git commits and linked memory sessions.
     Commit {
         #[command(subcommand)]
@@ -623,70 +636,6 @@ pub(in crate::cli) enum ImportAction {
         #[arg(long)]
         best_effort: bool,
     },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum CommitAction {
-    /// Look up git metadata and linked memory sessions for a full or short SHA.
-    Show {
-        sha: String,
-        #[arg(long, short)]
-        project: Option<String>,
-        #[arg(long)]
-        json: bool,
-    },
-    /// List commits linked to a content session ID or memory session ID.
-    Session {
-        session_id: String,
-        #[arg(long, short)]
-        project: Option<String>,
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum RawAction {
-    /// Search raw captured user/assistant chat turns, not curated memories.
-    Search {
-        /// Literal phrase or terms to search in raw archive rows.
-        query: String,
-        /// Restrict search to one project path.
-        #[arg(long, short)]
-        project: Option<String>,
-        /// Include rows from this branch plus branchless older rows.
-        #[arg(long)]
-        branch: Option<String>,
-        /// Restrict search to one message role.
-        #[arg(long, value_enum)]
-        role: Option<RawRole>,
-        /// Maximum raw rows to show.
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
-        /// Result offset for pagination.
-        #[arg(long, default_value = "0")]
-        offset: i64,
-        /// Emit a single JSON object with stable fields for scripts.
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(in crate::cli) enum RawRole {
-    User,
-    Assistant,
-}
-
-impl RawRole {
-    pub(in crate::cli) fn as_str(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Assistant => "assistant",
-        }
-    }
 }
 
 #[derive(Subcommand)]

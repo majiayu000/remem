@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 
-use super::generate_timeline_report;
+use super::{generate_timeline_report, generate_timeline_report_data};
 
 fn setup_test_db(conn: &Connection) {
     conn.execute_batch(
@@ -95,6 +95,30 @@ fn summary_report_excludes_timeline() {
     assert!(report.contains("Total observations: 1"));
     assert!(!report.contains("## Timeline"));
     assert!(!report.contains("## Monthly Breakdown"));
+}
+
+#[test]
+fn json_report_data_exposes_structured_fields() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_test_db(&conn);
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT INTO observations (memory_session_id, project, type, title, created_at_epoch, discovery_tokens) \
+         VALUES ('s1', 'tools/remem', 'decision', 'Structured report', ?1, 100)",
+        params![now],
+    )?;
+
+    let report = generate_timeline_report_data(&conn, "tools/remem", true)?;
+    let json = serde_json::to_value(report)?;
+
+    assert_eq!(json["project"], "tools/remem");
+    assert_eq!(json["overview"]["total_observations"], 1);
+    assert_eq!(json["activity_by_type"][0]["obs_type"], "decision");
+    assert_eq!(json["token_economics"]["total_discovery_tokens"], 100);
+    assert!(json["recent_timeline"].is_array());
+    assert!(json["monthly_breakdown"].is_array());
+    Ok(())
 }
 
 #[test]
