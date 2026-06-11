@@ -456,12 +456,74 @@
     }
 
     async function request(route, options = {}) {
+      if (canCallHostTool(route)) {
+        return requestViaHostTool(route, options);
+      }
       const response = await fetch(route, options);
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error?.message || `Request failed with ${response.status}`);
       }
       return payload;
+    }
+
+    function canCallHostTool(route) {
+      return typeof window.openai?.callTool === "function" && String(route).startsWith("/api/");
+    }
+
+    async function requestViaHostTool(route, options = {}) {
+      const method = String(options.method || "GET").toUpperCase();
+      const url = new URL(route, "http://remem.local");
+      const result = await callHostTool(apiToolName(url.pathname, method), apiToolArgs(url, method, options));
+      return result?.structuredContent ?? result;
+    }
+
+    async function callHostTool(name, args) {
+      if (!name) throw new Error("No host tool is available for this action");
+      return window.openai.callTool(name, args);
+    }
+
+    function apiToolName(pathname, method) {
+      if (method === "GET" && pathname === "/api/status") return "remem_dashboard";
+      if (method === "GET" && pathname === "/api/search") return "remem_search";
+      if (method === "GET" && pathname === "/api/memory") return "remem_get_memory";
+      if (method === "GET" && pathname === "/api/activation-plan") return "remem_activation_plan";
+      if (method === "POST" && pathname === "/api/save") return "remem_save_memory";
+      return null;
+    }
+
+    function apiToolArgs(url, method, options) {
+      if (method === "GET" && url.pathname === "/api/search") {
+        return {
+          query: url.searchParams.get("query") || "",
+          project: url.searchParams.get("project") || undefined,
+          type: url.searchParams.get("type") || undefined,
+          limit: numericParam(url.searchParams, "limit", 12),
+          offset: numericParam(url.searchParams, "offset", 0),
+          include_stale: booleanParam(url.searchParams, "include_stale"),
+          multi_hop: booleanParam(url.searchParams, "multi_hop")
+        };
+      }
+      if (method === "GET" && url.pathname === "/api/memory") {
+        return { id: Number(url.searchParams.get("id")) };
+      }
+      if (method === "POST" && url.pathname === "/api/save") {
+        return JSON.parse(options.body || "{}");
+      }
+      return {};
+    }
+
+    function numericParam(params, key, fallback) {
+      const value = params.get(key);
+      if (value === null || value === "") return fallback;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : fallback;
+    }
+
+    function booleanParam(params, key) {
+      const value = params.get(key);
+      if (value === null || value === "") return undefined;
+      return value === "true" || value === "1";
     }
 
     function renderRuntime(snapshot) {

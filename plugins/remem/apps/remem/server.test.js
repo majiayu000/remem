@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  RememApiProxy,
   activationSummary,
   buildSnapshot,
   createServer,
@@ -124,8 +125,24 @@ test("tool descriptors expose the dashboard UI resource", () => {
   const dashboard = toolDescriptors().find((tool) => tool.name === "remem_dashboard");
 
   assert.equal(dashboard._meta.ui.resourceUri, UI_RESOURCE);
+  assert.deepEqual(dashboard._meta.ui.visibility, ["model", "app"]);
   assert.equal(dashboard._meta["openai/outputTemplate"], UI_RESOURCE);
+  assert.equal(dashboard._meta["openai/widgetAccessible"], true);
   assert.equal(dashboard.annotations.readOnlyHint, true);
+});
+
+test("widget-callable tools are exposed to the app surface", () => {
+  for (const name of [
+    "remem_dashboard",
+    "remem_search",
+    "remem_get_memory",
+    "remem_save_memory",
+    "remem_activation_plan"
+  ]) {
+    const descriptor = toolDescriptors().find((tool) => tool.name === name);
+    assert.deepEqual(descriptor._meta.ui.visibility, ["model", "app"]);
+    assert.equal(descriptor._meta["openai/widgetAccessible"], true);
+  }
 });
 
 test("JSON-RPC tools/list and dashboard call return structured content", async () => {
@@ -180,6 +197,42 @@ test("widget renders raw archive fallback results", async () => {
     assert.match(widget, /raw_archive/);
     assert.match(widget, /raw archive/);
   });
+});
+
+test("widget routes embedded app actions through host tool calls", async () => {
+  await withServer(async (base) => {
+    const widget = await fetch(`${base}/widget.html`).then((response) => response.text());
+
+    assert.match(widget, /window\.openai\.callTool/);
+    assert.match(widget, /remem_dashboard/);
+    assert.match(widget, /remem_search/);
+    assert.match(widget, /remem_get_memory/);
+    assert.match(widget, /remem_save_memory/);
+    assert.match(widget, /remem_activation_plan/);
+  });
+});
+
+test("API proxy clears failed readiness so later requests can retry", async () => {
+  const proxy = new RememApiProxy();
+  let attempts = 0;
+  let kills = 0;
+  proxy.start = async function start() {
+    attempts += 1;
+    this.child = {
+      kill(signal) {
+        if (signal === "SIGTERM") kills += 1;
+      }
+    };
+    throw new Error("startup failed");
+  };
+
+  await assert.rejects(() => proxy.ensureStarted(), /startup failed/);
+  await assert.rejects(() => proxy.ensureStarted(), /startup failed/);
+
+  assert.equal(attempts, 2);
+  assert.equal(kills, 2);
+  assert.equal(proxy.ready, null);
+  assert.equal(proxy.child, null);
 });
 
 test("buildSnapshot keeps setup details available when status commands fail", async () => {

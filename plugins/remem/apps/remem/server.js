@@ -185,7 +185,10 @@ class RememApiProxy {
 
   async ensureStarted() {
     if (this.ready) return this.ready;
-    this.ready = this.start();
+    this.ready = this.start().catch((error) => {
+      this.stop();
+      throw error;
+    });
     return this.ready;
   }
 
@@ -456,8 +459,9 @@ function toolDescriptors() {
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: {
-        ui: { resourceUri: UI_RESOURCE },
+        ui: { resourceUri: UI_RESOURCE, visibility: ["model", "app"] },
         "openai/outputTemplate": UI_RESOURCE,
+        "openai/widgetAccessible": true,
         "openai/toolInvocation/invoking": "Loading Remem",
         "openai/toolInvocation/invoked": "Remem ready"
       }
@@ -480,7 +484,11 @@ function toolDescriptors() {
         required: ["query"],
         additionalProperties: false
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
     },
     {
       name: "remem_get_memory",
@@ -492,7 +500,11 @@ function toolDescriptors() {
         required: ["id"],
         additionalProperties: false
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
     },
     {
       name: "remem_save_memory",
@@ -511,14 +523,22 @@ function toolDescriptors() {
         required: ["text"],
         additionalProperties: false
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
     },
     {
       name: "remem_activation_plan",
       title: "Remem Activation Plan",
       description: "Preview Codex hook activation without writing config.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
     }
   ];
 }
