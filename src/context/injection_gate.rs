@@ -7,6 +7,9 @@ use super::host::HostKind;
 use super::invocation::ContextInvocation;
 
 mod delta;
+mod pre_render;
+
+pub(super) use pre_render::pre_render_context_gate;
 
 const DEFAULT_GATE_HOSTS: &str = "codex-cli,claude-code";
 const DEFAULT_SUPPRESSED_SOURCES: &str = "compact";

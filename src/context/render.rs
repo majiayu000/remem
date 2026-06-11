@@ -6,7 +6,9 @@ use crate::db;
 
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
-use super::injection_gate::{apply_context_gate, ContextGateAction, ContextGateDecision};
+use super::injection_gate::{
+    apply_context_gate, pre_render_context_gate, ContextGateAction, ContextGateDecision,
+};
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
@@ -221,18 +223,27 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         host: invocation.host,
         use_colors: invocation.use_colors,
     };
-    let rendered = render_context_output(&request, debug_enabled)?;
-    let mut decision = if use_gate {
-        apply_context_gate(&invocation, rendered.output)
-    } else {
-        ContextGateDecision {
-            output: rendered.output,
-            action: ContextGateAction::Bypassed,
-            reason: "legacy_direct",
-            key: None,
-            context_hash: None,
-            output_mode: None,
+    let (mut decision, stats) = if use_gate {
+        if let Some(decision) = pre_render_context_gate(&invocation) {
+            (decision, ContextRenderStats::default())
+        } else {
+            let rendered = render_context_output(&request, debug_enabled)?;
+            let decision = apply_context_gate(&invocation, rendered.output);
+            (decision, rendered.stats)
         }
+    } else {
+        let rendered = render_context_output(&request, debug_enabled)?;
+        (
+            ContextGateDecision {
+                output: rendered.output,
+                action: ContextGateAction::Bypassed,
+                reason: "legacy_direct",
+                key: None,
+                context_hash: None,
+                output_mode: None,
+            },
+            rendered.stats,
+        )
     };
     if debug_enabled {
         let decision_for_debug = decision.clone();
@@ -255,13 +266,13 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         capabilities.has_user_prompt_submit_hook,
         capabilities.observes_native_file_edits,
         capabilities.observes_bash,
-        rendered.stats.memories_loaded,
-        rendered.stats.core.count,
-        rendered.stats.lessons.count,
-        rendered.stats.index.count,
-        rendered.stats.preferences.count,
-        rendered.stats.sessions.count,
-        rendered.stats.workstreams.count,
+        stats.memories_loaded,
+        stats.core.count,
+        stats.lessons.count,
+        stats.index.count,
+        stats.preferences.count,
+        stats.sessions.count,
+        stats.workstreams.count,
     ));
     Ok(())
 }
@@ -311,7 +322,7 @@ fn render_context_output_with_policy(
     policy: ContextPolicy,
 ) -> Result<RenderedContext> {
     let profile = resolve_profile(request.host);
-    let conn = match db::open_db() {
+    let conn = match open_context_db() {
         Ok(connection) => connection,
         Err(error) => {
             crate::log::error(
@@ -507,6 +518,22 @@ fn render_context_output_with_policy(
         &stats_footer,
     );
     Ok(RenderedContext { output, stats })
+}
+
+fn open_context_db() -> Result<rusqlite::Connection> {
+    match db::open_db_read_only() {
+        Ok(connection) => Ok(connection),
+        Err(read_error) => {
+            crate::log::warn(
+                "context",
+                &format!(
+                    "open_db_read_only failed, falling back to read-write open: {}",
+                    read_error
+                ),
+            );
+            db::open_db()
+        }
+    }
 }
 
 fn context_error_output(request: &ContextRequest, errors: &[ContextLoadError]) -> String {
