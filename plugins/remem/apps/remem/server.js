@@ -20,6 +20,7 @@ const UI_RESOURCE = "ui://remem/dashboard.html";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5577;
 const JSON_LIMIT_BYTES = 1_000_000;
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 function dataDir(env = process.env) {
   return path.resolve(env.REMEM_DATA_DIR || path.join(os.homedir(), ".remem"));
@@ -70,6 +71,10 @@ function notFound(res) {
 
 function parseUrl(req) {
   return new URL(req.url, "http://remem.local");
+}
+
+function isLoopbackHost(host) {
+  return LOOPBACK_HOSTS.has(String(host || "").toLowerCase());
 }
 
 async function readBody(req) {
@@ -294,7 +299,10 @@ function createBackend(options = {}) {
       return inspectRuntime();
     },
     async status() {
-      return runRememJson(["status", "--json"], { allowDownload: false });
+      return runRememJson(["status", "--json"], {
+        allowDownload: false,
+        allowFailure: true
+      });
     },
     async doctor() {
       try {
@@ -351,10 +359,10 @@ function createBackend(options = {}) {
 
 async function buildSnapshot(backend) {
   const [runtime, status, doctor, activation] = await Promise.all([
-    backend.runtime(),
-    backend.status(),
-    backend.doctor(),
-    backend.activationPlan()
+    recoverableField("runtime", () => backend.runtime()),
+    recoverableField("status", () => backend.status(), setupStatus),
+    recoverableField("doctor", () => backend.doctor(), setupDoctor),
+    recoverableField("activation", () => backend.activationPlan(), setupActivation)
   ]);
   return {
     expected_version: expectedVersion(),
@@ -363,6 +371,65 @@ async function buildSnapshot(backend) {
     status,
     doctor,
     activation
+  };
+}
+
+async function recoverableField(name, load, fallback = setupField) {
+  try {
+    return await load();
+  } catch (error) {
+    return fallback(name, error);
+  }
+}
+
+function setupField(name, error) {
+  return {
+    status: "setup_required",
+    unavailable: true,
+    error: {
+      field: name,
+      message: error.message
+    }
+  };
+}
+
+function setupStatus(name, error) {
+  return {
+    ...setupField(name, error),
+    totals: {
+      memories: 0,
+      observations: 0,
+      raw_messages: 0
+    },
+    capture_pipeline: {
+      extract_todo: 0
+    },
+    pending_observations: {
+      ready: 0
+    },
+    jobs: {
+      pending: 0
+    }
+  };
+}
+
+function setupDoctor(name, error) {
+  return {
+    ...setupField(name, error),
+    fails: 0,
+    warns: 1,
+    checks: []
+  };
+}
+
+function setupActivation(name, error) {
+  return {
+    ...setupField(name, error),
+    plan_text: "",
+    line_count: 0,
+    writes_config: false,
+    mentions_hooks: false,
+    mentions_mcp: false
   };
 }
 
@@ -627,6 +694,9 @@ function parseArgs(argv) {
   if (!Number.isInteger(args.port) || args.port <= 0) {
     throw new Error("--port must be a positive integer");
   }
+  if (!isLoopbackHost(args.host)) {
+    throw new Error("--host must be a loopback address because this local app has no HTTP auth");
+  }
   return args;
 }
 
@@ -666,6 +736,8 @@ module.exports = {
   createServer,
   dataDir,
   handleJsonRpc,
+  isLoopbackHost,
+  parseArgs,
   readJson,
   runProcess,
   toolDescriptors,

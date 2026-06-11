@@ -6,8 +6,10 @@ const test = require("node:test");
 
 const {
   activationSummary,
+  buildSnapshot,
   createServer,
   handleJsonRpc,
+  parseArgs,
   toolDescriptors,
   UI_RESOURCE
 } = require("./server");
@@ -168,6 +170,44 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
     }).then((response) => response.json());
     assert.equal(save.id, 9);
   });
+});
+
+test("widget renders raw archive fallback results", async () => {
+  await withServer(async (base) => {
+    const widget = await fetch(`${base}/widget.html`).then((response) => response.text());
+
+    assert.match(widget, /payload\.raw_hits/);
+    assert.match(widget, /raw_archive/);
+    assert.match(widget, /raw archive/);
+  });
+});
+
+test("buildSnapshot keeps setup details available when status commands fail", async () => {
+  const backend = fakeBackend();
+  backend.status = async () => {
+    throw new Error("database not found");
+  };
+  backend.doctor = async () => {
+    throw new Error("database not found");
+  };
+
+  const snapshot = await buildSnapshot(backend);
+
+  assert.equal(snapshot.status.status, "setup_required");
+  assert.equal(snapshot.status.totals.memories, 0);
+  assert.equal(snapshot.doctor.status, "setup_required");
+  assert.equal(snapshot.doctor.warns, 1);
+  assert.equal(snapshot.runtime.selected.version, pluginManifest.version);
+});
+
+test("CLI host binding is restricted to loopback addresses", () => {
+  assert.equal(parseArgs(["--host", "127.0.0.1"]).host, "127.0.0.1");
+  assert.equal(parseArgs(["--host", "localhost"]).host, "localhost");
+  assert.equal(parseArgs(["--host", "::1"]).host, "::1");
+  assert.throws(
+    () => parseArgs(["--host", "0.0.0.0"]),
+    /loopback address/
+  );
 });
 
 test("activation summary is explicit about dry-run content", () => {

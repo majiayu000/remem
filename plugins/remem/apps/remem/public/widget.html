@@ -533,9 +533,31 @@
       $("results").innerHTML = `<li class="result"><span class="subtle">Searching...</span></li>`;
       $("detail").innerHTML = "";
       const payload = await request(`/api/search?${params.toString()}`);
-      state.results = payload.data || [];
+      state.results = searchResults(payload);
       $("result-count").textContent = `${state.results.length}`;
       renderResults();
+    }
+
+    function searchResults(payload) {
+      const memories = (payload.data || []).map((item) => ({
+        ...item,
+        result_kind: "memory",
+        result_id: String(item.id)
+      }));
+      const rawHits = (payload.raw_hits || []).map((item) => ({
+        ...item,
+        id: `raw-${item.id}`,
+        raw_id: item.id,
+        result_kind: "raw_archive",
+        result_id: `raw-${item.id}`,
+        title: `${item.role || "raw"} message from raw archive`,
+        content: item.preview || "",
+        memory_type: "raw archive",
+        status: "raw",
+        scope: item.source || "",
+        project: item.project || ""
+      }));
+      return memories.concat(rawHits);
     }
 
     function renderResults() {
@@ -545,7 +567,7 @@
         return;
       }
       results.innerHTML = state.results.map((item) => `
-        <li class="result" data-id="${item.id}">
+        <li class="result" data-id="${escapeHtml(item.result_id || item.id)}">
           <div class="result-title">
             <span>${escapeHtml(item.title || `Memory ${item.id}`)}</span>
             <span class="pill">${escapeHtml(item.memory_type || item.type || "memory")}</span>
@@ -560,6 +582,23 @@
         node.classList.toggle("active", node.dataset.id === String(id));
       });
       $("detail").innerHTML = `<div class="message">Loading memory ${id}...</div>`;
+      const cached = state.results.find((item) => String(item.result_id || item.id) === String(id));
+      if (cached?.result_kind === "raw_archive") {
+        state.selected = cached;
+        $("detail-type").textContent = "raw archive";
+        $("detail").innerHTML = `
+          <div class="stack">
+            <h3>${escapeHtml(cached.title)}</h3>
+            <div class="row">
+              <span class="pill">${escapeHtml(cached.role || "")}</span>
+              <span class="pill">${escapeHtml(cached.source || "")}</span>
+            </div>
+            <div class="subtle mono">${escapeHtml(cached.project || "")}</div>
+            <div class="detail-text">${escapeHtml(cached.preview || cached.content || "")}</div>
+          </div>
+        `;
+        return;
+      }
       const item = await request(`/api/memory?id=${encodeURIComponent(id)}`);
       state.selected = item;
       $("detail-type").textContent = item.memory_type || "memory";
