@@ -108,6 +108,7 @@ fn load_project_memories(
         conn,
         project,
         None,
+        current_branch,
         excluded_types,
         policy.limits.candidate_fetch_limit as i64,
     )
@@ -129,6 +130,7 @@ fn load_project_memories(
         conn,
         project,
         Some(project_query),
+        current_branch,
         excluded_types,
         BASENAME_SEARCH_LIMIT,
     ) {
@@ -213,6 +215,7 @@ fn query_owner_included_memory_rows(
     conn: &Connection,
     project: &str,
     query: Option<&str>,
+    current_branch: Option<&str>,
     excluded_types: &[&str],
     limit: i64,
 ) -> Result<Vec<ContextMemoryRow>> {
@@ -232,6 +235,11 @@ fn query_owner_included_memory_rows(
     conditions.push(crate::memory::memory_state_key_current_filter_sql(
         "memories",
     ));
+    if let Some(branch) = current_branch.filter(|branch| !branch.trim().is_empty()) {
+        conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
+        params.push(Box::new(branch.to_string()));
+        idx += 1;
+    }
 
     if let Some(query) = query {
         let like_pattern = format!("%{query}%");
