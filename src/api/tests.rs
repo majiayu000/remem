@@ -11,7 +11,7 @@ use tower::ServiceExt;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
-use super::handlers::{handle_status, search_request_from_params};
+use super::handlers::{handle_search, handle_status, search_request_from_params};
 use super::types::SearchParams;
 use super::DbState;
 
@@ -45,8 +45,8 @@ fn search_request_from_params_clamps_limit_and_offset() {
 
     assert_eq!(request.limit, 100);
     assert_eq!(request.offset, 0);
-    // Canonical default for `include_stale` is `true` so MCP and REST agree.
-    assert!(request.include_stale);
+    // Canonical default hides stale and archived memories unless callers opt in.
+    assert!(!request.include_stale);
     assert!(!request.multi_hop);
     assert!(!request.explain);
 }
@@ -74,6 +74,73 @@ fn search_request_from_params_preserves_filters() {
     assert_eq!(request.branch.as_deref(), Some("main"));
     assert!(request.multi_hop);
     assert!(request.explain);
+}
+
+#[tokio::test]
+async fn search_handler_hides_archived_memories_by_default() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-search-default-active");
+    let conn = db::open_db()?;
+
+    memory::insert_memory(
+        &conn,
+        Some("session-active"),
+        "proj-a",
+        None,
+        "aurora active",
+        "aurora visible memory",
+        "decision",
+        None,
+    )?;
+    let archived_id = memory::insert_memory(
+        &conn,
+        Some("session-archived"),
+        "proj-a",
+        None,
+        "aurora archived",
+        "aurora hidden memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET status = 'archived' WHERE id = ?1",
+        params![archived_id],
+    )?;
+    drop(conn);
+
+    let response = handle_search(
+        State(DbState),
+        axum::extract::Query(SearchParams {
+            query: Some("aurora".to_string()),
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            limit: Some(10),
+            offset: None,
+            include_stale: None,
+            branch: None,
+            multi_hop: None,
+            explain: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let data = payload["data"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("search response data should be an array"))?;
+    let titles: Vec<&str> = data
+        .iter()
+        .map(|item| {
+            item["title"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("search item title should be a string"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    assert_eq!(titles, vec!["aurora active"]);
+    Ok(())
 }
 
 #[tokio::test]

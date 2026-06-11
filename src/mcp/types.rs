@@ -13,7 +13,7 @@ pub(super) struct SearchParams {
     pub r#type: Option<String>,
     #[schemars(description = "Result offset for pagination")]
     pub offset: Option<i64>,
-    #[schemars(description = "Include stale observations (default true, stale ranked lower)")]
+    #[schemars(description = "Include stale or archived memories (default false)")]
     pub include_stale: Option<bool>,
     #[schemars(
         description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included."
