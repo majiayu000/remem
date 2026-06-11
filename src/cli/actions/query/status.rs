@@ -74,6 +74,7 @@ fn load_status_report() -> Result<StatusReport> {
             latest_drop_detail: stats.latest_capture_drop_detail,
             extract_todo: stats.pending_extraction_tasks,
             extract_running: stats.processing_extraction_tasks,
+            extract_expired: stats.expired_processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
             pending_candidates: stats.pending_memory_candidates,
             pending_graph_candidates: stats.pending_graph_candidates,
@@ -181,6 +182,10 @@ fn print_status_report(report: &StatusReport) {
         report.capture_pipeline.extract_running
     );
     println!(
+        "  Extract exp:  {:>6}",
+        report.capture_pipeline.extract_expired
+    );
+    println!(
         "  Extract fail: {:>6}",
         report.capture_pipeline.extract_failed
     );
@@ -275,6 +280,7 @@ fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_act
     queue_actions(
         report.pending_observations.failed,
         report.pending_observations.expired,
+        report.capture_pipeline.extract_expired,
         report.jobs.failed,
         report.jobs.stuck,
         report.capture_pipeline.extract_failed,
@@ -335,6 +341,7 @@ pub(super) struct CapturePipelineStatus {
     pub latest_drop_detail: Option<String>,
     pub extract_todo: i64,
     pub extract_running: i64,
+    pub extract_expired: i64,
     pub extract_failed: i64,
     pub pending_candidates: i64,
     pub pending_graph_candidates: i64,
@@ -429,6 +436,7 @@ mod tests {
                 latest_drop_detail: None,
                 extract_todo: 6,
                 extract_running: 7,
+                extract_expired: 0,
                 extract_failed: 0,
                 pending_candidates: 9,
                 pending_graph_candidates: 10,

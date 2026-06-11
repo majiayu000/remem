@@ -27,6 +27,7 @@ impl HealthAction {
 pub(crate) fn queue_actions(
     failed_pending_observations: i64,
     expired_processing_pending_observations: i64,
+    expired_processing_extraction_tasks: i64,
     failed_jobs: i64,
     stuck_jobs: i64,
     failed_extraction_tasks: i64,
@@ -56,6 +57,18 @@ pub(crate) fn queue_actions(
         );
     }
 
+    if expired_processing_extraction_tasks > 0 {
+        actions.push(
+            HealthAction::new(count_title(
+                expired_processing_extraction_tasks,
+                "expired processing extraction task",
+                "expired processing extraction tasks",
+            ))
+            .command("inspect counts", "remem status --json")
+            .command("recover", "remem worker --once"),
+        );
+    }
+
     if failed_jobs > 0 {
         actions.push(
             HealthAction::new(count_title(failed_jobs, "failed job", "failed jobs"))
@@ -70,8 +83,7 @@ pub(crate) fn queue_actions(
                 "failed extraction task",
                 "failed extraction tasks",
             ))
-            .command("inspect counts", "remem status --json")
-            .command("recover", "remem worker --once"),
+            .command("inspect counts", "remem status --json"),
         );
     }
 

@@ -28,6 +28,7 @@ pub struct SystemStats {
     pub latest_capture_drop_detail: Option<String>,
     pub pending_extraction_tasks: i64,
     pub processing_extraction_tasks: i64,
+    pub expired_processing_extraction_tasks: i64,
     pub failed_extraction_tasks: i64,
     pub oldest_pending_extraction_epoch: Option<i64>,
     pub pending_memory_candidates: i64,
@@ -128,6 +129,15 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         processing_extraction_tasks: conn.query_row(
             "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'processing'",
             [],
+            |row| row.get(0),
+        )?,
+        expired_processing_extraction_tasks: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_tasks
+             WHERE status = 'processing'
+               AND lease_expires_epoch IS NOT NULL
+               AND lease_expires_epoch < ?1",
+            params![now],
             |row| row.get(0),
         )?,
         failed_extraction_tasks: conn.query_row(

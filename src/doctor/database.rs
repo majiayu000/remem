@@ -65,7 +65,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         }
     };
     let detail = format!(
-        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing, {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
+        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing ({} expired), {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
         stats.ready_pending_observations,
         stats.delayed_pending_observations,
         stats.processing_pending_observations,
@@ -73,6 +73,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         stats.failed_pending_observations,
         stats.pending_extraction_tasks,
         stats.processing_extraction_tasks,
+        stats.expired_processing_extraction_tasks,
         stats.failed_extraction_tasks,
         stats.pending_jobs,
         stats.processing_jobs,
@@ -83,6 +84,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     let actions = queue_actions(
         stats.failed_pending_observations,
         stats.expired_processing_pending_observations,
+        stats.expired_processing_extraction_tasks,
         stats.failed_jobs,
         stats.stuck_jobs,
         stats.failed_extraction_tasks,
@@ -91,7 +93,10 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         .map(|hints| format!("; actions: {hints}"))
         .unwrap_or_default();
 
-    if stats.expired_processing_pending_observations > 0 || stats.stuck_jobs > 0 {
+    if stats.expired_processing_pending_observations > 0
+        || stats.expired_processing_extraction_tasks > 0
+        || stats.stuck_jobs > 0
+    {
         Check::new(
             "Pending queue",
             Status::Warn,

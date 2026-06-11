@@ -130,14 +130,14 @@ fn check_key_format_reports_effective_env_key() -> anyhow::Result<()> {
 
 #[test]
 fn health_action_queue_actions_are_empty_when_runtime_is_clear() {
-    let actions = queue_actions(0, 0, 0, 0, 0);
+    let actions = queue_actions(0, 0, 0, 0, 0, 0);
     assert!(actions.is_empty());
     assert!(render_action_block(&actions).is_empty());
 }
 
 #[test]
 fn health_action_queue_actions_render_copy_paste_commands() {
-    let actions = queue_actions(43, 1, 2, 3, 4);
+    let actions = queue_actions(43, 1, 5, 2, 3, 4);
     let text = render_action_block(&actions);
 
     assert!(text.contains("Needs attention:"));
@@ -145,6 +145,7 @@ fn health_action_queue_actions_render_copy_paste_commands() {
     assert!(text.contains("inspect: remem pending list-failed --limit 20"));
     assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
     assert!(text.contains("1 expired processing pending observation"));
+    assert!(text.contains("5 expired processing extraction tasks"));
     assert!(text.contains("2 failed jobs"));
     assert!(text.contains("3 stuck jobs"));
     assert!(text.contains("4 failed extraction tasks"));
@@ -238,7 +239,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let check = check_pending_queue(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     let expected_counts = format!(
-        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing, {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
+        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing ({} expired), {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
         stats.ready_pending_observations,
         stats.delayed_pending_observations,
         stats.processing_pending_observations,
@@ -246,6 +247,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         stats.failed_pending_observations,
         stats.pending_extraction_tasks,
         stats.processing_extraction_tasks,
+        stats.expired_processing_extraction_tasks,
         stats.failed_extraction_tasks,
         stats.pending_jobs,
         stats.processing_jobs,

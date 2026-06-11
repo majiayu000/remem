@@ -58,7 +58,8 @@ fn setup_stats_schema(conn: &Connection) {
         CREATE TABLE extraction_tasks (
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
-            created_at_epoch INTEGER NOT NULL
+            created_at_epoch INTEGER NOT NULL,
+            lease_expires_epoch INTEGER
         );
         CREATE TABLE memory_candidates (
             id INTEGER PRIMARY KEY,
@@ -168,7 +169,8 @@ fn query_system_stats_and_related_views_share_one_definition() {
     )
     .expect("pending extraction task insert should succeed");
     conn.execute(
-        "INSERT INTO extraction_tasks (status, created_at_epoch) VALUES ('processing', 95)",
+        "INSERT INTO extraction_tasks (status, created_at_epoch, lease_expires_epoch)
+         VALUES ('processing', 95, strftime('%s', 'now') - 1)",
         [],
     )
     .expect("processing extraction task insert should succeed");
@@ -269,6 +271,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
             latest_capture_drop_detail: Some("Codex Bash capture disabled".to_string()),
             pending_extraction_tasks: 1,
             processing_extraction_tasks: 1,
+            expired_processing_extraction_tasks: 1,
             failed_extraction_tasks: 1,
             oldest_pending_extraction_epoch: Some(90),
             pending_memory_candidates: 1,
