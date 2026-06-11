@@ -16,7 +16,8 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY,
             project TEXT NOT NULL,
             status TEXT NOT NULL,
-            created_at_epoch INTEGER NOT NULL
+            created_at_epoch INTEGER NOT NULL,
+            expires_at_epoch INTEGER
         );
         CREATE TABLE observations (
             id INTEGER PRIMARY KEY,
@@ -134,6 +135,20 @@ fn query_system_stats_and_related_views_share_one_definition() {
         [],
     )
     .expect("second active memory insert should succeed");
+    if let Err(err) = conn.execute(
+        "INSERT INTO memories (project, status, created_at_epoch, expires_at_epoch)
+         VALUES ('gamma', 'active', 310, strftime('%s', 'now') - 1)",
+        [],
+    ) {
+        panic!("expired active memory insert should succeed: {err}");
+    }
+    if let Err(err) = conn.execute(
+        "INSERT INTO memories (project, status, created_at_epoch, expires_at_epoch)
+         VALUES ('delta', 'active', 320, CAST(strftime('%s', 'now') AS INTEGER) + 3600)",
+        [],
+    ) {
+        panic!("future-expiring active memory insert should succeed: {err}");
+    }
     conn.execute(
         "INSERT INTO observations (project, status, created_at_epoch) VALUES ('alpha', 'active', 220)",
         [],
@@ -252,7 +267,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
     assert_eq!(
         system,
         SystemStats {
-            active_memories: 2,
+            active_memories: 3,
             active_observations: 1,
             session_summaries: 1,
             raw_messages: 0,
@@ -301,7 +316,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
     assert_eq!(
         daily,
         DailyActivityStats {
-            memories: 2,
+            memories: 4,
             observations: 1,
         }
     );
@@ -316,6 +331,10 @@ fn query_system_stats_and_related_views_share_one_definition() {
             },
             ProjectCount {
                 project: "beta".to_string(),
+                count: 1,
+            },
+            ProjectCount {
+                project: "delta".to_string(),
                 count: 1,
             },
         ]
