@@ -116,6 +116,25 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
             SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
             &error,
         )?;
+        let spill_path = path.display().to_string();
+        if let Err(drop_error) = crate::db::record_capture_drop(
+            &conn,
+            &crate::db::CaptureDropInput {
+                host: Some(&capture_host),
+                session_id: Some(&event.session_id),
+                project: Some(&event.project),
+                tool_name: Some(&event.tool_name),
+                reason: SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+                detail: Some(&error.to_string()),
+                spill_path: Some(&spill_path),
+                recovered_event_id: None,
+            },
+        ) {
+            crate::log::warn(
+                "observe",
+                &format!("capture persistence drop ledger write failed: {drop_error}"),
+            );
+        }
         crate::log::error(
             "observe",
             &format!(
@@ -591,6 +610,18 @@ mod tests {
         )?;
         assert_eq!(partial_captures, 1);
         assert_eq!(partial_events, 0);
+        let partial_drop: (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COUNT(recovered_event_id)
+             FROM capture_drop_events
+             WHERE session_id = 'sess-persist-fail'
+               AND reason = 'capture_persistence_failed'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let partial_stats = db::query_system_stats(&conn)?;
+        assert_eq!(partial_drop, (1, 0));
+        assert_eq!(partial_stats.actionable_capture_drops, 1);
+        assert_eq!(partial_stats.unrecovered_capture_spills, 1);
         conn.execute_batch("DROP TRIGGER fail_events_insert;")?;
         drop(conn);
 
@@ -617,15 +648,18 @@ mod tests {
         )?;
         assert_eq!(replayed_captures, 1);
         assert_eq!(replayed_events, 1);
-        let replayed_drop_reason: String = conn.query_row(
-            "SELECT reason FROM capture_drop_events WHERE session_id = 'sess-persist-fail'",
+        let replayed_drop: (String, Option<i64>) = conn.query_row(
+            "SELECT reason, recovered_event_id
+             FROM capture_drop_events
+             WHERE session_id = 'sess-persist-fail'",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        assert_eq!(
-            replayed_drop_reason,
-            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED
-        );
+        let replayed_stats = db::query_system_stats(&conn)?;
+        assert_eq!(replayed_drop.0, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED);
+        assert!(replayed_drop.1.is_some());
+        assert_eq!(replayed_stats.actionable_capture_drops, 0);
+        assert_eq!(replayed_stats.unrecovered_capture_spills, 0);
         assert!(!crate::db::data_dir().join("capture-spill.jsonl").exists());
 
         let replayed_event_id: String = conn.query_row(

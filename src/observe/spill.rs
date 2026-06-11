@@ -194,19 +194,20 @@ fn replay_spill_record(
         &record.event,
         &record.summary,
     )?;
-    crate::db::record_capture_drop(
-        &tx,
-        &crate::db::CaptureDropInput {
-            host: Some(&record.host),
-            session_id: Some(&record.event.session_id),
-            project: Some(&record.event.project),
-            tool_name: Some(&record.event.tool_name),
-            reason: &record.failure_reason,
-            detail: Some(&record.db_error),
-            spill_path: Some(&spill_path.display().to_string()),
-            recovered_event_id: Some(event_id),
-        },
-    )?;
+    let spill_path = spill_path.display().to_string();
+    let drop_input = crate::db::CaptureDropInput {
+        host: Some(&record.host),
+        session_id: Some(&record.event.session_id),
+        project: Some(&record.event.project),
+        tool_name: Some(&record.event.tool_name),
+        reason: &record.failure_reason,
+        detail: Some(&record.db_error),
+        spill_path: Some(&spill_path),
+        recovered_event_id: Some(event_id),
+    };
+    if !crate::db::mark_capture_spill_recovered(&tx, &drop_input, event_id)? {
+        crate::db::record_capture_drop(&tx, &drop_input)?;
+    }
     tx.commit()
         .context("commit capture spill replay transaction")?;
     Ok(true)

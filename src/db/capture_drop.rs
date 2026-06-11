@@ -46,6 +46,42 @@ pub fn record_capture_drop(conn: &Connection, input: &CaptureDropInput<'_>) -> R
     Ok(conn.last_insert_rowid())
 }
 
+pub fn mark_capture_spill_recovered(
+    conn: &Connection,
+    input: &CaptureDropInput<'_>,
+    recovered_event_id: i64,
+) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let updated = conn.execute(
+        "UPDATE capture_drop_events
+         SET recovered_event_id = ?7,
+             recovered_at_epoch = ?8
+         WHERE id = (
+             SELECT id FROM capture_drop_events
+             WHERE recovered_event_id IS NULL
+               AND reason = ?5
+               AND spill_path = ?6
+               AND ((host_id = ?1) OR (host_id IS NULL AND ?1 IS NULL))
+               AND ((session_id = ?2) OR (session_id IS NULL AND ?2 IS NULL))
+               AND ((project = ?3) OR (project IS NULL AND ?3 IS NULL))
+               AND ((tool_name = ?4) OR (tool_name IS NULL AND ?4 IS NULL))
+             ORDER BY created_at_epoch DESC, id DESC
+             LIMIT 1
+         )",
+        params![
+            input.host,
+            input.session_id,
+            input.project,
+            input.tool_name,
+            input.reason,
+            input.spill_path,
+            recovered_event_id,
+            now,
+        ],
+    )?;
+    Ok(updated > 0)
+}
+
 pub fn query_capture_drop_stats(conn: &Connection) -> Result<CaptureDropStats> {
     if !capture_drop_table_exists(conn)? {
         return Ok(CaptureDropStats::default());
