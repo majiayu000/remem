@@ -149,6 +149,18 @@ function runProcess(command, args, options = {}) {
   });
 }
 
+function requiredText(value, name) {
+  const text = String(value || "").trim();
+  if (!text) throw Object.assign(new Error(`${name} is required`), { statusCode: 400 });
+  return text;
+}
+
+function pushOptional(args, flag, value) {
+  if (value !== undefined && value !== null && String(value).trim() !== "") {
+    args.push(flag, String(value));
+  }
+}
+
 async function runRemem(args, options = {}) {
   const binary = options.binary || (await ensureRuntime({
     allowDownload: options.allowDownload === true,
@@ -382,6 +394,35 @@ function createBackend(options = {}) {
         requested
       };
     },
+    async currentState(input) {
+      const args = ["current", requiredText(input.state_key, "state_key"), "--json"];
+      pushOptional(args, "--project", input.project);
+      pushOptional(args, "--type", input.memory_type);
+      pushOptional(args, "--owner-scope", input.owner_scope);
+      pushOptional(args, "--owner-key", input.owner_key);
+      pushOptional(args, "--as-of-epoch", input.as_of_epoch);
+      return runRememJson(args, {
+        allowDownload: false,
+        timeoutMs: 15000
+      });
+    },
+    async commitLookup(input) {
+      const args = ["commit", "show", requiredText(input.sha, "sha"), "--json"];
+      pushOptional(args, "--project", input.project);
+      return runRememJson(args, {
+        allowDownload: false,
+        timeoutMs: 15000
+      });
+    },
+    async sessionCommits(input) {
+      const args = ["commit", "session", requiredText(input.session_id, "session_id"), "--json"];
+      pushOptional(args, "--project", input.project);
+      pushOptional(args, "--limit", input.limit || 20);
+      return runRememJson(args, {
+        allowDownload: false,
+        timeoutMs: 15000
+      });
+    },
     stop() {
       api.stop?.();
     }
@@ -500,6 +541,22 @@ async function callTool(backend, name, args = {}) {
       result
     );
   }
+  if (name === "remem_current_state") {
+    const result = await backend.currentState(args);
+    return toolResult(`Current state ${result.status || "resolved"}.`, result);
+  }
+  if (name === "remem_commit_lookup") {
+    const result = await backend.commitLookup(args);
+    return toolResult(`Found ${Array.isArray(result) ? result.length : 0} commit match(es).`, {
+      results: result
+    });
+  }
+  if (name === "remem_session_commits") {
+    const result = await backend.sessionCommits(args);
+    return toolResult(`Found ${Array.isArray(result) ? result.length : 0} linked commit(s).`, {
+      results: result
+    });
+  }
   throw Object.assign(new Error(`Unknown tool: ${name}`), { code: -32602 });
 }
 
@@ -594,6 +651,15 @@ function createServer(options = {}) {
       }
       if (req.method === "GET" && url.pathname === "/api/activation-plan") {
         return jsonResponse(res, 200, await backend.activationPlan());
+      }
+      if (req.method === "GET" && url.pathname === "/api/current-state") {
+        return jsonResponse(res, 200, await backend.currentState(Object.fromEntries(url.searchParams)));
+      }
+      if (req.method === "GET" && url.pathname === "/api/commit") {
+        return jsonResponse(res, 200, await backend.commitLookup(Object.fromEntries(url.searchParams)));
+      }
+      if (req.method === "GET" && url.pathname === "/api/session-commits") {
+        return jsonResponse(res, 200, await backend.sessionCommits(Object.fromEntries(url.searchParams)));
       }
       if (req.method === "POST" && url.pathname === "/api/save") {
         assertLocalPostAllowed(req);

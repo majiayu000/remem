@@ -132,6 +132,68 @@ function toolDescriptors() {
         ui: { visibility: ["model", "app"] },
         "openai/widgetAccessible": true
       }
+    },
+    {
+      name: "remem_current_state",
+      title: "Resolve Current State",
+      description: "Resolve the current Remem memory for a stable state key, including conflict and history metadata.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          state_key: { type: "string" },
+          project: { type: "string" },
+          memory_type: { type: "string" },
+          owner_scope: { type: "string" },
+          owner_key: { type: "string" },
+          as_of_epoch: { type: "number" }
+        },
+        required: ["state_key"],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
+    },
+    {
+      name: "remem_commit_lookup",
+      title: "Lookup Commit Memory",
+      description: "Look up git commit metadata and linked Remem memory sessions by full or short SHA.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sha: { type: "string" },
+          project: { type: "string" }
+        },
+        required: ["sha"],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
+    },
+    {
+      name: "remem_session_commits",
+      title: "Session Commits",
+      description: "List git commits linked to a content session ID or Remem memory session ID.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string" },
+          project: { type: "string" },
+          limit: { type: "number" }
+        },
+        required: ["session_id"],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
     }
   ];
 }

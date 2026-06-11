@@ -120,6 +120,43 @@ function fakeBackend() {
         ]
       };
     },
+    async currentState(input) {
+      return {
+        state_key: input.state_key,
+        status: "current",
+        current: {
+          id: 11,
+          title: "Current deployment target"
+        },
+        history: []
+      };
+    },
+    async commitLookup(input) {
+      return [
+        {
+          git: {
+            sha: input.sha,
+            short_sha: String(input.sha).slice(0, 7),
+            message: "Wire Remem app trace tools"
+          },
+          sessions: []
+        }
+      ];
+    },
+    async sessionCommits(input) {
+      return [
+        {
+          link: {
+            session_id: input.session_id,
+            source: "test"
+          },
+          git: {
+            sha: "abcdef123456",
+            short_sha: "abcdef1"
+          }
+        }
+      ];
+    },
     stop() {}
   };
 }
@@ -155,7 +192,10 @@ test("widget-callable tools are exposed to the app surface", () => {
     "remem_get_memory",
     "remem_save_memory",
     "remem_activation_plan",
-    "remem_governance_preview"
+    "remem_governance_preview",
+    "remem_current_state",
+    "remem_commit_lookup",
+    "remem_session_commits"
   ]) {
     const descriptor = toolDescriptors().find((tool) => tool.name === name);
     assert.deepEqual(descriptor._meta.ui.visibility, ["model", "app"]);
@@ -171,6 +211,8 @@ test("JSON-RPC tools/list and dashboard call return structured content", async (
   });
   assert.ok(tools.tools.some((tool) => tool.name === "remem_save_memory"));
   assert.ok(tools.tools.some((tool) => tool.name === "remem_governance_preview"));
+  assert.ok(tools.tools.some((tool) => tool.name === "remem_current_state"));
+  assert.ok(tools.tools.some((tool) => tool.name === "remem_commit_lookup"));
 
   const result = await handleJsonRpc(fakeBackend(), {
     id: 2,
@@ -213,6 +255,21 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
     }).then((response) => response.json());
     assert.equal(preview.dry_run, true);
     assert.equal(preview.affected[0].id, 7);
+
+    const current = await fetch(`${base}/api/current-state?state_key=deploy-target`).then((response) =>
+      response.json()
+    );
+    assert.equal(current.current.id, 11);
+
+    const commit = await fetch(`${base}/api/commit?sha=abcdef123456`).then((response) =>
+      response.json()
+    );
+    assert.equal(commit[0].git.short_sha, "abcdef1");
+
+    const sessionCommits = await fetch(`${base}/api/session-commits?session_id=session-1`).then(
+      (response) => response.json()
+    );
+    assert.equal(sessionCommits[0].link.session_id, "session-1");
   });
 });
 
@@ -290,6 +347,29 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /remem_governance_preview/);
     assert.match(widget, /\/api\/governance-preview/);
   });
+});
+
+test("JSON-RPC trace tools return structured content", async () => {
+  const current = await handleJsonRpc(fakeBackend(), {
+    id: 1,
+    method: "tools/call",
+    params: { name: "remem_current_state", arguments: { state_key: "deploy-target" } }
+  });
+  assert.equal(current.structuredContent.current.id, 11);
+
+  const commit = await handleJsonRpc(fakeBackend(), {
+    id: 2,
+    method: "tools/call",
+    params: { name: "remem_commit_lookup", arguments: { sha: "abcdef123456" } }
+  });
+  assert.equal(commit.structuredContent.results[0].git.short_sha, "abcdef1");
+
+  const sessionCommits = await handleJsonRpc(fakeBackend(), {
+    id: 3,
+    method: "tools/call",
+    params: { name: "remem_session_commits", arguments: { session_id: "session-1" } }
+  });
+  assert.equal(sessionCommits.structuredContent.results[0].link.session_id, "session-1");
 });
 
 test("governance preview args are always dry-run JSON CLI calls", () => {
