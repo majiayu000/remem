@@ -194,6 +194,90 @@ function toolDescriptors() {
         ui: { visibility: ["model", "app"] },
         "openai/widgetAccessible": true
       }
+    },
+    {
+      name: "remem_timeline_around",
+      title: "Timeline Around Observation",
+      description: "Load chronological Remem observations around an anchor observation ID or query.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          anchor: { type: "integer", minimum: 1 },
+          query: { type: "string", minLength: 1 },
+          project: { type: "string" },
+          depth_before: { type: "integer", minimum: 1 },
+          depth_after: { type: "integer", minimum: 1 }
+        },
+        anyOf: [{ required: ["anchor"] }, { required: ["query"] }],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
+    },
+    {
+      name: "remem_timeline_report",
+      title: "Timeline Report",
+      description: "Generate a structured project timeline report with optional timeline and monthly breakdown.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: { type: "string" },
+          full: { type: "boolean" }
+        },
+        required: ["project"],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
+    },
+    {
+      name: "remem_workstreams_list",
+      title: "List Workstreams",
+      description: "List Remem workstreams for a project, optionally filtered by status.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: { type: "string" },
+          status: { type: "string", enum: ["active", "paused", "completed", "abandoned"] }
+        },
+        required: ["project"],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
+    },
+    {
+      name: "remem_workstream_update",
+      title: "Update Workstream",
+      description: "Update a Remem workstream status, next action, or blockers after explicit confirmation.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "integer", minimum: 1 },
+          project: { type: "string" },
+          status: { type: "string", enum: ["active", "paused", "completed", "abandoned"] },
+          next_action: { type: "string", minLength: 1 },
+          blockers: { type: "string", minLength: 1 },
+          confirm: { type: "boolean" }
+        },
+        required: ["id", "project", "confirm"],
+        anyOf: [{ required: ["status"] }, { required: ["next_action"] }, { required: ["blockers"] }],
+        additionalProperties: false
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true
+      }
     }
   ];
 }
