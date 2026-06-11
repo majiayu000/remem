@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub(in crate::cli) use super::config_types::ConfigAction;
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -487,18 +488,6 @@ pub(in crate::cli) enum ContextGateAction {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum ConfigAction {
-    /// Print the active config file path.
-    Path,
-    /// Print the resolved config text, including built-in defaults.
-    Show,
-    /// Create or update the config file with default sections.
-    Init,
-    /// Set one scalar config key, for example memory_ai.profiles.codex.model.
-    Set { key: String, value: String },
 }
 
 #[derive(Subcommand)]

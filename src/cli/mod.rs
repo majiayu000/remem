@@ -1,8 +1,11 @@
 mod actions;
+mod config_types;
 mod cwd;
 mod dispatch;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_config;
 #[cfg(test)]
 mod tests_eval;
 #[cfg(test)]
