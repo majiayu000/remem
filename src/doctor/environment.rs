@@ -8,11 +8,7 @@ pub(super) fn check_binary() -> Check {
     let exe = std::env::current_exe()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
-    Check {
-        name: "Binary",
-        status: Status::Ok,
-        detail: exe,
-    }
+    Check::new("Binary", Status::Ok, exe)
 }
 
 pub(super) fn check_install_paths() -> Check {
@@ -26,15 +22,15 @@ pub(super) fn check_install_paths() -> Check {
     }
     let report =
         crate::install::duplicates::inspect_install_paths_with_configured_paths(&configured);
-    Check {
-        name: "Install paths",
-        status: if report.has_warning() {
+    Check::new(
+        "Install paths",
+        if report.has_warning() {
             Status::Warn
         } else {
             Status::Ok
         },
-        detail: crate::install::duplicates::format_doctor_detail(&report),
-    }
+        crate::install::duplicates::format_doctor_detail(&report),
+    )
 }
 
 fn configured_remem_paths_for(hosts: Vec<HostProbe>) -> Vec<PathBuf> {
@@ -100,11 +96,11 @@ fn check_hooks_for(hosts: Vec<HostProbe>) -> Vec<Check> {
         checks.push(probe_hooks(probe));
     }
     if checks.is_empty() {
-        checks.push(Check {
-            name: "Hooks",
-            status: Status::Fail,
-            detail: "no supported host detected (install Claude Code or Codex)".to_string(),
-        });
+        checks.push(Check::new(
+            "Hooks",
+            Status::Fail,
+            "no supported host detected (install Claude Code or Codex)",
+        ));
     }
     checks
 }
@@ -119,11 +115,11 @@ fn check_mcp_for(hosts: Vec<HostProbe>) -> Vec<Check> {
         checks.push(probe_mcp(probe));
     }
     if checks.is_empty() {
-        checks.push(Check {
-            name: "MCP server",
-            status: Status::Fail,
-            detail: "no supported host detected".to_string(),
-        });
+        checks.push(Check::new(
+            "MCP server",
+            Status::Fail,
+            "no supported host detected",
+        ));
     }
     checks
 }
@@ -132,35 +128,35 @@ fn probe_hooks(probe: HostProbe) -> Check {
     let name = hooks_check_name(probe.name);
 
     if !probe.hooks_path.exists() {
-        return Check {
+        return Check::new(
             name,
-            status: Status::Fail,
-            detail: format!(
+            Status::Fail,
+            format!(
                 "{} not found (run `remem install`)",
                 probe.hooks_path.display()
             ),
-        };
+        );
     }
 
     let content = match std::fs::read_to_string(&probe.hooks_path) {
         Ok(content) => content,
         Err(err) => {
-            return Check {
+            return Check::new(
                 name,
-                status: Status::Fail,
-                detail: format!("cannot read {}: {}", probe.hooks_path.display(), err),
-            };
+                Status::Fail,
+                format!("cannot read {}: {}", probe.hooks_path.display(), err),
+            );
         }
     };
 
     let doc: Value = match serde_json::from_str(&content) {
         Ok(doc) => doc,
         Err(err) => {
-            return Check {
+            return Check::new(
                 name,
-                status: Status::Fail,
-                detail: format!("cannot parse {}: {}", probe.hooks_path.display(), err),
-            };
+                Status::Fail,
+                format!("cannot parse {}: {}", probe.hooks_path.display(), err),
+            );
         }
     };
 
@@ -175,57 +171,57 @@ fn probe_hooks(probe: HostProbe) -> Check {
 
     if found == events.len() {
         if legacy_policy {
-            return Check {
+            return Check::new(
                 name,
-                status: Status::Warn,
-                detail: format!(
+                Status::Warn,
+                format!(
                     "{}/{} registered in {}; legacy memory-AI hook policy remains (run `remem install --target {}`)",
                     found, events.len(), probe.hooks_path.display(), probe.name
                 ),
-            };
+            );
         }
         if deprecated_codex_observe {
-            return Check {
+            return Check::new(
                 name,
-                status: Status::Warn,
-                detail: format!(
+                Status::Warn,
+                format!(
                     "{}/{} registered in {}; remove Codex PostToolUse observe to avoid unbounded Bash backlog",
                     found,
                     events.len(),
                     probe.hooks_path.display()
                 ),
-            };
+            );
         }
-        Check {
+        Check::new(
             name,
-            status: Status::Ok,
-            detail: format!(
+            Status::Ok,
+            format!(
                 "{}/{} registered in {}",
                 found,
                 events.len(),
                 probe.hooks_path.display()
             ),
-        }
+        )
     } else if found > 0 {
-        Check {
+        Check::new(
             name,
-            status: Status::Warn,
-            detail: format!(
+            Status::Warn,
+            format!(
                 "{}/{} registered (run `remem install --target {}` to fix)",
                 found,
                 events.len(),
                 probe.name
             ),
-        }
+        )
     } else {
-        Check {
+        Check::new(
             name,
-            status: Status::Fail,
-            detail: format!(
+            Status::Fail,
+            format!(
                 "no remem hooks (run `remem install --target {}`)",
                 probe.name
             ),
-        }
+        )
     }
 }
 
@@ -239,23 +235,23 @@ fn probe_mcp(probe: HostProbe) -> Check {
         .find_map(|path| probe_mcp_path(probe.name, path))
     {
         return match result {
-            Ok(path) => Check {
+            Ok(path) => Check::new(
                 name,
-                status: Status::Ok,
-                detail: format!("registered in {}", path.display()),
-            },
-            Err((path, err)) => Check {
+                Status::Ok,
+                format!("registered in {}", path.display()),
+            ),
+            Err((path, err)) => Check::new(
                 name,
-                status: Status::Fail,
-                detail: format!("cannot parse {}: {}", path.display(), err),
-            },
+                Status::Fail,
+                format!("cannot parse {}: {}", path.display(), err),
+            ),
         };
     }
 
-    Check {
+    Check::new(
         name,
-        status: Status::Fail,
-        detail: if has_existing_path {
+        Status::Fail,
+        if has_existing_path {
             format!(
                 "not registered (run `remem install --target {}`)",
                 probe.name
@@ -267,7 +263,7 @@ fn probe_mcp(probe: HostProbe) -> Check {
                 probe.name
             )
         },
-    }
+    )
 }
 
 fn hooks_check_name(host: &str) -> &'static str {

@@ -18,19 +18,19 @@ fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled:
     let mut files = match collect_remem_native_memory_files(projects_dir) {
         Ok(files) => files,
         Err(err) => {
-            return Check {
-                name: "Claude native memory",
-                status: Status::Warn,
-                detail: format!("cannot inspect {}: {}", projects_dir.display(), err),
-            };
+            return Check::new(
+                "Claude native memory",
+                Status::Warn,
+                format!("cannot inspect {}: {}", projects_dir.display(), err),
+            );
         }
     };
 
     if files.is_empty() {
-        return Check {
-            name: "Claude native memory",
-            status: Status::Ok,
-            detail: if disabled {
+        return Check::new(
+            "Claude native memory",
+            Status::Ok,
+            if disabled {
                 format!(
                     "disabled by {}; no remem_sessions.md files found",
                     crate::context::claude_memory::DISABLE_NATIVE_MEMORY_SYNC_ENV
@@ -38,7 +38,7 @@ fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled:
             } else {
                 "no remem_sessions.md files found".to_string()
             },
-        };
+        );
     }
 
     files.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.path.cmp(&b.path)));
@@ -57,10 +57,10 @@ fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled:
     };
 
     if oversized.is_empty() {
-        return Check {
-            name: "Claude native memory",
-            status: Status::Ok,
-            detail: format!(
+        return Check::new(
+            "Claude native memory",
+            Status::Ok,
+            format!(
                 "{} remem_sessions.md file(s), largest {} bytes, limit {}={} bytes{}",
                 files.len(),
                 largest,
@@ -68,7 +68,7 @@ fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled:
                 max_bytes,
                 disabled_note
             ),
-        };
+        );
     }
 
     let examples = oversized
@@ -77,10 +77,10 @@ fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled:
         .map(|file| format!("{} ({} bytes)", file.path.display(), file.bytes))
         .collect::<Vec<_>>()
         .join("; ");
-    Check {
-        name: "Claude native memory",
-        status: Status::Warn,
-        detail: format!(
+    Check::new(
+        "Claude native memory",
+        Status::Warn,
+        format!(
             "{} of {} remem_sessions.md file(s) exceed {} bytes{}; host-side Claude Code loads are not included in remem usage: {}",
             oversized.len(),
             files.len(),
@@ -88,7 +88,7 @@ fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled:
             disabled_note,
             examples
         ),
-    }
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]
