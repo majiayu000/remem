@@ -84,6 +84,51 @@ pub(crate) fn governance_eval_snapshot(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionStartEvalSnapshot {
+    pub rendered_output: String,
+    pub output_chars: usize,
+    pub memories_loaded: usize,
+    pub core_count: usize,
+    pub index_count: usize,
+    pub lesson_count: usize,
+    pub preference_count: usize,
+    pub session_count: usize,
+    pub workstream_count: usize,
+    pub truncated: bool,
+}
+
+pub(crate) fn session_start_eval_snapshot(
+    cwd: &str,
+    project: &str,
+    current_branch: Option<&str>,
+    host: &str,
+) -> Result<SessionStartEvalSnapshot> {
+    let request = ContextRequest {
+        cwd: cwd.to_string(),
+        project: project.to_string(),
+        session_id: Some("eval-session-start".to_string()),
+        hook_source: Some("SessionStart".to_string()),
+        current_branch: current_branch.map(str::to_string),
+        host: super::host::resolve_host_kind(Some(host)),
+        use_colors: false,
+    };
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+    let rendered = render_context_output_with_policy(&request, false, policy)?;
+    Ok(SessionStartEvalSnapshot {
+        rendered_output: rendered.output,
+        output_chars: rendered.stats.output_chars,
+        memories_loaded: rendered.stats.memories_loaded,
+        core_count: rendered.stats.core.count,
+        index_count: rendered.stats.index.count,
+        lesson_count: rendered.stats.lessons.count,
+        preference_count: rendered.stats.preferences.count,
+        session_count: rendered.stats.sessions.count,
+        workstream_count: rendered.stats.workstreams.count,
+        truncated: rendered.stats.truncated,
+    })
+}
+
 fn render_loaded_context_for_eval(
     conn: &rusqlite::Connection,
     project: &str,
@@ -257,7 +302,15 @@ pub(in crate::context) fn render_context_output(
     debug: bool,
 ) -> Result<RenderedContext> {
     let profile = resolve_profile(request.host);
-    let policy = profile.default_policy();
+    render_context_output_with_policy(request, debug, profile.default_policy())
+}
+
+fn render_context_output_with_policy(
+    request: &ContextRequest,
+    debug: bool,
+    policy: ContextPolicy,
+) -> Result<RenderedContext> {
+    let profile = resolve_profile(request.host);
     let conn = match db::open_db() {
         Ok(connection) => connection,
         Err(error) => {

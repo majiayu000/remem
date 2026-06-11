@@ -18,4 +18,5 @@ mod tests;
 mod types;
 
 pub(crate) use render::governance_eval_snapshot;
+pub(crate) use render::session_start_eval_snapshot;
 pub use render::{generate_context, generate_context_from_cli};
