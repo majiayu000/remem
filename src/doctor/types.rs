@@ -6,6 +6,7 @@ pub(crate) struct Check {
     pub name: &'static str,
     pub status: Status,
     pub detail: String,
+    pub duration_ms: u64,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -38,6 +39,20 @@ impl Status {
 }
 
 impl Check {
+    pub(crate) fn new(name: &'static str, status: Status, detail: impl Into<String>) -> Self {
+        Self {
+            name,
+            status,
+            detail: detail.into(),
+            duration_ms: 0,
+        }
+    }
+
+    pub(crate) fn with_duration_ms(mut self, duration_ms: u64) -> Self {
+        self.duration_ms = duration_ms;
+        self
+    }
+
     pub(crate) fn icon(&self) -> &'static str {
         self.status.icon()
     }
@@ -71,9 +86,9 @@ impl DoctorOutcome {
     }
 }
 
-/// Current JSON contract version. Bump when removing or renaming a field;
-/// adding new optional fields does NOT require a bump.
-pub(crate) const REPORT_SCHEMA_VERSION: u32 = 1;
+/// Current JSON contract version. Bump when removing or renaming a field, or
+/// when adding mandatory observability fields to every check/root report.
+pub(crate) const REPORT_SCHEMA_VERSION: u32 = 2;
 
 /// JSON-stable shape for `remem doctor --json`. Field names and the
 /// `status` tag are part of the CLI's machine-readable contract; do not
@@ -83,6 +98,7 @@ pub(crate) struct CheckJson<'a> {
     pub name: &'a str,
     pub status: &'a str,
     pub detail: &'a str,
+    pub duration_ms: u64,
 }
 
 #[derive(Serialize)]
@@ -93,5 +109,6 @@ pub(crate) struct ReportJson<'a> {
     pub status: &'a str,
     pub fails: usize,
     pub warns: usize,
+    pub elapsed_ms: u64,
     pub checks: Vec<CheckJson<'a>>,
 }

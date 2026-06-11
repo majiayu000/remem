@@ -3,66 +3,65 @@ use crate::db;
 use crate::doctor::health_action::{
     queue_actions, render_inline_hints, worker_once_fallback_detail,
 };
+use rusqlite::Connection;
 
-pub(super) fn check_database() -> Check {
+pub(super) fn check_database(conn: Option<&Connection>, open_error: Option<&str>) -> Check {
     let db_path = db::db_path();
     if !db_path.exists() {
-        return Check {
-            name: "Database",
-            status: Status::Fail,
-            detail: format!("{} (not found)", db_path.display()),
-        };
+        return Check::new(
+            "Database",
+            Status::Fail,
+            format!("{} (not found)", db_path.display()),
+        );
     }
 
     let size = std::fs::metadata(&db_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    match db::open_db_read_only() {
-        Ok(conn) => match db::query_system_stats(&conn) {
-            Ok(stats) => Check {
-                name: "Database",
-                status: Status::Ok,
-                detail: format!(
-                    "{} ({:.1} MB, {} memories)",
-                    db_path.display(),
-                    size as f64 / 1_048_576.0,
-                    stats.active_memories
-                ),
-            },
-            Err(err) => Check {
-                name: "Database",
-                status: Status::Fail,
-                detail: format!("{} (stats error: {})", db_path.display(), err),
-            },
-        },
-        Err(err) => Check {
-            name: "Database",
-            status: Status::Fail,
-            detail: format!("{} (open error: {})", db_path.display(), err),
-        },
+    let Some(conn) = conn else {
+        return Check::new(
+            "Database",
+            Status::Fail,
+            format!(
+                "{} (open error: {})",
+                db_path.display(),
+                open_error.unwrap_or("database connection unavailable")
+            ),
+        );
+    };
+
+    match db::query_system_stats(conn) {
+        Ok(stats) => Check::new(
+            "Database",
+            Status::Ok,
+            format!(
+                "{} ({:.1} MB, {} memories)",
+                db_path.display(),
+                size as f64 / 1_048_576.0,
+                stats.active_memories
+            ),
+        ),
+        Err(err) => Check::new(
+            "Database",
+            Status::Fail,
+            format!("{} (stats error: {})", db_path.display(), err),
+        ),
     }
 }
 
-pub(super) fn check_pending_queue() -> Check {
-    let conn = match db::open_db_read_only() {
-        Ok(conn) => conn,
-        Err(_) => {
-            return Check {
-                name: "Pending queue",
-                status: Status::Warn,
-                detail: "cannot open database".to_string(),
-            };
-        }
+pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new("Pending queue", Status::Warn, "cannot open database");
     };
 
-    let stats = match db::query_system_stats(&conn) {
+    let stats = match db::query_system_stats(conn) {
         Ok(stats) => stats,
         Err(err) => {
-            return Check {
-                name: "Pending queue",
-                status: Status::Warn,
-                detail: format!("cannot load queue stats: {}", err),
-            };
+            return Check::new(
+                "Pending queue",
+                Status::Warn,
+                format!("cannot load queue stats: {}", err),
+            );
         }
     };
     let detail = format!(
@@ -89,61 +88,50 @@ pub(super) fn check_pending_queue() -> Check {
         .unwrap_or_default();
 
     if stats.expired_processing_pending_observations > 0 || stats.stuck_jobs > 0 {
-        Check {
-            name: "Pending queue",
-            status: Status::Warn,
-            detail: format!("{detail} (will auto-recover{action_suffix})"),
-        }
+        Check::new(
+            "Pending queue",
+            Status::Warn,
+            format!("{detail} (will auto-recover{action_suffix})"),
+        )
     } else if stats.failed_pending_observations > 0 || stats.failed_jobs > 0 {
-        Check {
-            name: "Pending queue",
-            status: Status::Warn,
-            detail: format!("{detail} (inspect failures{action_suffix})"),
-        }
+        Check::new(
+            "Pending queue",
+            Status::Warn,
+            format!("{detail} (inspect failures{action_suffix})"),
+        )
     } else if stats.ready_pending_observations > 100 {
-        Check {
-            name: "Pending queue",
-            status: Status::Warn,
-            detail: format!("{detail} (backlog building up; action: `remem worker --once`)"),
-        }
+        Check::new(
+            "Pending queue",
+            Status::Warn,
+            format!("{detail} (backlog building up; action: `remem worker --once`)"),
+        )
     } else {
-        Check {
-            name: "Pending queue",
-            status: Status::Ok,
-            detail,
-        }
+        Check::new("Pending queue", Status::Ok, detail)
     }
 }
 
-pub(super) fn check_raw_archive_ingest() -> Check {
-    let conn = match db::open_db_read_only() {
-        Ok(conn) => conn,
-        Err(_) => {
-            return Check {
-                name: "Raw archive ingest",
-                status: Status::Warn,
-                detail: "cannot open database".to_string(),
-            };
-        }
+pub(super) fn check_raw_archive_ingest(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new("Raw archive ingest", Status::Warn, "cannot open database");
     };
 
-    let stats = match db::query_system_stats(&conn) {
+    let stats = match db::query_system_stats(conn) {
         Ok(stats) => stats,
         Err(err) => {
-            return Check {
-                name: "Raw archive ingest",
-                status: Status::Warn,
-                detail: format!("cannot load raw ingest stats: {}", err),
-            };
+            return Check::new(
+                "Raw archive ingest",
+                Status::Warn,
+                format!("cannot load raw ingest stats: {}", err),
+            );
         }
     };
 
     if stats.raw_ingest_failures == 0 {
-        return Check {
-            name: "Raw archive ingest",
-            status: Status::Ok,
-            detail: format!("{} raw messages, no ingest failures", stats.raw_messages),
-        };
+        return Check::new(
+            "Raw archive ingest",
+            Status::Ok,
+            format!("{} raw messages, no ingest failures", stats.raw_messages),
+        );
     }
 
     let mut detail = format!(
@@ -160,96 +148,75 @@ pub(super) fn check_raw_archive_ingest() -> Check {
         detail.push_str(&format!(" ({})", crate::db::truncate_str(&message, 160)));
     }
 
-    Check {
-        name: "Raw archive ingest",
-        status: Status::Warn,
-        detail,
-    }
+    Check::new("Raw archive ingest", Status::Warn, detail)
 }
 
-pub(super) fn check_temporal_facts() -> Check {
-    let conn = match db::open_db_read_only() {
-        Ok(conn) => conn,
-        Err(_) => {
-            return Check {
-                name: "Temporal facts",
-                status: Status::Warn,
-                detail: "cannot open database".to_string(),
-            };
-        }
+pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new("Temporal facts", Status::Warn, "cannot open database");
     };
 
-    let stats = match db::query_memory_facts_stats(&conn) {
+    let stats = match db::query_memory_facts_stats(conn) {
         Ok(stats) => stats,
         Err(err) => {
-            return Check {
-                name: "Temporal facts",
-                status: Status::Warn,
-                detail: format!("cannot load fact stats: {}", err),
-            };
+            return Check::new(
+                "Temporal facts",
+                Status::Warn,
+                format!("cannot load fact stats: {}", err),
+            );
         }
     };
 
     if !stats.table_exists {
-        return Check {
-            name: "Temporal facts",
-            status: Status::Ok,
-            detail: "memory_facts table not present; temporal retrieval uses created_at fallback"
-                .to_string(),
-        };
+        return Check::new(
+            "Temporal facts",
+            Status::Ok,
+            "memory_facts table not present; temporal retrieval uses created_at fallback",
+        );
     }
 
     if stats.retrieval_eligible == 0 && stats.active_memories == 0 && stats.captured_events == 0 {
-        return Check {
-            name: "Temporal facts",
-            status: Status::Ok,
-            detail:
-                "memory_facts table is empty because this store has no memories or captured events yet"
-                    .to_string(),
-        };
+        return Check::new(
+            "Temporal facts",
+            Status::Ok,
+            "memory_facts table is empty because this store has no memories or captured events yet",
+        );
     }
 
     if stats.retrieval_eligible == 0 {
-        return Check {
-            name: "Temporal facts",
-            status: Status::Warn,
-            detail: format!(
+        return Check::new(
+            "Temporal facts",
+            Status::Warn,
+            format!(
                 "temporal retrieval can read memory_facts, but 0 of {} fact row(s) are linked active event-time facts; production fact extraction is not populating retrievable facts yet",
                 stats.total
             ),
-        };
+        );
     }
 
-    Check {
-        name: "Temporal facts",
-        status: Status::Ok,
-        detail: format!(
+    Check::new(
+        "Temporal facts",
+        Status::Ok,
+        format!(
             "{} linked active memory fact(s) available for event-time retrieval",
             stats.retrieval_eligible
         ),
-    }
+    )
 }
 
-pub(super) fn check_worker_daemon() -> Check {
-    let conn = match db::open_db_read_only() {
-        Ok(conn) => conn,
-        Err(_) => {
-            return Check {
-                name: "Worker daemon",
-                status: Status::Warn,
-                detail: "cannot open database".to_string(),
-            };
-        }
+pub(super) fn check_worker_daemon(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new("Worker daemon", Status::Warn, "cannot open database");
     };
 
-    let stats = match db::query_system_stats(&conn) {
+    let stats = match db::query_system_stats(conn) {
         Ok(stats) => stats,
         Err(err) => {
-            return Check {
-                name: "Worker daemon",
-                status: Status::Warn,
-                detail: format!("cannot load heartbeat stats: {}", err),
-            };
+            return Check::new(
+                "Worker daemon",
+                Status::Warn,
+                format!("cannot load heartbeat stats: {}", err),
+            );
         }
     };
 
@@ -258,26 +225,26 @@ pub(super) fn check_worker_daemon() -> Check {
         stats.worker_heartbeat_owner,
         stats.worker_heartbeat_age_secs,
     ) {
-        (true, Some(owner), Some(age_secs)) => Check {
-            name: "Worker daemon",
-            status: Status::Ok,
-            detail: format!("healthy, last heartbeat {}s ago ({})", age_secs, owner),
-        },
-        (false, Some(owner), Some(age_secs)) => Check {
-            name: "Worker daemon",
-            status: Status::Warn,
-            detail: format!(
+        (true, Some(owner), Some(age_secs)) => Check::new(
+            "Worker daemon",
+            Status::Ok,
+            format!("healthy, last heartbeat {}s ago ({})", age_secs, owner),
+        ),
+        (false, Some(owner), Some(age_secs)) => Check::new(
+            "Worker daemon",
+            Status::Warn,
+            format!(
                 "stale, last heartbeat {}s ago ({}); {}",
                 age_secs,
                 owner,
                 worker_once_fallback_detail()
             ),
-        },
-        _ => Check {
-            name: "Worker daemon",
-            status: Status::Ok,
-            detail: format!("not running; {}", worker_once_fallback_detail()),
-        },
+        ),
+        _ => Check::new(
+            "Worker daemon",
+            Status::Ok,
+            format!("not running; {}", worker_once_fallback_detail()),
+        ),
     }
 }
 
@@ -294,26 +261,26 @@ pub(super) fn check_disk_space() -> Check {
     let total_mb = (db_size + log_size) as f64 / 1_048_576.0;
 
     if total_mb > 500.0 {
-        Check {
-            name: "Disk usage",
-            status: Status::Warn,
-            detail: format!(
+        Check::new(
+            "Disk usage",
+            Status::Warn,
+            format!(
                 "{:.1} MB total (DB: {:.1} MB, logs: {:.1} MB) — consider `remem cleanup`",
                 total_mb,
                 db_size as f64 / 1_048_576.0,
                 log_size as f64 / 1_048_576.0
             ),
-        }
+        )
     } else {
-        Check {
-            name: "Disk usage",
-            status: Status::Ok,
-            detail: format!(
+        Check::new(
+            "Disk usage",
+            Status::Ok,
+            format!(
                 "{:.1} MB total (DB: {:.1} MB, logs: {:.1} MB)",
                 total_mb,
                 db_size as f64 / 1_048_576.0,
                 log_size as f64 / 1_048_576.0
             ),
-        }
+        )
     }
 }

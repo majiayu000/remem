@@ -1,6 +1,10 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
+use rusqlite::Connection;
 
 use super::database::{
     check_database, check_disk_space, check_pending_queue, check_raw_archive_ingest,
@@ -11,6 +15,8 @@ use super::native_memory::check_native_memory_sync;
 use super::runtime_config_check::check_runtime_config;
 use super::schema::{check_key_format, check_schema_migration};
 use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION};
+
+const SLOW_CHECK_WARN_MS: u64 = 10_000;
 
 /// Caller-supplied options for `remem doctor`. Defaulting all fields keeps
 /// the unit tests and any future callers small while letting `cli::dispatch`
@@ -36,36 +42,140 @@ pub(crate) fn run_doctor_with_writer<W: Write>(
     opts: DoctorOptions,
     out: &mut W,
 ) -> Result<DoctorOutcome> {
-    let checks = collect_checks();
+    let started = Instant::now();
+    if !opts.json && !opts.quiet {
+        write_human_header(out)?;
+    }
+
+    let checks = run_checks(|check| {
+        if !opts.json && !opts.quiet {
+            write_human_check(out, check)?;
+            out.flush()?;
+        }
+        Ok(())
+    })?;
     let outcome = tally(&checks);
+    let elapsed_ms = duration_ms(started.elapsed());
 
     if opts.json {
-        write_json(out, &checks, outcome)?;
+        write_json(out, &checks, outcome, elapsed_ms)?;
     } else if !opts.quiet {
-        write_human(out, &checks, outcome)?;
+        write_human_summary(out, outcome)?;
     }
 
     Ok(outcome)
 }
 
-fn collect_checks() -> Vec<Check> {
-    let mut checks = vec![
-        check_binary(),
-        check_schema_migration(),
-        check_key_format(),
-        check_database(),
-    ];
-    checks.push(check_install_paths());
-    checks.push(check_runtime_config());
-    checks.extend(check_hooks());
-    checks.extend(check_mcp());
-    checks.push(check_raw_archive_ingest());
-    checks.push(check_temporal_facts());
-    checks.push(check_worker_daemon());
-    checks.push(check_pending_queue());
-    checks.push(check_native_memory_sync());
-    checks.push(check_disk_space());
-    checks
+fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Check>> {
+    let mut checks = Vec::new();
+
+    push_check(&mut checks, &mut on_check, check_binary)?;
+    let shared_db = SharedDoctorDb::open();
+    push_check(&mut checks, &mut on_check, || {
+        check_schema_migration(shared_db.conn(), shared_db.open_error())
+    })?;
+    push_check(&mut checks, &mut on_check, check_key_format)?;
+    push_check(&mut checks, &mut on_check, || {
+        check_database(shared_db.conn(), shared_db.open_error())
+    })?;
+    push_check(&mut checks, &mut on_check, check_install_paths)?;
+    push_check(&mut checks, &mut on_check, check_runtime_config)?;
+    push_checks(&mut checks, &mut on_check, check_hooks)?;
+    push_checks(&mut checks, &mut on_check, check_mcp)?;
+    push_check(&mut checks, &mut on_check, || {
+        check_raw_archive_ingest(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_temporal_facts(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_worker_daemon(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_pending_queue(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, check_native_memory_sync)?;
+    push_check(&mut checks, &mut on_check, check_disk_space)?;
+    Ok(checks)
+}
+
+fn push_check(
+    checks: &mut Vec<Check>,
+    on_check: &mut impl FnMut(&Check) -> Result<()>,
+    build: impl FnOnce() -> Check,
+) -> Result<()> {
+    let started = Instant::now();
+    let check = build().with_duration_ms(duration_ms(started.elapsed()));
+    push_ready_check(checks, on_check, check)
+}
+
+fn push_checks(
+    checks: &mut Vec<Check>,
+    on_check: &mut impl FnMut(&Check) -> Result<()>,
+    build: impl FnOnce() -> Vec<Check>,
+) -> Result<()> {
+    let started = Instant::now();
+    let built = build();
+    let duration = duration_ms(started.elapsed());
+    for check in built {
+        push_ready_check(checks, on_check, check.with_duration_ms(duration))?;
+    }
+    Ok(())
+}
+
+fn push_ready_check(
+    checks: &mut Vec<Check>,
+    on_check: &mut impl FnMut(&Check) -> Result<()>,
+    check: Check,
+) -> Result<()> {
+    if check.duration_ms > SLOW_CHECK_WARN_MS {
+        crate::log::warn(
+            "doctor",
+            &format!("slow check '{}' took {}ms", check.name, check.duration_ms),
+        );
+    }
+    on_check(&check)?;
+    checks.push(check);
+    Ok(())
+}
+
+fn duration_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+struct SharedDoctorDb {
+    conn: Option<Connection>,
+    open_error: Option<String>,
+}
+
+impl SharedDoctorDb {
+    fn open() -> Self {
+        if !crate::db::db_path().exists() {
+            return Self {
+                conn: None,
+                open_error: None,
+            };
+        }
+
+        match crate::db::open_db_read_only() {
+            Ok(conn) => Self {
+                conn: Some(conn),
+                open_error: None,
+            },
+            Err(error) => Self {
+                conn: None,
+                open_error: Some(error.to_string()),
+            },
+        }
+    }
+
+    fn conn(&self) -> Option<&Connection> {
+        self.conn.as_ref()
+    }
+
+    fn open_error(&self) -> Option<&str> {
+        self.open_error.as_deref()
+    }
 }
 
 fn tally(checks: &[Check]) -> DoctorOutcome {
@@ -80,18 +190,38 @@ fn tally(checks: &[Check]) -> DoctorOutcome {
     outcome
 }
 
+#[cfg(test)]
 fn write_human<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) -> Result<()> {
+    write_human_header(out)?;
+    for check in checks {
+        write_human_check(out, check)?;
+    }
+    write_human_summary(out, outcome)
+}
+
+fn write_human_header<W: Write>(out: &mut W) -> Result<()> {
     writeln!(
         out,
         "remem v{} — system check",
         crate::build_info::version_label()
     )?;
     writeln!(out)?;
+    Ok(())
+}
 
-    for check in checks {
-        writeln!(out, "  [{}] {}: {}", check.icon(), check.name, check.detail)?;
-    }
+fn write_human_check<W: Write>(out: &mut W, check: &Check) -> Result<()> {
+    writeln!(
+        out,
+        "  [{}] {}: {} ({}ms)",
+        check.icon(),
+        check.name,
+        check.detail,
+        check.duration_ms
+    )?;
+    Ok(())
+}
 
+fn write_human_summary<W: Write>(out: &mut W, outcome: DoctorOutcome) -> Result<()> {
     writeln!(out)?;
     if outcome.fails > 0 {
         writeln!(
@@ -108,7 +238,12 @@ fn write_human<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) 
     Ok(())
 }
 
-fn write_json<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) -> Result<()> {
+fn write_json<W: Write>(
+    out: &mut W,
+    checks: &[Check],
+    outcome: DoctorOutcome,
+    elapsed_ms: u64,
+) -> Result<()> {
     let overall = if outcome.fails > 0 {
         Status::Fail
     } else if outcome.warns > 0 {
@@ -124,12 +259,14 @@ fn write_json<W: Write>(out: &mut W, checks: &[Check], outcome: DoctorOutcome) -
         status: overall.as_json_tag(),
         fails: outcome.fails,
         warns: outcome.warns,
+        elapsed_ms,
         checks: checks
             .iter()
             .map(|c| CheckJson {
                 name: c.name,
                 status: c.status.as_json_tag(),
                 detail: c.detail.as_str(),
+                duration_ms: c.duration_ms,
             })
             .collect(),
     };
@@ -144,11 +281,7 @@ mod tests {
     use super::*;
 
     fn make(name: &'static str, status: Status, detail: &str) -> Check {
-        Check {
-            name,
-            status,
-            detail: detail.into(),
-        }
+        Check::new(name, status, detail)
     }
 
     #[test]
@@ -205,10 +338,10 @@ mod tests {
         ];
         let outcome = tally(&checks);
         let mut buf = Vec::new();
-        write_json(&mut buf, &checks, outcome).unwrap();
+        write_json(&mut buf, &checks, outcome, 123).unwrap();
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-        assert_eq!(parsed["schema_version"], 1);
+        assert_eq!(parsed["schema_version"], 2);
         assert_eq!(
             parsed["binary_schema_version"],
             crate::migrate::latest_schema_version()
@@ -216,10 +349,12 @@ mod tests {
         assert_eq!(parsed["status"], "fail");
         assert_eq!(parsed["fails"], 1);
         assert_eq!(parsed["warns"], 0);
+        assert_eq!(parsed["elapsed_ms"], 123);
         let checks_json = parsed["checks"].as_array().unwrap();
         assert_eq!(checks_json.len(), 2);
         assert_eq!(checks_json[0]["name"], "Database");
         assert_eq!(checks_json[0]["status"], "ok");
+        assert_eq!(checks_json[0]["duration_ms"], 0);
         assert_eq!(checks_json[1]["status"], "fail");
     }
 
@@ -231,12 +366,75 @@ mod tests {
         ];
         let outcome = tally(&checks);
         let mut buf = Vec::new();
-        write_json(&mut buf, &checks, outcome).unwrap();
+        write_json(&mut buf, &checks, outcome, 0).unwrap();
         let parsed: serde_json::Value =
             serde_json::from_str(String::from_utf8(buf).unwrap().trim()).unwrap();
         assert_eq!(parsed["status"], "ok");
         assert_eq!(parsed["fails"], 0);
         assert_eq!(parsed["warns"], 0);
+    }
+
+    #[test]
+    fn push_check_invokes_callback_before_next_check_runs() -> anyhow::Result<()> {
+        let events = std::cell::RefCell::new(Vec::new());
+        let mut checks = Vec::new();
+
+        push_check(
+            &mut checks,
+            &mut |check| {
+                events.borrow_mut().push(format!("write {}", check.name));
+                Ok(())
+            },
+            || {
+                events.borrow_mut().push("build first".to_string());
+                Check::new("first", Status::Ok, "ok")
+            },
+        )?;
+
+        push_check(
+            &mut checks,
+            &mut |check| {
+                events.borrow_mut().push(format!("write {}", check.name));
+                Ok(())
+            },
+            || {
+                assert_eq!(
+                    *events.borrow(),
+                    vec!["build first".to_string(), "write first".to_string()]
+                );
+                Check::new("second", Status::Ok, "ok")
+            },
+        )?;
+
+        assert_eq!(checks.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn push_checks_assigns_measured_duration_to_each_check() -> anyhow::Result<()> {
+        let mut checks = Vec::new();
+        let mut observed = Vec::new();
+
+        push_checks(
+            &mut checks,
+            &mut |check| {
+                observed.push((check.name, check.duration_ms));
+                Ok(())
+            },
+            || {
+                std::thread::sleep(Duration::from_millis(5));
+                vec![
+                    make("first", Status::Ok, "ok"),
+                    make("second", Status::Ok, "ok"),
+                ]
+            },
+        )?;
+
+        assert_eq!(observed.len(), 2);
+        assert_eq!(checks.len(), 2);
+        assert!(observed.iter().all(|(_, duration)| *duration > 0));
+        assert!(checks.iter().all(|check| check.duration_ms > 0));
+        Ok(())
     }
 
     #[test]
@@ -253,7 +451,7 @@ mod tests {
         let outcome = tally(&checks);
         let mut buf = Vec::new();
         if opts.json {
-            write_json(&mut buf, &checks, outcome).unwrap();
+            write_json(&mut buf, &checks, outcome, 0).unwrap();
         } else if !opts.quiet {
             write_human(&mut buf, &checks, outcome).unwrap();
         }
@@ -275,7 +473,7 @@ mod tests {
         let outcome = tally(&checks);
         let mut buf = Vec::new();
         if opts.json {
-            write_json(&mut buf, &checks, outcome).unwrap();
+            write_json(&mut buf, &checks, outcome, 0).unwrap();
         } else if !opts.quiet {
             write_human(&mut buf, &checks, outcome).unwrap();
         }

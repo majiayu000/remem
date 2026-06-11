@@ -1,6 +1,8 @@
 use rusqlite::params;
 
-use crate::db::test_support::ScopedTestDataDir;
+use crate::db::test_support::{
+    reset_runtime_connection_open_count, runtime_connection_open_count, ScopedTestDataDir,
+};
 use crate::{db, memory};
 
 use super::database::{
@@ -72,9 +74,7 @@ fn check_database_reports_shared_active_memory_count() {
     .expect("archive update should succeed");
 
     let stats = db::query_system_stats(&conn).expect("system stats should load");
-    drop(conn);
-
-    let check = check_database();
+    let check = check_database(Some(&conn), None);
     assert_eq!(check.icon(), "ok");
     assert!(check
         .detail
@@ -213,9 +213,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     )?;
 
     let stats = db::query_system_stats(&conn).expect("system stats should load");
-    drop(conn);
-
-    let check = check_pending_queue();
+    let check = check_pending_queue(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     let expected_counts = format!(
         "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} jobs pending, {} processing, {} failed, {} stuck",
@@ -276,9 +274,7 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
                  'read_error', 'read failed', 0, 0, 0, 0, ?1)",
         params![chrono::Utc::now().timestamp()],
     )?;
-    drop(conn);
-
-    let check = check_raw_archive_ingest();
+    let check = check_raw_archive_ingest(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     assert!(check.detail.contains("1 failure"), "{}", check.detail);
     assert!(check.detail.contains("read_error"), "{}", check.detail);
@@ -301,13 +297,11 @@ fn check_temporal_facts_warns_when_fact_table_is_empty() -> anyhow::Result<()> {
         None,
     )?;
     let stats = db::query_memory_facts_stats(&conn)?;
-    drop(conn);
-
     assert!(stats.table_exists);
     assert_eq!(stats.total, 0);
     assert_eq!(stats.retrieval_eligible, 0);
 
-    let check = check_temporal_facts();
+    let check = check_temporal_facts(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     assert!(
         check
@@ -331,15 +325,13 @@ fn check_temporal_facts_is_ok_when_store_has_no_source_data() -> anyhow::Result<
     let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-empty-store");
     let conn = db::open_db()?;
     let stats = db::query_memory_facts_stats(&conn)?;
-    drop(conn);
-
     assert!(stats.table_exists);
     assert_eq!(stats.total, 0);
     assert_eq!(stats.retrieval_eligible, 0);
     assert_eq!(stats.active_memories, 0);
     assert_eq!(stats.captured_events, 0);
 
-    let check = check_temporal_facts();
+    let check = check_temporal_facts(Some(&conn));
     assert_eq!(check.icon(), "ok");
     assert!(
         check.detail.contains("no memories or captured events yet"),
@@ -374,12 +366,10 @@ fn check_temporal_facts_warns_when_rows_are_not_retrievable() -> anyhow::Result<
         params![now],
     )?;
     let stats = db::query_memory_facts_stats(&conn)?;
-    drop(conn);
-
     assert_eq!(stats.total, 1);
     assert_eq!(stats.retrieval_eligible, 0);
 
-    let check = check_temporal_facts();
+    let check = check_temporal_facts(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     assert!(
         check.detail.contains("0 of 1 fact row(s)"),
@@ -418,12 +408,10 @@ fn check_temporal_facts_warns_when_source_memory_is_expired() -> anyhow::Result<
         params![now, memory_id],
     )?;
     let stats = db::query_memory_facts_stats(&conn)?;
-    drop(conn);
-
     assert_eq!(stats.total, 1);
     assert_eq!(stats.retrieval_eligible, 0);
 
-    let check = check_temporal_facts();
+    let check = check_temporal_facts(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     assert!(
         check.detail.contains("0 of 1 fact row(s)"),
@@ -458,12 +446,10 @@ fn check_temporal_facts_is_ok_when_fact_table_has_rows() -> anyhow::Result<()> {
         params![now, memory_id],
     )?;
     let stats = db::query_memory_facts_stats(&conn)?;
-    drop(conn);
-
     assert_eq!(stats.total, 1);
     assert_eq!(stats.retrieval_eligible, 1);
 
-    let check = check_temporal_facts();
+    let check = check_temporal_facts(Some(&conn));
     assert_eq!(check.icon(), "ok");
     assert!(
         check
@@ -481,9 +467,8 @@ fn check_schema_migration_reads_encrypted_database() -> anyhow::Result<()> {
     std::fs::create_dir_all(&test_dir.path)?;
     std::fs::write(test_dir.path.join(".key"), "doctor-schema-key")?;
     let conn = db::open_db()?;
-    drop(conn);
 
-    let check = check_schema_migration();
+    let check = check_schema_migration(Some(&conn), None);
     assert_eq!(check.icon(), "ok");
     assert!(check.detail.contains("up to date"), "got: {}", check.detail);
     Ok(())
@@ -498,9 +483,7 @@ fn check_schema_migration_reports_v022_schema_drift() -> anyhow::Result<()> {
          DROP TABLE memory_state_keys;
          PRAGMA foreign_keys=ON;",
     )?;
-    drop(conn);
-
-    let check = check_schema_migration();
+    let check = check_schema_migration(Some(&conn), None);
     assert_eq!(check.icon(), "FAIL");
     assert!(
         check.detail.contains("schema drift"),
@@ -535,12 +518,34 @@ fn run_doctor_with_writer_returns_outcome_and_emits_human_lines() {
     let text = String::from_utf8(buf).expect("output should be utf-8");
     assert!(text.contains("system check"));
     assert!(text.contains("Database"));
+    assert!(text.contains("ms)"), "{text}");
     // Exit code is a function of fails/warns; the absolute counts depend on
     // host config (claude/codex hooks may or may not exist on the test
     // machine), but the contract — fails maps to exit 2 — must hold.
     if outcome.fails > 0 {
         assert_eq!(outcome.exit_code(), 2);
     }
+}
+
+#[test]
+fn run_doctor_with_writer_opens_one_shared_database_connection() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-run-one-connection");
+    let conn = db::open_db()?;
+    drop(conn);
+
+    reset_runtime_connection_open_count();
+    let mut buf = Vec::new();
+    let outcome = run_doctor_with_writer(
+        DoctorOptions {
+            json: false,
+            quiet: true,
+        },
+        &mut buf,
+    )?;
+
+    assert!(outcome.exit_code() <= 2);
+    assert_eq!(runtime_connection_open_count(), 1);
+    Ok(())
 }
 
 #[test]
@@ -561,10 +566,15 @@ fn run_doctor_with_writer_emits_parseable_json() {
     let text = String::from_utf8(buf).expect("output should be utf-8");
     let parsed: serde_json::Value =
         serde_json::from_str(text.trim()).expect("output must be a single JSON object");
+    assert_eq!(parsed["schema_version"], 2);
     assert!(parsed["version"].is_string());
     assert!(parsed["status"].is_string());
+    assert!(parsed["elapsed_ms"].is_u64());
     let checks = parsed["checks"].as_array().expect("checks must be array");
     assert!(!checks.is_empty(), "doctor should always emit some checks");
+    for check in checks {
+        assert!(check["duration_ms"].is_u64(), "{check}");
+    }
     assert_eq!(
         parsed["fails"].as_u64().unwrap_or(0) as usize,
         outcome.fails
@@ -573,6 +583,33 @@ fn run_doctor_with_writer_emits_parseable_json() {
         parsed["warns"].as_u64().unwrap_or(0) as usize,
         outcome.warns
     );
+}
+
+#[test]
+fn run_doctor_with_writer_json_wins_over_quiet() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-run-json-quiet");
+    let conn = db::open_db()?;
+    drop(conn);
+
+    let mut buf: Vec<u8> = Vec::new();
+    let outcome = run_doctor_with_writer(
+        DoctorOptions {
+            json: true,
+            quiet: true,
+        },
+        &mut buf,
+    )?;
+
+    let text = String::from_utf8(buf).expect("output should be utf-8");
+    let parsed: serde_json::Value =
+        serde_json::from_str(text.trim()).expect("output must be a single JSON object");
+    assert_eq!(
+        parsed["fails"].as_u64().unwrap_or_default() as usize,
+        outcome.fails
+    );
+    assert!(parsed["checks"].is_array());
+    assert!(parsed["elapsed_ms"].is_u64());
+    Ok(())
 }
 
 #[test]
@@ -606,9 +643,7 @@ fn check_worker_daemon_reports_healthy_heartbeat() {
         now - 5,
     )
     .expect("heartbeat should insert");
-    drop(conn);
-
-    let check = check_worker_daemon();
+    let check = check_worker_daemon(Some(&conn));
     assert_eq!(check.icon(), "ok");
     assert!(check.detail.contains("healthy"));
     assert!(check.detail.contains("worker-daemon"));
@@ -618,9 +653,7 @@ fn check_worker_daemon_reports_healthy_heartbeat() {
 fn check_worker_daemon_reports_missing_as_fallback_ok() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-worker-missing");
     let conn = db::open_db()?;
-    drop(conn);
-
-    let check = check_worker_daemon();
+    let check = check_worker_daemon(Some(&conn));
     assert_eq!(check.icon(), "ok");
     assert_eq!(
         check.detail,
