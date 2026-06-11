@@ -80,11 +80,21 @@ pub fn record_captured_event(
     conn: &Connection,
     input: &CaptureEventInput<'_>,
 ) -> Result<CaptureEventOutcome> {
+    record_captured_event_with_id(conn, input, None)
+}
+
+pub fn record_captured_event_with_id(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
     let inserted_at = now;
     let sanitized_content = redact_capture_content(input.content);
     let content_hash = exact_hash(&sanitized_content);
-    let event_id = synthesize_event_id(input.event_type, &content_hash);
+    let event_id = event_id_override
+        .map(ToString::to_string)
+        .unwrap_or_else(|| synthesize_event_id(input.event_type, &content_hash));
     let identity = upsert_identity(conn, input, now)?;
     let (content_text, content_blob_id, retention_class) =
         store_content(conn, &sanitized_content, &content_hash, now)?;
@@ -351,6 +361,19 @@ fn exact_hash(content: &str) -> String {
     format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
 }
 
+pub fn unique_capture_event_id(event_type: &str, content: &str) -> String {
+    let sanitized_content = redact_capture_content(content);
+    let nanos = chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() * 1_000_000_000);
+    format!(
+        "{}-{}-{}",
+        event_type,
+        nanos,
+        exact_hash(&sanitized_content)
+    )
+}
+
 fn synthesize_event_id(event_type: &str, content_hash: &str) -> String {
     let nanos = chrono::Utc::now()
         .timestamp_nanos_opt()
@@ -362,7 +385,7 @@ fn estimate_tokens(content: &str) -> i64 {
     ((content.len() as i64) + 3) / 4
 }
 
-fn redact_capture_content(content: &str) -> String {
+pub(crate) fn redact_capture_content(content: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
         let redacted = crate::adapter::common::redact_sensitive_value(&value);
         return serde_json::to_string(&redacted)
