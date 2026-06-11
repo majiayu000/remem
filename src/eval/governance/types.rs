@@ -52,7 +52,7 @@ pub struct RateMetric {
 }
 
 impl RateMetric {
-    pub(super) fn new(passed: usize, total: usize) -> Self {
+    pub fn new(passed: usize, total: usize) -> Self {
         Self {
             passed,
             total,
@@ -64,7 +64,7 @@ impl RateMetric {
         }
     }
 
-    pub(super) fn is_perfect(&self) -> bool {
+    pub fn is_perfect(&self) -> bool {
         self.total > 0 && self.passed == self.total
     }
 }
