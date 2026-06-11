@@ -4,7 +4,10 @@ use rusqlite::OptionalExtension;
 use crate::db;
 
 use super::native::sync_native_memory;
-use super::spill::{record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event};
+use super::spill::{
+    record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event,
+    SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+};
 
 pub async fn session_init(host: Option<&str>) -> Result<()> {
     let timer = crate::log::Timer::start("session-init", "");
@@ -83,7 +86,14 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
     let conn = match db::open_db() {
         Ok(conn) => conn,
         Err(error) => {
-            let path = spill_capture_event(&capture_host, &event_id, &event, &summary, &error)?;
+            let path = spill_capture_event(
+                &capture_host,
+                &event_id,
+                &event,
+                &summary,
+                SPILL_REASON_DB_OPEN_FAILED,
+                &error,
+            )?;
             crate::log::error(
                 "observe",
                 &format!(
@@ -99,7 +109,14 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
     if let Err(error) =
         record_live_observed_event_with_id(&conn, &capture_host, &event_id, &event, &summary)
     {
-        let path = spill_capture_event(&capture_host, &event_id, &event, &summary, &error)?;
+        let path = spill_capture_event(
+            &capture_host,
+            &event_id,
+            &event,
+            &summary,
+            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+            &error,
+        )?;
         crate::log::error(
             "observe",
             &format!(
@@ -378,7 +395,10 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::super::spill::spill_capture_event;
-    use super::{event_skip_reason, observe_input, record_capture_event, session_init_event};
+    use super::{
+        event_skip_reason, observe_input, record_capture_event, session_init_event,
+        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+    };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -667,6 +687,15 @@ mod tests {
         )?;
         assert_eq!(replayed_captures, 1);
         assert_eq!(replayed_events, 1);
+        let replayed_drop_reason: String = conn.query_row(
+            "SELECT reason FROM capture_drop_events WHERE session_id = 'sess-persist-fail'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            replayed_drop_reason,
+            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED
+        );
         assert!(!crate::db::data_dir().join("capture-spill.jsonl").exists());
 
         let replayed_event_id: String = conn.query_row(
@@ -704,6 +733,7 @@ mod tests {
             &replayed_event_id,
             &replayed_event,
             &replayed_summary,
+            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
             &anyhow::anyhow!("retry same partial capture"),
         )?;
         observe_input(&replay_trigger, Some("claude-code")).await?;

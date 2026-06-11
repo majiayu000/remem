@@ -6,6 +6,9 @@ use std::path::PathBuf;
 
 use crate::adapter::{EventSummary, ParsedHookEvent};
 
+pub(super) const SPILL_REASON_DB_OPEN_FAILED: &str = "db_open_failed";
+pub(super) const SPILL_REASON_CAPTURE_PERSISTENCE_FAILED: &str = "capture_persistence_failed";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CaptureSpillRecord {
     version: u32,
@@ -13,6 +16,7 @@ struct CaptureSpillRecord {
     host: String,
     event: ParsedHookEvent,
     summary: EventSummary,
+    failure_reason: String,
     db_error: String,
     created_at_epoch: i64,
 }
@@ -24,23 +28,24 @@ struct CaptureSpillRecordCompat {
     host: String,
     event: ParsedHookEvent,
     summary: EventSummary,
+    failure_reason: Option<String>,
     db_error: String,
     created_at_epoch: i64,
 }
 
-impl From<CaptureSpillRecordCompat> for CaptureSpillRecord {
-    fn from(record: CaptureSpillRecordCompat) -> Self {
-        let content = legacy_spill_event_content(&record.event, &record.summary);
-        Self {
-            version: record.version,
-            event_id: record
-                .event_id
-                .unwrap_or_else(|| crate::db::unique_capture_event_id("tool_result", &content)),
-            host: record.host,
-            event: record.event,
-            summary: record.summary,
-            db_error: record.db_error,
-            created_at_epoch: record.created_at_epoch,
+impl CaptureSpillRecordCompat {
+    fn into_record(self, fallback_event_id: String) -> CaptureSpillRecord {
+        CaptureSpillRecord {
+            version: self.version,
+            event_id: self.event_id.unwrap_or(fallback_event_id),
+            host: self.host,
+            event: self.event,
+            summary: self.summary,
+            failure_reason: self
+                .failure_reason
+                .unwrap_or_else(|| SPILL_REASON_DB_OPEN_FAILED.to_string()),
+            db_error: self.db_error,
+            created_at_epoch: self.created_at_epoch,
         }
     }
 }
@@ -84,6 +89,7 @@ pub(super) fn spill_capture_event(
     event_id: &str,
     event: &ParsedHookEvent,
     summary: &EventSummary,
+    failure_reason: &str,
     db_error: &anyhow::Error,
 ) -> Result<PathBuf> {
     let path = spill_path();
@@ -97,6 +103,7 @@ pub(super) fn spill_capture_event(
         host: host.to_string(),
         event: sanitize_event(event),
         summary: sanitize_summary(summary),
+        failure_reason: failure_reason.to_string(),
         db_error: crate::db::truncate_str(
             &crate::db::capture::redact_capture_content(&db_error.to_string()),
             1000,
@@ -129,8 +136,12 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
             .with_context(|| format!("remove stale {}", failed_path.display()))?;
     }
 
-    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-        match parse_spill_record(line) {
+    for (line_index, line) in contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
+        match parse_spill_record(line, line_index) {
             Ok(record) => match super::hook::record_observed_event_with_id(
                 conn,
                 &record.host,
@@ -146,7 +157,7 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
                             session_id: Some(&record.event.session_id),
                             project: Some(&record.event.project),
                             tool_name: Some(&record.event.tool_name),
-                            reason: "db_open_failed",
+                            reason: &record.failure_reason,
                             detail: Some(&record.db_error),
                             spill_path: Some(&path.display().to_string()),
                             recovered_event_id: Some(event_id),
@@ -154,9 +165,9 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
                     )?;
                     replayed += 1;
                 }
-                Err(error) => append_failed_spill(&failed_path, line, &error)?,
+                Err(error) => append_failed_spill_record(&failed_path, &record, &error)?,
             },
-            Err(error) => append_failed_spill(&failed_path, line, &error)?,
+            Err(error) => append_failed_spill_line(&failed_path, line, &error)?,
         }
     }
 
@@ -180,7 +191,7 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
     Ok(replayed)
 }
 
-fn append_failed_spill(path: &PathBuf, line: &str, error: &anyhow::Error) -> Result<()> {
+fn append_failed_spill_line(path: &PathBuf, line: &str, error: &anyhow::Error) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create failed capture spill dir {}", parent.display()))?;
@@ -191,6 +202,26 @@ fn append_failed_spill(path: &PathBuf, line: &str, error: &anyhow::Error) -> Res
         .open(path)
         .with_context(|| format!("open failed capture spill {}", path.display()))?;
     writeln!(file, "{line}")?;
+    crate::log::warn("observe", &format!("capture spill replay failed: {error}"));
+    Ok(())
+}
+
+fn append_failed_spill_record(
+    path: &PathBuf,
+    record: &CaptureSpillRecord,
+    error: &anyhow::Error,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create failed capture spill dir {}", parent.display()))?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open failed capture spill {}", path.display()))?;
+    serde_json::to_writer(&mut file, record)?;
+    file.write_all(b"\n")?;
     crate::log::warn("observe", &format!("capture spill replay failed: {error}"));
     Ok(())
 }
@@ -225,29 +256,17 @@ fn sanitize_summary(summary: &EventSummary) -> EventSummary {
     }
 }
 
-fn parse_spill_record(line: &str) -> Result<CaptureSpillRecord> {
+fn parse_spill_record(line: &str, line_index: usize) -> Result<CaptureSpillRecord> {
     let record: CaptureSpillRecordCompat = serde_json::from_str(line)?;
-    Ok(record.into())
+    Ok(record.into_record(legacy_spill_event_id(line, line_index)))
 }
 
-fn legacy_spill_event_content(event: &ParsedHookEvent, summary: &EventSummary) -> String {
-    serde_json::json!({
-        "summary": &summary.summary,
-        "event_type": &summary.event_type,
-        "detail": summary.detail.as_deref(),
-        "files": summary.files_json.as_deref(),
-        "exit_code": summary.exit_code,
-        "tool_name": &event.tool_name,
-        "tool_input": event
-            .tool_input
-            .as_ref()
-            .map(crate::adapter::common::redact_sensitive_value),
-        "tool_response": event
-            .tool_response
-            .as_ref()
-            .map(crate::adapter::common::redact_sensitive_value),
-    })
-    .to_string()
+fn legacy_spill_event_id(line: &str, line_index: usize) -> String {
+    format!(
+        "tool_result-legacy-spill-{}-{:016x}",
+        line_index + 1,
+        crate::db::deterministic_hash(line.as_bytes())
+    )
 }
 
 fn spill_path() -> PathBuf {
@@ -263,7 +282,7 @@ mod tests {
     use crate::adapter::{EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::{replay_spilled_capture_events, spill_capture_event};
+    use super::{replay_spilled_capture_events, spill_capture_event, SPILL_REASON_DB_OPEN_FAILED};
 
     #[test]
     fn replay_spilled_capture_event_records_capture_and_drop_ledger() -> anyhow::Result<()> {
@@ -292,7 +311,14 @@ mod tests {
         })
         .to_string();
         let event_id = db::unique_capture_event_id("tool_result", &content);
-        spill_capture_event("codex-cli", &event_id, &event, &summary, &err)?;
+        spill_capture_event(
+            "codex-cli",
+            &event_id,
+            &event,
+            &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
+            &err,
+        )?;
         let conn = db::open_db()?;
 
         let replayed = replay_spilled_capture_events(&conn)?;
@@ -303,8 +329,13 @@ mod tests {
         let drops: i64 = conn.query_row("SELECT COUNT(*) FROM capture_drop_events", [], |row| {
             row.get(0)
         })?;
+        let drop_reason: String =
+            conn.query_row("SELECT reason FROM capture_drop_events", [], |row| {
+                row.get(0)
+            })?;
         assert_eq!(captured, 1);
         assert_eq!(drops, 1);
+        assert_eq!(drop_reason, SPILL_REASON_DB_OPEN_FAILED);
         Ok(())
     }
 
@@ -333,6 +364,7 @@ mod tests {
             "tool_result-identical-a",
             &event,
             &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
             &err,
         )?;
         spill_capture_event(
@@ -340,6 +372,7 @@ mod tests {
             "tool_result-identical-b",
             &event,
             &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
             &err,
         )?;
         let conn = db::open_db()?;
@@ -398,6 +431,82 @@ mod tests {
     }
 
     #[test]
+    fn replay_legacy_spill_preserves_synthesized_id_after_partial_failure() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-legacy-stable-id");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "host": "codex-cli",
+            "event": {
+                "session_id": "session-legacy-stable",
+                "cwd": "/tmp/remem",
+                "project": "/tmp/remem",
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "/tmp/remem/src/lib.rs"},
+                "tool_response": {"ok": true}
+            },
+            "summary": {
+                "event_type": "file_edit",
+                "summary": "Edited src/lib.rs",
+                "detail": null,
+                "files_json": "[\"src/lib.rs\"]",
+                "exit_code": null
+            },
+            "db_error": "database is locked",
+            "created_at_epoch": 1700000000
+        });
+        let path = crate::db::data_dir().join("capture-spill.jsonl");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, format!("{legacy}\n"))?;
+        let conn = db::open_db()?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_legacy_events_insert
+             BEFORE INSERT ON events
+             BEGIN
+                 SELECT RAISE(FAIL, 'legacy events blocked');
+             END;",
+        )?;
+
+        let replayed = replay_spilled_capture_events(&conn)?;
+
+        assert_eq!(replayed, 0);
+        let partial_captures: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-legacy-stable'",
+            [],
+            |row| row.get(0),
+        )?;
+        let partial_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'session-legacy-stable'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(partial_captures, 1);
+        assert_eq!(partial_events, 0);
+        let failed_spill = std::fs::read_to_string(&path)?;
+        assert!(failed_spill.contains(r#""event_id":"tool_result-legacy-spill-1-"#));
+
+        conn.execute_batch("DROP TRIGGER fail_legacy_events_insert;")?;
+        let replayed = replay_spilled_capture_events(&conn)?;
+
+        assert_eq!(replayed, 1);
+        let replayed_captures: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-legacy-stable'",
+            [],
+            |row| row.get(0),
+        )?;
+        let replayed_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'session-legacy-stable'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(replayed_captures, 1);
+        assert_eq!(replayed_events, 1);
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
     fn spill_redacts_summary_and_database_error() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("capture-spill-redacts");
         let err = anyhow::anyhow!("database token=github_pat_secret");
@@ -419,7 +528,14 @@ mod tests {
             exit_code: Some(1),
         };
 
-        spill_capture_event("codex-cli", "tool_result-redact", &event, &summary, &err)?;
+        spill_capture_event(
+            "codex-cli",
+            "tool_result-redact",
+            &event,
+            &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
+            &err,
+        )?;
         let stored = std::fs::read_to_string(crate::db::data_dir().join("capture-spill.jsonl"))?;
 
         assert!(stored.contains("[REDACTED]"));
