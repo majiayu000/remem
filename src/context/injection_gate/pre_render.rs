@@ -37,6 +37,16 @@ pub(in crate::context) fn pre_render_context_gate(
     };
 
     let row = row?;
+    if !fallback_cooldown_allows_suppression(invocation, &row, now) {
+        return None;
+    }
+    if let Err(error) = record_suppression(conn, invocation, &key, now) {
+        crate::log::warn(
+            "context-gate",
+            &format!("pre_render_skip reason=gate_write error={}", error),
+        );
+        return None;
+    }
     crate::log::info(
         "context-gate",
         &format!(
@@ -215,6 +225,82 @@ mod tests {
         )?;
 
         assert!(pre_render_context_gate(&conn, &invocation).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn strict_pre_render_respects_fallback_cooldown_expiry() -> anyhow::Result<()> {
+        let _data_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-fallback");
+        let _cooldown = ScopedEnvVar::set("REMEM_CONTEXT_GATE_FALLBACK_COOLDOWN_SECS", "900");
+        let mut invocation = gate_invocation(None);
+        invocation.gate_mode = Some("strict".to_string());
+        let conn = crate::db::test_support::runtime_connection()?;
+
+        let first = apply_context_gate(
+            &conn,
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        );
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        let old_last_emitted = chrono::Utc::now().timestamp().saturating_sub(901);
+        conn.execute(
+            "UPDATE context_injections
+             SET last_emitted_epoch = ?1
+             WHERE host = ?2 AND injection_key = ?3",
+            params![
+                old_last_emitted,
+                invocation.host.as_env_value(),
+                injection_key(&invocation)
+            ],
+        )?;
+
+        assert!(pre_render_context_gate(&conn, &invocation).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn strict_pre_render_records_suppression_refresh() -> anyhow::Result<()> {
+        let _data_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-refresh");
+        let mut invocation = gate_invocation(Some("sess-pre-render-refresh"));
+        invocation.gate_mode = Some("strict".to_string());
+        let conn = crate::db::test_support::runtime_connection()?;
+
+        let first = apply_context_gate(
+            &conn,
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        );
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        let old_epoch = chrono::Utc::now().timestamp().saturating_sub(60);
+        conn.execute(
+            "UPDATE context_injections
+             SET updated_at_epoch = ?1, suppress_count = 0
+             WHERE host = ?2 AND injection_key = ?3",
+            params![
+                old_epoch,
+                invocation.host.as_env_value(),
+                injection_key(&invocation)
+            ],
+        )?;
+
+        let Some(decision) = pre_render_context_gate(&conn, &invocation) else {
+            anyhow::bail!("existing strict gate row should suppress before render");
+        };
+        assert_eq!(decision.action, ContextGateAction::Suppressed);
+
+        let (updated_at_epoch, suppress_count): (i64, i64) = conn.query_row(
+            "SELECT updated_at_epoch, suppress_count
+             FROM context_injections
+             WHERE host = ?1 AND injection_key = ?2",
+            params![invocation.host.as_env_value(), injection_key(&invocation)],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert!(updated_at_epoch > old_epoch);
+        assert_eq!(suppress_count, 1);
         Ok(())
     }
 }
