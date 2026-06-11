@@ -29,6 +29,7 @@ pub(crate) fn queue_actions(
     expired_processing_pending_observations: i64,
     failed_jobs: i64,
     stuck_jobs: i64,
+    failed_extraction_tasks: i64,
 ) -> Vec<HealthAction> {
     let mut actions = Vec::new();
 
@@ -59,6 +60,18 @@ pub(crate) fn queue_actions(
         actions.push(
             HealthAction::new(count_title(failed_jobs, "failed job", "failed jobs"))
                 .command("inspect counts", "remem status --json"),
+        );
+    }
+
+    if failed_extraction_tasks > 0 {
+        actions.push(
+            HealthAction::new(count_title(
+                failed_extraction_tasks,
+                "failed extraction task",
+                "failed extraction tasks",
+            ))
+            .command("inspect counts", "remem status --json")
+            .command("recover", "remem worker --once"),
         );
     }
 

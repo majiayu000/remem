@@ -130,14 +130,14 @@ fn check_key_format_reports_effective_env_key() -> anyhow::Result<()> {
 
 #[test]
 fn health_action_queue_actions_are_empty_when_runtime_is_clear() {
-    let actions = queue_actions(0, 0, 0, 0);
+    let actions = queue_actions(0, 0, 0, 0, 0);
     assert!(actions.is_empty());
     assert!(render_action_block(&actions).is_empty());
 }
 
 #[test]
 fn health_action_queue_actions_render_copy_paste_commands() {
-    let actions = queue_actions(43, 1, 2, 3);
+    let actions = queue_actions(43, 1, 2, 3, 4);
     let text = render_action_block(&actions);
 
     assert!(text.contains("Needs attention:"));
@@ -147,6 +147,7 @@ fn health_action_queue_actions_render_copy_paste_commands() {
     assert!(text.contains("1 expired processing pending observation"));
     assert!(text.contains("2 failed jobs"));
     assert!(text.contains("3 stuck jobs"));
+    assert!(text.contains("4 failed extraction tasks"));
     assert!(text.contains("inspect counts: remem status --json"));
     assert!(text.contains("recover: remem worker --once"));
 }
@@ -211,17 +212,41 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         "UPDATE jobs SET state = 'failed' WHERE id = ?1",
         params![failed_job_id],
     )?;
+    let capture = db::record_captured_event(
+        &conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id: "session-5",
+            project: "proj-a",
+            cwd: None,
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some("Bash"),
+            content: r#"{"tool_name":"Bash"}"#,
+            task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
+        },
+    )?;
+    let extraction_task_id = capture
+        .extraction_task_id
+        .ok_or_else(|| anyhow::anyhow!("capture should enqueue extraction task"))?;
+    conn.execute(
+        "UPDATE extraction_tasks SET status = 'failed' WHERE id = ?1",
+        params![extraction_task_id],
+    )?;
 
     let stats = db::query_system_stats(&conn).expect("system stats should load");
     let check = check_pending_queue(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     let expected_counts = format!(
-        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} jobs pending, {} processing, {} failed, {} stuck",
+        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing, {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
         stats.ready_pending_observations,
         stats.delayed_pending_observations,
         stats.processing_pending_observations,
         stats.expired_processing_pending_observations,
         stats.failed_pending_observations,
+        stats.pending_extraction_tasks,
+        stats.processing_extraction_tasks,
+        stats.failed_extraction_tasks,
         stats.pending_jobs,
         stats.processing_jobs,
         stats.failed_jobs,
@@ -251,6 +276,11 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         check
             .detail
             .contains("inspect counts: `remem status --json`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains("extraction tasks pending"),
         "{}",
         check.detail
     );

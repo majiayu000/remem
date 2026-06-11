@@ -256,6 +256,7 @@ fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_act
         report.pending_observations.expired,
         report.jobs.failed,
         report.jobs.stuck,
+        report.capture_pipeline.extract_failed,
     )
 }
 
@@ -395,7 +396,7 @@ mod tests {
                 captured: 5,
                 extract_todo: 6,
                 extract_running: 7,
-                extract_failed: 8,
+                extract_failed: 0,
                 pending_candidates: 9,
                 pending_graph_candidates: 10,
                 oldest_task_epoch: Some(10),
@@ -497,6 +498,7 @@ mod tests {
         let mut report = status_report_fixture();
         report.pending_observations.failed = 43;
         report.pending_observations.expired = 1;
+        report.capture_pipeline.extract_failed = 4;
         report.jobs.failed = 2;
         report.jobs.stuck = 3;
 
@@ -508,6 +510,7 @@ mod tests {
         assert!(text.contains("inspect: remem pending list-failed --limit 20"));
         assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
         assert!(text.contains("1 expired processing pending observation"));
+        assert!(text.contains("4 failed extraction tasks"));
         assert!(text.contains("2 failed jobs"));
         assert!(text.contains("3 stuck jobs"));
         assert!(text.contains("inspect counts: remem status --json"));
