@@ -292,6 +292,111 @@ async fn memory_candidate_keeps_negated_support_overlap_pending() -> Result<()> 
 }
 
 #[tokio::test]
+async fn memory_candidate_keeps_contracted_negation_overlap_pending() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-contracted-negation")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The ingestion worker doesn't persist durable memory candidates from summarized observations.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-contracted-negation</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Ingestion worker persists durable memory candidates from summarized observations.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_keeps_uncertain_overlap_pending() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-uncertain-overlap")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The ingestion worker may promote summarized memory candidates because source evidence support validation passes.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-uncertain-overlap</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Ingestion worker promotes summarized memory candidates because source evidence support validation passes.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_candidate_keeps_actor_swap_overlap_pending() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-candidate-actor-swap")?;
+    insert_source_observation_typed(
+        &conn,
+        &task,
+        "feature",
+        "The review dashboard shows pending memory candidate diagnostics while the ingestion worker validates rewritten durable memory facts against source observations.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate><scope>project</scope><type>discovery</type><topic_key>discovery-actor-swap</topic_key><risk_class>low</risk_class><confidence>0.92</confidence><text>Review dashboard validates rewritten durable memory facts against source observations.</text></memory_candidate>".to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task
+                .high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        }
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
 async fn memory_candidate_keeps_architecture_unsupported_by_bugfix_pending() -> Result<()> {
     let mut conn = setup_conn();
     let task = setup_task(&mut conn, "sess-candidate-architecture-bugfix")?;

@@ -48,52 +48,17 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
 ];
 const MIN_SUPPORT_TOKEN_OVERLAP: usize = 6;
 const MIN_SUPPORT_TOKEN_RATIO: f64 = 0.72;
+const MAX_SUPPORT_TOKEN_WINDOW_EXTRA: usize = 5;
 const SUPPORT_TOKEN_MIN_CHARS: usize = 4;
+#[rustfmt::skip]
 const SUPPORT_RISK_TOKENS: &[&str] = &[
-    "allow",
-    "allowed",
-    "allows",
-    "delete",
-    "deleted",
-    "deletes",
-    "deny",
-    "denied",
-    "denies",
-    "disable",
-    "disabled",
-    "disables",
-    "enable",
-    "enabled",
-    "enables",
-    "fail",
-    "failed",
-    "failing",
-    "fails",
-    "ignore",
-    "ignored",
-    "ignores",
-    "cannot",
-    "cant",
-    "never",
-    "no",
-    "not",
-    "prevent",
-    "prevented",
-    "prevents",
-    "reject",
-    "rejected",
-    "rejects",
-    "remove",
-    "removed",
-    "removes",
-    "skip",
-    "skipped",
-    "skips",
-    "succeed",
-    "succeeded",
-    "succeeds",
-    "success",
-    "without",
+    "allow", "allowed", "allows", "cannot", "cant", "could", "couldn", "delete", "deleted",
+    "deletes", "deny", "denied", "denies", "didn", "disable", "disabled", "disables", "doesn", "don",
+    "enable", "enabled", "enables", "fail", "failed", "failing", "fails", "hadn", "hasn",
+    "haven", "ignore", "ignored", "ignores", "isn", "may", "might", "never", "no", "not",
+    "prevent", "prevented", "prevents", "reject", "rejected", "rejects", "remove", "removed",
+    "removes", "shouldn", "skip", "skipped", "skips", "succeed", "succeeded", "succeeds",
+    "success", "wasn", "weren", "without", "won", "wouldn",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -646,19 +611,54 @@ fn has_conservative_support_token_overlap(candidate_text: &str, observation_text
         return false;
     }
     let observation_tokens = support_tokens(observation_text);
-    let matched = candidate_tokens
-        .iter()
-        .filter(|token| observation_tokens.contains(*token))
-        .count();
+    let Some((matched, start, end)) =
+        ordered_support_window(&candidate_tokens, &observation_tokens)
+    else {
+        return false;
+    };
+    let window_len = end.saturating_sub(start) + 1;
     matched >= MIN_SUPPORT_TOKEN_OVERLAP
         && (matched as f64 / candidate_tokens.len() as f64) >= MIN_SUPPORT_TOKEN_RATIO
+        && window_len <= candidate_tokens.len() + MAX_SUPPORT_TOKEN_WINDOW_EXTRA
 }
 
-fn support_tokens(text: &str) -> BTreeSet<&str> {
+fn ordered_support_window(
+    candidate_tokens: &[String],
+    observation_tokens: &[String],
+) -> Option<(usize, usize, usize)> {
+    let mut start = None;
+    let mut end = 0;
+    let mut matched = 0;
+    for candidate in candidate_tokens {
+        let search_from = end + usize::from(start.is_some());
+        let position = observation_tokens
+            .iter()
+            .enumerate()
+            .skip(search_from)
+            .find_map(|(index, observation)| (observation == candidate).then_some(index))?;
+        start.get_or_insert(position);
+        end = position;
+        matched += 1;
+    }
+    start.map(|start| (matched, start, end))
+}
+
+fn support_tokens(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter(|token| token.chars().count() >= SUPPORT_TOKEN_MIN_CHARS)
         .filter(|token| !is_support_stop_token(token))
+        .map(normalize_support_token)
         .collect()
+}
+
+fn normalize_support_token(token: &str) -> String {
+    if let Some(stem) = token.strip_suffix("ies") {
+        return format!("{stem}y");
+    }
+    if token.len() > 4 && token.ends_with('s') && !token.ends_with("ss") && !token.ends_with("us") {
+        return token[..token.len() - 1].to_string();
+    }
+    token.to_string()
 }
 
 fn contains_support_risk_token(text: &str) -> bool {
