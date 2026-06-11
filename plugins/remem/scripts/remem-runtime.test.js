@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  codesignRuntimeIfNeeded,
   copyRuntime,
   ensureRuntimeSync,
   ensureRuntime,
@@ -58,6 +59,7 @@ function fixture(options = {}) {
     pluginRoot: root,
     repoRoot: repo,
     pluginData: data,
+    platformKey: options.platformKey || "linux-x64",
     env: {
       PATH: options.path || "",
       REMEM_ALLOW_VERSION_MISMATCH: options.allowMismatch || ""
@@ -150,9 +152,30 @@ test("ensureRuntime can use local runtime without adopting it", async () => {
   assert.equal(fs.existsSync(runtimeMetadataPath(fx)), false);
 });
 
+test("activation dry-run uses local runtime without writing plugin runtime files", async () => {
+  const fx = fixture();
+  const source = path.join(fx.repoRoot, "target", "release", "remem");
+  writeFakeRemem(source, "0.5.17");
+
+  const status = await runRememAsync(
+    ["install", "--target", "codex", "--hooks-only", "--dry-run"],
+    { ...fx, adoptLocal: false, allowDownload: false }
+  );
+
+  assert.equal(status, 0);
+  assert.equal(fs.existsSync(managedBinaryPath(fx)), false);
+  assert.equal(fs.existsSync(runtimeMetadataPath(fx)), false);
+});
+
 test("darwin arm64 runtimes require ad-hoc codesign", () => {
   assert.equal(shouldCodesignRuntime({ platformKey: "darwin-arm64" }), true);
   assert.equal(shouldCodesignRuntime({ platformKey: "darwin-x64" }), false);
   assert.equal(shouldCodesignRuntime({ platformKey: "linux-arm64" }), false);
   assert.equal(shouldCodesignRuntime({ platformKey: "win32-x64" }), false);
+});
+
+test("codesign is skipped without throwing on non-darwin-arm64 platforms", () => {
+  assert.doesNotThrow(() => codesignRuntimeIfNeeded("unused", { platformKey: "win32-x64" }));
+  assert.doesNotThrow(() => codesignRuntimeIfNeeded("unused", { platformKey: "linux-x64" }));
+  assert.doesNotThrow(() => codesignRuntimeIfNeeded("unused", { platformKey: "freebsd-x64" }));
 });
