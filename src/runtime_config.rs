@@ -51,6 +51,12 @@ pub struct HostRuntimeConfig {
     pub capture_adapter: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigDefaultMode {
+    PreserveUserValues,
+    MigrateLegacyDefaults,
+}
+
 pub fn config_path() -> PathBuf {
     std::env::var("REMEM_CONFIG")
         .ok()
@@ -62,8 +68,12 @@ pub fn config_path() -> PathBuf {
 
 pub fn default_config_text() -> String {
     let mut doc = DocumentMut::new();
-    ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])
-        .expect("default runtime config should be valid");
+    ensure_config_defaults_with_mode(
+        &mut doc,
+        &[CLAUDE_HOST, CODEX_HOST],
+        ConfigDefaultMode::MigrateLegacyDefaults,
+    )
+    .expect("default runtime config should be valid");
     doc.to_string()
 }
 
@@ -76,7 +86,11 @@ pub fn show_config_text() -> Result<String> {
 pub fn init_config() -> Result<PathBuf> {
     let path = config_path();
     let mut doc = read_config_doc_or_default()?;
-    ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
+    ensure_config_defaults_with_mode(
+        &mut doc,
+        &[CLAUDE_HOST, CODEX_HOST],
+        ConfigDefaultMode::MigrateLegacyDefaults,
+    )?;
     write_config_doc(&path, &doc)?;
     Ok(path)
 }
@@ -84,7 +98,7 @@ pub fn init_config() -> Result<PathBuf> {
 pub fn ensure_config_for_hosts(hosts: &[&str]) -> Result<PathBuf> {
     let path = config_path();
     let mut doc = read_config_doc_or_default()?;
-    ensure_config_defaults(&mut doc, hosts)?;
+    ensure_config_defaults_with_mode(&mut doc, hosts, ConfigDefaultMode::MigrateLegacyDefaults)?;
     write_config_doc(&path, &doc)?;
     Ok(path)
 }
@@ -92,7 +106,11 @@ pub fn ensure_config_for_hosts(hosts: &[&str]) -> Result<PathBuf> {
 pub fn set_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
     let path = config_path();
     let mut doc = read_config_doc_or_default()?;
-    ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
+    ensure_config_defaults_with_mode(
+        &mut doc,
+        &[CLAUDE_HOST, CODEX_HOST],
+        ConfigDefaultMode::MigrateLegacyDefaults,
+    )?;
 
     let segments = key
         .split('.')
@@ -199,6 +217,14 @@ fn write_config_doc(path: &PathBuf, doc: &DocumentMut) -> Result<()> {
 }
 
 fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
+    ensure_config_defaults_with_mode(doc, hosts, ConfigDefaultMode::PreserveUserValues)
+}
+
+fn ensure_config_defaults_with_mode(
+    doc: &mut DocumentMut,
+    hosts: &[&str],
+    mode: ConfigDefaultMode,
+) -> Result<()> {
     if doc.get("version").is_none() {
         doc["version"] = value(1);
     }
@@ -221,11 +247,11 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
 
     {
         let hosts_table = child_table_mut(memory_ai, "hosts")?;
-        ensure_host_config(hosts_table, &default_host)?;
+        ensure_host_config(hosts_table, &default_host, mode)?;
         for host in hosts {
             let host = normalize_host(host);
             if !host.is_empty() && host != default_host {
-                ensure_host_config(hosts_table, &host)?;
+                ensure_host_config(hosts_table, &host, mode)?;
             }
         }
     }
@@ -257,7 +283,7 @@ fn ensure_http_profile(profiles: &mut Table) -> Result<()> {
     Ok(())
 }
 
-fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
+fn ensure_host_config(hosts: &mut Table, host: &str, mode: ConfigDefaultMode) -> Result<()> {
     let table = child_table_mut(hosts, host)?;
     match host {
         CODEX_HOST => {
@@ -268,7 +294,11 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
         }
         CLAUDE_HOST => {
             set_str_if_missing(table, "memory_profile", "claude");
-            set_str_if_missing_or_legacy_value(table, "context_gate", "auto", "off");
+            if mode == ConfigDefaultMode::MigrateLegacyDefaults {
+                set_str_if_missing_or_legacy_value(table, "context_gate", "auto", "off");
+            } else {
+                set_str_if_missing(table, "context_gate", "auto");
+            }
             set_bool_if_missing(table, "context_color", true);
             set_str_if_missing(table, "capture_adapter", CLAUDE_HOST);
         }
@@ -600,6 +630,24 @@ mod tests {
 
             assert_eq!(host.host, CLAUDE_HOST);
             assert_eq!(host.context_gate.as_deref(), Some("auto"));
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn claude_host_resolve_preserves_explicit_context_gate_off() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context-explicit-off");
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(
+                &path,
+                "[memory_ai.hosts.claude-code]\nmemory_profile = \"claude\"\ncontext_gate = \"off\"\n",
+            )?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("off"));
             Ok(())
         })?;
         std::fs::remove_file(path)?;
