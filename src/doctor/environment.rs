@@ -488,6 +488,18 @@ mod tests {
         });
         assert!(matches!(missing_mcp_check.status, Status::Ok));
 
+        let stale_mcp_path = dir.join("stale.toml");
+        std::fs::write(
+            &stale_mcp_path,
+            "[mcp_servers.remem]\ncommand = \"/stale/remem\"\n",
+        )?;
+        let stale_mcp_check = probe_hooks(HostProbe {
+            name: "codex",
+            hooks_path: hooks_path.clone(),
+            mcp_paths: vec![stale_mcp_path],
+        });
+        assert!(matches!(stale_mcp_check.status, Status::Ok));
+
         let mcp_path = dir.join("config.toml");
         std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
