@@ -50,6 +50,17 @@ impl MemoryServer {
         let start = std::time::Instant::now();
         let requested_multi_hop = params.multi_hop.unwrap_or(false);
         let requested_explain = params.explain.unwrap_or(false);
+        if requested_explain
+            && !params
+                .query
+                .as_deref()
+                .is_some_and(|query| !query.trim().is_empty())
+        {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "explain requires a non-empty query; set query or explain=false",
+            ));
+        }
         if requested_multi_hop && requested_explain {
             return Err(McpToolError::invalid_request(
                 TOOL,
@@ -289,6 +300,33 @@ mod tests {
             "{}",
             json
         );
+        Ok(())
+    }
+
+    #[test]
+    fn search_rejects_explain_without_query() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("mcp-search-explain-missing-query");
+        let server = MemoryServer::new()?;
+
+        for query in [None, Some("")] {
+            let mut params = base_search_params(Some(true));
+            params.query = query.map(str::to_string);
+
+            let err = server
+                .search(Parameters(params))
+                .expect_err("queryless explain should be rejected");
+            let json: Value = serde_json::from_str(&err.to_string())?;
+
+            assert_eq!(json["error"]["code"], "invalid_request");
+            assert!(
+                json["error"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("non-empty query"),
+                "{}",
+                json
+            );
+        }
         Ok(())
     }
 }

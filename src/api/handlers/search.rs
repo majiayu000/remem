@@ -35,6 +35,20 @@ pub(in crate::api) async fn handle_search(
     State(_state): State<DbState>,
     Query(params): Query<SearchParams>,
 ) -> impl IntoResponse {
+    if params.explain.unwrap_or(false)
+        && !params
+            .query
+            .as_deref()
+            .is_some_and(|query| !query.trim().is_empty())
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_search_request",
+            "explain requires a non-empty query; set query or explain=false",
+        )
+        .into_response();
+    }
+
     if params.multi_hop.unwrap_or(false) && params.explain.unwrap_or(false) {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -206,6 +220,32 @@ mod tests {
             "{}",
             json
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handle_search_rejects_explain_without_query() -> Result<()> {
+        for query in [None, Some("")] {
+            let mut params = base_search_params(Some(true));
+            params.query = query.map(str::to_string);
+
+            let response = handle_search(State(DbState), Query(params))
+                .await
+                .into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            let json: Value = serde_json::from_slice(&body)?;
+
+            assert_eq!(json["error"]["code"], "invalid_search_request");
+            assert!(
+                json["error"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("non-empty query"),
+                "{}",
+                json
+            );
+        }
         Ok(())
     }
 }
