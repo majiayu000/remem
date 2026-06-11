@@ -293,7 +293,20 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
   await withServer(async (base) => {
     const widget = await fetch(`${base}/widget.html`);
     assert.equal(widget.status, 200);
-    assert.match(await widget.text(), /Remem Dashboard/);
+    const widgetHtml = await widget.text();
+    assert.match(widgetHtml, /Remem Dashboard/);
+    assert.match(widgetHtml, /href="\/widget\.css"/);
+    assert.match(widgetHtml, /src="\/widget\.js"/);
+
+    const widgetCss = await fetch(`${base}/widget.css`);
+    assert.equal(widgetCss.status, 200);
+    assert.match(widgetCss.headers.get("content-type"), /^text\/css/);
+    assert.match(await widgetCss.text(), /\.shell/);
+
+    const widgetJs = await fetch(`${base}/widget.js`);
+    assert.equal(widgetJs.status, 200);
+    assert.match(widgetJs.headers.get("content-type"), /^text\/javascript/);
+    assert.match(await widgetJs.text(), /window\.openai\.callTool/);
 
     const status = await fetch(`${base}/api/status`).then((response) => response.json());
     assert.equal(status.runtime.selected.schemaVersion, 34);
@@ -431,7 +444,7 @@ test("HTTP write routes reject cross-site browser requests", async () => {
 
 test("widget renders raw archive fallback results", async () => {
   await withServer(async (base) => {
-    const widget = await fetch(`${base}/widget.html`).then((response) => response.text());
+    const widget = await fetch(`${base}/widget.js`).then((response) => response.text());
 
     assert.match(widget, /payload\.raw_hits/);
     assert.match(widget, /raw_archive/);
@@ -441,8 +454,11 @@ test("widget renders raw archive fallback results", async () => {
 
 test("widget routes embedded app actions through host tool calls", async () => {
   await withServer(async (base) => {
-    const widget = await fetch(`${base}/widget.html`).then((response) => response.text());
+    const html = await fetch(`${base}/widget.html`).then((response) => response.text());
+    const widget = await fetch(`${base}/widget.js`).then((response) => response.text());
 
+    assert.match(html, /data-view="timeline"/);
+    assert.match(html, /data-view="workstreams"/);
     assert.match(widget, /window\.openai\.callTool/);
     assert.match(widget, /remem_dashboard/);
     assert.match(widget, /remem_search/);
@@ -450,7 +466,13 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /remem_save_memory/);
     assert.match(widget, /remem_activation_plan/);
     assert.match(widget, /remem_governance_preview/);
+    assert.match(widget, /remem_timeline_around/);
+    assert.match(widget, /remem_timeline_report/);
+    assert.match(widget, /remem_workstreams_list/);
+    assert.match(widget, /remem_workstream_update/);
     assert.match(widget, /\/api\/governance-preview/);
+    assert.match(widget, /\/api\/timeline-around/);
+    assert.match(widget, /\/api\/workstream-update/);
   });
 });
 

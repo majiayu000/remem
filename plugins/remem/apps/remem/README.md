@@ -11,6 +11,8 @@ This app surface provides:
 - governance: stale, reject, or delete dry-run preview with affected IDs and status transitions
 - current-state resolution: stable state keys with current/conflict/history metadata
 - traceability: commit lookup and session-to-commit links
+- timeline: project report and around-anchor/query browsing
+- workstreams: status filtering plus confirmed status/next-action/blocker updates
 - activation: hooks-only dry-run plan without writing Codex config
 
 ## Surface map
@@ -32,9 +34,9 @@ This app surface provides:
 | Activation plan | `remem_activation_plan` | `GET /api/activation-plan` | `remem install --target codex --hooks-only --dry-run` |
 
 Timeline and workstream backend routes are wired for app and MCP callers through
-machine-readable Rust CLI bridges. The visible widget UI remains unchanged until
-`public/widget.html` is split below the 800-line cap. Workstream updates must
-pass an explicit project and `--confirm`.
+machine-readable Rust CLI bridges. The visible widget is split into HTML, CSS,
+and JS assets so new timeline/workstream tabs can stay below the 800-line cap.
+Workstream updates must pass an explicit project and `--confirm`.
 
 Run locally:
 

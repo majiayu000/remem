@@ -50,6 +50,20 @@ function readWidgetHtml() {
   return fs.readFileSync(path.join(__dirname, "public", "widget.html"), "utf8");
 }
 
+const PUBLIC_ASSETS = new Map([
+  ["/widget.css", { file: "widget.css", contentType: "text/css; charset=utf-8" }],
+  ["/widget.js", { file: "widget.js", contentType: "text/javascript; charset=utf-8" }]
+]);
+
+function readPublicAsset(pathname) {
+  const asset = PUBLIC_ASSETS.get(pathname);
+  if (!asset) return null;
+  return {
+    content: fs.readFileSync(path.join(__dirname, "public", asset.file), "utf8"),
+    contentType: asset.contentType
+  };
+}
+
 function jsonResponse(res, status, payload) {
   const body = JSON.stringify(payload, null, 2);
   res.writeHead(status, {
@@ -583,6 +597,10 @@ function createServer(options = {}) {
       const url = parseUrl(req);
       if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/widget.html")) {
         return textResponse(res, 200, readWidgetHtml(), "text/html; charset=utf-8");
+      }
+      if (req.method === "GET") {
+        const asset = readPublicAsset(url.pathname);
+        if (asset) return textResponse(res, 200, asset.content, asset.contentType);
       }
       if (req.method === "GET" && url.pathname === "/healthz") {
         return jsonResponse(res, 200, { ok: true, name: "remem-app" });
