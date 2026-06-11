@@ -157,10 +157,12 @@ fn find_host_arg(tokens: &[String]) -> Option<String> {
     let mut iter = tokens.iter();
     while let Some(token) = iter.next() {
         if token == "--host" {
-            return iter.next().cloned();
+            return iter
+                .next()
+                .map(|host| crate::runtime_config::normalize_host(host));
         }
         if let Some(host) = token.strip_prefix("--host=") {
-            return Some(host.to_string());
+            return Some(crate::runtime_config::normalize_host(host));
         }
     }
     None
@@ -295,7 +297,7 @@ mod tests {
     #[test]
     fn parse_remem_invocation_accepts_env_prefix_and_quotes() {
         let invocation = parse_remem_invocation(
-            "REMEM_CONTEXT_HOST=codex-cli '/opt/remem bin/remem' context --host codex-cli",
+            "REMEM_CONTEXT_HOST=codex-cli '/opt/remem bin/remem' context --host codex",
         )
         .expect("remem invocation should parse");
 
@@ -312,9 +314,8 @@ mod tests {
 
     #[test]
     fn parse_remem_invocation_handles_single_quote_escaping() {
-        let invocation =
-            parse_remem_invocation("'/tmp/remem'\\''bin/remem' observe --host claude-code")
-                .expect("remem invocation should parse");
+        let invocation = parse_remem_invocation("'/tmp/remem'\\''bin/remem' observe --host=claude")
+            .expect("remem invocation should parse");
 
         assert_eq!(invocation.executable, "/tmp/remem'bin/remem");
         assert_eq!(invocation.subcommand.as_deref(), Some("observe"));

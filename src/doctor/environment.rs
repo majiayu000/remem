@@ -348,9 +348,10 @@ fn configured_mcp_paths(probe: &HostProbe) -> Vec<PathBuf> {
 }
 
 fn expected_hook_executable(doc: &Value, probe: &HostProbe) -> Option<PathBuf> {
-    expected_hook_executable_from_hooks(doc, probe.name)
-        .map(PathBuf::from)
-        .or_else(|| configured_mcp_paths(probe).into_iter().next())
+    configured_mcp_paths(probe)
+        .into_iter()
+        .next()
+        .or_else(|| expected_hook_executable_from_hooks(doc, probe.name).map(PathBuf::from))
 }
 
 fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
@@ -488,17 +489,17 @@ mod tests {
         });
         assert!(matches!(missing_mcp_check.status, Status::Ok));
 
-        let stale_mcp_path = dir.join("stale.toml");
+        let mismatched_mcp_path = dir.join("mismatch.toml");
         std::fs::write(
-            &stale_mcp_path,
-            "[mcp_servers.remem]\ncommand = \"/stale/remem\"\n",
+            &mismatched_mcp_path,
+            "[mcp_servers.remem]\ncommand = \"/configured/remem\"\n",
         )?;
-        let stale_mcp_check = probe_hooks(HostProbe {
+        let mismatched_mcp_check = probe_hooks(HostProbe {
             name: "codex",
             hooks_path: hooks_path.clone(),
-            mcp_paths: vec![stale_mcp_path],
+            mcp_paths: vec![mismatched_mcp_path],
         });
-        assert!(matches!(stale_mcp_check.status, Status::Ok));
+        assert!(matches!(mismatched_mcp_check.status, Status::Fail));
 
         let mcp_path = dir.join("config.toml");
         std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
