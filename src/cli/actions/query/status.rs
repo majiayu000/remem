@@ -74,6 +74,7 @@ fn load_status_report() -> Result<StatusReport> {
             latest_drop_detail: stats.latest_capture_drop_detail,
             extract_todo: stats.pending_extraction_tasks,
             extract_running: stats.processing_extraction_tasks,
+            extract_expired: stats.expired_processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
             pending_candidates: stats.pending_memory_candidates,
             pending_graph_candidates: stats.pending_graph_candidates,
@@ -181,6 +182,10 @@ fn print_status_report(report: &StatusReport) {
         report.capture_pipeline.extract_running
     );
     println!(
+        "  Extract exp:  {:>6}",
+        report.capture_pipeline.extract_expired
+    );
+    println!(
         "  Extract fail: {:>6}",
         report.capture_pipeline.extract_failed
     );
@@ -275,8 +280,10 @@ fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_act
     queue_actions(
         report.pending_observations.failed,
         report.pending_observations.expired,
+        report.capture_pipeline.extract_expired,
         report.jobs.failed,
         report.jobs.stuck,
+        report.capture_pipeline.extract_failed,
     )
 }
 
@@ -334,6 +341,7 @@ pub(super) struct CapturePipelineStatus {
     pub latest_drop_detail: Option<String>,
     pub extract_todo: i64,
     pub extract_running: i64,
+    pub extract_expired: i64,
     pub extract_failed: i64,
     pub pending_candidates: i64,
     pub pending_graph_candidates: i64,
@@ -428,7 +436,8 @@ mod tests {
                 latest_drop_detail: None,
                 extract_todo: 6,
                 extract_running: 7,
-                extract_failed: 8,
+                extract_expired: 0,
+                extract_failed: 0,
                 pending_candidates: 9,
                 pending_graph_candidates: 10,
                 oldest_task_epoch: Some(10),
@@ -530,6 +539,7 @@ mod tests {
         let mut report = status_report_fixture();
         report.pending_observations.failed = 43;
         report.pending_observations.expired = 1;
+        report.capture_pipeline.extract_failed = 4;
         report.jobs.failed = 2;
         report.jobs.stuck = 3;
 
@@ -541,6 +551,7 @@ mod tests {
         assert!(text.contains("inspect: remem pending list-failed --limit 20"));
         assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
         assert!(text.contains("1 expired processing pending observation"));
+        assert!(text.contains("4 failed extraction tasks"));
         assert!(text.contains("2 failed jobs"));
         assert!(text.contains("3 stuck jobs"));
         assert!(text.contains("inspect counts: remem status --json"));
