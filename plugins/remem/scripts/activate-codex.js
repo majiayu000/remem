@@ -1,12 +1,20 @@
 #!/usr/bin/env node
 "use strict";
 
-const { runRemem } = require("./remem-binary");
+const { runRememAsync } = require("./remem-runtime");
 
-try {
+async function main() {
   const extraArgs = process.argv.slice(2);
-  process.exit(runRemem(["install", "--target", "codex", "--hooks-only", ...extraArgs]));
-} catch (error) {
-  process.stderr.write(`${error.message}\n`);
-  process.exit(1);
+  const dryRun = extraArgs.includes("--dry-run");
+  return runRememAsync(["install", "--target", "codex", "--hooks-only", ...extraArgs], {
+    allowDownload: !dryRun,
+    adoptLocal: !dryRun
+  });
 }
+
+main()
+  .then((status) => process.exit(status))
+  .catch((error) => {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(1);
+  });

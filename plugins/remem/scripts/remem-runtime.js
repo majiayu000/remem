@@ -182,7 +182,8 @@ function versionMismatchMessage(candidate, expected, version) {
 }
 
 function shouldCodesignRuntime(options = {}) {
-  return (options.platformKey || platformKey()) === "darwin-arm64";
+  if (options.platformKey) return options.platformKey === "darwin-arm64";
+  return os.platform() === "darwin" && os.arch() === "arm64";
 }
 
 function codesignRuntimeIfNeeded(candidate, options = {}) {
@@ -362,6 +363,7 @@ async function ensureRuntime(options = {}) {
     (candidate) => candidate.ok && candidate.adoptable && candidate.source === "repo"
   );
   if (localCandidate) {
+    if (options.adoptLocal === false) return localCandidate.path;
     return copyRuntime(localCandidate.path, options).path;
   }
 
@@ -475,6 +477,7 @@ function ensureRuntimeSync(options = {}) {
     (candidate) => candidate.ok && candidate.adoptable && candidate.source === "repo"
   );
   if (localCandidate) {
+    if (options.adoptLocal === false) return localCandidate.path;
     return copyRuntime(localCandidate.path, options).path;
   }
   throw new Error(runtimeMissingMessage(status));

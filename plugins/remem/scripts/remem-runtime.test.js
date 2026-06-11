@@ -10,6 +10,7 @@ const test = require("node:test");
 const {
   copyRuntime,
   ensureRuntimeSync,
+  ensureRuntime,
   installRuntime,
   inspectRuntime,
   managedBinaryPath,
@@ -137,8 +138,21 @@ test("runRememAsync resolves local runtime before executing", async () => {
   assert.equal(fs.existsSync(managedBinaryPath(fx)), true);
 });
 
+test("ensureRuntime can use local runtime without adopting it", async () => {
+  const fx = fixture();
+  const source = path.join(fx.repoRoot, "target", "release", "remem");
+  writeFakeRemem(source, "0.5.17");
+
+  const resolved = await ensureRuntime({ ...fx, adoptLocal: false, allowDownload: false });
+
+  assert.equal(resolved, source);
+  assert.equal(fs.existsSync(managedBinaryPath(fx)), false);
+  assert.equal(fs.existsSync(runtimeMetadataPath(fx)), false);
+});
+
 test("darwin arm64 runtimes require ad-hoc codesign", () => {
   assert.equal(shouldCodesignRuntime({ platformKey: "darwin-arm64" }), true);
   assert.equal(shouldCodesignRuntime({ platformKey: "darwin-x64" }), false);
   assert.equal(shouldCodesignRuntime({ platformKey: "linux-arm64" }), false);
+  assert.equal(shouldCodesignRuntime({ platformKey: "win32-x64" }), false);
 });
