@@ -8,6 +8,7 @@ This app surface provides:
 - project memory dashboard: memory, observation, raw archive, and queue counts
 - search: compact results with detail drill-down
 - save memory: explicit decision, bugfix, architecture, discovery, or preference save
+- governance: stale, reject, or delete dry-run preview with affected IDs and status transitions
 - activation: hooks-only dry-run plan without writing Codex config
 
 Run locally:
