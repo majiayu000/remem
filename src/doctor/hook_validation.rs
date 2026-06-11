@@ -33,18 +33,36 @@ pub(super) fn expected_hook_command<'a>(
     event: &str,
     executable: &'a Path,
 ) -> Option<ExpectedHookCommand<'a>> {
-    let subcommand = match event {
-        "PostToolUse" => "observe",
-        "PreCompact" | "Stop" => "summarize",
-        "SessionStart" => "context",
-        "UserPromptSubmit" => "session-init",
-        _ => return None,
-    };
+    let subcommand = expected_subcommand(event)?;
     Some(ExpectedHookCommand {
         executable,
         subcommand,
         host: runtime_host(host),
     })
+}
+
+pub(super) fn expected_hook_executable_from_hooks(doc: &Value, host: &str) -> Option<String> {
+    let mut paths = Vec::new();
+    for event in expected_hook_events(host) {
+        let Some(subcommand) = expected_subcommand(event) else {
+            continue;
+        };
+        for command in hook_commands_for_event(doc, event) {
+            let Some(invocation) = parse_remem_invocation(command) else {
+                continue;
+            };
+            if invocation.subcommand.as_deref() == Some(subcommand)
+                && invocation.resolved_host() == Some(runtime_host(host))
+                && !paths.contains(&invocation.executable)
+            {
+                paths.push(invocation.executable);
+            }
+        }
+    }
+    match paths.as_slice() {
+        [path] => Some(path.clone()),
+        _ => None,
+    }
 }
 
 pub(super) fn event_has_expected_remem_hook(
@@ -56,24 +74,15 @@ pub(super) fn event_has_expected_remem_hook(
         parse_remem_invocation(command).is_some_and(|invocation| {
             Path::new(&invocation.executable) == expected.executable
                 && invocation.subcommand.as_deref() == Some(expected.subcommand)
-                && invocation.host.as_deref() == Some(expected.host)
+                && invocation.resolved_host() == Some(expected.host)
         })
     })
 }
 
-pub(super) fn event_has_remem_subcommand_hook(
-    doc: &Value,
-    event: &str,
-    executable: &Path,
-    subcommand: &str,
-    host: &str,
-) -> bool {
+pub(super) fn event_has_remem_subcommand_hook(doc: &Value, event: &str, subcommand: &str) -> bool {
     hook_commands_for_event(doc, event).any(|command| {
-        parse_remem_invocation(command).is_some_and(|invocation| {
-            Path::new(&invocation.executable) == executable
-                && invocation.subcommand.as_deref() == Some(subcommand)
-                && invocation.host.as_deref() == Some(host)
-        })
+        parse_remem_invocation(command)
+            .is_some_and(|invocation| invocation.subcommand.as_deref() == Some(subcommand))
     })
 }
 
@@ -109,6 +118,13 @@ struct RememInvocation {
     executable: String,
     subcommand: Option<String>,
     host: Option<String>,
+    env_host: Option<String>,
+}
+
+impl RememInvocation {
+    fn resolved_host(&self) -> Option<&str> {
+        self.host.as_deref().or(self.env_host.as_deref())
+    }
 }
 
 fn parse_remem_invocation(command: &str) -> Option<RememInvocation> {
@@ -123,7 +139,18 @@ fn parse_remem_invocation(command: &str) -> Option<RememInvocation> {
         executable: tokens[command_index].clone(),
         subcommand: tokens.get(command_index + 1).cloned(),
         host,
+        env_host: find_legacy_host_env(&tokens[..command_index]),
     })
+}
+
+fn expected_subcommand(event: &str) -> Option<&'static str> {
+    match event {
+        "PostToolUse" => Some("observe"),
+        "PreCompact" | "Stop" => Some("summarize"),
+        "SessionStart" => Some("context"),
+        "UserPromptSubmit" => Some("session-init"),
+        _ => None,
+    }
 }
 
 fn find_host_arg(tokens: &[String]) -> Option<String> {
@@ -139,6 +166,34 @@ fn find_host_arg(tokens: &[String]) -> Option<String> {
     None
 }
 
+fn find_legacy_host_env(tokens: &[String]) -> Option<String> {
+    for token in tokens {
+        let Some((name, value)) = env_assignment(token) else {
+            continue;
+        };
+        if matches!(name, "REMEM_HOOK_HOST" | "REMEM_CONTEXT_HOST") {
+            return Some(crate::runtime_config::normalize_host(value));
+        }
+    }
+    for token in tokens {
+        let Some((name, value)) = env_assignment(token) else {
+            continue;
+        };
+        if matches!(name, "REMEM_SUMMARY_EXECUTOR" | "REMEM_EXECUTOR") {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "codex" | "codex-cli" => {
+                    return Some(crate::runtime_config::CODEX_HOST.to_string())
+                }
+                "claude" | "claude-cli" | "cli" => {
+                    return Some(crate::runtime_config::CLAUDE_HOST.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn is_remem_command_token(token: &str) -> bool {
     Path::new(token)
         .file_stem()
@@ -147,15 +202,20 @@ fn is_remem_command_token(token: &str) -> bool {
 }
 
 fn is_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
+    env_assignment(token).is_some()
+}
+
+fn env_assignment(token: &str) -> Option<(&str, &str)> {
+    let (name, value) = token.split_once('=')?;
     let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first.is_ascii_alphabetic() || first == '_')
+    let first = chars.next()?;
+    if (first.is_ascii_alphabetic() || first == '_')
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        Some((name, value))
+    } else {
+        None
+    }
 }
 
 fn shell_words(command: &str) -> Option<Vec<String>> {
@@ -245,6 +305,7 @@ mod tests {
                 executable: "/opt/remem bin/remem".to_string(),
                 subcommand: Some("context".to_string()),
                 host: Some("codex-cli".to_string()),
+                env_host: Some("codex-cli".to_string()),
             }
         );
     }
@@ -285,6 +346,30 @@ mod tests {
         };
 
         assert!(!event_has_expected_remem_hook(
+            &doc,
+            "SessionStart",
+            expected
+        ));
+    }
+
+    #[test]
+    fn expected_hook_accepts_legacy_env_host() {
+        let doc = serde_json::json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "command": "REMEM_CONTEXT_HOST=codex-cli /tmp/remem context"
+                    }]
+                }]
+            }
+        });
+        let Some(expected) =
+            expected_hook_command("codex", "SessionStart", Path::new("/tmp/remem"))
+        else {
+            panic!("known hook event should build expected command");
+        };
+
+        assert!(event_has_expected_remem_hook(
             &doc,
             "SessionStart",
             expected

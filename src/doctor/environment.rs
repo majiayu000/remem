@@ -4,7 +4,8 @@ use toml_edit::DocumentMut;
 
 use super::hook_validation::{
     event_has_expected_remem_hook, event_has_remem_subcommand_hook, expected_hook_command,
-    expected_hook_events, extract_remem_command_path, hook_command_strings, runtime_host,
+    expected_hook_events, expected_hook_executable_from_hooks, extract_remem_command_path,
+    hook_command_strings,
 };
 use super::types::{Check, Status};
 
@@ -165,7 +166,7 @@ fn probe_hooks(probe: HostProbe) -> Check {
     };
 
     let events = expected_hook_events(probe.name);
-    let expected_executable = expected_hook_executable(&probe);
+    let expected_executable = expected_hook_executable(&doc, &probe);
     let found = events
         .iter()
         .filter(|event| {
@@ -175,16 +176,8 @@ fn probe_hooks(probe: HostProbe) -> Check {
                 .is_some_and(|expected| event_has_expected_remem_hook(&doc, event, expected))
         })
         .count();
-    let deprecated_codex_observe = probe.name == "codex"
-        && expected_executable.as_deref().is_some_and(|executable| {
-            event_has_remem_subcommand_hook(
-                &doc,
-                "PostToolUse",
-                executable,
-                "observe",
-                runtime_host(probe.name),
-            )
-        });
+    let deprecated_codex_observe =
+        probe.name == "codex" && event_has_remem_subcommand_hook(&doc, "PostToolUse", "observe");
     let legacy_policy = has_legacy_hook_policy(&doc);
 
     if found == events.len() {
@@ -354,8 +347,10 @@ fn configured_mcp_paths(probe: &HostProbe) -> Vec<PathBuf> {
     paths
 }
 
-fn expected_hook_executable(probe: &HostProbe) -> Option<PathBuf> {
-    configured_mcp_paths(probe).into_iter().next()
+fn expected_hook_executable(doc: &Value, probe: &HostProbe) -> Option<PathBuf> {
+    expected_hook_executable_from_hooks(doc, probe.name)
+        .map(PathBuf::from)
+        .or_else(|| configured_mcp_paths(probe).into_iter().next())
 }
 
 fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
@@ -491,7 +486,7 @@ mod tests {
             hooks_path: hooks_path.clone(),
             mcp_paths: vec![dir.join("missing.toml")],
         });
-        assert!(matches!(missing_mcp_check.status, Status::Fail));
+        assert!(matches!(missing_mcp_check.status, Status::Ok));
 
         let mcp_path = dir.join("config.toml");
         std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
@@ -566,7 +561,7 @@ mod tests {
             r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
-    "PostToolUse": [{ "hooks": [{ "command": "/tmp/remem observe --host codex-cli" }] }],
+    "PostToolUse": [{ "hooks": [{ "command": "/stale/remem observe --host codex-cli" }] }],
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
