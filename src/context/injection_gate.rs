@@ -7,6 +7,9 @@ use super::host::HostKind;
 use super::invocation::ContextInvocation;
 
 mod delta;
+mod pre_render;
+
+pub(super) use pre_render::pre_render_context_gate;
 
 const DEFAULT_GATE_HOSTS: &str = "codex-cli,claude-code";
 const DEFAULT_SUPPRESSED_SOURCES: &str = "compact";
@@ -375,8 +378,7 @@ fn read_i64_env(key: &str, default: i64) -> i64 {
 }
 
 fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
-    let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
-    let cutoff = now.saturating_sub(retention_days.saturating_mul(86_400));
+    let cutoff = retention_cutoff_epoch(now);
     if let Err(error) = conn.execute(
         "DELETE FROM context_injections WHERE updated_at_epoch < ?1",
         [cutoff],
@@ -386,6 +388,11 @@ fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
             &format!("retention cleanup failed: {}", error),
         );
     }
+}
+
+fn retention_cutoff_epoch(now: i64) -> i64 {
+    let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
+    now.saturating_sub(retention_days.saturating_mul(86_400))
 }
 
 fn load_gate_row(conn: &rusqlite::Connection, host: &str, key: &str) -> Result<Option<GateRow>> {

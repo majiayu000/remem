@@ -6,7 +6,9 @@ use crate::db;
 
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
-use super::injection_gate::{apply_context_gate, ContextGateAction, ContextGateDecision};
+use super::injection_gate::{
+    apply_context_gate, pre_render_context_gate, ContextGateAction, ContextGateDecision,
+};
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
@@ -261,25 +263,35 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             return Ok(());
         }
     };
-    let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
-    let mut decision = if use_gate {
-        apply_context_gate(&conn, &invocation, rendered.output)
-    } else {
-        ContextGateDecision {
-            output: rendered.output,
-            action: ContextGateAction::Bypassed,
-            reason: "legacy_direct",
-            key: None,
-            context_hash: None,
-            output_mode: None,
+    let (mut decision, stats) = if use_gate {
+        if let Some(decision) = pre_render_context_gate(&conn, &invocation) {
+            (decision, ContextRenderStats::default())
+        } else {
+            let rendered =
+                render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
+            let decision = apply_context_gate(&conn, &invocation, rendered.output);
+            (decision, rendered.stats)
         }
+    } else {
+        let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
+        (
+            ContextGateDecision {
+                output: rendered.output,
+                action: ContextGateAction::Bypassed,
+                reason: "legacy_direct",
+                key: None,
+                context_hash: None,
+                output_mode: None,
+            },
+            rendered.stats,
+        )
     };
     if debug_enabled {
         let decision_for_debug = decision.clone();
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
     print!("{}", decision.output);
-    log_context_timer(timer, &request, &decision, &rendered.stats);
+    log_context_timer(timer, &request, &decision, &stats);
     Ok(())
 }
 
