@@ -70,7 +70,7 @@ const FIXTURE_MEMORIES: &[FixtureMemory] = &[
         branch: Some("feature/wasm"),
         status: "active",
         updated_offset: 10,
-        expected: InjectionExpectation::Filler,
+        expected: InjectionExpectation::Forbidden,
     },
     FixtureMemory {
         id: 4,
