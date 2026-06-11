@@ -9,7 +9,27 @@ This app surface provides:
 - search: compact results with detail drill-down
 - save memory: explicit decision, bugfix, architecture, discovery, or preference save
 - governance: stale, reject, or delete dry-run preview with affected IDs and status transitions
+- current-state resolution: stable state keys with current/conflict/history metadata
+- traceability: commit lookup and session-to-commit links
 - activation: hooks-only dry-run plan without writing Codex config
+
+## Surface map
+
+| Surface | App tool | HTTP route | Remem backend |
+| --- | --- | --- | --- |
+| Dashboard | `remem_dashboard` | `GET /api/status` | `remem status --json`, `remem doctor --json`, runtime inspection |
+| Search | `remem_search` | `GET /api/search` | local Remem API `GET /api/v1/search` |
+| Detail | `remem_get_memory` | `GET /api/memory` | local Remem API `GET /api/v1/memory` |
+| Save | `remem_save_memory` | `POST /api/save` | local Remem API `POST /api/v1/memories` |
+| Governance preview | `remem_governance_preview` | `POST /api/governance-preview` | `remem govern --dry-run --json` |
+| Current state | `remem_current_state` | `GET /api/current-state` | `remem current --json` |
+| Commit lookup | `remem_commit_lookup` | `GET /api/commit` | `remem commit show --json` |
+| Session commits | `remem_session_commits` | `GET /api/session-commits` | `remem commit session --json` |
+| Activation plan | `remem_activation_plan` | `GET /api/activation-plan` | `remem install --target codex --hooks-only --dry-run` |
+
+Workstream mutation and chronological timeline browsing remain MCP-native Rust
+tools today. Add them to this app after a small HTTP/MCP bridge exists; do not
+parse human CLI output for those surfaces.
 
 Run locally:
 
