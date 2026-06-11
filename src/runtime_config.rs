@@ -268,7 +268,7 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
         }
         CLAUDE_HOST => {
             set_str_if_missing(table, "memory_profile", "claude");
-            set_str_if_missing(table, "context_gate", "off");
+            set_str_if_missing(table, "context_gate", "strict");
             set_bool_if_missing(table, "context_color", true);
             set_str_if_missing(table, "capture_adapter", CLAUDE_HOST);
         }
@@ -552,6 +552,23 @@ mod tests {
             assert_eq!(host.capture_adapter, CODEX_HOST);
         });
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn claude_host_defaults_to_context_gate_strict() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context");
+        with_config_path(&path, || -> Result<()> {
+            init_config()?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("strict"));
+            assert!(host.context_color);
+            assert_eq!(host.capture_adapter, CLAUDE_HOST);
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 
     #[test]
