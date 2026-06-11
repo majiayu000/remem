@@ -25,13 +25,16 @@ This app surface provides:
 | Current state | `remem_current_state` | `GET /api/current-state` | `remem current --json` |
 | Commit lookup | `remem_commit_lookup` | `GET /api/commit` | `remem commit show --json` |
 | Session commits | `remem_session_commits` | `GET /api/session-commits` | `remem commit session --json` |
+| Timeline around | `remem_timeline_around` | `GET /api/timeline-around` | `remem timeline around --json` |
+| Timeline report | `remem_timeline_report` | `GET /api/timeline-report` | `remem timeline report --json` |
+| Workstreams | `remem_workstreams_list` | `GET /api/workstreams` | `remem workstreams list --json` |
+| Workstream update | `remem_workstream_update` | `POST /api/workstream-update` | `remem workstreams update --json --confirm` |
 | Activation plan | `remem_activation_plan` | `GET /api/activation-plan` | `remem install --target codex --hooks-only --dry-run` |
 
-Workstream mutation and chronological timeline browsing now have machine-readable
-Rust CLI bridges (`remem workstreams ... --json`, `remem timeline ... --json`)
-plus MCP-native tools. Add them to this app through those JSON bridges; do not
-parse human CLI output for those surfaces. Workstream updates must pass an
-explicit project and `--confirm`.
+Timeline and workstream backend routes are wired for app and MCP callers through
+machine-readable Rust CLI bridges. The visible widget UI remains unchanged until
+`public/widget.html` is split below the 800-line cap. Workstream updates must
+pass an explicit project and `--confirm`.
 
 Run locally:
 

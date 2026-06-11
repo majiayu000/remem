@@ -15,6 +15,7 @@ const {
   UI_RESOURCE
 } = require("./server");
 const { governancePreviewArgs } = require("./governance");
+const { createTraceBackend } = require("./trace");
 const pluginManifest = require("../../.codex-plugin/plugin.json");
 
 function fakeBackend() {
@@ -157,6 +158,55 @@ function fakeBackend() {
         }
       ];
     },
+    async timelineAround(input) {
+      return {
+        anchor_id: Number(input.anchor || 15),
+        query: input.query || null,
+        project: input.project || null,
+        count: 1,
+        results: [
+          {
+            id: Number(input.anchor || 15),
+            title: "Release manifest",
+            type: "decision"
+          }
+        ]
+      };
+    },
+    async timelineReport(input) {
+      return {
+        project: input.project,
+        full: input.full === true || input.full === "true",
+        report: {
+          overview: {
+            total_observations: 2
+          },
+          activity_by_type: [],
+          token_economics: {}
+        }
+      };
+    },
+    async workstreamsList(input) {
+      return {
+        project: input.project,
+        status: input.status || null,
+        count: 1,
+        workstreams: [
+          {
+            id: 21,
+            title: "Wire app routes",
+            status: "active"
+          }
+        ]
+      };
+    },
+    async workstreamUpdate(input) {
+      return {
+        id: Number(input.id),
+        project: input.project,
+        updated: input.confirm === true
+      };
+    },
     stop() {}
   };
 }
@@ -195,12 +245,27 @@ test("widget-callable tools are exposed to the app surface", () => {
     "remem_governance_preview",
     "remem_current_state",
     "remem_commit_lookup",
-    "remem_session_commits"
+    "remem_session_commits",
+    "remem_timeline_around",
+    "remem_timeline_report",
+    "remem_workstreams_list",
+    "remem_workstream_update"
   ]) {
     const descriptor = toolDescriptors().find((tool) => tool.name === name);
     assert.deepEqual(descriptor._meta.ui.visibility, ["model", "app"]);
     assert.equal(descriptor._meta["openai/widgetAccessible"], true);
   }
+  const timelineAround = toolDescriptors().find((tool) => tool.name === "remem_timeline_around");
+  assert.deepEqual(timelineAround.inputSchema.anyOf, [
+    { required: ["anchor"] },
+    { required: ["query"] }
+  ]);
+  const workstreamUpdate = toolDescriptors().find((tool) => tool.name === "remem_workstream_update");
+  assert.deepEqual(workstreamUpdate.inputSchema.anyOf, [
+    { required: ["status"] },
+    { required: ["next_action"] },
+    { required: ["blockers"] }
+  ]);
 });
 
 test("JSON-RPC tools/list and dashboard call return structured content", async () => {
@@ -270,6 +335,33 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
       (response) => response.json()
     );
     assert.equal(sessionCommits[0].link.session_id, "session-1");
+
+    const timelineAround = await fetch(`${base}/api/timeline-around?anchor=15`).then((response) =>
+      response.json()
+    );
+    assert.equal(timelineAround.anchor_id, 15);
+
+    const timelineReport = await fetch(
+      `${base}/api/timeline-report?project=/tmp/remem&full=true`
+    ).then((response) => response.json());
+    assert.equal(timelineReport.report.overview.total_observations, 2);
+
+    const workstreams = await fetch(`${base}/api/workstreams?project=/tmp/remem&status=active`).then(
+      (response) => response.json()
+    );
+    assert.equal(workstreams.workstreams[0].id, 21);
+
+    const workstreamUpdate = await fetch(`${base}/api/workstream-update`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({
+        id: 21,
+        project: "/tmp/remem",
+        status: "paused",
+        confirm: true
+      })
+    }).then((response) => response.json());
+    assert.equal(workstreamUpdate.updated, true);
   });
 });
 
@@ -284,6 +376,11 @@ test("HTTP write routes reject cross-site browser requests", async () => {
   backend.governancePreview = async () => {
     previews += 1;
     return { dry_run: true, affected: [] };
+  };
+  let workstreamUpdates = 0;
+  backend.workstreamUpdate = async () => {
+    workstreamUpdates += 1;
+    return { id: 21, updated: true };
   };
 
   await withServer(async (base) => {
@@ -318,10 +415,18 @@ test("HTTP write routes reject cross-site browser requests", async () => {
       body: JSON.stringify({ action: "delete", ids: [7] })
     });
     assert.equal(apiGovernance.status, 403);
+
+    const apiWorkstreamUpdate = await fetch(`${base}/api/workstream-update`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://attacker.example" },
+      body: JSON.stringify({ id: 21, project: "/tmp/remem", status: "paused", confirm: true })
+    });
+    assert.equal(apiWorkstreamUpdate.status, 403);
   }, backend);
 
   assert.equal(saves, 0);
   assert.equal(previews, 0);
+  assert.equal(workstreamUpdates, 0);
 });
 
 test("widget renders raw archive fallback results", async () => {
@@ -370,6 +475,96 @@ test("JSON-RPC trace tools return structured content", async () => {
     params: { name: "remem_session_commits", arguments: { session_id: "session-1" } }
   });
   assert.equal(sessionCommits.structuredContent.results[0].link.session_id, "session-1");
+
+  const timelineAround = await handleJsonRpc(fakeBackend(), {
+    id: 4,
+    method: "tools/call",
+    params: { name: "remem_timeline_around", arguments: { anchor: 15 } }
+  });
+  assert.equal(timelineAround.structuredContent.anchor_id, 15);
+
+  const timelineReport = await handleJsonRpc(fakeBackend(), {
+    id: 5,
+    method: "tools/call",
+    params: { name: "remem_timeline_report", arguments: { project: "/tmp/remem" } }
+  });
+  assert.equal(timelineReport.structuredContent.report.overview.total_observations, 2);
+
+  const workstreams = await handleJsonRpc(fakeBackend(), {
+    id: 6,
+    method: "tools/call",
+    params: { name: "remem_workstreams_list", arguments: { project: "/tmp/remem" } }
+  });
+  assert.equal(workstreams.structuredContent.workstreams[0].id, 21);
+
+  const update = await handleJsonRpc(fakeBackend(), {
+    id: 7,
+    method: "tools/call",
+    params: {
+      name: "remem_workstream_update",
+      arguments: { id: 21, project: "/tmp/remem", status: "paused", confirm: true }
+    }
+  });
+  assert.equal(update.structuredContent.updated, true);
+});
+
+test("trace backend builds guarded timeline and workstream CLI args", async () => {
+  const calls = [];
+  const backend = createTraceBackend(async (args) => {
+    calls.push(args);
+    return { ok: true };
+  });
+
+  await backend.timelineAround({ query: "release manifest", project: "/tmp/remem", depth_before: 2 });
+  await backend.timelineReport({ project: "/tmp/remem", full: true });
+  await backend.workstreamsList({ project: "/tmp/remem", status: "active" });
+  await backend.workstreamUpdate({
+    id: 21,
+    project: "/tmp/remem",
+    status: "paused",
+    confirm: true
+  });
+
+  assert.deepEqual(calls[0], [
+    "timeline",
+    "around",
+    "--json",
+    "--query",
+    "release manifest",
+    "--project",
+    "/tmp/remem",
+    "--depth-before",
+    "2"
+  ]);
+  assert.deepEqual(calls[1], ["timeline", "report", "/tmp/remem", "--json", "--full"]);
+  assert.deepEqual(calls[2], [
+    "workstreams",
+    "list",
+    "--project",
+    "/tmp/remem",
+    "--json",
+    "--status",
+    "active"
+  ]);
+  assert.deepEqual(calls[3], [
+    "workstreams",
+    "update",
+    "21",
+    "--project",
+    "/tmp/remem",
+    "--json",
+    "--status",
+    "paused",
+    "--confirm"
+  ]);
+  assert.throws(
+    () => backend.workstreamUpdate({ id: 21, project: "/tmp/remem", confirm: true }),
+    /required/
+  );
+  assert.throws(
+    () => backend.workstreamUpdate({ id: 21, project: "/tmp/remem", status: "paused" }),
+    /confirm/
+  );
 });
 
 test("governance preview args are always dry-run JSON CLI calls", () => {
