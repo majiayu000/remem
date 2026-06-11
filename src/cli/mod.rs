@@ -2,6 +2,7 @@ mod actions;
 mod config_types;
 mod cwd;
 mod dispatch;
+mod query_types;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -10,6 +11,8 @@ mod tests_config;
 mod tests_eval;
 #[cfg(test)]
 mod tests_maintenance;
+#[cfg(test)]
+mod tests_trace;
 mod types;
 
 use anyhow::Result;

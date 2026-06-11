@@ -24,7 +24,7 @@ pub(super) use pending::run_pending;
 pub(super) use preferences::run_preferences;
 pub(super) use query::{
     run_backfill_entities, run_commit, run_current_state, run_raw, run_search, run_show,
-    run_status, run_why,
+    run_status, run_timeline, run_why, run_workstreams,
 };
 pub(super) use review::{run_graph_review, run_review};
 pub(super) use scope_cleanup::{

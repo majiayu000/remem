@@ -27,9 +27,11 @@ This app surface provides:
 | Session commits | `remem_session_commits` | `GET /api/session-commits` | `remem commit session --json` |
 | Activation plan | `remem_activation_plan` | `GET /api/activation-plan` | `remem install --target codex --hooks-only --dry-run` |
 
-Workstream mutation and chronological timeline browsing remain MCP-native Rust
-tools today. Add them to this app after a small HTTP/MCP bridge exists; do not
-parse human CLI output for those surfaces.
+Workstream mutation and chronological timeline browsing now have machine-readable
+Rust CLI bridges (`remem workstreams ... --json`, `remem timeline ... --json`)
+plus MCP-native tools. Add them to this app through those JSON bridges; do not
+parse human CLI output for those surfaces. Workstream updates must pass an
+explicit project and `--confirm`.
 
 Run locally:
 
