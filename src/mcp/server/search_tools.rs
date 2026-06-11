@@ -51,10 +51,10 @@ impl MemoryServer {
         let requested_multi_hop = params.multi_hop.unwrap_or(false);
         let requested_explain = params.explain.unwrap_or(false);
         if requested_explain
-            && !params
+            && params
                 .query
                 .as_deref()
-                .is_some_and(|query| !query.trim().is_empty())
+                .is_none_or(|query| query.trim().is_empty())
         {
             return Err(McpToolError::invalid_request(
                 TOOL,

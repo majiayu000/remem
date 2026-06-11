@@ -36,10 +36,10 @@ pub(in crate::api) async fn handle_search(
     Query(params): Query<SearchParams>,
 ) -> impl IntoResponse {
     if params.explain.unwrap_or(false)
-        && !params
+        && params
             .query
             .as_deref()
-            .is_some_and(|query| !query.trim().is_empty())
+            .is_none_or(|query| query.trim().is_empty())
     {
         return error_response(
             StatusCode::BAD_REQUEST,
