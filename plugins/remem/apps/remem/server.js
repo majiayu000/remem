@@ -77,6 +77,22 @@ function isLoopbackHost(host) {
   return LOOPBACK_HOSTS.has(String(host || "").toLowerCase());
 }
 
+function assertLocalPostAllowed(req) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase().split(";")[0].trim();
+  if (contentType !== "application/json") {
+    throw Object.assign(new Error("Local app POST routes require application/json"), { statusCode: 415 });
+  }
+  const site = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+  if (site && site !== "same-origin" && site !== "none") {
+    throw Object.assign(new Error("Cross-site browser requests are not allowed"), { statusCode: 403 });
+  }
+  const origin = String(req.headers.origin || "").toLowerCase();
+  const expected = req.headers.host && `http://${String(req.headers.host).toLowerCase()}`;
+  if (origin && origin !== expected) {
+    throw Object.assign(new Error("Cross-origin browser requests are not allowed"), { statusCode: 403 });
+  }
+}
+
 async function readBody(req) {
   const chunks = [];
   let size = 0;
@@ -668,9 +684,11 @@ function createServer(options = {}) {
         return jsonResponse(res, 200, await backend.activationPlan());
       }
       if (req.method === "POST" && url.pathname === "/api/save") {
+        assertLocalPostAllowed(req);
         return jsonResponse(res, 201, await backend.save(await readJsonBody(req)));
       }
       if (req.method === "POST" && url.pathname === "/mcp") {
+        assertLocalPostAllowed(req);
         const payload = await readJsonBody(req);
         const items = Array.isArray(payload) ? payload : [payload];
         const replies = [];

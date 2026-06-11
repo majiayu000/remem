@@ -107,8 +107,8 @@ function fakeBackend() {
   };
 }
 
-async function withServer(fn) {
-  const server = createServer({ backend: fakeBackend() });
+async function withServer(fn, backend = fakeBackend()) {
+  const server = createServer({ backend });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -182,11 +182,49 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
 
     const save = await fetch(`${base}/api/save`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", origin: base },
       body: JSON.stringify({ text: "Remember this.", memory_type: "decision" })
     }).then((response) => response.json());
     assert.equal(save.id, 9);
   });
+});
+
+test("HTTP write routes reject cross-site browser requests", async () => {
+  const backend = fakeBackend();
+  let saves = 0;
+  backend.save = async () => {
+    saves += 1;
+    return { id: 9 };
+  };
+
+  await withServer(async (base) => {
+    const apiSave = await fetch(`${base}/api/save`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://attacker.example" },
+      body: JSON.stringify({ text: "poison" })
+    });
+    assert.equal(apiSave.status, 403);
+
+    const simplePost = await fetch(`${base}/api/save`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify({ text: "poison" })
+    });
+    assert.equal(simplePost.status, 415);
+
+    const mcpSave = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://attacker.example" },
+      body: JSON.stringify({
+        id: 1,
+        method: "tools/call",
+        params: { name: "remem_save_memory", arguments: { text: "poison" } }
+      })
+    });
+    assert.equal(mcpSave.status, 403);
+  }, backend);
+
+  assert.equal(saves, 0);
 });
 
 test("widget renders raw archive fallback results", async () => {
