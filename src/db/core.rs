@@ -80,6 +80,16 @@ pub fn data_dir() -> PathBuf {
         })
 }
 
+pub fn absolute_data_dir() -> Result<PathBuf> {
+    let path = data_dir();
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    Ok(std::env::current_dir()
+        .context("read current directory for relative REMEM_DATA_DIR")?
+        .join(path))
+}
+
 pub fn db_path() -> PathBuf {
     data_dir().join("remem.db")
 }

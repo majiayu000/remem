@@ -3,6 +3,8 @@ use tokio::time::{sleep, Duration};
 
 use crate::{db, summarize};
 
+mod lock;
+
 // The lease is the maximum time another worker will wait before requeuing a
 // job whose owner died, so `JOB_LEASE_SECS` must always exceed
 // `JOB_TIMEOUT_SECS`. Otherwise a job that legitimately runs near the
@@ -87,12 +89,25 @@ fn job_profile(payload_json: &str) -> Option<String> {
 
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     let started_at_epoch = chrono::Utc::now().timestamp();
+    let mode = if once { "once" } else { "daemon" };
     let lease_owner = format!(
-        "worker-{}-{}",
+        "worker-{}-{}-{}",
+        mode,
         std::process::id(),
         chrono::Utc::now().timestamp_millis()
     );
-    crate::log::info("worker", &format!("start owner={}", lease_owner));
+    let Some(_singleton) = lock::acquire_worker_singleton()? else {
+        crate::log::info("worker", "worker already running, exiting");
+        return Ok(());
+    };
+    crate::log::info(
+        "worker",
+        &format!("start owner={} mode={}", lease_owner, mode),
+    );
+    {
+        let conn = db::open_db()?;
+        record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
+    }
 
     loop {
         let mut conn = db::open_db()?;
@@ -193,7 +208,7 @@ mod tests {
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::run;
+    use super::{lock, run};
     use test_support::install_stub_codex;
 
     mod test_support;
@@ -318,6 +333,88 @@ mod tests {
                 .as_deref()
                 .is_some_and(|err| err.contains("not implemented")),
             "expected explicit unimplemented error"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn worker_once_records_startup_heartbeat_without_work() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-once-startup-heartbeat");
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let Some(heartbeat) = db::latest_worker_heartbeat(&conn)? else {
+            anyhow::bail!("worker --once should record startup heartbeat");
+        };
+        anyhow::ensure!(
+            heartbeat.owner.starts_with("worker-once-"),
+            "unexpected heartbeat owner {}",
+            heartbeat.owner
+        );
+        anyhow::ensure!(
+            heartbeat.started_at_epoch <= heartbeat.updated_at_epoch,
+            "heartbeat should be valid immediately after singleton acquisition"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn worker_once_exits_without_work_when_singleton_lock_is_held() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-once-lock-held");
+        let Some(_guard) = lock::acquire_worker_singleton()? else {
+            anyhow::bail!("test worker lock should acquire");
+        };
+        let conn = db::open_db()?;
+        let job_id = db::enqueue_job(
+            &conn,
+            "codex-cli",
+            db::JobType::Observation,
+            "/tmp/remem",
+            Some("sess-lock-held"),
+            r#"{"host":"codex-cli","session_id":"sess-lock-held","project":"/tmp/remem"}"#,
+            50,
+        )?;
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let state: String = conn.query_row(
+            "SELECT state FROM jobs WHERE id = ?1",
+            params![job_id],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(
+            state == "pending",
+            "locked-out worker should not process job"
+        );
+        anyhow::ensure!(
+            db::latest_worker_heartbeat(&conn)?.is_none(),
+            "locked-out worker should exit before recording heartbeat"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn daemon_and_once_are_mutually_exclusive() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-daemon-once-mutual-exclusion");
+        let Some(_daemon_lock) = lock::acquire_worker_singleton()? else {
+            anyhow::bail!("test daemon lock should acquire");
+        };
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        let daemon_owner = "worker-daemon-test";
+        db::upsert_worker_heartbeat(&conn, daemon_owner, i64::from(std::process::id()), now, now)?;
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let Some(heartbeat) = db::latest_worker_heartbeat(&conn)? else {
+            anyhow::bail!("daemon heartbeat should remain present");
+        };
+        anyhow::ensure!(
+            heartbeat.owner == daemon_owner,
+            "worker --once should not replace daemon heartbeat while daemon holds singleton"
         );
         Ok(())
     }

@@ -30,11 +30,30 @@ pub fn upsert_worker_heartbeat(
 }
 
 pub fn latest_worker_heartbeat(conn: &Connection) -> Result<Option<WorkerHeartbeat>> {
+    query_latest_worker_heartbeat(conn, false)
+}
+
+pub fn latest_daemon_worker_heartbeat(conn: &Connection) -> Result<Option<WorkerHeartbeat>> {
+    query_latest_worker_heartbeat(conn, true)
+}
+
+fn query_latest_worker_heartbeat(
+    conn: &Connection,
+    daemon_only: bool,
+) -> Result<Option<WorkerHeartbeat>> {
+    let daemon_filter = if daemon_only {
+        "WHERE owner NOT LIKE 'worker-once-%'"
+    } else {
+        ""
+    };
     conn.query_row(
-        "SELECT owner, pid, started_at_epoch, updated_at_epoch
+        &format!(
+            "SELECT owner, pid, started_at_epoch, updated_at_epoch
          FROM worker_heartbeats
+         {daemon_filter}
          ORDER BY updated_at_epoch DESC, owner ASC
-         LIMIT 1",
+         LIMIT 1"
+        ),
         [],
         |row| {
             Ok(WorkerHeartbeat {
@@ -53,14 +72,35 @@ pub fn healthy_worker_heartbeat(
     conn: &Connection,
     max_age_secs: i64,
 ) -> Result<Option<WorkerHeartbeat>> {
+    query_healthy_worker_heartbeat(conn, max_age_secs, false)
+}
+
+pub fn healthy_daemon_worker_heartbeat(
+    conn: &Connection,
+    max_age_secs: i64,
+) -> Result<Option<WorkerHeartbeat>> {
+    query_healthy_worker_heartbeat(conn, max_age_secs, true)
+}
+
+fn query_healthy_worker_heartbeat(
+    conn: &Connection,
+    max_age_secs: i64,
+    daemon_only: bool,
+) -> Result<Option<WorkerHeartbeat>> {
     let now = chrono::Utc::now().timestamp();
-    let mut stmt = conn.prepare(
+    let daemon_filter = if daemon_only {
+        " AND owner NOT LIKE 'worker-once-%'"
+    } else {
+        ""
+    };
+    let mut stmt = conn.prepare(&format!(
         "SELECT owner, pid, started_at_epoch, updated_at_epoch
          FROM worker_heartbeats
          WHERE updated_at_epoch >= ?1
+         {daemon_filter}
          ORDER BY updated_at_epoch DESC, owner ASC
-         LIMIT 10",
-    )?;
+         LIMIT 10"
+    ))?;
     let rows = stmt.query_map(params![now.saturating_sub(max_age_secs)], |row| {
         Ok(WorkerHeartbeat {
             owner: row.get(0)?,
@@ -112,8 +152,9 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        healthy_worker_heartbeat, latest_worker_heartbeat, test_heartbeat_process_alive,
-        upsert_worker_heartbeat, WORKER_HEARTBEAT_HEALTH_SECS,
+        healthy_daemon_worker_heartbeat, healthy_worker_heartbeat, latest_daemon_worker_heartbeat,
+        latest_worker_heartbeat, test_heartbeat_process_alive, upsert_worker_heartbeat,
+        WORKER_HEARTBEAT_HEALTH_SECS,
     };
 
     fn setup(conn: &Connection) {
@@ -171,6 +212,89 @@ mod tests {
         let healthy = healthy_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)
             .expect("healthy heartbeat query should run");
         assert!(healthy.is_none());
+    }
+
+    #[test]
+    fn once_heartbeat_is_not_daemon_healthy() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup(&conn);
+        let now = chrono::Utc::now().timestamp();
+
+        upsert_worker_heartbeat(
+            &conn,
+            "worker-once-test",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+
+        let healthy = healthy_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)?;
+        assert_eq!(
+            healthy.as_ref().map(|heartbeat| heartbeat.owner.as_str()),
+            Some("worker-once-test")
+        );
+        let healthy_daemon = healthy_daemon_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)?;
+        assert!(healthy_daemon.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_worker_heartbeat_counts_as_daemon_healthy() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup(&conn);
+        let now = chrono::Utc::now().timestamp();
+
+        upsert_worker_heartbeat(
+            &conn,
+            "worker-legacy",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+
+        let healthy_daemon = healthy_daemon_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)?;
+        let Some(healthy_daemon) = healthy_daemon else {
+            anyhow::bail!("legacy daemon heartbeat should be healthy");
+        };
+        assert_eq!(healthy_daemon.owner, "worker-legacy");
+        Ok(())
+    }
+
+    #[test]
+    fn latest_daemon_heartbeat_ignores_once_heartbeat() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup(&conn);
+        let now = chrono::Utc::now().timestamp();
+
+        upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon-test",
+            i64::from(std::process::id()),
+            now - 10,
+            now - 10,
+        )?;
+        upsert_worker_heartbeat(
+            &conn,
+            "worker-once-test",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+
+        let latest = latest_worker_heartbeat(&conn)?;
+        assert_eq!(
+            latest.as_ref().map(|heartbeat| heartbeat.owner.as_str()),
+            Some("worker-once-test")
+        );
+
+        let latest_daemon = latest_daemon_worker_heartbeat(&conn)?;
+        assert_eq!(
+            latest_daemon
+                .as_ref()
+                .map(|heartbeat| heartbeat.owner.as_str()),
+            Some("worker-daemon-test")
+        );
+        Ok(())
     }
 
     #[test]
