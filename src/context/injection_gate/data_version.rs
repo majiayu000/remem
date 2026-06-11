@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::OptionalExtension;
+use rusqlite::{types::ToSql, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -9,8 +9,6 @@ use super::super::types::ContextRequest;
 
 const SUMMARY_VERSION_SCAN_LIMIT: i64 = 200;
 const BASENAME_SEARCH_LIMIT: i64 = 20;
-const INDEXED_MEMORY_TYPES_SQL: &str = "'decision', 'discovery', 'bugfix', 'architecture', \
-                                        'procedure', 'session_activity'";
 
 pub(super) fn context_injections_has_data_version(conn: &rusqlite::Connection) -> Result<bool> {
     conn.query_row(
@@ -57,7 +55,7 @@ pub(super) fn compute_data_version(
     push_lesson_signal(conn, request, policy, now, &mut version)?;
     push_preference_signal(conn, &request.project, policy, &mut version)?;
     push_session_signal(conn, &request.project, &mut version)?;
-    push_workstream_signal(conn, &request.project, &mut version)?;
+    push_workstream_signal(conn, &request.project, policy, &mut version)?;
 
     Ok(version.finish())
 }
@@ -82,22 +80,20 @@ fn push_memory_signal(
         .section(SectionKind::MemoryIndex)
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
-    let type_filter = if excluded_types.is_empty() {
-        String::new()
-    } else {
-        format!(" AND m.memory_type IN ({})", INDEXED_MEMORY_TYPES_SQL)
-    };
-    let recent_sql = memory_window_sql(&type_filter, None);
+    let recent_type_filter = memory_type_filter(excluded_types, 4);
+    let recent_sql = memory_window_sql(&recent_type_filter, None, 4 + excluded_types.len());
+    let recent_params = memory_window_params(
+        request,
+        now,
+        None,
+        excluded_types,
+        policy.limits.candidate_fetch_limit as i64,
+    );
     push_memory_window(
         conn,
         "memories_recent",
         &recent_sql,
-        rusqlite::params![
-            request.project,
-            now,
-            request.current_branch.as_deref(),
-            policy.limits.candidate_fetch_limit as i64
-        ],
+        &recent_params,
         version,
     )?;
 
@@ -108,21 +104,24 @@ fn push_memory_signal(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(&request.project);
     let like_pattern = format!("%{basename}%");
+    let search_type_filter = memory_type_filter(excluded_types, 5);
     let search_sql = memory_window_sql(
-        &type_filter,
+        &search_type_filter,
         Some(" AND (m.title LIKE ?4 OR m.content LIKE ?4)"),
+        5 + excluded_types.len(),
+    );
+    let search_params = memory_window_params(
+        request,
+        now,
+        Some(like_pattern),
+        excluded_types,
+        BASENAME_SEARCH_LIMIT,
     );
     push_memory_window(
         conn,
         "memories_basename",
         &search_sql,
-        rusqlite::params![
-            request.project,
-            now,
-            request.current_branch.as_deref(),
-            like_pattern,
-            BASENAME_SEARCH_LIMIT
-        ],
+        &search_params,
         version,
     )
 }
@@ -274,35 +273,93 @@ fn push_session_signal(
 fn push_workstream_signal(
     conn: &rusqlite::Connection,
     project: &str,
+    policy: &ContextPolicy,
     version: &mut DataVersionBuilder,
 ) -> Result<()> {
-    let workstreams = crate::workstream::query_active_workstreams(conn, project)?;
-    for workstream in &workstreams {
-        version.push_row(
-            "workstream",
-            &[
-                workstream.id.to_string(),
-                workstream.project.clone(),
-                workstream.title.clone(),
-                workstream.description.clone().unwrap_or_default(),
-                workstream.status.as_str().to_string(),
-                workstream.progress.clone().unwrap_or_default(),
-                workstream.next_action.clone().unwrap_or_default(),
-                workstream.blockers.clone().unwrap_or_default(),
-                workstream.created_at_epoch.to_string(),
-                workstream.updated_at_epoch.to_string(),
-                workstream
-                    .completed_at_epoch
-                    .unwrap_or_default()
-                    .to_string(),
-            ],
-        );
+    let limit = policy.section_item_limit(SectionKind::Workstreams, 5);
+    if limit == 0 {
+        version.push("workstreams_count", "0");
+        return Ok(());
     }
-    version.push("workstreams_count", &workstreams.len().to_string());
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project, title, description, status, progress, next_action,
+                blockers, created_at_epoch, updated_at_epoch, completed_at_epoch
+         FROM workstreams
+         WHERE status = 'active'
+           AND ((owner_scope = 'repo' AND owner_key = ?1)
+                OR (owner_scope = 'repo' AND target_project = ?1)
+                OR (owner_scope = 'workstream' AND target_project = ?1)
+                OR (owner_scope IS NULL AND project = ?1))
+         ORDER BY updated_at_epoch DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![project, limit as i64], |row| {
+        Ok(vec![
+            row.get::<_, i64>(0)?.to_string(),
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+            row.get::<_, i64>(8)?.to_string(),
+            row.get::<_, i64>(9)?.to_string(),
+            row.get::<_, Option<i64>>(10)?
+                .unwrap_or_default()
+                .to_string(),
+        ])
+    })?;
+
+    let mut count = 0usize;
+    for row in rows {
+        version.push_row("workstream", &row?);
+        count += 1;
+    }
+    version.push("workstreams_count", &count.to_string());
     Ok(())
 }
 
-fn memory_window_sql(type_filter: &str, search_filter: Option<&str>) -> String {
+fn memory_type_filter(excluded_types: &[&str], first_param_index: usize) -> String {
+    if excluded_types.is_empty() {
+        return String::new();
+    }
+
+    let placeholders = (first_param_index..first_param_index + excluded_types.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(" AND m.memory_type NOT IN ({placeholders})")
+}
+
+fn memory_window_params(
+    request: &ContextRequest,
+    now: i64,
+    search_pattern: Option<String>,
+    excluded_types: &[&str],
+    limit: i64,
+) -> Vec<Box<dyn ToSql>> {
+    let mut params: Vec<Box<dyn ToSql>> = vec![
+        Box::new(request.project.clone()),
+        Box::new(now),
+        Box::new(request.current_branch.clone()),
+    ];
+    if let Some(pattern) = search_pattern {
+        params.push(Box::new(pattern));
+    }
+    for excluded_type in excluded_types {
+        params.push(Box::new((*excluded_type).to_string()));
+    }
+    params.push(Box::new(limit));
+    params
+}
+
+fn memory_window_sql(
+    type_filter: &str,
+    search_filter: Option<&str>,
+    limit_param_index: usize,
+) -> String {
     format!(
         "SELECT m.id, m.session_id, m.project, m.topic_key, m.title, m.content,
                 m.memory_type, m.files, m.created_at_epoch, m.updated_at_epoch,
@@ -328,22 +385,22 @@ fn memory_window_sql(type_filter: &str, search_filter: Option<&str>) -> String {
          ORDER BY m.updated_at_epoch DESC, m.id DESC
          LIMIT ?{}",
         search_filter.unwrap_or(""),
-        if search_filter.is_some() { 5 } else { 4 }
+        limit_param_index
     )
 }
 
-fn push_memory_window<P>(
+fn push_memory_window(
     conn: &rusqlite::Connection,
     label: &'static str,
     sql: &str,
-    params: P,
+    params: &[Box<dyn ToSql>],
     version: &mut DataVersionBuilder,
-) -> Result<()>
-where
-    P: rusqlite::Params,
-{
+) -> Result<()> {
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params, map_memory_version_row)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(crate::db::to_sql_refs(params)),
+        map_memory_version_row,
+    )?;
     let mut count = 0usize;
     for row in rows {
         push_memory_fields(version, label, &row?);

@@ -481,6 +481,48 @@ mod tests {
     }
 
     #[test]
+    fn strict_pre_render_misses_after_unknown_memory_type_content_change() -> anyhow::Result<()> {
+        let _data_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-custom-row");
+        let mut invocation = gate_invocation(Some("sess-pre-render-custom-row"));
+        invocation.gate_mode = Some("strict".to_string());
+        let conn = crate::db::test_support::runtime_connection()?;
+        let memory_id = crate::memory::insert_memory_full(
+            &conn,
+            Some("sess-pre-render-custom-row"),
+            &invocation.project,
+            Some("custom/context-gate-row"),
+            "Custom context row",
+            "Original custom row text.",
+            "custom_context",
+            None,
+            None,
+            "project",
+            None,
+        )?;
+
+        let first = apply_gate_with_current_data_version(
+            &conn,
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        )?;
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        conn.execute(
+            "UPDATE memories
+             SET content = 'Changed custom row text.'
+             WHERE id = ?1",
+            params![memory_id],
+        )?;
+
+        let result = pre_render_for_test(&conn, &invocation);
+        assert!(result.decision.is_none());
+        assert_eq!(result.precheck, ContextGatePrecheck::Miss);
+        assert!(result.data_version.is_some());
+        Ok(())
+    }
+
+    #[test]
     fn strict_pre_render_misses_after_preference_content_change() -> anyhow::Result<()> {
         let _data_dir =
             crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-pref-row");
@@ -557,6 +599,51 @@ mod tests {
         assert!(result.decision.is_none());
         assert_eq!(result.precheck, ContextGatePrecheck::Miss);
         assert!(result.data_version.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn strict_pre_render_ignores_workstream_past_render_limit() -> anyhow::Result<()> {
+        let _data_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-work-limit");
+        let mut invocation = gate_invocation(Some("sess-pre-render-work-limit"));
+        invocation.gate_mode = Some("strict".to_string());
+        let conn = crate::db::test_support::runtime_connection()?;
+        for idx in 0..6 {
+            conn.execute(
+                "INSERT INTO workstreams
+                 (project, title, status, next_action, created_at_epoch, updated_at_epoch,
+                  source_project, target_project, owner_scope, owner_key, context_class)
+                 VALUES (?1, ?2, 'active', ?3, ?4, ?4, ?1, ?1, 'repo', ?1, 'startup_core')",
+                params![
+                    invocation.project,
+                    format!("Context gate workstream {idx}"),
+                    format!("Next action {idx}"),
+                    2_000_i64 - idx,
+                ],
+            )?;
+        }
+
+        let first = apply_gate_with_current_data_version(
+            &conn,
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        )?;
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        conn.execute(
+            "UPDATE workstreams
+             SET next_action = 'Changed offscreen next action'
+             WHERE title = 'Context gate workstream 5'",
+            [],
+        )?;
+
+        let result = pre_render_for_test(&conn, &invocation);
+        let Some(decision) = result.decision else {
+            anyhow::bail!("off-limit workstream should not invalidate rendered context");
+        };
+        assert_eq!(result.precheck, ContextGatePrecheck::Hit);
+        assert_eq!(decision.reason, "suppressed_data_version");
         Ok(())
     }
 
