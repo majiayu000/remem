@@ -16,6 +16,7 @@ pub struct CaptureDropInput<'a> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CaptureDropStats {
     pub total: i64,
+    pub actionable: i64,
     pub unrecovered_spills: i64,
     pub latest_epoch: Option<i64>,
     pub latest_reason: Option<String>,
@@ -24,6 +25,7 @@ pub struct CaptureDropStats {
 
 pub fn record_capture_drop(conn: &Connection, input: &CaptureDropInput<'_>) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
+    let detail = input.detail.map(crate::db::capture::redact_capture_content);
     conn.execute(
         "INSERT INTO capture_drop_events
          (host_id, session_id, project, tool_name, reason, detail, spill_path,
@@ -35,7 +37,7 @@ pub fn record_capture_drop(conn: &Connection, input: &CaptureDropInput<'_>) -> R
             input.project,
             input.tool_name,
             input.reason,
-            input.detail,
+            detail,
             input.spill_path,
             input.recovered_event_id,
             now,
@@ -52,6 +54,14 @@ pub fn query_capture_drop_stats(conn: &Connection) -> Result<CaptureDropStats> {
     let total = conn.query_row("SELECT COUNT(*) FROM capture_drop_events", [], |row| {
         row.get(0)
     })?;
+    let actionable = conn.query_row(
+        "SELECT COUNT(*)
+         FROM capture_drop_events
+         WHERE reason NOT IN ('adapter_skip', 'codex_bash_disabled', 'bash_read_only')
+           AND NOT (reason = 'db_open_failed' AND recovered_event_id IS NOT NULL)",
+        [],
+        |row| row.get(0),
+    )?;
     let unrecovered_spills = conn.query_row(
         "SELECT COUNT(*)
          FROM capture_drop_events
@@ -79,6 +89,7 @@ pub fn query_capture_drop_stats(conn: &Connection) -> Result<CaptureDropStats> {
     Ok(match latest {
         Some((latest_epoch, latest_reason, latest_detail)) => CaptureDropStats {
             total,
+            actionable,
             unrecovered_spills,
             latest_epoch: Some(latest_epoch),
             latest_reason: Some(latest_reason),
@@ -86,6 +97,7 @@ pub fn query_capture_drop_stats(conn: &Connection) -> Result<CaptureDropStats> {
         },
         None => CaptureDropStats {
             total,
+            actionable,
             unrecovered_spills,
             ..CaptureDropStats::default()
         },
@@ -116,6 +128,7 @@ mod tests {
         let stats = query_capture_drop_stats(&conn)?;
 
         assert_eq!(stats.total, 0);
+        assert_eq!(stats.actionable, 0);
         assert_eq!(stats.unrecovered_spills, 0);
         assert_eq!(stats.latest_reason, None);
         Ok(())
@@ -157,9 +170,42 @@ mod tests {
         let stats = query_capture_drop_stats(&conn)?;
 
         assert_eq!(stats.total, 2);
+        assert_eq!(stats.actionable, 1);
         assert_eq!(stats.unrecovered_spills, 1);
         assert_eq!(stats.latest_reason.as_deref(), Some("adapter_skip"));
         assert_eq!(stats.latest_detail.as_deref(), Some("read-only tool"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_drop_redacts_sensitive_detail() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE captured_events (id INTEGER PRIMARY KEY);")?;
+        conn.execute_batch(include_str!("../migrations/v036_capture_drop_events.sql"))?;
+
+        record_capture_drop(
+            &conn,
+            &CaptureDropInput {
+                host: Some("codex-cli"),
+                session_id: Some("session-secret"),
+                project: Some("/repo"),
+                tool_name: Some("Bash"),
+                reason: "codex_bash_disabled",
+                detail: Some(
+                    "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'",
+                ),
+                spill_path: None,
+                recovered_event_id: None,
+            },
+        )?;
+
+        let detail: String = conn.query_row(
+            "SELECT detail FROM capture_drop_events WHERE session_id = 'session-secret'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(detail.contains("[REDACTED]"));
+        assert!(!detail.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
         Ok(())
     }
 }

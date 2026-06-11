@@ -179,17 +179,20 @@ pub(super) fn check_capture_drops(conn: Option<&Connection>) -> Check {
         }
     };
 
-    if stats.capture_drop_events == 0 {
+    if stats.actionable_capture_drops == 0 {
         return Check::new(
             "Capture drops",
             Status::Ok,
-            "0 recorded hook skips or drops",
+            format!(
+                "{} expected hook skip/drop event(s), no actionable capture drops",
+                stats.capture_drop_events
+            ),
         );
     }
 
     let mut detail = format!(
-        "{} recorded hook skip/drop event(s)",
-        stats.capture_drop_events
+        "{} actionable capture drop(s), {} total recorded hook skip/drop event(s)",
+        stats.actionable_capture_drops, stats.capture_drop_events
     );
     if stats.unrecovered_capture_spills > 0 {
         detail.push_str(&format!(
