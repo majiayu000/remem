@@ -150,12 +150,23 @@ mod tests {
         }
     }
 
+    fn apply_test_context_gate(
+        invocation: &ContextInvocation,
+        output: String,
+    ) -> ContextGateDecision {
+        let conn = match crate::db::test_support::runtime_connection() {
+            Ok(conn) => conn,
+            Err(error) => panic!("test database should open: {error:#}"),
+        };
+        apply_context_gate(&conn, invocation, output)
+    }
+
     #[test]
     fn delta_mode_emits_compact_changed_hash() -> Result<()> {
         let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-delta");
         let mut invocation = invocation(Some("sess-delta"));
         invocation.gate_mode = Some("delta".to_string());
-        let first = apply_context_gate(
+        let first = apply_test_context_gate(
             &invocation,
             "# [/tmp/remem] context now\nBody A\n".to_string(),
         );
@@ -165,7 +176,7 @@ mod tests {
             "# [/tmp/remem] context later\n{}\n\n1 context memories loaded. 1 core (10 chars). 0 lessons (0 chars). 0 indexed (0 chars). 0 preferences (project:0 global:0, 0 chars). 0 sessions (0 chars). host=codex-cli branch=main total=3000 chars/~750 tokens limit=12000 truncated=no\n",
             "Body B ".repeat(400)
         );
-        let second = apply_context_gate(&invocation, changed_output.clone());
+        let second = apply_test_context_gate(&invocation, changed_output.clone());
         assert_eq!(second.action, ContextGateAction::EmittedDelta);
         assert_eq!(second.reason, "changed_hash");
         assert_ne!(second.output, changed_output);
@@ -173,7 +184,7 @@ mod tests {
         assert!(second.output.chars().count() <= 1200);
 
         let key = injection_key(&invocation);
-        let mode: String = crate::db::open_db()?.query_row(
+        let mode: String = crate::db::test_support::runtime_connection()?.query_row(
             "SELECT output_mode FROM context_injections WHERE host = ?1 AND injection_key = ?2",
             params![invocation.host.as_env_value(), key],
             |row| row.get(0),
@@ -186,13 +197,13 @@ mod tests {
     fn auto_mode_emits_delta_on_changed_hash() {
         let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-auto-delta");
         let invocation = invocation(Some("sess-auto-delta"));
-        let first = apply_context_gate(
+        let first = apply_test_context_gate(
             &invocation,
             "# [/tmp/remem] context now\nBody A\n".to_string(),
         );
         assert_eq!(first.action, ContextGateAction::EmittedFull);
 
-        let second = apply_context_gate(
+        let second = apply_test_context_gate(
             &invocation,
             "# [/tmp/remem] context now\nBody B\n".to_string(),
         );
@@ -206,18 +217,18 @@ mod tests {
             crate::db::test_support::ScopedTestDataDir::new("context-gate-fallback-expired");
         let invocation = invocation(None);
         let output = "# [/tmp/remem] context now\nBody\n".to_string();
-        let first = apply_context_gate(&invocation, output.clone());
+        let first = apply_test_context_gate(&invocation, output.clone());
         assert_eq!(first.action, ContextGateAction::EmittedFull);
 
         let key = injection_key(&invocation);
-        crate::db::open_db()?.execute(
+        crate::db::test_support::runtime_connection()?.execute(
             "UPDATE context_injections
              SET last_emitted_epoch = 0
              WHERE host = ?1 AND injection_key = ?2",
             params![invocation.host.as_env_value(), key],
         )?;
 
-        let second = apply_context_gate(&invocation, output.clone());
+        let second = apply_test_context_gate(&invocation, output.clone());
         assert_eq!(second.action, ContextGateAction::EmittedFull);
         assert_eq!(second.reason, "fallback_cooldown_expired");
         assert_eq!(second.output, output);

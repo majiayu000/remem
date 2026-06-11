@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::Connection;
 
 use super::schema_drift::{install_v031_state_delete_trigger, repair_known_schema_drift};
-use super::state::{applied_versions, ensure_migration_table, mark_applied};
+use super::state::{applied_versions, ensure_migration_table, has_migration_table, mark_applied};
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
 
@@ -37,6 +37,40 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
             Err(error)
         }
     }
+}
+
+pub(crate) fn ensure_schema_current(conn: &Connection) -> Result<()> {
+    if !has_migration_table(conn) {
+        return Err(anyhow!(
+            "database schema is not initialized; run a foreground remem command before hook context"
+        ));
+    }
+    let applied = applied_versions(conn)?;
+    let binary_latest = super::latest_schema_version();
+    let db_latest = applied.iter().copied().max().unwrap_or(0);
+    if db_latest > binary_latest {
+        return Err(anyhow!(
+            "database is at schema v{db_latest} but this binary ({}) only knows up to v{binary_latest}; please upgrade remem and verify `remem --version` reports schema v{db_latest} or newer",
+            crate::build_info::version_label()
+        ));
+    }
+    if db_latest < binary_latest {
+        return Err(anyhow!(
+            "database is at schema v{db_latest} but this binary ({}) requires schema v{binary_latest}; run a foreground remem command to migrate before hook context",
+            crate::build_info::version_label()
+        ));
+    }
+    if let Some(missing) = MIGRATIONS
+        .iter()
+        .find(|migration| !applied.contains(&migration.version))
+    {
+        return Err(anyhow!(
+            "database schema is missing migration v{:03}_{}; run a foreground remem command to migrate before hook context",
+            missing.version,
+            missing.name
+        ));
+    }
+    Ok(())
 }
 
 fn run_migrations_locked(conn: &Connection) -> Result<()> {

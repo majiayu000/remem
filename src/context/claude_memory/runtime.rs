@@ -14,7 +14,7 @@ const DEFAULT_NATIVE_MEMORY_MAX_BYTES: usize = 16 * 1024;
 const TRUNCATION_NOTE: &str =
     "\n\n---\n*Truncated by remem native memory guard; use `remem search` for full memory.*\n";
 
-pub fn sync_to_claude_memory(cwd: &str, project: &str) -> Result<()> {
+pub fn sync_to_claude_memory(conn: &rusqlite::Connection, cwd: &str, project: &str) -> Result<()> {
     if native_memory_sync_disabled() {
         crate::log::info(
             "claude-mem",
@@ -26,7 +26,6 @@ pub fn sync_to_claude_memory(cwd: &str, project: &str) -> Result<()> {
         return Ok(());
     }
 
-    let conn = crate::db::open_db()?;
     let memory_dir = claude_memory_dir(cwd);
 
     if !memory_dir.exists() {
@@ -37,7 +36,7 @@ pub fn sync_to_claude_memory(cwd: &str, project: &str) -> Result<()> {
         return Ok(());
     }
 
-    let sessions = load_recent_sessions(&conn, project)?;
+    let sessions = load_recent_sessions(conn, project)?;
     let Some(content) = render_memory_content(&sessions) else {
         return Ok(());
     };

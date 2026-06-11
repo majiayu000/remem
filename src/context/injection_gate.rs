@@ -50,6 +50,7 @@ struct GateRow {
 }
 
 pub(super) fn apply_context_gate(
+    conn: &rusqlite::Connection,
     invocation: &ContextInvocation,
     output: String,
 ) -> ContextGateDecision {
@@ -84,19 +85,9 @@ pub(super) fn apply_context_gate(
     let hash = context_fingerprint(&output);
     let key = injection_key(invocation);
     let now = chrono::Utc::now().timestamp();
-    let conn = match crate::db::open_db() {
-        Ok(conn) => conn,
-        Err(error) => {
-            crate::log::error(
-                "context-gate",
-                &format!("fail_open reason=open_db error={}", error),
-            );
-            return decision(output, ContextGateAction::FailOpen, "open_db");
-        }
-    };
 
-    cleanup_old_rows(&conn, now);
-    let row = match load_gate_row(&conn, invocation.host.as_env_value(), &key) {
+    cleanup_old_rows(conn, now);
+    let row = match load_gate_row(conn, invocation.host.as_env_value(), &key) {
         Ok(row) => row,
         Err(error) => {
             crate::log::warn(
@@ -109,7 +100,7 @@ pub(super) fn apply_context_gate(
 
     let Some(row) = row else {
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -134,7 +125,7 @@ pub(super) fn apply_context_gate(
 
     if invocation.force {
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -158,7 +149,7 @@ pub(super) fn apply_context_gate(
     }
     if source_requires_fresh_emission(invocation.source.as_deref()) {
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -188,7 +179,7 @@ pub(super) fn apply_context_gate(
             } else {
                 "same_hash"
             };
-            return match record_suppression(&conn, invocation, &key, now) {
+            return match record_suppression(conn, invocation, &key, now) {
                 Ok(()) => {
                     log_gate("suppress", invocation, &key, reason, &hash);
                     gate_decision(
@@ -204,7 +195,7 @@ pub(super) fn apply_context_gate(
             };
         }
         return match upsert_emit_row(
-            &conn,
+            conn,
             invocation,
             &key,
             &hash,
@@ -228,7 +219,7 @@ pub(super) fn apply_context_gate(
     }
 
     if mode == ContextGateMode::Strict {
-        return match record_suppression(&conn, invocation, &key, now) {
+        return match record_suppression(conn, invocation, &key, now) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "strict", &hash);
                 gate_decision(
@@ -256,7 +247,7 @@ pub(super) fn apply_context_gate(
         };
 
     match upsert_emit_row(
-        &conn,
+        conn,
         invocation,
         &key,
         &hash,
@@ -387,8 +378,7 @@ fn read_i64_env(key: &str, default: i64) -> i64 {
 }
 
 fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
-    let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
-    let cutoff = now.saturating_sub(retention_days.saturating_mul(86_400));
+    let cutoff = retention_cutoff_epoch(now);
     if let Err(error) = conn.execute(
         "DELETE FROM context_injections WHERE updated_at_epoch < ?1",
         [cutoff],
@@ -398,6 +388,11 @@ fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
             &format!("retention cleanup failed: {}", error),
         );
     }
+}
+
+fn retention_cutoff_epoch(now: i64) -> i64 {
+    let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
+    now.saturating_sub(retention_days.saturating_mul(86_400))
 }
 
 fn load_gate_row(conn: &rusqlite::Connection, host: &str, key: &str) -> Result<Option<GateRow>> {

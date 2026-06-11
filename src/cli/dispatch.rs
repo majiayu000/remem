@@ -73,7 +73,8 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::SyncMemory { cwd } => {
             let cwd = resolve_cwd_arg(cwd);
             let project = db::project_from_cwd(&cwd);
-            context::claude_memory::sync_to_claude_memory(&cwd, &project)?;
+            let conn = db::open_db()?;
+            context::claude_memory::sync_to_claude_memory(&conn, &cwd, &project)?;
         }
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::Memory { action } => match action {
