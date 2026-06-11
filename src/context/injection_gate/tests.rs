@@ -10,6 +10,15 @@ fn setup_gate_conn() -> rusqlite::Connection {
     conn
 }
 
+fn setup_gate_conn_with_data_version() -> Result<rusqlite::Connection> {
+    let conn = setup_gate_conn();
+    conn.execute(
+        "ALTER TABLE context_injections ADD COLUMN data_version TEXT",
+        [],
+    )?;
+    Ok(conn)
+}
+
 fn gate_invocation(session_id: Option<&str>) -> ContextInvocation {
     ContextInvocation {
         cwd: "/tmp/remem".to_string(),
@@ -109,12 +118,12 @@ fn first_same_session_context_emits_and_second_suppresses() -> Result<()> {
     let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
     assert!(load_gate_row(&conn, invocation.host.as_env_value(), &key)?.is_none());
-    upsert_emit_row(&conn, &invocation, &key, &hash, "full", 32, 100)?;
+    upsert_emit_row(&conn, &invocation, &key, &hash, None, "full", 32, 100)?;
     let row = load_gate_row(&conn, invocation.host.as_env_value(), &key)?
         .ok_or_else(|| anyhow::anyhow!("missing context injection gate row"))?;
     assert_eq!(row.context_hash, hash);
 
-    record_suppression(&conn, &invocation, &key, 101)?;
+    record_suppression(&conn, &invocation, &key, None, 101)?;
     let suppress_count: i64 = conn.query_row(
         "SELECT suppress_count FROM context_injections WHERE host = ?1 AND injection_key = ?2",
         params![invocation.host.as_env_value(), key],
@@ -177,8 +186,8 @@ fn suppression_does_not_extend_fallback_cooldown() -> Result<()> {
     let key = injection_key(&invocation);
     let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
-    upsert_emit_row(&conn, &invocation, &key, &hash, "full", 32, 100)?;
-    record_suppression(&conn, &invocation, &key, 150)?;
+    upsert_emit_row(&conn, &invocation, &key, &hash, None, "full", 32, 100)?;
+    record_suppression(&conn, &invocation, &key, None, 150)?;
 
     let (updated_at_epoch, last_emitted_epoch, suppress_count): (i64, i64, i64) = conn.query_row(
         "SELECT updated_at_epoch, last_emitted_epoch, suppress_count
@@ -416,6 +425,47 @@ fn restart_source_reemits_same_hash_context() {
 }
 
 #[test]
+fn strict_suppression_after_render_refreshes_data_version_only() -> Result<()> {
+    let conn = setup_gate_conn_with_data_version()?;
+    let mut invocation = gate_invocation(Some("sess-strict-data-version"));
+    invocation.gate_mode = Some("strict".to_string());
+    let key = injection_key(&invocation);
+    let emitted_hash = context_fingerprint("# [/tmp/remem] context now\nBody A\n");
+    let now = chrono::Utc::now().timestamp();
+
+    upsert_emit_row(
+        &conn,
+        &invocation,
+        &key,
+        &emitted_hash,
+        Some("version-a"),
+        "full",
+        32,
+        now,
+    )?;
+
+    let decision = apply_context_gate_with_data_version(
+        &conn,
+        &invocation,
+        "# [/tmp/remem] context now\nBody B\n".to_string(),
+        Some("version-b"),
+    );
+
+    assert_eq!(decision.action, ContextGateAction::Suppressed);
+    assert_eq!(decision.reason, "strict");
+    let (stored_hash, stored_version): (String, Option<String>) = conn.query_row(
+        "SELECT context_hash, data_version
+         FROM context_injections
+         WHERE host = ?1 AND injection_key = ?2",
+        params![invocation.host.as_env_value(), key],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(stored_hash, emitted_hash);
+    assert_eq!(stored_version.as_deref(), Some("version-b"));
+    Ok(())
+}
+
+#[test]
 fn emit_and_suppress_persist_hook_source() -> Result<()> {
     let conn = setup_gate_conn();
     let mut invocation = gate_invocation(Some("sess-source"));
@@ -423,9 +473,9 @@ fn emit_and_suppress_persist_hook_source() -> Result<()> {
     let key = injection_key(&invocation);
     let hash = context_fingerprint("# [/tmp/remem] context now\nBody\n");
 
-    upsert_emit_row(&conn, &invocation, &key, &hash, "full", 32, 100)?;
+    upsert_emit_row(&conn, &invocation, &key, &hash, None, "full", 32, 100)?;
     invocation.source = Some("resume".to_string());
-    record_suppression(&conn, &invocation, &key, 101)?;
+    record_suppression(&conn, &invocation, &key, None, 101)?;
 
     let hook_source: Option<String> = conn.query_row(
         "SELECT hook_source FROM context_injections WHERE host = ?1 AND injection_key = ?2",

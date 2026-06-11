@@ -7,7 +7,8 @@ use crate::db;
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
 use super::injection_gate::{
-    apply_context_gate, pre_render_context_gate, ContextGateAction, ContextGateDecision,
+    apply_context_gate_with_data_version, pre_render_context_gate, ContextGateAction,
+    ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
@@ -21,6 +22,8 @@ use super::sections::{
     render_workstreams_with_limits,
 };
 use super::types::{ContextLoadError, ContextRequest};
+mod timer;
+use timer::log_context_timer;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
@@ -259,18 +262,31 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 );
             }
             print!("{}", decision.output);
-            log_context_timer(timer, &request, &decision, &rendered.stats);
+            log_context_timer(
+                timer,
+                &request,
+                &decision,
+                &rendered.stats,
+                ContextGatePrecheck::Off,
+            );
             return Ok(());
         }
     };
-    let (mut decision, stats) = if use_gate {
-        if let Some(decision) = pre_render_context_gate(&conn, &invocation) {
-            (decision, ContextRenderStats::default())
+    let (mut decision, stats, precheck) = if use_gate {
+        let precheck =
+            pre_render_context_gate(&conn, &invocation, &request, &policy, debug_enabled);
+        if let Some(decision) = precheck.decision {
+            (decision, ContextRenderStats::default(), precheck.precheck)
         } else {
             let rendered =
                 render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
-            let decision = apply_context_gate(&conn, &invocation, rendered.output);
-            (decision, rendered.stats)
+            let decision = apply_context_gate_with_data_version(
+                &conn,
+                &invocation,
+                rendered.output,
+                precheck.data_version.as_deref(),
+            );
+            (decision, rendered.stats, precheck.precheck)
         }
     } else {
         let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
@@ -284,6 +300,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 output_mode: None,
             },
             rendered.stats,
+            ContextGatePrecheck::Off,
         )
     };
     if debug_enabled {
@@ -291,7 +308,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
     print!("{}", decision.output);
-    log_context_timer(timer, &request, &decision, &stats);
+    log_context_timer(timer, &request, &decision, &stats, precheck);
     Ok(())
 }
 
@@ -301,37 +318,6 @@ pub(in crate::context) fn generate_context_for_test(
     use_gate: bool,
 ) -> Result<()> {
     generate_context_for_invocation(invocation, use_gate)
-}
-
-fn log_context_timer(
-    timer: crate::log::Timer,
-    request: &ContextRequest,
-    decision: &ContextGateDecision,
-    stats: &ContextRenderStats,
-) {
-    let capabilities = resolve_profile(request.host).capabilities();
-    timer.done(&format!(
-        "project={} cwd={} session={} host={} colors={} gate={:?}:{} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} lessons={} index={} preferences={} sessions={} workstreams={}",
-        request.project,
-        request.cwd,
-        request.session_id.as_deref().unwrap_or("-"),
-        request.host.as_env_value(),
-        request.use_colors,
-        decision.action,
-        decision.reason,
-        capabilities.has_mcp_tools,
-        capabilities.has_session_start_hook,
-        capabilities.has_user_prompt_submit_hook,
-        capabilities.observes_native_file_edits,
-        capabilities.observes_bash,
-        stats.memories_loaded,
-        stats.core.count,
-        stats.lessons.count,
-        stats.index.count,
-        stats.preferences.count,
-        stats.sessions.count,
-        stats.workstreams.count,
-    ));
 }
 
 pub(in crate::context) fn append_context_gate_debug_trace(

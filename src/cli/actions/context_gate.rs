@@ -48,15 +48,22 @@ fn load_recent_context_gate_rows(
         return Ok(Vec::new());
     }
 
-    let mut stmt = conn.prepare(
+    let data_version_select = if context_injections_column_exists(conn, "data_version")? {
+        "data_version"
+    } else {
+        "NULL"
+    };
+    let sql = format!(
         "SELECT host, project, injection_key, session_id, hook_source, output_mode,
-                output_chars, updated_at_epoch, last_emitted_epoch, emit_count, suppress_count
+                output_chars, updated_at_epoch, last_emitted_epoch, emit_count, suppress_count,
+                {data_version_select}
          FROM context_injections
          WHERE (?1 IS NULL OR project = ?1)
            AND (?2 IS NULL OR session_id = ?2)
          ORDER BY updated_at_epoch DESC
          LIMIT ?3",
-    )?;
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
         .query_map(params![project, session, limit], |row| {
             let mut status = ContextGateStatusRow {
@@ -73,6 +80,7 @@ fn load_recent_context_gate_rows(
                 last_emitted_at: String::new(),
                 emit_count: row.get(9)?,
                 suppress_count: row.get(10)?,
+                data_version: row.get(11)?,
                 inferred_reason: String::new(),
             };
             status.updated_at = format_context_gate_timestamp(status.updated_at_epoch);
@@ -85,11 +93,25 @@ fn load_recent_context_gate_rows(
 }
 
 fn context_injections_table_exists(conn: &Connection) -> Result<bool> {
+    context_injections_column_exists(conn, "*")
+}
+
+fn context_injections_column_exists(conn: &Connection, column_name: &str) -> Result<bool> {
+    if column_name == "*" {
+        let exists = conn.query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'context_injections'
+             )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        return Ok(exists != 0);
+    }
     let exists = conn.query_row(
         "SELECT EXISTS (
-             SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'context_injections'
+             SELECT 1 FROM pragma_table_info('context_injections') WHERE name = ?1
          )",
-        [],
+        [column_name],
         |row| row.get::<_, i64>(0),
     )?;
     Ok(exists != 0)
@@ -124,6 +146,7 @@ fn infer_context_gate_reason(row: &ContextGateStatusRow) -> &'static str {
         "suppressed" if source_is_default_suppressed(row.hook_source.as_deref()) => {
             "suppressed_source"
         }
+        "suppressed" if row.data_version.is_some() => "suppressed_data_version",
         "suppressed" => "same_hash_or_strict",
         "full" if source_requires_restart(row.hook_source.as_deref()) => "restart_source",
         "full" if row.emit_count <= 1 => "first_or_forced",
@@ -181,6 +204,7 @@ struct ContextGateStatusRow {
     last_emitted_at: String,
     emit_count: i64,
     suppress_count: i64,
+    data_version: Option<String>,
     inferred_reason: String,
 }
 
@@ -251,6 +275,7 @@ mod tests {
             last_emitted_at: String::new(),
             emit_count: 1,
             suppress_count: 0,
+            data_version: None,
             inferred_reason: String::new(),
         };
 
@@ -280,6 +305,7 @@ mod tests {
                 last_emitted_at: "1970-01-01 00:01:40 UTC".to_string(),
                 emit_count: 1,
                 suppress_count: 2,
+                data_version: None,
                 inferred_reason: "suppressed_source".to_string(),
             }],
         };
@@ -298,6 +324,44 @@ mod tests {
         let rows = load_recent_context_gate_rows(&conn, None, None, 20)?;
 
         assert!(rows.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn context_gate_status_infers_data_version_suppression() -> Result<()> {
+        let conn = setup_context_gate_conn();
+        conn.execute(
+            "ALTER TABLE context_injections ADD COLUMN data_version TEXT",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO context_injections
+             (host, project, injection_key, session_id, transcript_path, hook_source,
+              context_hash, data_version, output_mode, output_chars, created_at_epoch,
+              updated_at_epoch, last_emitted_epoch, emit_count, suppress_count)
+             VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                "codex-cli",
+                "/tmp/remem",
+                "session:/tmp/remem:sess-1",
+                "sess-1",
+                "SessionStart",
+                "hash-a",
+                "version-a",
+                "suppressed",
+                0,
+                100,
+                110,
+                100,
+                1,
+                2,
+            ],
+        )?;
+
+        let rows = load_recent_context_gate_rows(&conn, Some("/tmp/remem"), Some("sess-1"), 20)?;
+
+        assert_eq!(rows[0].data_version.as_deref(), Some("version-a"));
+        assert_eq!(rows[0].inferred_reason, "suppressed_data_version");
         Ok(())
     }
 

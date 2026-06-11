@@ -175,6 +175,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "graph_edge_file_nodes",
         sql: include_str!("../migrations/v034_graph_edge_file_nodes.sql"),
     },
+    Migration {
+        version: 35,
+        name: "context_injection_data_version",
+        sql: include_str!("../migrations/v035_context_injection_data_version.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

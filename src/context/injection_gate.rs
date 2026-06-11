@@ -1,15 +1,19 @@
 use anyhow::Result;
-use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
 
 use super::host::HostKind;
 use super::invocation::ContextInvocation;
+use super::policy::ContextPolicy;
+use super::types::ContextRequest;
 
+mod data_version;
 mod delta;
 mod pre_render;
+mod store;
 
 pub(super) use pre_render::pre_render_context_gate;
+use store::{load_gate_row, record_suppression, upsert_emit_row, GateRow};
 
 const DEFAULT_GATE_HOSTS: &str = "codex-cli,claude-code";
 const DEFAULT_SUPPRESSED_SOURCES: &str = "compact";
@@ -43,16 +47,37 @@ pub(super) struct ContextGateDecision {
     pub output_mode: Option<&'static str>,
 }
 
-#[derive(Debug)]
-struct GateRow {
-    context_hash: String,
-    last_emitted_epoch: i64,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ContextGatePrecheck {
+    Off,
+    Hit,
+    Miss,
 }
 
+impl ContextGatePrecheck {
+    pub(super) fn as_log_value(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn apply_context_gate(
     conn: &rusqlite::Connection,
     invocation: &ContextInvocation,
     output: String,
+) -> ContextGateDecision {
+    apply_context_gate_with_data_version(conn, invocation, output, None)
+}
+
+pub(super) fn apply_context_gate_with_data_version(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    output: String,
+    data_version: Option<&str>,
 ) -> ContextGateDecision {
     if output.is_empty() {
         return decision(output, ContextGateAction::Bypassed, "empty_output");
@@ -104,6 +129,7 @@ pub(super) fn apply_context_gate(
             invocation,
             &key,
             &hash,
+            data_version,
             "full",
             output.chars().count(),
             now,
@@ -129,6 +155,7 @@ pub(super) fn apply_context_gate(
             invocation,
             &key,
             &hash,
+            data_version,
             "full",
             output.chars().count(),
             now,
@@ -153,6 +180,7 @@ pub(super) fn apply_context_gate(
             invocation,
             &key,
             &hash,
+            data_version,
             "full",
             output.chars().count(),
             now,
@@ -179,7 +207,7 @@ pub(super) fn apply_context_gate(
             } else {
                 "same_hash"
             };
-            return match record_suppression(conn, invocation, &key, now) {
+            return match record_suppression(conn, invocation, &key, data_version, now) {
                 Ok(()) => {
                     log_gate("suppress", invocation, &key, reason, &hash);
                     gate_decision(
@@ -199,6 +227,7 @@ pub(super) fn apply_context_gate(
             invocation,
             &key,
             &hash,
+            data_version,
             "full",
             output.chars().count(),
             now,
@@ -219,7 +248,7 @@ pub(super) fn apply_context_gate(
     }
 
     if mode == ContextGateMode::Strict {
-        return match record_suppression(conn, invocation, &key, now) {
+        return match record_suppression(conn, invocation, &key, data_version, now) {
             Ok(()) => {
                 log_gate("suppress", invocation, &key, "strict", &hash);
                 gate_decision(
@@ -251,6 +280,7 @@ pub(super) fn apply_context_gate(
         invocation,
         &key,
         &hash,
+        data_version,
         output_mode,
         output.chars().count(),
         now,
@@ -393,83 +423,6 @@ fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
 fn retention_cutoff_epoch(now: i64) -> i64 {
     let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
     now.saturating_sub(retention_days.saturating_mul(86_400))
-}
-
-fn load_gate_row(conn: &rusqlite::Connection, host: &str, key: &str) -> Result<Option<GateRow>> {
-    conn.query_row(
-        "SELECT context_hash, last_emitted_epoch
-         FROM context_injections
-         WHERE host = ?1 AND injection_key = ?2",
-        params![host, key],
-        |row| {
-            Ok(GateRow {
-                context_hash: row.get(0)?,
-                last_emitted_epoch: row.get(1)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(Into::into)
-}
-
-fn upsert_emit_row(
-    conn: &rusqlite::Connection,
-    invocation: &ContextInvocation,
-    key: &str,
-    hash: &str,
-    output_mode: &str,
-    output_chars: usize,
-    now: i64,
-) -> Result<()> {
-    conn.execute(
-        "INSERT INTO context_injections
-         (host, project, injection_key, session_id, transcript_path, hook_source, context_hash, output_mode,
-          output_chars, created_at_epoch, updated_at_epoch, last_emitted_epoch, emit_count,
-          suppress_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?10, 1, 0)
-         ON CONFLICT(host, injection_key) DO UPDATE SET
-          project = excluded.project,
-          session_id = excluded.session_id,
-          transcript_path = excluded.transcript_path,
-          hook_source = excluded.hook_source,
-          context_hash = excluded.context_hash,
-          output_mode = excluded.output_mode,
-          output_chars = excluded.output_chars,
-          updated_at_epoch = excluded.updated_at_epoch,
-          last_emitted_epoch = excluded.last_emitted_epoch,
-          emit_count = context_injections.emit_count + 1",
-        params![
-            invocation.host.as_env_value(),
-            invocation.project,
-            key,
-            invocation.session_id,
-            invocation.transcript_path,
-            invocation.source,
-            hash,
-            output_mode,
-            output_chars as i64,
-            now,
-        ],
-    )?;
-    Ok(())
-}
-
-fn record_suppression(
-    conn: &rusqlite::Connection,
-    invocation: &ContextInvocation,
-    key: &str,
-    now: i64,
-) -> Result<()> {
-    conn.execute(
-        "UPDATE context_injections
-         SET output_mode = 'suppressed',
-             hook_source = ?3,
-             updated_at_epoch = ?4,
-             suppress_count = suppress_count + 1
-         WHERE host = ?1 AND injection_key = ?2",
-        params![invocation.host.as_env_value(), key, invocation.source, now,],
-    )?;
-    Ok(())
 }
 
 fn injection_key(invocation: &ContextInvocation) -> String {
@@ -747,8 +700,12 @@ fn is_context_stats_footer(text: &str) -> bool {
 }
 
 fn sha256_hex(value: &str) -> String {
+    sha256_hex_bytes(value.as_bytes())
+}
+
+fn sha256_hex_bytes(value: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
+    hasher.update(value);
     let digest = hasher.finalize();
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {
