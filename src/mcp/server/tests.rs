@@ -74,6 +74,7 @@ fn search_reopens_database_after_file_removal() {
         include_stale: Some(true),
         branch: None,
         multi_hop: Some(false),
+        explain: None,
     }));
     assert!(first.is_ok());
     assert!(test_dir.db_path().exists());
@@ -90,6 +91,7 @@ fn search_reopens_database_after_file_removal() {
         include_stale: Some(true),
         branch: None,
         multi_hop: Some(false),
+        explain: None,
     }));
     assert!(second.is_ok());
     assert!(test_dir.db_path().exists());
@@ -406,6 +408,7 @@ fn search_returns_stable_compact_envelope_with_expansion_hint() {
             include_stale: Some(true),
             branch: None,
             multi_hop: Some(false),
+            explain: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -541,6 +544,7 @@ fn search_labels_sparse_result_raw_fallback_as_raw_archive() {
             include_stale: Some(true),
             branch: Some("main".to_string()),
             multi_hop: Some(false),
+            explain: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -569,6 +573,7 @@ fn search_preserves_multi_hop_metadata_in_compact_envelope() {
             include_stale: Some(true),
             branch: None,
             multi_hop: Some(true),
+            explain: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -704,6 +709,7 @@ fn mcp_tool_errors_report_db_open_failure_as_retryable() {
         include_stale: Some(true),
         branch: None,
         multi_hop: Some(false),
+        explain: None,
     }));
 
     if let Err(err) = std::fs::remove_file(&test_dir.path) {

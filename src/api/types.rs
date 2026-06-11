@@ -14,6 +14,7 @@ pub(super) struct SearchParams {
     pub include_stale: Option<bool>,
     pub branch: Option<String>,
     pub multi_hop: Option<bool>,
+    pub explain: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -26,6 +27,8 @@ pub(super) struct SearchResponse {
     /// Only present when the underlying service returned non-empty raw_hits.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub raw_hits: Vec<RawHitItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explain: Option<crate::retrieval::search::SearchExplain>,
 }
 
 #[derive(Serialize)]

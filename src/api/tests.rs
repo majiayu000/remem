@@ -40,6 +40,7 @@ fn search_request_from_params_clamps_limit_and_offset() {
         include_stale: None,
         branch: None,
         multi_hop: None,
+        explain: None,
     });
 
     assert_eq!(request.limit, 100);
@@ -47,6 +48,7 @@ fn search_request_from_params_clamps_limit_and_offset() {
     // Canonical default for `include_stale` is `true` so MCP and REST agree.
     assert!(request.include_stale);
     assert!(!request.multi_hop);
+    assert!(!request.explain);
 }
 
 #[test]
@@ -60,6 +62,7 @@ fn search_request_from_params_preserves_filters() {
         include_stale: Some(true),
         branch: Some("main".to_string()),
         multi_hop: Some(true),
+        explain: Some(true),
     });
 
     assert_eq!(request.query.as_deref(), Some("hello"));
@@ -70,6 +73,7 @@ fn search_request_from_params_preserves_filters() {
     assert!(request.include_stale);
     assert_eq!(request.branch.as_deref(), Some("main"));
     assert!(request.multi_hop);
+    assert!(request.explain);
 }
 
 #[tokio::test]

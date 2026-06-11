@@ -74,7 +74,7 @@ impl MemoryServer {
                     .unwrap_or_else(service::default_include_stale),
                 branch: params.branch.clone(),
                 multi_hop: requested_multi_hop,
-                explain: false,
+                explain: params.explain.unwrap_or(false),
             };
             let search_set = service::search_memories(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
@@ -86,7 +86,7 @@ impl MemoryServer {
                 memories,
                 multi_hop,
                 has_more,
-                explain: _,
+                explain,
                 raw_hits,
             } = search_set;
 
@@ -185,7 +185,73 @@ impl MemoryServer {
                 response["has_more"] = serde_json::Value::Bool(true);
                 response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
             }
+            if let Some(explain) = explain {
+                response["explain"] = errors::to_json_value(TOOL, &explain)?;
+            }
             errors::to_json_pretty(TOOL, &response)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use rmcp::handler::server::wrapper::Parameters;
+    use serde_json::Value;
+
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+    use crate::mcp::types::SearchParams;
+    use crate::memory;
+
+    fn base_search_params(explain: Option<bool>) -> SearchParams {
+        SearchParams {
+            query: Some("aurora".to_string()),
+            limit: Some(5),
+            project: Some("/repo".to_string()),
+            r#type: None,
+            offset: Some(0),
+            include_stale: Some(true),
+            branch: None,
+            multi_hop: Some(false),
+            explain,
+        }
+    }
+
+    #[test]
+    fn search_emits_explain_only_when_requested() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("mcp-search-explain");
+        let conn = crate::db::open_db()?;
+        let memory_id = memory::insert_memory(
+            &conn,
+            Some("session-1"),
+            "/repo",
+            Some("aurora-contract"),
+            "Aurora contract decision",
+            "The aurora recall contract keeps search compact before expansion.",
+            "decision",
+            None,
+        )?;
+        drop(conn);
+
+        let server = MemoryServer::new()?;
+        let default_response = server
+            .search(Parameters(base_search_params(None)))
+            .map_err(anyhow::Error::msg)?;
+        let default_json: Value = serde_json::from_str(&default_response)?;
+        assert!(default_json.get("explain").is_none());
+
+        let explain_response = server
+            .search(Parameters(base_search_params(Some(true))))
+            .map_err(anyhow::Error::msg)?;
+        let explain_json: Value = serde_json::from_str(&explain_response)?;
+
+        assert_eq!(explain_json["results"][0]["id"], memory_id);
+        assert_eq!(explain_json["explain"]["query"], "aurora");
+        assert_eq!(
+            explain_json["explain"]["results"][0]["memory_id"],
+            memory_id
+        );
+        Ok(())
     }
 }

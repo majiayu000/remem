@@ -27,7 +27,7 @@ pub(in crate::api) fn search_request_from_params(params: SearchParams) -> servic
             .unwrap_or_else(service::default_include_stale),
         branch: params.branch,
         multi_hop: params.multi_hop.unwrap_or(false),
-        explain: false,
+        explain: params.explain.unwrap_or(false),
     }
 }
 
@@ -76,6 +76,7 @@ pub(in crate::api) async fn handle_search(
                     entities_discovered: meta.entities_discovered,
                 }),
                 raw_hits,
+                explain: results.explain,
             })
             .into_response()
         }
@@ -85,5 +86,86 @@ pub(in crate::api) async fn handle_search(
             &err.to_string(),
         )
         .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use axum::{
+        body::to_bytes,
+        extract::{Query, State},
+        response::IntoResponse,
+    };
+    use serde_json::Value;
+
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+    use crate::memory;
+
+    fn base_search_params(explain: Option<bool>) -> SearchParams {
+        SearchParams {
+            query: Some("aurora".to_string()),
+            project: Some("/repo".to_string()),
+            memory_type: None,
+            limit: Some(5),
+            offset: Some(0),
+            include_stale: Some(true),
+            branch: None,
+            multi_hop: Some(false),
+            explain,
+        }
+    }
+
+    #[test]
+    fn search_request_from_params_keeps_explain_default_false() {
+        let request = search_request_from_params(base_search_params(None));
+
+        assert!(!request.explain);
+    }
+
+    #[test]
+    fn search_request_from_params_passes_explain_true() {
+        let request = search_request_from_params(base_search_params(Some(true)));
+
+        assert!(request.explain);
+    }
+
+    #[tokio::test]
+    async fn handle_search_emits_explain_only_when_requested() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("api-search-explain");
+        let conn = crate::db::open_db()?;
+        let memory_id = memory::insert_memory(
+            &conn,
+            Some("session-1"),
+            "/repo",
+            Some("aurora-contract"),
+            "Aurora contract decision",
+            "The aurora recall contract keeps search compact before expansion.",
+            "decision",
+            None,
+        )?;
+        drop(conn);
+
+        let default_response = handle_search(State(DbState), Query(base_search_params(None)))
+            .await
+            .into_response();
+        let default_body = to_bytes(default_response.into_body(), usize::MAX).await?;
+        let default_json: Value = serde_json::from_slice(&default_body)?;
+        assert!(default_json.get("explain").is_none());
+
+        let explain_response = handle_search(State(DbState), Query(base_search_params(Some(true))))
+            .await
+            .into_response();
+        let explain_body = to_bytes(explain_response.into_body(), usize::MAX).await?;
+        let explain_json: Value = serde_json::from_slice(&explain_body)?;
+
+        assert_eq!(explain_json["data"][0]["id"], memory_id);
+        assert_eq!(explain_json["explain"]["query"], "aurora");
+        assert_eq!(
+            explain_json["explain"]["results"][0]["memory_id"],
+            memory_id
+        );
+        Ok(())
     }
 }
