@@ -355,11 +355,7 @@ fn configured_mcp_paths(probe: &HostProbe) -> Vec<PathBuf> {
 }
 
 fn expected_hook_executable(probe: &HostProbe) -> Option<PathBuf> {
-    configured_mcp_paths(probe)
-        .into_iter()
-        .next()
-        .or_else(|| std::env::var_os("REMEM_INSTALL_BINARY").map(PathBuf::from))
-        .or_else(|| std::env::current_exe().ok())
+    configured_mcp_paths(probe).into_iter().next()
 }
 
 fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
@@ -490,6 +486,13 @@ mod tests {
   }
 }"#,
         )?;
+        let missing_mcp_check = probe_hooks(HostProbe {
+            name: "codex",
+            hooks_path: hooks_path.clone(),
+            mcp_paths: vec![dir.join("missing.toml")],
+        });
+        assert!(matches!(missing_mcp_check.status, Status::Fail));
+
         let mcp_path = dir.join("config.toml");
         std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
@@ -531,11 +534,13 @@ mod tests {
             let dir = temp_path(label);
             let hooks_path = dir.join("hooks.json");
             std::fs::write(&hooks_path, content)?;
+            let mcp_path = dir.join("config.toml");
+            std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
 
             let check = probe_hooks(HostProbe {
                 name: "codex",
                 hooks_path,
-                mcp_paths: vec![dir.join("config.toml")],
+                mcp_paths: vec![mcp_path],
             });
 
             assert!(
