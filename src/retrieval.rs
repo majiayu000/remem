@@ -5,3 +5,4 @@ pub mod search;
 pub mod search_multihop;
 pub mod temporal;
 pub mod vector;
+pub(crate) mod vector_candidates;

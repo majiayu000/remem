@@ -21,3 +21,12 @@ fn cli_parses_encrypt_rekey_raw() {
         _ => panic!("expected encrypt command"),
     }
 }
+
+#[test]
+fn cli_parses_backfill_embeddings_limit() {
+    let cli = Cli::parse_from(["remem", "backfill-embeddings", "--limit", "250"]);
+    match cli.command {
+        Commands::BackfillEmbeddings { limit } => assert_eq!(limit, 250),
+        _ => panic!("expected backfill-embeddings command"),
+    }
+}

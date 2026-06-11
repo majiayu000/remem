@@ -67,7 +67,7 @@ pub(in crate::cli) fn run_backfill_embeddings(limit: i64) -> Result<()> {
     println!("Backfilling up to {limit} missing memory embeddings...");
 
     let backfilled = crate::retrieval::vector::backfill_missing_memory_embeddings(&conn, limit)?;
-    let remaining = count_missing_embeddings(&conn).unwrap_or(0);
+    let remaining = count_missing_embeddings(&conn)?;
     println!("Done. {backfilled} embeddings backfilled, {remaining} remaining.");
     Ok(())
 }
