@@ -69,6 +69,10 @@ impl InstallHost for CodexHost {
                 SERVER_KEY
             ),
             format!(
+                "  config -> {} (set [features].hooks = true)",
+                codex_config_path().display()
+            ),
+            format!(
                 "  hooks  -> {} (SessionStart/Stop)",
                 codex_hooks_path().display()
             ),
@@ -302,6 +306,16 @@ codex_hooks = true
             hooks["Stop"][0]["hooks"][0]["command"],
             "/tmp/remem summarize --host codex-cli"
         );
+    }
+
+    #[test]
+    fn dry_run_plan_discloses_hooks_feature_config_write() {
+        let host = CodexHost;
+        let plan = host.dry_run_plan("/tmp/remem").join("\n");
+
+        assert!(plan.contains("MCP"), "{plan}");
+        assert!(plan.contains("set [features].hooks = true"), "{plan}");
+        assert!(plan.contains("SessionStart/Stop"), "{plan}");
     }
 
     #[test]
