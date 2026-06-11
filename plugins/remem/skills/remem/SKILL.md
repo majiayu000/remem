@@ -27,18 +27,23 @@ Use a stable `topic_key` so repeated saves update the same memory instead of cre
 
 ## Activation
 
-The plugin exposes MCP tools as soon as Codex loads `.mcp.json`. Automatic context injection and Stop summarization require explicit hook activation because they modify `~/.codex/config.toml` and `~/.codex/hooks.json`.
+The plugin exposes MCP tools as soon as Codex loads `.mcp.json` and the runtime
+manager can resolve a matching `remem` binary. Automatic context injection and
+Stop summarization require explicit hook activation because they modify
+`~/.codex/config.toml` and `~/.codex/hooks.json`.
 
 For a local repo checkout, activate with:
 
 ```bash
+cargo build --release
+node plugins/remem/scripts/remem-runtime.js install
 node plugins/remem/scripts/activate-codex.js --dry-run
 node plugins/remem/scripts/activate-codex.js
 remem doctor
 remem status
 ```
 
-If the plugin cannot find the binary, build or install remem first:
+If the plugin cannot find the binary, build or explicitly point at remem first:
 
 ```bash
 cargo build --release

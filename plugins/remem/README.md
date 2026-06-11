@@ -4,10 +4,11 @@ This directory contains a local Codex plugin wrapper for remem.
 
 The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install hooks. Automatic SessionStart context injection and Stop summarization require an explicit activation step.
 
-This is a development foundation, not the final plugin experience. A complete
-plugin should manage its own version-matched remem runtime under plugin storage
-and should work even when the user has not installed remem separately. See
-`../../docs/spec-codex-plugin-complete-design.md` for the target design.
+This is a development foundation, not the final Apps SDK GUI experience. The
+plugin now manages a version-matched local runtime under plugin storage for
+local checkout testing, so it no longer needs to select a stale `remem` from
+`PATH`. See `../../docs/spec-codex-plugin-complete-design.md` for the target
+design.
 
 ## Local Install
 
@@ -20,24 +21,34 @@ codex plugin add remem@remem-local
 
 Start a new Codex thread after installing the plugin.
 
-## Binary Resolution
+## Runtime Resolution
 
-The MCP wrapper looks for the remem binary in this order:
+The MCP wrapper resolves the remem runtime in this order:
 
 1. `REMEM_BINARY`
-2. `target/release/remem`
-3. `target/debug/remem`
-4. `remem` on `PATH`
+2. `PLUGIN_DATA/bin/remem` or `REMEM_PLUGIN_DATA/bin/remem`
+3. `target/release/remem`
+4. `target/debug/remem`
+5. `remem` on `PATH`, reported but not silently adopted
 
+When a matching repo binary exists, the runtime manager copies it into plugin
+storage. PATH binaries are never adopted silently; use `REMEM_BINARY` for
+explicit development overrides or `--adopt-path` for a deliberate local copy.
 By default, the selected binary must report the same version as the plugin
-manifest. Set `REMEM_ALLOW_VERSION_MISMATCH=1` only for explicit local
-debugging.
+manifest. Set `REMEM_ALLOW_VERSION_MISMATCH=1` only for explicit local debugging.
 
 Build from source when testing directly from this repository:
 
 ```bash
 cargo build --release
+node plugins/remem/scripts/remem-runtime.js install
+node plugins/remem/scripts/remem-runtime.js status
 ```
+
+Release download support is intentionally checksum-gated. Until a matching
+release manifest exists for the plugin version, fresh installs outside a local
+checkout must provide `REMEM_BINARY` or use a published plugin build that
+includes checked runtime assets.
 
 ## Hook Activation
 

@@ -4,7 +4,7 @@
       "cwd": ".",
       "command": "node",
       "args": ["./scripts/remem-mcp.js"],
-      "note": "Starts `remem mcp`. Set REMEM_BINARY to an absolute remem binary path to override auto-detection."
+      "note": "Starts `remem mcp` through the plugin runtime manager. Set REMEM_BINARY to an absolute remem binary path only for explicit local debugging."
     }
   }
 }

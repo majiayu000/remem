@@ -373,12 +373,11 @@ plugin product.
 
 Deliverables:
 
-- `scripts/remem-runtime.js`
-- `scripts/remem-download.js`
-- `$PLUGIN_DATA/bin/remem` install path
-- `runtimes/remem-releases.json` with platform artifacts and checksums
-- `plugin_status` and `ensure_runtime` flow
-- tests using temp `PLUGIN_DATA` and empty `PATH`
+- `scripts/remem-runtime.js` for runtime status, install, and path resolution
+- `$PLUGIN_DATA/bin/remem` or `REMEM_PLUGIN_DATA/bin/remem` install path
+- local checkout adoption from `target/release/remem` or `target/debug/remem`
+- `runtimes/remem-releases.json` for future platform artifacts and checksums
+- tests using temp plugin data and isolated `PATH`
 
 Acceptance:
 
@@ -386,6 +385,8 @@ Acceptance:
   can install or repair a runtime.
 - The plugin does not select stale system binaries silently.
 - MCP starts from the plugin-managed runtime.
+- Release download remains checksum-gated; if no manifest entry exists for the
+  plugin version, the installer fails closed with an actionable message.
 
 ### Phase 2: plugin-bundled hooks
 
@@ -466,6 +467,7 @@ For plugin runtime tests:
 ```bash
 PLUGIN_DATA="$(mktemp -d)" PATH="/usr/bin:/bin" node plugins/remem/scripts/remem-runtime.js status
 PLUGIN_DATA="$(mktemp -d)" PATH="/usr/bin:/bin" node plugins/remem/scripts/remem-mcp.js --self-test
+node --test plugins/remem/scripts/remem-runtime.test.js
 ```
 
 For Apps SDK tests:

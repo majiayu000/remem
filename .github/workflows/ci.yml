@@ -10,6 +10,8 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
+      - name: Test plugin runtime scripts
+        run: node --test plugins/remem/scripts/remem-runtime.test.js
       - name: Check version bump
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/check_version_bump.py "${{ github.event.pull_request.base.sha }}" HEAD
