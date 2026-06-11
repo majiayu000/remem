@@ -22,6 +22,7 @@ pub struct SystemStats {
     pub latest_raw_ingest_failure_message: Option<String>,
     pub captured_events: i64,
     pub capture_drop_events: i64,
+    pub actionable_capture_drops: i64,
     pub unrecovered_capture_spills: i64,
     pub latest_capture_drop_epoch: Option<i64>,
     pub latest_capture_drop_reason: Option<String>,
@@ -92,11 +93,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         .map(|heartbeat| now.saturating_sub(heartbeat.updated_at_epoch));
     let worker_daemon_healthy = healthy_worker_heartbeat.is_some();
     Ok(SystemStats {
-        active_memories: conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-            [],
-            |row| row.get(0),
-        )?,
+        active_memories: query_current_active_memory_count(conn)?,
         active_observations: conn.query_row(
             "SELECT COUNT(*) FROM observations WHERE status = 'active'",
             [],
@@ -117,6 +114,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             row.get(0)
         })?,
         capture_drop_events: capture_drop.total,
+        actionable_capture_drops: capture_drop.actionable,
         unrecovered_capture_spills: capture_drop.unrecovered_spills,
         latest_capture_drop_epoch: capture_drop.latest_epoch,
         latest_capture_drop_reason: capture_drop.latest_reason,
@@ -243,7 +241,10 @@ pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
              WHERE f.status = 'active'
                AND f.valid_from_epoch IS NOT NULL
                AND m.status = 'active'
-               AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > strftime('%s', 'now'))",
+               AND (
+                 m.expires_at_epoch IS NULL
+                 OR m.expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
+               )",
             [],
             |row| row.get(0),
         )?
@@ -251,11 +252,7 @@ pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
         0
     };
     let active_memories = if memories_exists {
-        conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-            [],
-            |row| row.get(0),
-        )?
+        query_current_active_memory_count(conn)?
     } else {
         0
     };
@@ -335,6 +332,20 @@ fn query_raw_ingest_failure_stats(conn: &Connection) -> Result<RawIngestFailureS
     })
 }
 
+fn query_current_active_memory_count(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE status = 'active'
+           AND (
+             expires_at_epoch IS NULL
+             OR expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
+           )",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
     Ok(conn
         .query_row(
@@ -403,7 +414,13 @@ pub fn query_candidate_promotion_stats(
 
 pub fn query_top_projects(conn: &Connection, limit: i64) -> Result<Vec<ProjectCount>> {
     let mut stmt = conn.prepare(
-        "SELECT project, COUNT(*) as cnt FROM memories WHERE status = 'active' \
+        "SELECT project, COUNT(*) as cnt
+         FROM memories
+         WHERE status = 'active'
+           AND (
+             expires_at_epoch IS NULL
+             OR expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
+           )
          GROUP BY project ORDER BY cnt DESC, project ASC LIMIT ?1",
     )?;
     let rows = stmt.query_map(params![limit], |row| {
