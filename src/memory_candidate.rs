@@ -12,6 +12,7 @@ mod apply;
 mod parse;
 pub(crate) mod review;
 mod route;
+mod support;
 
 use apply::{
     promote_candidate_to_memory_with_route, update_candidate_after_lifecycle, CandidateApplyOutcome,
@@ -19,6 +20,7 @@ use apply::{
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
 pub(super) use route::{route_candidate, CandidateRoute};
+use support::has_conservative_support_token_overlap;
 
 const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
@@ -46,7 +48,6 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
     "sk-",
     "token",
 ];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCandidateResult {
     EmptyRange,
@@ -576,9 +577,14 @@ fn is_supported_by_source_observation(
         return false;
     };
     batch.observations.iter().any(|observation| {
-        observation.confidence >= AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
-            && candidate_type.supports_observation_type(&observation.observation_type)
-            && normalize_evidence_text(&observation.text).contains(&candidate_text)
+        if observation.confidence < AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
+            || !candidate_type.supports_observation_type(&observation.observation_type)
+        {
+            return false;
+        }
+        let observation_text = normalize_evidence_text(&observation.text);
+        observation_text.contains(&candidate_text)
+            || has_conservative_support_token_overlap(&candidate_text, &observation_text)
     })
 }
 
