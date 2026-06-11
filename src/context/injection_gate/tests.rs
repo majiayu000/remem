@@ -293,6 +293,28 @@ fn claude_code_compact_session_start_suppresses_same_hash_by_default() {
 }
 
 #[test]
+fn claude_code_compact_changed_hash_emits_delta_by_default() {
+    let _data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("context-gate-claude-compact-changed");
+    let mut invocation = claude_gate_invocation(Some("claude-session-compact-changed"));
+
+    let first = apply_context_gate(
+        &invocation,
+        "# [/tmp/remem] context now\nBody A\n".to_string(),
+    );
+    assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+    invocation.source = Some("compact".to_string());
+    let second = apply_context_gate(
+        &invocation,
+        "# [/tmp/remem] context now\nBody B\n".to_string(),
+    );
+    assert_eq!(second.action, ContextGateAction::EmittedDelta);
+    assert_eq!(second.reason, "changed_hash");
+    assert!(second.output.contains("context delta"));
+}
+
+#[test]
 fn unknown_host_remains_ungated_by_default() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-unknown-host");
     let mut invocation = gate_invocation(Some("unknown-session"));

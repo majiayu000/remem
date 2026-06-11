@@ -268,7 +268,7 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
         }
         CLAUDE_HOST => {
             set_str_if_missing(table, "memory_profile", "claude");
-            set_str_if_missing(table, "context_gate", "strict");
+            set_str_if_missing_or_legacy_value(table, "context_gate", "auto", "off");
             set_bool_if_missing(table, "context_color", true);
             set_str_if_missing(table, "capture_adapter", CLAUDE_HOST);
         }
@@ -395,6 +395,22 @@ fn child_table_mut<'a>(table: &'a mut Table, key: &str) -> Result<&'a mut Table>
 
 fn set_str_if_missing(table: &mut Table, key: &str, value_str: &str) {
     if table.get(key).is_none() {
+        table[key] = value(value_str);
+    }
+}
+
+fn set_str_if_missing_or_legacy_value(
+    table: &mut Table,
+    key: &str,
+    value_str: &str,
+    legacy_value: &str,
+) {
+    let should_set = table
+        .get(key)
+        .and_then(Item::as_str)
+        .map(|current| current.trim().eq_ignore_ascii_case(legacy_value))
+        .unwrap_or(true);
+    if should_set {
         table[key] = value(value_str);
     }
 }
@@ -555,16 +571,35 @@ mod tests {
     }
 
     #[test]
-    fn claude_host_defaults_to_context_gate_strict() -> Result<()> {
+    fn claude_host_defaults_to_context_gate_auto() -> Result<()> {
         let path = temp_config_path("runtime-claude-context");
         with_config_path(&path, || -> Result<()> {
             init_config()?;
             let host = resolve_host_runtime_config(Some("claude-code"))?;
 
             assert_eq!(host.host, CLAUDE_HOST);
-            assert_eq!(host.context_gate.as_deref(), Some("strict"));
+            assert_eq!(host.context_gate.as_deref(), Some("auto"));
             assert!(host.context_color);
             assert_eq!(host.capture_adapter, CLAUDE_HOST);
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn claude_host_migrates_legacy_context_gate_off_to_auto() -> Result<()> {
+        let path = temp_config_path("runtime-claude-context-migrate");
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(
+                &path,
+                "[memory_ai.hosts.claude-code]\nmemory_profile = \"claude\"\ncontext_gate = \"off\"\n",
+            )?;
+            init_config()?;
+            let host = resolve_host_runtime_config(Some("claude-code"))?;
+
+            assert_eq!(host.host, CLAUDE_HOST);
+            assert_eq!(host.context_gate.as_deref(), Some("auto"));
             Ok(())
         })?;
         std::fs::remove_file(path)?;
