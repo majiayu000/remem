@@ -22,6 +22,7 @@ pub struct SystemStats {
     pub latest_raw_ingest_failure_message: Option<String>,
     pub captured_events: i64,
     pub capture_drop_events: i64,
+    pub actionable_capture_drops: i64,
     pub unrecovered_capture_spills: i64,
     pub latest_capture_drop_epoch: Option<i64>,
     pub latest_capture_drop_reason: Option<String>,
@@ -116,6 +117,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             row.get(0)
         })?,
         capture_drop_events: capture_drop.total,
+        actionable_capture_drops: capture_drop.actionable,
         unrecovered_capture_spills: capture_drop.unrecovered_spills,
         latest_capture_drop_epoch: capture_drop.latest_epoch,
         latest_capture_drop_reason: capture_drop.latest_reason,

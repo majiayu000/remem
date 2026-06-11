@@ -283,8 +283,8 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
 }
 
 #[test]
-fn check_capture_drops_warns_on_recorded_hook_drops() -> anyhow::Result<()> {
-    let _test_dir = ScopedTestDataDir::new("doctor-capture-drops");
+fn check_capture_drops_is_ok_for_expected_hook_skips() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-drops-expected");
     let conn = db::open_db()?;
     db::record_capture_drop(
         &conn,
@@ -302,10 +302,43 @@ fn check_capture_drops_warns_on_recorded_hook_drops() -> anyhow::Result<()> {
 
     let check = check_capture_drops(Some(&conn));
 
-    assert_eq!(check.icon(), "WARN");
-    assert!(check.detail.contains("1 recorded"), "{}", check.detail);
+    assert_eq!(check.icon(), "ok");
     assert!(
-        check.detail.contains("latest reason=codex_bash_disabled"),
+        check.detail.contains("1 expected hook skip/drop event"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_capture_drops_warns_on_actionable_drops() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-capture-drops-actionable");
+    let conn = db::open_db()?;
+    db::record_capture_drop(
+        &conn,
+        &db::CaptureDropInput {
+            host: Some("codex-cli"),
+            session_id: None,
+            project: None,
+            tool_name: None,
+            reason: "adapter_mismatch",
+            detail: Some("no capture adapter matched hook input"),
+            spill_path: None,
+            recovered_event_id: None,
+        },
+    )?;
+
+    let check = check_capture_drops(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check.detail.contains("1 actionable capture drop"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains("latest reason=adapter_mismatch"),
         "{}",
         check.detail
     );

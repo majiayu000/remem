@@ -263,6 +263,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
             latest_raw_ingest_failure_message: Some("bad jsonl".to_string()),
             captured_events: 1,
             capture_drop_events: 1,
+            actionable_capture_drops: 0,
             unrecovered_capture_spills: 0,
             latest_capture_drop_epoch: Some(170),
             latest_capture_drop_reason: Some("codex_bash_disabled".to_string()),
@@ -373,6 +374,7 @@ fn query_system_stats_defaults_capture_drops_when_table_is_absent() -> anyhow::R
     let system = query_system_stats(&conn)?;
 
     assert_eq!(system.capture_drop_events, 0);
+    assert_eq!(system.actionable_capture_drops, 0);
     assert_eq!(system.unrecovered_capture_spills, 0);
     assert_eq!(system.latest_capture_drop_epoch, None);
     assert_eq!(system.latest_capture_drop_reason, None);

@@ -9,6 +9,7 @@ use crate::adapter::{EventSummary, ParsedHookEvent};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CaptureSpillRecord {
     version: u32,
+    event_id: String,
     host: String,
     event: ParsedHookEvent,
     summary: EventSummary,
@@ -52,6 +53,7 @@ pub(super) fn record_capture_drop_lossy(
 
 pub(super) fn spill_capture_event(
     host: &str,
+    event_id: &str,
     event: &ParsedHookEvent,
     summary: &EventSummary,
     db_error: &anyhow::Error,
@@ -63,10 +65,15 @@ pub(super) fn spill_capture_event(
     }
     let record = CaptureSpillRecord {
         version: 1,
+        event_id: event_id.to_string(),
         host: host.to_string(),
         event: sanitize_event(event),
-        summary: summary.clone(),
-        db_error: crate::db::truncate_str(&db_error.to_string(), 1000).to_string(),
+        summary: sanitize_summary(summary),
+        db_error: crate::db::truncate_str(
+            &crate::db::capture::redact_capture_content(&db_error.to_string()),
+            1000,
+        )
+        .to_string(),
         created_at_epoch: chrono::Utc::now().timestamp(),
     };
     let mut file = std::fs::OpenOptions::new()
@@ -96,9 +103,10 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
 
     for line in contents.lines().filter(|line| !line.trim().is_empty()) {
         match serde_json::from_str::<CaptureSpillRecord>(line) {
-            Ok(record) => match super::hook::record_observed_event(
+            Ok(record) => match super::hook::record_observed_event_with_id(
                 conn,
                 &record.host,
+                &record.event_id,
                 &record.event,
                 &record.summary,
             ) {
@@ -176,6 +184,19 @@ fn sanitize_event(event: &ParsedHookEvent) -> ParsedHookEvent {
     }
 }
 
+fn sanitize_summary(summary: &EventSummary) -> EventSummary {
+    EventSummary {
+        event_type: summary.event_type.clone(),
+        summary: crate::db::capture::redact_capture_content(&summary.summary),
+        detail: summary
+            .detail
+            .as_ref()
+            .map(|detail| crate::db::capture::redact_capture_content(detail)),
+        files_json: summary.files_json.clone(),
+        exit_code: summary.exit_code,
+    }
+}
+
 fn spill_path() -> PathBuf {
     crate::db::data_dir().join("capture-spill.jsonl")
 }
@@ -210,7 +231,15 @@ mod tests {
             files_json: Some("[\"src/lib.rs\"]".to_string()),
             exit_code: None,
         };
-        spill_capture_event("codex-cli", &event, &summary, &err)?;
+        let content = serde_json::json!({
+            "summary": summary.summary,
+            "tool_name": event.tool_name,
+            "tool_input": event.tool_input,
+            "tool_response": event.tool_response,
+        })
+        .to_string();
+        let event_id = db::unique_capture_event_id("tool_result", &content);
+        spill_capture_event("codex-cli", &event_id, &event, &summary, &err)?;
         let conn = db::open_db()?;
 
         let replayed = replay_spilled_capture_events(&conn)?;
@@ -223,6 +252,83 @@ mod tests {
         })?;
         assert_eq!(captured, 1);
         assert_eq!(drops, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_identical_spills_preserves_distinct_captured_events() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-identical-replay");
+        let err = anyhow::anyhow!("database is locked");
+        let event = ParsedHookEvent {
+            session_id: "session-identical-spill".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Edit".to_string(),
+            tool_input: Some(serde_json::json!({"file_path": "/tmp/remem/src/lib.rs"})),
+            tool_response: Some(serde_json::json!({"ok": true})),
+        };
+        let summary = EventSummary {
+            event_type: "file_edit".to_string(),
+            summary: "Edited src/lib.rs".to_string(),
+            detail: None,
+            files_json: Some("[\"src/lib.rs\"]".to_string()),
+            exit_code: None,
+        };
+
+        spill_capture_event(
+            "codex-cli",
+            "tool_result-identical-a",
+            &event,
+            &summary,
+            &err,
+        )?;
+        spill_capture_event(
+            "codex-cli",
+            "tool_result-identical-b",
+            &event,
+            &summary,
+            &err,
+        )?;
+        let conn = db::open_db()?;
+
+        let replayed = replay_spilled_capture_events(&conn)?;
+
+        assert_eq!(replayed, 2);
+        let captured: i64 =
+            conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
+        assert_eq!(captured, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn spill_redacts_summary_and_database_error() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-redacts");
+        let err = anyhow::anyhow!("database token=github_pat_secret");
+        let event = ParsedHookEvent {
+            session_id: "session-spill-redact".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: Some(serde_json::json!({
+                "command": "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'"
+            })),
+            tool_response: Some(serde_json::json!({"stderr": "password=hunter2"})),
+        };
+        let summary = EventSummary {
+            event_type: "bash".to_string(),
+            summary: "Run curl with ghp_abcdefghijklmnopqrstuvwxyz123456".to_string(),
+            detail: Some("password=hunter2".to_string()),
+            files_json: None,
+            exit_code: Some(1),
+        };
+
+        spill_capture_event("codex-cli", "tool_result-redact", &event, &summary, &err)?;
+        let stored = std::fs::read_to_string(crate::db::data_dir().join("capture-spill.jsonl"))?;
+
+        assert!(stored.contains("[REDACTED]"));
+        assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        assert!(!stored.contains("hunter2"));
+        assert!(!stored.contains("github_pat_secret"));
         Ok(())
     }
 }
