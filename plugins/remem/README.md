@@ -4,6 +4,11 @@ This directory contains a local Codex plugin wrapper for remem.
 
 The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install hooks. Automatic SessionStart context injection and Stop summarization require an explicit activation step.
 
+This is a development foundation, not the final plugin experience. A complete
+plugin should manage its own version-matched remem runtime under plugin storage
+and should work even when the user has not installed remem separately. See
+`../../docs/spec-codex-plugin-complete-design.md` for the target design.
+
 ## Local Install
 
 From the repository root:

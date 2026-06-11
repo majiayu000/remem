@@ -135,7 +135,10 @@ session. It does not install high-frequency Bash observation by default.
 
 This repository includes a local Codex plugin wrapper in `plugins/remem`.
 The plugin exposes `remem mcp` and a Remem skill while keeping hook activation
-explicit. To try it from a local checkout:
+explicit. The complete product direction is documented in
+[`docs/spec-codex-plugin-complete-design.md`](docs/spec-codex-plugin-complete-design.md);
+the current plugin is the local development foundation, not the final
+self-contained plugin experience. To try it from a local checkout:
 
 ```bash
 codex plugin marketplace add .
