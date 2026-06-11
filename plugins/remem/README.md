@@ -51,6 +51,10 @@ release manifest exists for the plugin version, fresh installs outside a local
 checkout must provide `REMEM_BINARY` or use a published plugin build that
 includes checked runtime assets.
 
+CI enforces that `Cargo.toml`, `Cargo.lock`,
+`.codex-plugin/plugin.json`, and `runtimes/remem-releases.json` carry the same
+Remem version. Bump those files together whenever the binary version changes.
+
 Plugin MCP startup leaves the server cwd as the active Codex workspace. The
 wrapper is invoked by plugin-root path so repo-scoped memory operations can use
 the caller workspace instead of the plugin checkout.
