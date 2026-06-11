@@ -16,6 +16,7 @@ mod transition;
 mod types;
 
 pub(crate) use dry_run::dry_run_pending;
+pub(crate) use run::ensure_schema_current;
 pub use run::run_migrations;
 pub(crate) use schema_drift::validate_schema_invariants;
 #[cfg(test)]

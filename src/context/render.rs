@@ -114,7 +114,10 @@ pub(crate) fn session_start_eval_snapshot(
         use_colors: false,
     };
     let policy = ContextPolicy::from_limits(ContextLimits::default());
-    let rendered = render_context_output_with_policy(&request, false, policy)?;
+    let rendered = match open_context_connection_or_error(&request, &policy) {
+        Ok(conn) => render_context_output_with_policy(&conn, &request, false, policy)?,
+        Err(rendered) => *rendered,
+    };
     Ok(SessionStartEvalSnapshot {
         rendered_output: rendered.output,
         output_chars: rendered.stats.output_chars,
@@ -221,9 +224,46 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         host: invocation.host,
         use_colors: invocation.use_colors,
     };
-    let rendered = render_context_output(&request, debug_enabled)?;
+    let policy = resolve_profile(request.host).default_policy();
+    let conn = match open_context_connection_or_error(&request, &policy) {
+        Ok(conn) => conn,
+        Err(rendered) => {
+            let rendered = *rendered;
+            let mut decision = if use_gate {
+                ContextGateDecision {
+                    output: rendered.output,
+                    action: ContextGateAction::FailOpen,
+                    reason: "db_open",
+                    key: None,
+                    context_hash: None,
+                    output_mode: None,
+                }
+            } else {
+                ContextGateDecision {
+                    output: rendered.output,
+                    action: ContextGateAction::Bypassed,
+                    reason: "legacy_direct",
+                    key: None,
+                    context_hash: None,
+                    output_mode: None,
+                }
+            };
+            if debug_enabled {
+                let decision_for_debug = decision.clone();
+                append_context_gate_debug_trace(
+                    &mut decision.output,
+                    &request,
+                    &decision_for_debug,
+                );
+            }
+            print!("{}", decision.output);
+            log_context_timer(timer, &request, &decision, &rendered.stats);
+            return Ok(());
+        }
+    };
+    let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
     let mut decision = if use_gate {
-        apply_context_gate(&invocation, rendered.output)
+        apply_context_gate(&conn, &invocation, rendered.output)
     } else {
         ContextGateDecision {
             output: rendered.output,
@@ -239,7 +279,24 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
     print!("{}", decision.output);
+    log_context_timer(timer, &request, &decision, &rendered.stats);
+    Ok(())
+}
 
+#[cfg(test)]
+pub(in crate::context) fn generate_context_for_test(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<()> {
+    generate_context_for_invocation(invocation, use_gate)
+}
+
+fn log_context_timer(
+    timer: crate::log::Timer,
+    request: &ContextRequest,
+    decision: &ContextGateDecision,
+    stats: &ContextRenderStats,
+) {
     let capabilities = resolve_profile(request.host).capabilities();
     timer.done(&format!(
         "project={} cwd={} session={} host={} colors={} gate={:?}:{} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} lessons={} index={} preferences={} sessions={} workstreams={}",
@@ -255,15 +312,14 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         capabilities.has_user_prompt_submit_hook,
         capabilities.observes_native_file_edits,
         capabilities.observes_bash,
-        rendered.stats.memories_loaded,
-        rendered.stats.core.count,
-        rendered.stats.lessons.count,
-        rendered.stats.index.count,
-        rendered.stats.preferences.count,
-        rendered.stats.sessions.count,
-        rendered.stats.workstreams.count,
+        stats.memories_loaded,
+        stats.core.count,
+        stats.lessons.count,
+        stats.index.count,
+        stats.preferences.count,
+        stats.sessions.count,
+        stats.workstreams.count,
     ));
-    Ok(())
 }
 
 pub(in crate::context) fn append_context_gate_debug_trace(
@@ -297,55 +353,36 @@ pub(in crate::context) fn append_context_gate_debug_trace(
     ));
 }
 
+#[cfg(test)]
 pub(in crate::context) fn render_context_output(
     request: &ContextRequest,
     debug: bool,
 ) -> Result<RenderedContext> {
     let profile = resolve_profile(request.host);
-    render_context_output_with_policy(request, debug, profile.default_policy())
+    let policy = profile.default_policy();
+    let conn = match open_context_connection_or_error(request, &policy) {
+        Ok(conn) => conn,
+        Err(rendered) => return Ok(*rendered),
+    };
+    render_context_output_with_policy(&conn, request, debug, policy)
 }
 
 fn render_context_output_with_policy(
+    conn: &rusqlite::Connection,
     request: &ContextRequest,
     debug: bool,
     policy: ContextPolicy,
 ) -> Result<RenderedContext> {
     let profile = resolve_profile(request.host);
-    let conn = match db::open_db() {
-        Ok(connection) => connection,
-        Err(error) => {
-            crate::log::error(
-                "context",
-                &format!("open_db failed for project={}: {}", request.project, error),
-            );
-            let mut output = context_error_output(
-                request,
-                &[ContextLoadError::new(
-                    "database",
-                    format!("failed to open remem database: {error}"),
-                )],
-            );
-            let mut stats = empty_stats(request);
-            stats.total_char_limit = policy.limits.total_char_limit;
-            stats.output_chars = char_len(&output);
-            enforce_total_char_limit_preserving_footer(
-                &mut output,
-                policy.limits.total_char_limit,
-                "",
-            );
-            return Ok(RenderedContext { output, stats });
-        }
-    };
-
     let mut loaded = load_context_data_with_policy(
-        &conn,
+        conn,
         &request.project,
         request.current_branch.as_deref(),
         &policy,
         debug,
     );
     let (preference_output, preference_details) =
-        match render_preferences_to_buffer(&conn, &request.project, &request.cwd, &policy) {
+        match render_preferences_to_buffer(conn, &request.project, &request.cwd, &policy) {
             Ok(rendered) => rendered,
             Err(error) => {
                 let message = format!(
@@ -484,7 +521,7 @@ fn render_context_output_with_policy(
 
     if debug {
         super::diagnostics::apply_preference_diagnostics(
-            &conn,
+            conn,
             &request.project,
             preference_details.rendered_ids,
             &mut loaded.diagnostics,
@@ -507,6 +544,41 @@ fn render_context_output_with_policy(
         &stats_footer,
     );
     Ok(RenderedContext { output, stats })
+}
+
+fn open_context_connection_or_error(
+    request: &ContextRequest,
+    policy: &ContextPolicy,
+) -> std::result::Result<rusqlite::Connection, Box<RenderedContext>> {
+    match db::open_db_no_migrate() {
+        Ok(conn) => Ok(conn),
+        Err(error) => {
+            crate::log::error(
+                "context",
+                &format!("db open failed for project={}: {}", request.project, error),
+            );
+            Err(Box::new(render_context_open_error(request, policy, error)))
+        }
+    }
+}
+
+fn render_context_open_error(
+    request: &ContextRequest,
+    policy: &ContextPolicy,
+    error: anyhow::Error,
+) -> RenderedContext {
+    let mut output = context_error_output(
+        request,
+        &[ContextLoadError::new(
+            "database",
+            format!("failed to open remem database: {error}"),
+        )],
+    );
+    let mut stats = empty_stats(request);
+    stats.total_char_limit = policy.limits.total_char_limit;
+    stats.output_chars = char_len(&output);
+    enforce_total_char_limit_preserving_footer(&mut output, policy.limits.total_char_limit, "");
+    RenderedContext { output, stats }
 }
 
 fn context_error_output(request: &ContextRequest, errors: &[ContextLoadError]) -> String {

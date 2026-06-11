@@ -95,7 +95,7 @@ pub async fn process_summary_job_input(
         &msg_hash,
         summary,
     )?;
-    sync_native_memory(cwd, &project);
+    sync_native_memory(&conn, cwd, &project);
     Ok(())
 }
 

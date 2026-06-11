@@ -31,6 +31,14 @@ fn claude_gate_invocation(session_id: Option<&str>) -> ContextInvocation {
     invocation
 }
 
+fn apply_test_context_gate(invocation: &ContextInvocation, output: String) -> ContextGateDecision {
+    let conn = match crate::db::test_support::runtime_connection() {
+        Ok(conn) => conn,
+        Err(error) => panic!("test database should open: {error:#}"),
+    };
+    apply_context_gate(&conn, invocation, output)
+}
+
 #[test]
 fn fingerprint_ignores_header_timestamp() {
     let a = "# [/tmp/remem] context 2026-05-25 1:00pm\nBody\n";
@@ -151,12 +159,12 @@ fn cwd_only_fallback_identity_fails_open_without_suppressing() {
     invocation.transcript_path = None;
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::FailOpen);
     assert_eq!(first.reason, "missing_session_identity");
     assert_eq!(first.output, output);
 
-    let second = apply_context_gate(&invocation, output.clone());
+    let second = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(second.action, ContextGateAction::FailOpen);
     assert_eq!(second.reason, "missing_session_identity");
     assert_eq!(second.output, output);
@@ -209,7 +217,7 @@ fn compact_source_emits_first_context() {
     invocation.source = Some("compact".to_string());
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let decision = apply_context_gate(&invocation, output.clone());
+    let decision = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(decision.action, ContextGateAction::EmittedFull);
     assert_eq!(decision.reason, "first_or_forced");
     assert_eq!(decision.output, output);
@@ -228,11 +236,11 @@ fn compact_source_suppresses_same_hash_after_first_context() {
     let mut invocation = gate_invocation(Some("sess-compact-same-hash"));
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
     invocation.source = Some("compact".to_string());
-    let second = apply_context_gate(&invocation, output);
+    let second = apply_test_context_gate(&invocation, output);
     assert_eq!(second.action, ContextGateAction::Suppressed);
     assert_eq!(second.reason, "suppressed_source");
     assert!(second.output.is_empty());
@@ -244,12 +252,12 @@ fn compact_source_force_bypasses_suppression() {
     let mut invocation = gate_invocation(Some("sess-compact-force"));
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
     invocation.source = Some("compact".to_string());
     invocation.force = true;
-    let forced = apply_context_gate(&invocation, output.clone());
+    let forced = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(forced.action, ContextGateAction::EmittedFull);
     assert_eq!(forced.reason, "first_or_forced");
     assert_eq!(forced.output, output);
@@ -261,7 +269,7 @@ fn claude_code_resume_suppresses_same_session_same_hash_by_default() {
     let invocation = claude_gate_invocation(Some("claude-session-1"));
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::EmittedFull);
     assert_eq!(first.reason, "first_or_forced");
     assert_eq!(first.output, output);
@@ -270,7 +278,7 @@ fn claude_code_resume_suppresses_same_session_same_hash_by_default() {
         .as_deref()
         .is_some_and(|key| key.contains("claude-session-1")));
 
-    let second = apply_context_gate(&invocation, output);
+    let second = apply_test_context_gate(&invocation, output);
     assert_eq!(second.action, ContextGateAction::Suppressed);
     assert_eq!(second.reason, "same_hash");
     assert!(second.output.is_empty());
@@ -282,11 +290,11 @@ fn claude_code_compact_session_start_suppresses_same_hash_by_default() {
     let mut invocation = claude_gate_invocation(Some("claude-session-compact"));
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
     invocation.source = Some("compact".to_string());
-    let second = apply_context_gate(&invocation, output);
+    let second = apply_test_context_gate(&invocation, output);
     assert_eq!(second.action, ContextGateAction::Suppressed);
     assert_eq!(second.reason, "suppressed_source");
     assert!(second.output.is_empty());
@@ -298,14 +306,14 @@ fn claude_code_compact_changed_hash_emits_delta_by_default() {
         crate::db::test_support::ScopedTestDataDir::new("context-gate-claude-compact-changed");
     let mut invocation = claude_gate_invocation(Some("claude-session-compact-changed"));
 
-    let first = apply_context_gate(
+    let first = apply_test_context_gate(
         &invocation,
         "# [/tmp/remem] context now\nBody A\n".to_string(),
     );
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
     invocation.source = Some("compact".to_string());
-    let second = apply_context_gate(
+    let second = apply_test_context_gate(
         &invocation,
         "# [/tmp/remem] context now\nBody B\n".to_string(),
     );
@@ -321,12 +329,12 @@ fn unknown_host_remains_ungated_by_default() {
     invocation.host = HostKind::Unknown;
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::Bypassed);
     assert_eq!(first.reason, "host_not_gated");
     assert_eq!(first.output, output);
 
-    let second = apply_context_gate(&invocation, output.clone());
+    let second = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(second.action, ContextGateAction::Bypassed);
     assert_eq!(second.reason, "host_not_gated");
     assert_eq!(second.output, output);
@@ -340,7 +348,7 @@ fn compact_source_missing_identity_fails_open() {
     invocation.source = Some("compact".to_string());
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let decision = apply_context_gate(&invocation, output.clone());
+    let decision = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(decision.action, ContextGateAction::FailOpen);
     assert_eq!(decision.reason, "missing_session_identity");
     assert_eq!(decision.output, output);
@@ -351,14 +359,14 @@ fn compact_source_changed_hash_emits_delta() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-compact-changed");
     let mut invocation = gate_invocation(Some("sess-compact-changed"));
 
-    let first = apply_context_gate(
+    let first = apply_test_context_gate(
         &invocation,
         "# [/tmp/remem] context now\nBody A\n".to_string(),
     );
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
     invocation.source = Some("compact".to_string());
-    let second = apply_context_gate(
+    let second = apply_test_context_gate(
         &invocation,
         "# [/tmp/remem] context now\nBody B\n".to_string(),
     );
@@ -373,13 +381,13 @@ fn strict_mode_suppresses_changed_hash_after_first_context() {
     let mut invocation = gate_invocation(Some("sess-strict-changed"));
     invocation.gate_mode = Some("strict".to_string());
 
-    let first = apply_context_gate(
+    let first = apply_test_context_gate(
         &invocation,
         "# [/tmp/remem] context now\nBody A\n".to_string(),
     );
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
-    let second = apply_context_gate(
+    let second = apply_test_context_gate(
         &invocation,
         "# [/tmp/remem] context now\nBody B\n".to_string(),
     );
@@ -394,14 +402,14 @@ fn restart_source_reemits_same_hash_context() {
     let mut invocation = gate_invocation(Some("sess-restart"));
     let output = "# [/tmp/remem] context now\nBody\n".to_string();
 
-    let first = apply_context_gate(&invocation, output.clone());
+    let first = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(first.action, ContextGateAction::EmittedFull);
 
-    let second = apply_context_gate(&invocation, output.clone());
+    let second = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(second.action, ContextGateAction::Suppressed);
 
     invocation.source = Some("clear".to_string());
-    let restart = apply_context_gate(&invocation, output.clone());
+    let restart = apply_test_context_gate(&invocation, output.clone());
     assert_eq!(restart.action, ContextGateAction::EmittedFull);
     assert_eq!(restart.reason, "restart_source");
     assert_eq!(restart.output, output);
