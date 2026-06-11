@@ -199,11 +199,24 @@ pub(super) fn check_temporal_facts() -> Check {
         };
     }
 
-    if stats.total == 0 {
+    if stats.retrieval_eligible == 0 && stats.active_memories == 0 && stats.captured_events == 0 {
+        return Check {
+            name: "Temporal facts",
+            status: Status::Ok,
+            detail:
+                "memory_facts table is empty because this store has no memories or captured events yet"
+                    .to_string(),
+        };
+    }
+
+    if stats.retrieval_eligible == 0 {
         return Check {
             name: "Temporal facts",
             status: Status::Warn,
-            detail: "temporal retrieval can read memory_facts, but the table is empty; production fact extraction is not populating event-time facts yet".to_string(),
+            detail: format!(
+                "temporal retrieval can read memory_facts, but 0 of {} fact row(s) are linked active event-time facts; production fact extraction is not populating retrievable facts yet",
+                stats.total
+            ),
         };
     }
 
@@ -211,8 +224,8 @@ pub(super) fn check_temporal_facts() -> Check {
         name: "Temporal facts",
         status: Status::Ok,
         detail: format!(
-            "{} memory fact(s) available for event-time retrieval",
-            stats.total
+            "{} linked active memory fact(s) available for event-time retrieval",
+            stats.retrieval_eligible
         ),
     }
 }

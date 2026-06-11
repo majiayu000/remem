@@ -215,11 +215,22 @@ fn check_raw_archive_ingest_warns_on_recorded_failures() -> anyhow::Result<()> {
 fn check_temporal_facts_warns_when_fact_table_is_empty() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-empty");
     let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-1"),
+        "proj-a",
+        None,
+        "source memory",
+        "A source memory exists without temporal facts.",
+        "decision",
+        None,
+    )?;
     let stats = db::query_memory_facts_stats(&conn)?;
     drop(conn);
 
     assert!(stats.table_exists);
     assert_eq!(stats.total, 0);
+    assert_eq!(stats.retrieval_eligible, 0);
 
     let check = check_temporal_facts();
     assert_eq!(check.icon(), "WARN");
@@ -241,24 +252,104 @@ fn check_temporal_facts_warns_when_fact_table_is_empty() -> anyhow::Result<()> {
 }
 
 #[test]
-fn check_temporal_facts_is_ok_when_fact_table_has_rows() -> anyhow::Result<()> {
-    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-present");
+fn check_temporal_facts_is_ok_when_store_has_no_source_data() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-empty-store");
     let conn = db::open_db()?;
-    conn.execute(
-        "INSERT INTO memory_facts
-         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
-          learned_at_epoch, source_event_ids, confidence, status, created_at_epoch,
-          updated_at_epoch)
-         VALUES ('proj-a', 'deploy', 'affects_project', 'prod', ?1, NULL,
-                 ?1, '[]', 0.9, 'active', ?1, ?1)",
-        params![chrono::Utc::now().timestamp()],
-    )?;
+    let stats = db::query_memory_facts_stats(&conn)?;
     drop(conn);
+
+    assert!(stats.table_exists);
+    assert_eq!(stats.total, 0);
+    assert_eq!(stats.retrieval_eligible, 0);
+    assert_eq!(stats.active_memories, 0);
+    assert_eq!(stats.captured_events, 0);
 
     let check = check_temporal_facts();
     assert_eq!(check.icon(), "ok");
     assert!(
-        check.detail.contains("1 memory fact(s) available"),
+        check.detail.contains("no memories or captured events yet"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_temporal_facts_warns_when_rows_are_not_retrievable() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-unlinked");
+    let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-1"),
+        "proj-a",
+        None,
+        "source memory",
+        "A source memory exists with an unlinked temporal fact.",
+        "decision",
+        None,
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_event_ids, confidence, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('proj-a', 'deploy', 'affects_project', 'prod', ?1, NULL,
+                 ?1, NULL, '[]', 0.9, 'active', ?1, ?1)",
+        params![now],
+    )?;
+    let stats = db::query_memory_facts_stats(&conn)?;
+    drop(conn);
+
+    assert_eq!(stats.total, 1);
+    assert_eq!(stats.retrieval_eligible, 0);
+
+    let check = check_temporal_facts();
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check.detail.contains("0 of 1 fact row(s)"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn check_temporal_facts_is_ok_when_fact_table_has_rows() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-present");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-1"),
+        "proj-a",
+        None,
+        "source memory",
+        "A source memory exists with a retrievable temporal fact.",
+        "decision",
+        None,
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_event_ids, confidence, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('proj-a', 'deploy', 'affects_project', 'prod', ?1, NULL,
+                 ?1, ?2, '[]', 0.9, 'active', ?1, ?1)",
+        params![now, memory_id],
+    )?;
+    let stats = db::query_memory_facts_stats(&conn)?;
+    drop(conn);
+
+    assert_eq!(stats.total, 1);
+    assert_eq!(stats.retrieval_eligible, 1);
+
+    let check = check_temporal_facts();
+    assert_eq!(check.icon(), "ok");
+    assert!(
+        check
+            .detail
+            .contains("1 linked active memory fact(s) available"),
         "{}",
         check.detail
     );
