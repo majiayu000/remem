@@ -4,11 +4,12 @@ This directory contains a local Codex plugin wrapper for remem.
 
 The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install hooks. Automatic SessionStart context injection and Stop summarization require an explicit activation step.
 
-This is a development foundation, not the final Apps SDK GUI experience. The
-plugin now manages a version-matched local runtime under plugin storage for
-local checkout testing, so it no longer needs to select a stale `remem` from
-`PATH`. See `../../docs/spec-codex-plugin-complete-design.md` for the target
-design.
+This is a development foundation. The plugin now manages a version-matched
+local runtime under plugin storage for local checkout testing, so it no longer
+needs to select a stale `remem` from `PATH`. It also includes a local Remem app
+surface under `apps/remem/`; `.app.json` is intentionally not wired until a real
+Apps SDK app or connector id exists. See
+`../../docs/spec-codex-plugin-complete-design.md` for the target design.
 
 ## Local Install
 
@@ -53,6 +54,24 @@ includes checked runtime assets.
 Plugin MCP startup leaves the server cwd as the active Codex workspace. The
 wrapper is invoked by plugin-root path so repo-scoped memory operations can use
 the caller workspace instead of the plugin checkout.
+
+## Local App Surface
+
+The local app prototype exposes a dashboard, search/detail view, explicit save
+form, and hooks-only activation dry run:
+
+```bash
+cargo build --release
+node plugins/remem/scripts/remem-runtime.js install
+node plugins/remem/apps/remem/server.js --port 5577
+```
+
+Open `http://127.0.0.1:5577/`.
+
+The same server exposes `/mcp` with tool descriptors and the
+`ui://remem/dashboard.html` resource for Apps SDK-style testing. Do not add
+`apps` to `.codex-plugin/plugin.json` until `.app.json` can point at a real app
+id.
 
 ## Hook Activation
 

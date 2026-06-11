@@ -55,4 +55,18 @@ REMEM_BINARY="$PWD/target/release/remem" node plugins/remem/scripts/activate-cod
 
 The wrapper rejects stale remem binaries by default. Use `REMEM_ALLOW_VERSION_MISMATCH=1` only for explicit local debugging.
 
+## Local App
+
+For local GUI testing from this repo, run:
+
+```bash
+cargo build --release
+node plugins/remem/scripts/remem-runtime.js install
+node plugins/remem/apps/remem/server.js --port 5577
+```
+
+The app exposes runtime status, memory counts, search/detail, explicit save, and
+activation dry-run views. Treat this as a local Apps SDK surface until a real
+`.app.json` app id is available.
+
 After installing or updating the plugin, start a new Codex thread so skills and MCP tools are reloaded.

@@ -408,17 +408,18 @@ Acceptance:
 
 Deliverables:
 
-- `apps/remem` app server
-- HTTP MCP endpoint
-- dashboard/search/save/governance UI
+- `plugins/remem/apps/remem/server.js` local app server
+- `/mcp` JSON-RPC endpoint with tool descriptors
+- `ui://remem/dashboard.html` resource
+- runtime dashboard, search/detail, explicit save, and activation dry-run UI
 - structured tool results and widget `_meta`
-- developer-mode smoke test
+- Node contract tests for REST and MCP-style calls
 
 Acceptance:
 
-- App tools list in MCP Inspector or ChatGPT Developer Mode.
+- Local app tools list through `/mcp`.
 - Dashboard renders with local Remem status.
-- Search, detail, save, and governance dry-run work end to end.
+- Search, detail, save, and activation dry-run work end to end.
 - `.app.json` is added only after the app id exists.
 
 ### Phase 4: distribution
