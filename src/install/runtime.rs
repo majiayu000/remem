@@ -5,7 +5,7 @@ use crate::install::host::{HookSupport, InstallTarget};
 use crate::install::hosts::resolve_hosts;
 use crate::install::paths::{binary_path, old_hooks_path, remem_data_dir};
 
-pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
+pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result<()> {
     let bin = binary_path()?;
     let hosts = resolve_hosts(target);
     if hosts.is_empty() {
@@ -16,10 +16,18 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
     }
 
     if dry_run {
-        eprintln!("remem install (dry-run) — 以下写入不会被执行:");
+        if hooks_only {
+            eprintln!("remem install --hooks-only (dry-run) — 以下写入不会被执行:");
+        } else {
+            eprintln!("remem install (dry-run) — 以下写入不会被执行:");
+        }
         for host in &hosts {
             eprintln!("→ {}", host.name());
-            for line in host.dry_run_plan(&bin) {
+            let plan = host.dry_run_plan(&bin);
+            for line in plan
+                .iter()
+                .filter(|line| !hooks_only || !line.contains("MCP"))
+            {
                 eprintln!("{line}");
             }
         }
@@ -32,7 +40,11 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    eprintln!("remem install:");
+    if hooks_only {
+        eprintln!("remem install --hooks-only:");
+    } else {
+        eprintln!("remem install:");
+    }
     let runtime_hosts = hosts
         .iter()
         .map(|host| runtime_host_name(host.name()))
@@ -41,8 +53,12 @@ pub fn install(target: InstallTarget, dry_run: bool) -> Result<()> {
     eprintln!("  config -> {}", config_path.display());
     for host in &hosts {
         eprintln!("→ {}", host.name());
-        host.install_mcp(&bin)?;
-        eprintln!("  MCP    -> {}", host.config_path().display());
+        if hooks_only {
+            eprintln!("  MCP    skipped (hooks-only)");
+        } else {
+            host.install_mcp(&bin)?;
+            eprintln!("  MCP    -> {}", host.config_path().display());
+        }
         match host.install_hooks(&bin)? {
             HookSupport::Installed => eprintln!("  hooks  ✓"),
             HookSupport::Skipped(reason) => eprintln!("  hooks  skipped: {reason}"),

@@ -50,6 +50,10 @@ release manifest exists for the plugin version, fresh installs outside a local
 checkout must provide `REMEM_BINARY` or use a published plugin build that
 includes checked runtime assets.
 
+Plugin MCP startup leaves the server cwd as the active Codex workspace. The
+wrapper is invoked by plugin-root path so repo-scoped memory operations can use
+the caller workspace instead of the plugin checkout.
+
 ## Hook Activation
 
 MCP tools work without hook activation. To enable automatic memory injection and Stop summarization for Codex:
@@ -64,7 +68,8 @@ remem status
 The activation script delegates to:
 
 ```bash
-remem install --target codex
+remem install --target codex --hooks-only
 ```
 
-That command updates `~/.codex/config.toml`, `~/.codex/hooks.json`, and `~/.remem/config.toml`.
+That command enables Codex hooks without adding another global `remem` MCP
+server entry, because the plugin already provides MCP through `.mcp.json`.

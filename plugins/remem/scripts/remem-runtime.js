@@ -181,14 +181,40 @@ function versionMismatchMessage(candidate, expected, version) {
   return `${candidate}: found remem ${version.version} (schema v${version.schemaVersion}), expected ${expected}`;
 }
 
+function shouldCodesignRuntime(options = {}) {
+  return (options.platformKey || platformKey()) === "darwin-arm64";
+}
+
+function codesignRuntimeIfNeeded(candidate, options = {}) {
+  if (!shouldCodesignRuntime(options)) return;
+  const result = spawnSync("codesign", ["--force", "--sign", "-", candidate], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5000
+  });
+  if (result.error) {
+    throw new Error(`codesign failed for ${candidate}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const reason = (result.stderr || result.stdout || `exit ${result.status}`).trim();
+    throw new Error(`codesign failed for ${candidate}: ${reason}`);
+  }
+}
+
 function copyRuntime(source, options = {}) {
   const dest = managedBinaryPath(options);
   fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o755 });
   fs.copyFileSync(source, dest);
   fs.chmodSync(dest, 0o755);
+  codesignRuntimeIfNeeded(dest, options);
   const version = inspectVersion(dest);
   if (!version.ok) {
     throw new Error(`Copied runtime is not executable: ${version.reason}`);
+  }
+  const expected = expectedVersion(options);
+  const allowMismatch = (options.env || process.env).REMEM_ALLOW_VERSION_MISMATCH === "1";
+  if (!allowMismatch && version.version !== expected) {
+    throw new Error(versionMismatchMessage(dest, expected, version));
   }
   const metadata = {
     version: version.version,
@@ -389,16 +415,45 @@ async function installRuntime(options = {}) {
   const matchingPath = status.candidates.find((candidate) => candidate.ok && candidate.source === "path");
   if (matchingPath && adoptPath) return copyRuntime(matchingPath.path, options).path;
 
+  if (!options.allowDownload) {
+    throw new Error(runtimeMissingMessage(status));
+  }
+
   return downloadRuntime(options).then((installed) => installed.path);
 }
 
-function runRemem(args, options = {}) {
-  const env = {
+function runtimeEnv(options = {}) {
+  return {
     ...process.env,
+    ...(options.env || {}),
     REMEM_PLUGIN_ROOT: pluginRoot(options),
     REMEM_PLUGIN_DATA: pluginDataDir(options)
   };
+}
+
+function runRemem(args, options = {}) {
+  const env = runtimeEnv(options);
   const bin = options.binary || fs.realpathSync(ensureRuntimeSync(options));
+  const result = spawnSync(bin, args, {
+    stdio: "inherit",
+    env,
+    ...options.spawnOptions
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  return result.status === null ? 1 : result.status;
+}
+
+async function runRememAsync(args, options = {}) {
+  const env = runtimeEnv(options);
+  const runtimeOptions = {
+    ...options,
+    allowDownload: options.allowDownload !== false
+  };
+  const resolved = options.binary || (await ensureRuntime(runtimeOptions));
+  const bin = fs.realpathSync(resolved);
   const result = spawnSync(bin, args, {
     stdio: "inherit",
     env,
@@ -479,10 +534,12 @@ async function main(argv) {
 module.exports = {
   binaryName,
   candidateEntries,
+  codesignRuntimeIfNeeded,
   copyRuntime,
   ensureRuntime,
   ensureRuntimeSync,
   expectedVersion,
+  installRuntime,
   inspectRuntime,
   inspectVersion,
   isExecutable,
@@ -493,7 +550,9 @@ module.exports = {
   repoCandidates,
   repoRoot,
   runRemem,
+  runRememAsync,
   runtimeMetadataPath,
+  shouldCodesignRuntime,
   versionMismatchMessage
 };
 

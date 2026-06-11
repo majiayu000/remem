@@ -8,11 +8,15 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  copyRuntime,
   ensureRuntimeSync,
+  installRuntime,
   inspectRuntime,
   managedBinaryPath,
   pluginDataDir,
-  runtimeMetadataPath
+  runRememAsync,
+  runtimeMetadataPath,
+  shouldCodesignRuntime
 } = require("./remem-runtime");
 
 function tempDir(prefix) {
@@ -29,7 +33,7 @@ function writeFakeRemem(file, version) {
   fs.writeFileSync(
     file,
     [
-      "#!/usr/bin/env sh",
+      "#!/bin/sh",
       "if [ \"$1\" = \"--version\" ]; then",
       `  printf 'remem ${version} (schema v34)\\n'`,
       "  exit 0",
@@ -98,4 +102,43 @@ test("mismatched managed binary is rejected", () => {
 
   assert.equal(status.selected, undefined);
   assert.match(status.candidates[0].reason, /expected 0.5.17/);
+});
+
+test("copyRuntime rejects mismatched source version", () => {
+  const fx = fixture();
+  const source = path.join(fx.repoRoot, "target", "release", "remem");
+  writeFakeRemem(source, "0.5.11");
+
+  assert.throws(() => copyRuntime(source, fx), /expected 0.5.17/);
+  assert.equal(fs.existsSync(runtimeMetadataPath(fx)), false);
+});
+
+test("installRuntime honors no-download fallback", async () => {
+  const fx = fixture();
+
+  await assert.rejects(
+    () => installRuntime({ ...fx, allowDownload: false }),
+    (error) => {
+      assert.match(error.message, /Unable to find plugin-managed remem 0.5.17/);
+      assert.doesNotMatch(error.message, /No checked release asset/);
+      return true;
+    }
+  );
+});
+
+test("runRememAsync resolves local runtime before executing", async () => {
+  const fx = fixture();
+  const source = path.join(fx.repoRoot, "target", "release", "remem");
+  writeFakeRemem(source, "0.5.17");
+
+  const status = await runRememAsync(["mcp"], fx);
+
+  assert.equal(status, 0);
+  assert.equal(fs.existsSync(managedBinaryPath(fx)), true);
+});
+
+test("darwin arm64 runtimes require ad-hoc codesign", () => {
+  assert.equal(shouldCodesignRuntime({ platformKey: "darwin-arm64" }), true);
+  assert.equal(shouldCodesignRuntime({ platformKey: "darwin-x64" }), false);
+  assert.equal(shouldCodesignRuntime({ platformKey: "linux-arm64" }), false);
 });

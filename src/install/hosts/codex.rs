@@ -49,6 +49,10 @@ impl InstallHost for CodexHost {
     }
 
     fn install_hooks(&self, bin: &str) -> Result<HookSupport> {
+        let config_path = codex_config_path();
+        let mut doc = read_toml_doc(&config_path)?;
+        enable_codex_hooks(&mut doc)?;
+        write_toml_doc(&config_path, &doc)?;
         apply_codex_hooks_json(&codex_hooks_path(), bin)?;
         Ok(HookSupport::Installed)
     }
