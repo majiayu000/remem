@@ -23,7 +23,7 @@ Save a durable memory after:
 - important project discoveries with future implications
 - explicit user preferences that should affect future sessions
 
-Use a stable `topic_key` so repeated saves update the same memory instead of creating duplicates.
+Use the active repo/workspace `project` plus a stable `topic_key` so repeated saves update the same memory instead of creating duplicates.
 For project memories, pass `project` as the active repo/workspace path and pass
 `branch` when it is known. Use `scope: "global"` only for explicit cross-project
 user preferences.
