@@ -221,7 +221,8 @@ pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
              JOIN memories m ON m.id = f.source_memory_id
              WHERE f.status = 'active'
                AND f.valid_from_epoch IS NOT NULL
-               AND m.status = 'active'",
+               AND m.status = 'active'
+               AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > strftime('%s', 'now'))",
             [],
             |row| row.get(0),
         )?

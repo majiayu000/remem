@@ -315,6 +315,50 @@ fn check_temporal_facts_warns_when_rows_are_not_retrievable() -> anyhow::Result<
 }
 
 #[test]
+fn check_temporal_facts_warns_when_source_memory_is_expired() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-expired");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-1"),
+        "proj-a",
+        None,
+        "expired memory",
+        "A source memory exists with an expired temporal fact.",
+        "decision",
+        None,
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE memories SET expires_at_epoch = ?1 WHERE id = ?2",
+        params![now - 1, memory_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_event_ids, confidence, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('proj-a', 'deploy', 'affects_project', 'prod', ?1, NULL,
+                 ?1, ?2, '[]', 0.9, 'active', ?1, ?1)",
+        params![now, memory_id],
+    )?;
+    let stats = db::query_memory_facts_stats(&conn)?;
+    drop(conn);
+
+    assert_eq!(stats.total, 1);
+    assert_eq!(stats.retrieval_eligible, 0);
+
+    let check = check_temporal_facts();
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check.detail.contains("0 of 1 fact row(s)"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
 fn check_temporal_facts_is_ok_when_fact_table_has_rows() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-present");
     let conn = db::open_db()?;
