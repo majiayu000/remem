@@ -70,9 +70,10 @@ struct RememInvocation {
 
 fn parse_remem_invocation(command: &str) -> Option<RememInvocation> {
     let tokens = shell_words(command)?;
-    let command_index = tokens
-        .iter()
-        .position(|token| !is_env_assignment(token) && is_remem_command_token(token))?;
+    let command_index = tokens.iter().position(|token| !is_env_assignment(token))?;
+    if !is_remem_command_token(&tokens[command_index]) {
+        return None;
+    }
     let host = find_host_arg(&tokens[command_index + 1..]);
 
     Some(RememInvocation {
@@ -219,6 +220,7 @@ mod tests {
     #[test]
     fn parse_remem_invocation_rejects_text_without_remem_executable() {
         assert!(parse_remem_invocation("NOTE=remem echo ok").is_none());
+        assert!(parse_remem_invocation("echo remem context --host codex-cli").is_none());
         assert!(parse_remem_invocation("/bin/sh -c 'remem context --host codex-cli'").is_none());
     }
 }
