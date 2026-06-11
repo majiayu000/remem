@@ -49,6 +49,10 @@ impl InstallHost for CodexHost {
     }
 
     fn install_hooks(&self, bin: &str) -> Result<HookSupport> {
+        let config_path = codex_config_path();
+        let mut doc = read_toml_doc(&config_path)?;
+        enable_codex_hooks(&mut doc)?;
+        write_toml_doc(&config_path, &doc)?;
         apply_codex_hooks_json(&codex_hooks_path(), bin)?;
         Ok(HookSupport::Installed)
     }
@@ -63,6 +67,10 @@ impl InstallHost for CodexHost {
                 "  MCP    -> {} (add [mcp_servers.{}])",
                 codex_config_path().display(),
                 SERVER_KEY
+            ),
+            format!(
+                "  config -> {} (set [features].hooks = true)",
+                codex_config_path().display()
             ),
             format!(
                 "  hooks  -> {} (SessionStart/Stop)",
@@ -298,6 +306,16 @@ codex_hooks = true
             hooks["Stop"][0]["hooks"][0]["command"],
             "/tmp/remem summarize --host codex-cli"
         );
+    }
+
+    #[test]
+    fn dry_run_plan_discloses_hooks_feature_config_write() {
+        let host = CodexHost;
+        let plan = host.dry_run_plan("/tmp/remem").join("\n");
+
+        assert!(plan.contains("MCP"), "{plan}");
+        assert!(plan.contains("set [features].hooks = true"), "{plan}");
+        assert!(plan.contains("SessionStart/Stop"), "{plan}");
     }
 
     #[test]

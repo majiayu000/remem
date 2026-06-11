@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "remem": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/scripts/remem-mcp.js"],
+      "note": "Starts `remem mcp` through the plugin runtime manager. Set REMEM_BINARY to an absolute remem binary path only for explicit local debugging."
+    }
+  }
+}

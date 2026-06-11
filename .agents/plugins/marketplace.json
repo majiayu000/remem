@@ -1,0 +1,20 @@
+{
+  "name": "remem-local",
+  "interface": {
+    "displayName": "Remem Local"
+  },
+  "plugins": [
+    {
+      "name": "remem",
+      "source": {
+        "source": "local",
+        "path": "./plugins/remem"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

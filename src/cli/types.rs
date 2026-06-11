@@ -95,6 +95,9 @@ pub(super) enum Commands {
         /// Which host(s) to install into.
         #[arg(long, value_enum, default_value = "auto")]
         target: InstallTarget,
+        /// Install automatic capture hooks without registering MCP servers.
+        #[arg(long)]
+        hooks_only: bool,
         /// Print what would be written without touching disk.
         #[arg(long)]
         dry_run: bool,

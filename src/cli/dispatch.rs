@@ -63,7 +63,11 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         }
         Commands::Worker { once } => worker::run(once, 2000).await?,
         Commands::Mcp => mcp::run_mcp_server().await?,
-        Commands::Install { target, dry_run } => install::install(target, dry_run)?,
+        Commands::Install {
+            target,
+            hooks_only,
+            dry_run,
+        } => install::install(target, dry_run, hooks_only)?,
         Commands::Uninstall { target, dry_run } => install::uninstall(target, dry_run)?,
         Commands::Cleanup { dry_run, json } => run_cleanup(dry_run, json)?,
         Commands::SyncMemory { cwd } => {

@@ -131,6 +131,29 @@ Codex uses strict duplicate-injection gating via
 `SessionStart` repeat stays silent after the first injection for the same
 session. It does not install high-frequency Bash observation by default.
 
+### Codex Plugin
+
+This repository includes a local Codex plugin wrapper in `plugins/remem`.
+The plugin exposes `remem mcp` and a Remem skill while keeping hook activation
+explicit. The complete product direction is documented in
+[`docs/spec-codex-plugin-complete-design.md`](docs/spec-codex-plugin-complete-design.md);
+the current plugin is the local development foundation, not the final
+self-contained plugin experience. To try it from a local checkout:
+
+```bash
+codex plugin marketplace add .
+codex plugin add remem@remem-local
+```
+
+After installing the plugin, start a new Codex thread. To enable automatic
+SessionStart context injection and Stop summarization, run:
+
+```bash
+cargo build --release
+node plugins/remem/scripts/activate-codex.js --dry-run
+node plugins/remem/scripts/activate-codex.js
+```
+
 ## Distribution Channels
 
 Currently published:
