@@ -1,6 +1,7 @@
 mod database;
 mod environment;
 pub(crate) mod health_action;
+mod hook_validation;
 mod native_memory;
 mod report;
 mod runtime_config_check;
