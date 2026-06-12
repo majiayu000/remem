@@ -4,9 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(test)]
-use anyhow::bail;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -21,20 +19,51 @@ pub(crate) fn write_atomic(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -
     fs::create_dir_all(parent)
         .with_context(|| format!("create parent directory {}", parent.display()))?;
 
-    let temp_path = temp_path_for(&path)?;
-    let result = write_via_temp(&path, parent, &temp_path, contents.as_ref());
+    let (temp_path, file) = create_temp_file(&path)?;
+    let result = write_via_temp(&path, parent, &temp_path, file, contents.as_ref());
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
     }
     result
 }
 
-fn write_via_temp(path: &Path, parent: &Path, temp_path: &Path, contents: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(temp_path)
-        .with_context(|| format!("create temp file {}", temp_path.display()))?;
+fn create_temp_file(path: &Path) -> Result<(PathBuf, File)> {
+    let mut last_collision = None;
+    for _ in 0..16 {
+        let temp_path = temp_path_for(path)?;
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_collision = Some(temp_path);
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("create temp file {}", temp_path.display()));
+            }
+        }
+    }
+
+    let last = last_collision
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    bail!(
+        "create unique temp file for {} failed after repeated collisions; last collision {}",
+        path.display(),
+        last
+    );
+}
+
+fn write_via_temp(
+    path: &Path,
+    parent: &Path,
+    temp_path: &Path,
+    mut file: File,
+    contents: &[u8],
+) -> Result<()> {
     file.write_all(contents)
         .with_context(|| format!("write temp file {}", temp_path.display()))?;
     copy_permissions_if_present(path, &file)?;
@@ -47,8 +76,7 @@ fn write_via_temp(path: &Path, parent: &Path, temp_path: &Path, contents: &[u8])
         bail!("injected atomic write failure before rename");
     }
 
-    fs::rename(temp_path, path)
-        .with_context(|| format!("rename {} to {}", temp_path.display(), path.display()))?;
+    replace_file(temp_path, path)?;
     sync_parent_dir(parent)?;
     Ok(())
 }
@@ -95,9 +123,17 @@ fn temp_path_for(path: &Path) -> Result<PathBuf> {
         .file_name()
         .with_context(|| format!("atomic write path has no file name: {}", path.display()))?;
     let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut nonce = [0u8; 8];
+    getrandom::fill(&mut nonce)
+        .map_err(|err| anyhow::anyhow!("generate atomic temp file nonce: {err}"))?;
+    let nonce = u64::from_ne_bytes(nonce);
     let mut temp_name = OsString::from(".");
     temp_name.push(file_name);
-    temp_name.push(format!(".tmp.{}.{}", std::process::id(), counter));
+    temp_name.push(format!(
+        ".tmp.{}.{}.{nonce:016x}",
+        std::process::id(),
+        counter
+    ));
     Ok(parent.join(temp_name))
 }
 
@@ -118,6 +154,49 @@ fn sync_parent_dir(parent: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn sync_parent_dir(_parent: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file(temp_path: &Path, path: &Path) -> Result<()> {
+    fs::rename(temp_path, path)
+        .with_context(|| format!("rename {} to {}", temp_path.display(), path.display()))
+}
+
+#[cfg(windows)]
+fn replace_file(temp_path: &Path, path: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[link(name = "Kernel32")]
+    unsafe extern "system" {
+        #[link_name = "MoveFileExW"]
+        fn move_file_ex_w(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+
+    let existing = wide_null(temp_path);
+    let new = wide_null(path);
+    let ok = unsafe {
+        move_file_ex_w(
+            existing.as_ptr(),
+            new.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("replace {} with {}", path.display(), temp_path.display()));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn wide_null(path: &Path) -> Vec<u16> {
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 #[cfg(test)]
