@@ -11,26 +11,8 @@ const path = require("node:path");
 
 const { platformKey } = require("./platform");
 
-const VERSION = "0.4.5";
+const VERSION = require("../package.json").version;
 const BASE_URL = `https://github.com/majiayu000/remem/releases/download/v${VERSION}`;
-const ASSETS = {
-  "darwin-arm64": {
-    file: "remem-darwin-arm64.tar.gz",
-    sha256: "35ffef27827c66e96c60149524c20e3af572c75f8f5d597eb740906f97255c22",
-  },
-  "darwin-x64": {
-    file: "remem-darwin-x64.tar.gz",
-    sha256: "71d13ddd4935dd9e13e37c8ec1ff081934fb7a12c1d83c6c7b9b425a7acaab4d",
-  },
-  "linux-arm64": {
-    file: "remem-linux-arm64.tar.gz",
-    sha256: "27ac660646801aa14d89cfcab4fc626d6dbb7992dfc43a4e9000fbd971a4dc61",
-  },
-  "linux-x64": {
-    file: "remem-linux-x64.tar.gz",
-    sha256: "91106ddecc684ab223f343caf089312ca61a39c42e323ea5c6ea57fb82e5100b",
-  },
-};
 
 function download(url, dest, redirects = 0) {
   return new Promise((resolve, reject) => {
@@ -65,10 +47,70 @@ function download(url, dest, redirects = 0) {
   });
 }
 
+function fetchJson(url, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, (response) => {
+      if (
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        response.headers.location
+      ) {
+        response.resume();
+        if (redirects >= 5) {
+          reject(new Error(`Too many redirects while fetching ${url}`));
+          return;
+        }
+        const next = new URL(response.headers.location, url).toString();
+        resolve(fetchJson(next, redirects + 1));
+        return;
+      }
+
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`Manifest fetch failed with HTTP ${response.statusCode}: ${url}`));
+        return;
+      }
+
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+      });
+      response.on("end", () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(new Error(`Invalid release manifest JSON from ${url}: ${error.message}`));
+        }
+      });
+    });
+    request.on("error", reject);
+  });
+}
+
 function sha256(file) {
   const hash = crypto.createHash("sha256");
   hash.update(fs.readFileSync(file));
   return hash.digest("hex");
+}
+
+function resolveAsset(manifest, version, key) {
+  const release = manifest?.versions?.[version];
+  const asset = release?.assets?.[key];
+  if (!asset || typeof asset.file !== "string") {
+    throw new Error(`Release manifest for remem ${version} is missing asset ${key}`);
+  }
+  if (!/^[0-9a-f]{64}$/i.test(asset.sha256 || "")) {
+    throw new Error(`Release manifest asset ${key} is missing a valid sha256`);
+  }
+  const baseUrl = typeof release.base_url === "string" && release.base_url
+    ? release.base_url.replace(/\/$/, "")
+    : BASE_URL;
+  return {
+    file: asset.file,
+    sha256: asset.sha256.toLowerCase(),
+    url: `${baseUrl}/${asset.file}`,
+  };
 }
 
 async function main() {
@@ -78,7 +120,6 @@ async function main() {
   }
 
   const key = platformKey();
-  const asset = ASSETS[key];
   const vendorDir = path.join(__dirname, "..", "vendor", key);
   const binary = path.join(vendorDir, "remem");
   if (process.argv.includes("--skip-existing") && fs.existsSync(binary)) {
@@ -89,12 +130,15 @@ async function main() {
   fs.mkdirSync(vendorDir, { recursive: true, mode: 0o755 });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "remem-npm-"));
-  const archive = path.join(tmpDir, asset.file);
-  const url = `${BASE_URL}/${asset.file}`;
 
   try {
+    const manifestUrl = `${BASE_URL}/remem-releases.json`;
+    const manifest = await fetchJson(manifestUrl);
+    const asset = resolveAsset(manifest, VERSION, key);
+    const archive = path.join(tmpDir, asset.file);
+
     console.log(`Downloading remem ${VERSION} for ${key}`);
-    await download(url, archive);
+    await download(asset.url, archive);
     const actual = sha256(archive);
     if (actual !== asset.sha256) {
       throw new Error(`Checksum mismatch for ${asset.file}: expected ${asset.sha256}, got ${actual}`);
@@ -113,7 +157,15 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  BASE_URL,
+  VERSION,
+  resolveAsset,
+};
