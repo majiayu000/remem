@@ -569,6 +569,37 @@ fn render_context_output_exposes_lesson_query_failures() {
 }
 
 #[test]
+fn render_context_output_exposes_primary_memory_query_failures() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-memory-error");
+    let conn = crate::db::test_support::runtime_connection().unwrap();
+    conn.execute("DROP TABLE memories", []).unwrap();
+    drop(conn);
+
+    let rendered = render_context_output(
+        &ContextRequest {
+            cwd: "/tmp/remem".to_string(),
+            project: "/tmp/remem".to_string(),
+            session_id: None,
+            hook_source: Some("session_start".to_string()),
+            current_branch: Some("main".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+        },
+        false,
+    )
+    .unwrap();
+
+    assert!(rendered.output.contains("## Context Load Errors"));
+    assert!(rendered
+        .output
+        .contains("- memories: failed to load recent context memories for /tmp/remem"));
+    assert!(rendered
+        .output
+        .contains("- memories: failed to search context memories for /tmp/remem"));
+    assert!(!rendered.output.contains("No previous sessions found."));
+}
+
+#[test]
 fn strict_context_pipeline_opens_one_database_connection() -> anyhow::Result<()> {
     let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-single-db-open");
     let setup = crate::db::test_support::runtime_connection()?;

@@ -5,6 +5,10 @@ use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
 
+use super::filters::{
+    push_context_related_filter, push_excluded_type_filter, push_owner_excluded_filter,
+    push_owner_included_filter,
+};
 use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
@@ -33,8 +37,9 @@ pub(super) fn load_context_data_with_policy(
     collect_diagnostics: bool,
 ) -> LoadedContext {
     let mut errors = Vec::new();
-    let memory_selection =
+    let mut memory_selection =
         load_project_memories(conn, project, current_branch, policy, collect_diagnostics);
+    errors.append(&mut memory_selection.errors);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
     let lessons = memory::lesson::list_lessons_for_context(
@@ -79,6 +84,7 @@ pub(super) fn load_context_data_with_policy(
 
 struct ContextMemorySelection {
     memories: Vec<Memory>,
+    errors: Vec<ContextLoadError>,
     owner_traces: Vec<OwnerTrace>,
     owner_counts: OwnerCounts,
     diagnostics: super::types::ContextDiagnostics,
@@ -97,6 +103,7 @@ fn load_project_memories(
     collect_diagnostics: bool,
 ) -> ContextMemorySelection {
     let mut memories = Vec::new();
+    let mut errors = Vec::new();
     let mut traces = Vec::new();
     let mut seen_ids = HashSet::new();
 
@@ -113,10 +120,9 @@ fn load_project_memories(
         policy.limits.candidate_fetch_limit as i64,
     )
     .unwrap_or_else(|e| {
-        crate::log::error(
-            "context",
-            &format!("failed to load recent context memories for {project}: {e}"),
-        );
+        let message = format!("failed to load recent context memories for {project}: {e}");
+        crate::log::error("context", &message);
+        errors.push(ContextLoadError::new("memories", message));
         Vec::new()
     });
     for row in recent {
@@ -141,10 +147,11 @@ fn load_project_memories(
                 }
             }
         }
-        Err(e) => crate::log::error(
-            "context",
-            &format!("failed to search context memories for {project}: {e}"),
-        ),
+        Err(e) => {
+            let message = format!("failed to search context memories for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("memories", message));
+        }
     }
 
     memories
@@ -195,6 +202,7 @@ fn load_project_memories(
 
     ContextMemorySelection {
         memories: selected,
+        errors,
         owner_traces: traces,
         owner_counts,
         diagnostics: if collect_diagnostics {
@@ -356,97 +364,6 @@ fn map_context_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextMe
         memory: memory::map_memory_row_pub(row)?,
         owner: OwnerMetadata::from_memory_row(row, 13)?,
     })
-}
-
-pub(super) fn push_owner_included_filter(
-    project: &str,
-    idx: &mut usize,
-    conditions: &mut Vec<String>,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    let owner_key_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let target_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let legacy_project_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    conditions.push(format!(
-        "((owner_scope = 'repo' AND owner_key = ?{owner_key_idx}) \
-          OR (owner_scope = 'repo' AND target_project = ?{target_idx}) \
-          OR (owner_scope IS NULL AND project = ?{legacy_project_idx} \
-              AND COALESCE(scope, 'project') != 'global'))"
-    ));
-}
-
-fn push_owner_excluded_filter(
-    project: &str,
-    idx: &mut usize,
-    conditions: &mut Vec<String>,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    let owner_key_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let target_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let legacy_project_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    conditions.push(format!(
-        "NOT ((owner_scope = 'repo' AND owner_key = ?{owner_key_idx}) \
-              OR (owner_scope = 'repo' AND target_project = ?{target_idx}) \
-              OR (owner_scope IS NULL AND project = ?{legacy_project_idx} \
-                  AND COALESCE(scope, 'project') != 'global'))"
-    ));
-}
-
-fn push_context_related_filter(
-    project: &str,
-    idx: &mut usize,
-    conditions: &mut Vec<String>,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    let project_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let source_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let target_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let owner_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    conditions.push(format!(
-        "(project = ?{project_idx} OR source_project = ?{source_idx} \
-          OR target_project = ?{target_idx} OR owner_key = ?{owner_idx})"
-    ));
-}
-
-pub(super) fn push_excluded_type_filter(
-    excluded_types: &[&str],
-    idx: &mut usize,
-    conditions: &mut Vec<String>,
-    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    if excluded_types.is_empty() {
-        return;
-    }
-    let placeholders: Vec<String> = excluded_types
-        .iter()
-        .map(|memory_type| {
-            let placeholder = format!("?{idx}");
-            params.push(Box::new((*memory_type).to_string()));
-            *idx += 1;
-            placeholder
-        })
-        .collect();
-    conditions.push(format!("memory_type NOT IN ({})", placeholders.join(", ")));
 }
 
 fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {
