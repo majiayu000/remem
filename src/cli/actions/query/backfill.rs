@@ -64,14 +64,14 @@ where
 pub(in crate::cli) fn run_backfill_embeddings(limit: i64) -> Result<()> {
     let conn = db::open_db()?;
     let limit = limit.max(1);
-    println!("Backfilling up to {limit} missing memory embeddings...");
+    println!("Backfilling/reindexing up to {limit} missing or stale memory embeddings...");
 
-    let backfilled = crate::retrieval::vector::backfill_missing_memory_embeddings(&conn, limit)?;
+    let backfilled = crate::retrieval::vector::reindex_memory_embeddings(&conn, limit)?;
     let remaining = count_missing_embeddings(&conn)?;
-    println!("Done. {backfilled} embeddings backfilled, {remaining} remaining.");
+    println!("Done. {backfilled} embeddings backfilled/reindexed, {remaining} remaining.");
     Ok(())
 }
 
 fn count_missing_embeddings(conn: &Connection) -> Result<i64> {
-    crate::retrieval::vector::pending_memory_embedding_count(conn)
+    crate::retrieval::vector::pending_memory_embedding_reindex_count(conn)
 }

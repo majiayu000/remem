@@ -458,9 +458,10 @@ pub(super) enum Commands {
     EvalLocal,
     /// Backfill entity records for existing memories.
     BackfillEntities,
-    /// Backfill missing vector embeddings for existing memories.
+    /// Backfill or reindex missing/stale vector embeddings for existing memories.
+    #[command(visible_alias = "reindex-embeddings")]
     BackfillEmbeddings {
-        /// Maximum missing memory rows to backfill in this run.
+        /// Maximum memory rows to backfill or reindex in this run.
         #[arg(long, default_value_t = 1000)]
         limit: i64,
     },
