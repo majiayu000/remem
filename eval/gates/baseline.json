@@ -45,6 +45,8 @@
     "injection.abstention_false_positive_bound": 1.0,
     "injection.all_checks": 1.0,
     "injection.expected_memory_recall": 1.0,
-    "injection.forbidden_memory_exclusion": 1.0
+    "injection.forbidden_memory_exclusion": 1.0,
+    "injection.user_prompt_submit_abstention_false_positive_bound": 1.0,
+    "injection.user_prompt_submit_memory_recall": 1.0
   }
 }

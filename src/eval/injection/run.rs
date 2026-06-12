@@ -13,8 +13,10 @@ const PROJECT: &str = "/tmp/remem-injection-eval/repo";
 const OTHER_PROJECT: &str = "/tmp/remem-injection-eval/other";
 const ABSTENTION_PROJECT: &str = "/tmp/remem-injection-eval/abstain";
 const HOST: &str = "codex-cli";
+const USER_PROMPT_HOST: &str = "claude-code";
 const CURRENT_BRANCH: &str = "main";
 const ABSTENTION_FORBIDDEN_TITLE: &str = "Unrelated recent deployment note";
+const USER_PROMPT_SESSION: &str = "eval-user-prompt-submit";
 
 #[derive(Clone, Copy)]
 struct FixtureMemory {
@@ -139,6 +141,24 @@ fn run_sandbox_eval_inner(
 ) -> Result<InjectionEvalReport> {
     let mut conn = crate::db::open_db().context("open sandbox injection eval DB")?;
     seed_fixture(&mut conn).context("seed injection eval fixture")?;
+    let user_prompt_context = crate::context::prompt_submit_additional_context(
+        &conn,
+        PROJECT,
+        PROJECT,
+        USER_PROMPT_SESSION,
+        "How do we fix startup migration races?",
+        Some(USER_PROMPT_HOST),
+    )
+    .context("render UserPromptSubmit matching additionalContext")?;
+    let user_prompt_abstention_context = crate::context::prompt_submit_additional_context(
+        &conn,
+        ABSTENTION_PROJECT,
+        ABSTENTION_PROJECT,
+        USER_PROMPT_SESSION,
+        "Investigate quantum telemetry routing",
+        Some(USER_PROMPT_HOST),
+    )
+    .context("render UserPromptSubmit abstention additionalContext")?;
     drop(conn);
 
     let snapshot =
@@ -168,9 +188,19 @@ fn run_sandbox_eval_inner(
         .contains(ABSTENTION_FORBIDDEN_TITLE);
     let abstention_false_positive_bound =
         InjectionRateMetric::new(usize::from(abstention_passed), 1);
+    let user_prompt_submit_passed = user_prompt_context
+        .as_deref()
+        .is_some_and(|output| output.contains("Migration locking fix"));
+    let user_prompt_submit_memory_recall =
+        InjectionRateMetric::new(usize::from(user_prompt_submit_passed), 1);
+    let user_prompt_submit_abstention_passed = user_prompt_abstention_context.is_none();
+    let user_prompt_submit_abstention_false_positive_bound =
+        InjectionRateMetric::new(usize::from(user_prompt_submit_abstention_passed), 1);
     let all_checks_passed = expected_memory_recall.is_perfect()
         && forbidden_memory_exclusion.is_perfect()
-        && abstention_false_positive_bound.is_perfect();
+        && abstention_false_positive_bound.is_perfect()
+        && user_prompt_submit_memory_recall.is_perfect()
+        && user_prompt_submit_abstention_false_positive_bound.is_perfect();
     let mut failing_examples = Vec::new();
     for case in expected_cases.iter().filter(|case| !case.matched) {
         failing_examples.push(format!("missing expected memory: {}", case.title));
@@ -182,6 +212,13 @@ fn run_sandbox_eval_inner(
         failing_examples.push(format!(
             "abstention rendered unrelated memory: {ABSTENTION_FORBIDDEN_TITLE}"
         ));
+    }
+    if !user_prompt_submit_passed {
+        failing_examples
+            .push("UserPromptSubmit missing expected memory: Migration locking fix".to_string());
+    }
+    if !user_prompt_submit_abstention_passed {
+        failing_examples.push("UserPromptSubmit rendered unexpected additionalContext".to_string());
     }
 
     let mut cases = expected_cases;
@@ -211,6 +248,8 @@ fn run_sandbox_eval_inner(
             expected_memory_recall,
             forbidden_memory_exclusion,
             abstention_false_positive_bound,
+            user_prompt_submit_memory_recall,
+            user_prompt_submit_abstention_false_positive_bound,
             all_checks_passed,
         },
         cases,

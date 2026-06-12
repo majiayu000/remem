@@ -29,6 +29,19 @@ fn injection_eval_exercises_session_start_render_path() -> Result<()> {
         "{:#?}",
         report
     );
+    assert!(
+        report.metrics.user_prompt_submit_memory_recall.is_perfect(),
+        "{:#?}",
+        report
+    );
+    assert!(
+        report
+            .metrics
+            .user_prompt_submit_abstention_false_positive_bound
+            .is_perfect(),
+        "{:#?}",
+        report
+    );
     assert!(report.metrics.all_checks_passed, "{:#?}", report);
     assert!(report.metadata.memories_loaded > 0);
     assert!(report.metadata.core_count > 0 || report.metadata.index_count > 0);
@@ -64,6 +77,8 @@ fn injection_eval_display_includes_metrics() {
             expected_memory_recall: InjectionRateMetric::new(2, 2),
             forbidden_memory_exclusion: InjectionRateMetric::new(3, 3),
             abstention_false_positive_bound: InjectionRateMetric::new(1, 1),
+            user_prompt_submit_memory_recall: InjectionRateMetric::new(1, 1),
+            user_prompt_submit_abstention_false_positive_bound: InjectionRateMetric::new(1, 1),
             all_checks_passed: true,
         },
         cases: vec![],
@@ -76,5 +91,7 @@ fn injection_eval_display_includes_metrics() {
     assert!(rendered.contains("expected_memory_recall: 2/2"));
     assert!(rendered.contains("forbidden_memory_exclusion: 3/3"));
     assert!(rendered.contains("abstention_false_positive_bound: 1/1"));
+    assert!(rendered.contains("user_prompt_submit_memory_recall: 1/1"));
+    assert!(rendered.contains("user_prompt_submit_abstention_false_positive_bound: 1/1"));
     assert!(rendered.contains("all_checks_passed: true"));
 }
