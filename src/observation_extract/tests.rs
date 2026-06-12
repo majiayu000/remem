@@ -1,3 +1,4 @@
+use anyhow::Context;
 use rusqlite::params;
 
 use crate::db::{record_captured_event, CaptureEventInput, ExtractionTaskKind};
@@ -268,6 +269,101 @@ async fn observation_extract_prompt_includes_summary_and_recent_context() -> Res
             .unwrap()
             .iter()
             .any(|gate| gate.as_str().unwrap().contains("absolute ISO dates")));
+        Ok(no_observations_response("prompt checked"))
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn observation_extract_prompt_keeps_late_content_after_large_early_event() -> Result<()> {
+    let mut conn = setup_conn();
+    let large_early_output = "x".repeat(30 * 1024);
+    let large_early_len = large_early_output.len();
+    capture_event(
+        &conn,
+        "sess-budget",
+        "tool_result",
+        None,
+        Some("Bash"),
+        &large_early_output,
+    )?;
+    capture_event(
+        &conn,
+        "sess-budget",
+        "tool_result",
+        None,
+        Some("Bash"),
+        "DURABLE_LATE_FIX: cargo test verified the schema parser fix.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+
+    process_with_extractor(&mut conn, &task, |prompt| async move {
+        let payload: serde_json::Value = serde_json::from_str(&prompt)?;
+        let events = payload["transcript_events"]
+            .as_array()
+            .context("transcript_events should be an array")?;
+        assert_eq!(events.len(), 2);
+        let first_content = events
+            .first()
+            .and_then(|event| event["content"].as_str())
+            .context("first transcript event content should be a string")?;
+        let second_content = events
+            .get(1)
+            .and_then(|event| event["content"].as_str())
+            .context("second transcript event content should be a string")?;
+        assert!(first_content.len() < large_early_len);
+        assert!(second_content.contains("DURABLE_LATE_FIX"));
+        assert_eq!(
+            payload["content_truncated_event_ids"]
+                .as_array()
+                .context("truncated ids should be an array")?
+                .len(),
+            1
+        );
+        assert_eq!(
+            payload["per_event_content_budget_bytes"]
+                .as_u64()
+                .context("per-event budget should be present")?,
+            24 * 1024
+        );
+        Ok(no_observations_response("prompt checked"))
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn observation_extract_prompt_keeps_summary_when_first_field_blank() -> Result<()> {
+    let mut conn = setup_conn();
+    capture_event(
+        &conn,
+        "sess-summary-fallback",
+        "message",
+        Some("user"),
+        None,
+        "Continue the strict JSON extraction work.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, created_at, created_at_epoch,
+          host_id, project_id, session_row_id, summary_text, request,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('summary-test-blank', '/tmp/remem', '2026-06-12', 1,
+                 ?1, ?2, ?3, '   ', 'Use strict JSON for observation extraction.',
+                 0, 0)",
+        params![task.host_id, task.project_id, task.session_row_id],
+    )?;
+
+    process_with_extractor(&mut conn, &task, |prompt| async move {
+        let payload: serde_json::Value = serde_json::from_str(&prompt)?;
+        assert_eq!(
+            payload["rolling_session_summary"]["request"],
+            "Use strict JSON for observation extraction."
+        );
         Ok(no_observations_response("prompt checked"))
     })
     .await?;

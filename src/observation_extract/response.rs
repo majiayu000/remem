@@ -28,9 +28,9 @@ struct NoObservations {
 struct JsonObservation {
     #[serde(rename = "type")]
     obs_type: String,
-    title: Option<String>,
-    subtitle: Option<String>,
-    narrative: Option<String>,
+    title: serde_json::Value,
+    subtitle: serde_json::Value,
+    narrative: serde_json::Value,
     facts: Vec<String>,
     concepts: Vec<String>,
     files_read: Vec<String>,
@@ -115,18 +115,22 @@ fn validate_observation(index: usize, observation: JsonObservation) -> Result<Pa
 fn validate_observation_optional_text(
     field: &str,
     index: usize,
-    value: Option<String>,
+    value: serde_json::Value,
 ) -> Result<Option<String>> {
-    value
-        .map(|value| {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(value) => {
             let trimmed = value.trim();
             ensure!(
                 !trimmed.is_empty(),
                 "malformed observation_extract output: observation {index} {field} must not be blank"
             );
-            Ok(trimmed.to_string())
-        })
-        .transpose()
+            Ok(Some(trimmed.to_string()))
+        }
+        _ => bail!(
+            "malformed observation_extract output: observation {index} {field} must be a string or null"
+        ),
+    }
 }
 
 fn validate_observation_text_list(
@@ -219,6 +223,26 @@ mod tests {
         )
         .expect_err("unknown fields must fail closed");
         assert!(format!("{err:#}").contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_missing_nullable_observation_fields() {
+        let err = parse_observation_extract_response(
+            r#"{
+              "observations": [{
+                "type": "decision",
+                "subtitle": null,
+                "narrative": "Known",
+                "facts": [],
+                "concepts": [],
+                "files_read": [],
+                "files_modified": [],
+                "confidence": 0.91
+              }]
+            }"#,
+        )
+        .expect_err("missing title key must fail closed");
+        assert!(format!("{err:#}").contains("missing field `title`"));
     }
 
     #[test]

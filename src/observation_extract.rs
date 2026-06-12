@@ -300,15 +300,18 @@ fn load_summary_context(
 
 impl SessionSummaryContext {
     fn has_content(&self) -> bool {
-        self.summary_text
-            .as_deref()
-            .or(self.request.as_deref())
-            .or(self.completed.as_deref())
-            .or(self.decisions.as_deref())
-            .or(self.learned.as_deref())
-            .or(self.next_steps.as_deref())
-            .or(self.preferences.as_deref())
-            .is_some_and(|value| !value.trim().is_empty())
+        [
+            self.summary_text.as_deref(),
+            self.request.as_deref(),
+            self.completed.as_deref(),
+            self.decisions.as_deref(),
+            self.learned.as_deref(),
+            self.next_steps.as_deref(),
+            self.preferences.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| !value.trim().is_empty())
     }
 }
 

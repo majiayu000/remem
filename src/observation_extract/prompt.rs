@@ -19,7 +19,7 @@ pub(super) fn build_extract_prompt(task: &db::ExtractionTask, range: &EvidenceRa
             "event_ids": range.event_ids,
         },
         "extraction_run_date": extraction_run_date(range),
-        "event_content_budget_bytes": EXTRACT_PROMPT_EVENT_CONTENT_BUDGET_BYTES,
+        "per_event_content_budget_bytes": EXTRACT_PROMPT_EVENT_CONTENT_BUDGET_BYTES,
         "content_truncated_event_ids": truncated_events,
         "rolling_session_summary": summary_context_json(range.summary_context.as_ref()),
         "recent_context": recent_context_events(range),
@@ -89,18 +89,18 @@ fn summary_context_json(summary: Option<&SessionSummaryContext>) -> serde_json::
 }
 
 fn prompt_transcript_events(range: &EvidenceRange) -> (Vec<serde_json::Value>, Vec<i64>) {
-    let mut remaining = EXTRACT_PROMPT_EVENT_CONTENT_BUDGET_BYTES;
     let mut truncated_event_ids = Vec::new();
     let events = range
         .events
         .iter()
         .map(|event| {
             let redacted_content = redact_extract_content(&event.content);
-            let content = db::truncate_str(&redacted_content, remaining).to_string();
+            let content =
+                db::truncate_str(&redacted_content, EXTRACT_PROMPT_EVENT_CONTENT_BUDGET_BYTES)
+                    .to_string();
             if content.len() < redacted_content.len() {
                 truncated_event_ids.push(event.id);
             }
-            remaining = remaining.saturating_sub(content.len());
             prompt_event_json(event, content)
         })
         .collect::<Vec<_>>();

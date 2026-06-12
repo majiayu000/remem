@@ -46,7 +46,7 @@
     {
       "id": "build-fix-loop-guard",
       "transcript_events": 3,
-      "observation_request_sha256": "9a3168e6facf01a624c99f9566b3062f51fe3510d42691bc112b798fa187cfdc",
+      "observation_request_sha256": "0b88836e19db636880308758f6c6e01f38b9be0591864d3e4ea16c871202125c",
       "candidate_request_sha256": "a21e45990a9f9a11b49107714b0e2b0f644e6709eb617ddbca7837a503c76f3d",
       "predicted_observations": [
         {
@@ -78,7 +78,7 @@
     {
       "id": "automatic-capture-primary",
       "transcript_events": 2,
-      "observation_request_sha256": "df8187094e8f65526e03b744ceab7c88217e867ca26f3a5f4a90bc8e64404b10",
+      "observation_request_sha256": "401a8f906640ea858d06f5673e56800758457c652c08042be060b086332d266c",
       "candidate_request_sha256": "c885dc5134cd6e9cf944bcb6cc341432b925c2a1a3a6101b36d2fe78721e28ee",
       "predicted_observations": [
         {
