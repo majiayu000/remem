@@ -104,7 +104,7 @@ pub mod gates {
 
         let mut current_metrics = collect_metrics(&golden, &injection, &extraction);
         if options.simulate_golden_regression {
-            current_metrics.insert("golden.overall.hit_at_k".to_string(), 0.0);
+            current_metrics.insert("golden.slice.temporal.hit_at_k".to_string(), 0.0);
         }
         let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current_metrics);
         let source_reports = EvalSourceReports {

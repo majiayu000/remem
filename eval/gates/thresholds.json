@@ -1,5 +1,81 @@
 {
   "version": "2026-06-12",
   "default_max_drop": 0.0,
-  "metrics": {}
+  "metrics": {
+    "golden.slice.abstention.abstention_pass_rate": {
+      "max_drop": 0.0
+    },
+    "golden.slice.knowledge_update.evidence_recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.knowledge_update.hit_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.knowledge_update.mrr_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.knowledge_update.ndcg_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.knowledge_update.precision_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.knowledge_update.recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.multi_hop.evidence_recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.multi_hop.hit_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.multi_hop.mrr_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.multi_hop.ndcg_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.multi_hop.precision_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.multi_hop.recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.paraphrase.evidence_recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.paraphrase.hit_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.paraphrase.mrr_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.paraphrase.ndcg_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.paraphrase.precision_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.paraphrase.recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.temporal.evidence_recall_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.temporal.hit_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.temporal.mrr_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.temporal.ndcg_at_10": {
+      "max_drop": 0.0
+    },
+    "golden.slice.temporal.precision_at_k": {
+      "max_drop": 0.0
+    },
+    "golden.slice.temporal.recall_at_k": {
+      "max_drop": 0.0
+    }
+  }
 }
