@@ -111,6 +111,12 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
         .results
         .iter()
         .any(|result| result.visibility == "global-overlay"));
+    assert!(explain.results.iter().all(|result| {
+        result.staleness.status == "active"
+            && result.staleness.age == "fresh"
+            && result.staleness.source_anchor == "untracked"
+            && result.staleness.label.contains("source_anchor=untracked")
+    }));
     let like = explain
         .channels
         .iter()

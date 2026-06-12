@@ -184,6 +184,12 @@ mod tests {
         let default_body = to_bytes(default_response.into_body(), usize::MAX).await?;
         let default_json: Value = serde_json::from_slice(&default_body)?;
         assert!(default_json.get("explain").is_none());
+        assert_eq!(default_json["data"][0]["id"], memory_id);
+        assert_eq!(default_json["data"][0]["staleness"]["status"], "active");
+        assert_eq!(
+            default_json["data"][0]["staleness"]["source_anchor"],
+            "untracked"
+        );
 
         let explain_response = handle_search(State(DbState), Query(base_search_params(Some(true))))
             .await
@@ -192,10 +198,19 @@ mod tests {
         let explain_json: Value = serde_json::from_slice(&explain_body)?;
 
         assert_eq!(explain_json["data"][0]["id"], memory_id);
+        assert_eq!(explain_json["data"][0]["staleness"]["status"], "active");
+        assert_eq!(
+            explain_json["data"][0]["staleness"]["source_anchor"],
+            "untracked"
+        );
         assert_eq!(explain_json["explain"]["query"], "aurora");
         assert_eq!(
             explain_json["explain"]["results"][0]["memory_id"],
             memory_id
+        );
+        assert_eq!(
+            explain_json["explain"]["results"][0]["staleness"]["status"],
+            "active"
         );
         Ok(())
     }

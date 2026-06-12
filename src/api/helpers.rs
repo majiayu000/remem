@@ -17,6 +17,7 @@ pub(super) fn memory_to_item(memory: &memory::Memory) -> MemoryItem {
         project: memory.project.clone(),
         scope: memory.scope.clone(),
         status: memory.status.clone(),
+        staleness: memory::memory_staleness_label(memory, chrono::Utc::now().timestamp()),
         topic_key: memory.topic_key.clone(),
         branch: memory.branch.clone(),
         created_at_epoch: memory.created_at_epoch,

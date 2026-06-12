@@ -111,6 +111,12 @@ impl MemoryServer {
             let search_results: Vec<SearchResult> = memories
                 .into_iter()
                 .map(|memory| {
+                    let staleness = requested_explain.then(|| {
+                        crate::memory::memory_staleness_label(
+                            &memory,
+                            chrono::Utc::now().timestamp(),
+                        )
+                    });
                     let updated = chrono::DateTime::from_timestamp(memory.updated_at_epoch, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                         .unwrap_or_default();
@@ -126,6 +132,7 @@ impl MemoryServer {
                         updated_at: updated,
                         project: memory.project,
                         status: memory.status,
+                        staleness,
                     }
                 })
                 .collect();
@@ -273,6 +280,7 @@ mod tests {
             .map_err(anyhow::Error::msg)?;
         let default_json: Value = serde_json::from_str(&default_response)?;
         assert!(default_json.get("explain").is_none());
+        assert!(default_json["results"][0].get("staleness").is_none());
 
         let explain_response = server
             .search(Parameters(base_search_params(Some(true))))
@@ -280,10 +288,19 @@ mod tests {
         let explain_json: Value = serde_json::from_str(&explain_response)?;
 
         assert_eq!(explain_json["results"][0]["id"], memory_id);
+        assert_eq!(explain_json["results"][0]["staleness"]["status"], "active");
+        assert_eq!(
+            explain_json["results"][0]["staleness"]["source_anchor"],
+            "untracked"
+        );
         assert_eq!(explain_json["explain"]["query"], "aurora");
         assert_eq!(
             explain_json["explain"]["results"][0]["memory_id"],
             memory_id
+        );
+        assert_eq!(
+            explain_json["explain"]["results"][0]["staleness"]["status"],
+            "active"
         );
         Ok(())
     }

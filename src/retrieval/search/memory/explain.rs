@@ -61,6 +61,7 @@ pub struct SearchExplainResult {
     pub project: String,
     pub scope: String,
     pub visibility: String,
+    pub staleness: crate::memory::MemoryStalenessLabel,
     pub contributions: Vec<ChannelContribution>,
 }
 
