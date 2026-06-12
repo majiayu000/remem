@@ -2,6 +2,7 @@ mod actions;
 mod config_types;
 mod cwd;
 mod dispatch;
+mod eval_types;
 mod query_types;
 #[cfg(test)]
 mod tests;
