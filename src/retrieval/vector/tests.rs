@@ -206,7 +206,7 @@ fn backfill_rebuilds_embeddings_from_stale_model() -> Result<()> {
 }
 
 #[test]
-fn reindex_rebuilds_embeddings_from_stale_content_hash() -> Result<()> {
+fn reindex_rebuilds_embeddings_when_memory_is_newer_than_embedding() -> Result<()> {
     let conn = setup_vector_conn()?;
     insert_test_memory(&conn, 1)?;
     upsert_memory_embedding(
@@ -223,10 +223,15 @@ fn reindex_rebuilds_embeddings_from_stale_content_hash() -> Result<()> {
         |row| row.get(0),
     )?;
     conn.execute(
-        "UPDATE memories
-         SET content = 'SQLCipher protects the local database with encryption at rest.'
-         WHERE id = 1",
+        "UPDATE memory_embeddings SET updated_at_epoch = 1 WHERE memory_id = 1",
         [],
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET content = 'SQLCipher protects the local database with encryption at rest.',
+             updated_at_epoch = ?1
+         WHERE id = 1",
+        params![2],
     )?;
 
     assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 1);

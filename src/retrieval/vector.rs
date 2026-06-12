@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::embedding::{EmbeddingBackfillTarget, TextEmbedding};
+use super::embedding::TextEmbedding;
 pub use super::vector_candidates::VECTOR_SEARCH_CANDIDATE_LIMIT;
 
 pub use super::embedding::{
@@ -133,35 +133,30 @@ pub fn reindex_memory_embeddings(conn: &Connection, limit: i64) -> Result<usize>
     }
 
     let target = super::embedding::configured_backfill_target()?;
-    let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type,
-                e.model, e.dimensions, e.content_hash
+    let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type
          FROM memories m
          LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE m.status IN ('active', 'stale', 'archived')
-         ORDER BY m.updated_at_epoch DESC, m.id DESC";
+         WHERE (e.memory_id IS NULL
+                OR e.model <> ?1
+                OR e.dimensions <> ?2
+                OR e.updated_at_epoch < m.updated_at_epoch)
+           AND m.status IN ('active', 'stale', 'archived')
+         ORDER BY m.updated_at_epoch DESC, m.id DESC
+         LIMIT ?3";
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([], |row| {
-        Ok(MemoryEmbeddingReindexCandidate {
-            id: row.get(0)?,
-            topic_key: row.get(1)?,
-            title: row.get(2)?,
-            content: row.get(3)?,
-            memory_type: row.get(4)?,
-            stored_model: row.get(5)?,
-            stored_dimensions: row.get(6)?,
-            stored_content_hash: row.get(7)?,
-        })
-    })?;
-    let mut pending = Vec::new();
-    for row in rows {
-        let candidate = row?;
-        if candidate.needs_reindex(&target) {
-            pending.push(candidate);
-            if pending.len() >= limit as usize {
-                break;
-            }
-        }
-    }
+    let rows = stmt.query_map(
+        params![target.model.as_str(), target.dimensions as i64, limit],
+        |row| {
+            Ok(MemoryEmbeddingReindexCandidate {
+                id: row.get(0)?,
+                topic_key: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                memory_type: row.get(4)?,
+            })
+        },
+    )?;
+    let pending = crate::db::query::collect_rows(rows)?;
     let count = pending.len();
     for candidate in pending {
         upsert_memory_embedding(
@@ -204,27 +199,6 @@ struct MemoryEmbeddingReindexCandidate {
     title: String,
     content: String,
     memory_type: String,
-    stored_model: Option<String>,
-    stored_dimensions: Option<i64>,
-    stored_content_hash: Option<String>,
-}
-
-impl MemoryEmbeddingReindexCandidate {
-    fn needs_reindex(&self, target: &EmbeddingBackfillTarget) -> bool {
-        let expected_content_hash = self.expected_content_hash();
-        self.stored_model.as_deref() != Some(target.model.as_str())
-            || self.stored_dimensions != Some(target.dimensions as i64)
-            || self.stored_content_hash.as_deref() != Some(expected_content_hash.as_str())
-    }
-
-    fn expected_content_hash(&self) -> String {
-        super::embedding::embedding_content_hash(
-            &self.title,
-            &self.content,
-            &self.memory_type,
-            self.topic_key.as_deref(),
-        )
-    }
 }
 
 fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
@@ -232,31 +206,19 @@ fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
         return Ok(0);
     }
     let target = super::embedding::configured_backfill_target()?;
-    let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type,
-                e.model, e.dimensions, e.content_hash
-         FROM memories m
-         LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE m.status IN ('active', 'stale', 'archived')";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map([], |row| {
-        Ok(MemoryEmbeddingReindexCandidate {
-            id: row.get(0)?,
-            topic_key: row.get(1)?,
-            title: row.get(2)?,
-            content: row.get(3)?,
-            memory_type: row.get(4)?,
-            stored_model: row.get(5)?,
-            stored_dimensions: row.get(6)?,
-            stored_content_hash: row.get(7)?,
-        })
-    })?;
-    let mut pending = 0;
-    for row in rows {
-        if row?.needs_reindex(&target) {
-            pending += 1;
-        }
-    }
-    Ok(pending)
+    let sql = "SELECT COUNT(*)
+               FROM memories m
+               LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+               WHERE (e.memory_id IS NULL
+                      OR e.model <> ?1
+                      OR e.dimensions <> ?2
+                      OR e.updated_at_epoch < m.updated_at_epoch)
+                 AND m.status IN ('active', 'stale', 'archived')";
+    Ok(conn.query_row(
+        sql,
+        params![target.model.as_str(), target.dimensions as i64],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn embed_query_text(query: &str) -> Vec<f32> {
