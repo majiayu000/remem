@@ -193,6 +193,17 @@ pub mod gates {
             injection.metrics.abstention_false_positive_bound.rate,
         );
         metrics.insert(
+            "injection.user_prompt_submit_memory_recall".to_string(),
+            injection.metrics.user_prompt_submit_memory_recall.rate,
+        );
+        metrics.insert(
+            "injection.user_prompt_submit_abstention_false_positive_bound".to_string(),
+            injection
+                .metrics
+                .user_prompt_submit_abstention_false_positive_bound
+                .rate,
+        );
+        metrics.insert(
             "injection.all_checks".to_string(),
             bool_metric(injection.metrics.all_checks_passed),
         );

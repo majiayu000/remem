@@ -1,46 +1,12 @@
 use anyhow::Result;
 
-use crate::db;
-
 use super::native::sync_native_memory;
 use super::spill::{
     record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event,
     SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
 };
 
-pub async fn session_init(host: Option<&str>) -> Result<()> {
-    let timer = crate::log::Timer::start("session-init", "");
-    let input = std::io::read_to_string(std::io::stdin())?;
-    crate::log::debug(
-        "session-init",
-        &format!("raw input: {}", crate::db::truncate_str(&input, 500)),
-    );
-
-    let Some(event) = session_init_event(&input, host) else {
-        timer.done("skipped");
-        return Ok(());
-    };
-
-    let project = event.project.clone();
-    let conn = db::open_db()?;
-    db::upsert_session(&conn, &event.session_id, &event.project, None)?;
-
-    timer.done(&format!("project={}", project));
-    Ok(())
-}
-
-fn session_init_event(input: &str, host: Option<&str>) -> Option<crate::adapter::ParsedHookEvent> {
-    let Some((_adapter, event)) = detect_adapter_for_host(input, host) else {
-        crate::log::warn("session-init", "SKIP no adapter matched hook input");
-        return None;
-    };
-
-    crate::log::info(
-        "session-init",
-        &format!("project={} session={}", event.project, event.session_id),
-    );
-    Some(event)
-}
+use crate::db;
 
 pub async fn observe(host: Option<&str>) -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
@@ -215,7 +181,7 @@ fn record_observed_event(
     Ok(capture_event_id)
 }
 
-fn detect_adapter_for_host(
+pub(super) fn detect_adapter_for_host(
     input: &str,
     host: Option<&str>,
 ) -> Option<(
@@ -345,7 +311,7 @@ mod tests {
 
     use super::super::spill::spill_capture_event;
     use super::{
-        event_skip_reason, observe_input, record_capture_event, session_init_event,
+        event_skip_reason, observe_input, record_capture_event,
         SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
     };
 
@@ -409,32 +375,6 @@ mod tests {
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
         assert_eq!(skipped, None);
-    }
-
-    #[test]
-    fn session_init_skips_empty_hook_input() {
-        let _test_dir = ScopedTestDataDir::new("session-init-empty");
-
-        assert!(session_init_event("", Some("claude-code")).is_none());
-    }
-
-    #[test]
-    fn session_init_accepts_claude_user_prompt_submit_shape() {
-        let _test_dir = ScopedTestDataDir::new("session-init-user-prompt");
-        let input = serde_json::json!({
-            "session_id": "sess-user-prompt",
-            "cwd": "/tmp/remem",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "hello"
-        })
-        .to_string();
-
-        let Some(event) = session_init_event(&input, Some("claude-code")) else {
-            panic!("event should parse");
-        };
-
-        assert_eq!(event.session_id, "sess-user-prompt");
-        assert_eq!(event.project, "/tmp/remem");
     }
 
     #[test]

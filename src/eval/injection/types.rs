@@ -4,7 +4,7 @@ use serde::Serialize;
 
 pub use crate::eval::governance::RateMetric as InjectionRateMetric;
 
-pub(super) const CORPUS_NAME: &str = "builtin-session-start-injection-v1";
+pub(super) const CORPUS_NAME: &str = "builtin-context-injection-v2";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InjectionEvalOptions {
@@ -46,6 +46,8 @@ pub struct InjectionMetricSummary {
     pub expected_memory_recall: InjectionRateMetric,
     pub forbidden_memory_exclusion: InjectionRateMetric,
     pub abstention_false_positive_bound: InjectionRateMetric,
+    pub user_prompt_submit_memory_recall: InjectionRateMetric,
+    pub user_prompt_submit_abstention_false_positive_bound: InjectionRateMetric,
     pub all_checks_passed: bool,
 }
 
@@ -87,6 +89,27 @@ impl Display for InjectionEvalReport {
             self.metrics.abstention_false_positive_bound.passed,
             self.metrics.abstention_false_positive_bound.total,
             self.metrics.abstention_false_positive_bound.rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "user_prompt_submit_memory_recall: {}/{} ({:.1}%)",
+            self.metrics.user_prompt_submit_memory_recall.passed,
+            self.metrics.user_prompt_submit_memory_recall.total,
+            self.metrics.user_prompt_submit_memory_recall.rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "user_prompt_submit_abstention_false_positive_bound: {}/{} ({:.1}%)",
+            self.metrics
+                .user_prompt_submit_abstention_false_positive_bound
+                .passed,
+            self.metrics
+                .user_prompt_submit_abstention_false_positive_bound
+                .total,
+            self.metrics
+                .user_prompt_submit_abstention_false_positive_bound
+                .rate
+                * 100.0
         )?;
         writeln!(
             f,

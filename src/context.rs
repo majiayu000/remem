@@ -14,6 +14,7 @@ mod invocation;
 mod memory_traits;
 mod ownership;
 mod policy;
+mod prompt_submit;
 mod query;
 mod render;
 mod sections;
@@ -23,6 +24,7 @@ mod style;
 mod tests;
 mod types;
 
+pub(crate) use prompt_submit::prompt_submit_additional_context;
 pub(crate) use render::governance_eval_snapshot;
 pub(crate) use render::session_start_eval_snapshot;
 pub use render::{generate_context, generate_context_from_cli};
