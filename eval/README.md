@@ -129,3 +129,21 @@ changes cannot pass on aggregate rates alone.
 The hidden `--simulate-golden-regression` flag is exercised in CI to prove the
 gate fails on a constructed per-slice retrieval regression before changing
 defaults.
+
+## Graph Decision Gate
+
+`remem eval-graph-decision` runs the issue #382 wire-or-freeze gate. It compares
+standard golden retrieval against the explicit entity-BFS multi-hop proxy path
+and writes the artifact used by the graph retrieval ADR:
+
+```bash
+remem eval-graph-decision --json-out eval/graph-decision/report.json
+```
+
+The gate records the pre-registered 5% multi-hop evidence-recall threshold,
+non-`multi_hop` zero-regression checks, a 1000ms p95 latency budget, whether the
+entity-BFS proxy exercised two-hop expansion, and whether literal `graph_edges`
+traversal was evaluated. A failure to clear the entity-BFS wire requirements is
+not a process failure by itself; it means the correct decision is to keep
+`graph_edges` frozen as a retrieval channel until a future literal graph-edge
+fixture and A/B report prove material value.

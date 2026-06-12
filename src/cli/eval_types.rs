@@ -27,3 +27,15 @@ pub(in crate::cli) struct EvalGatesArgs {
     #[arg(long, hide = true)]
     pub(in crate::cli) simulate_golden_regression: bool,
 }
+
+#[derive(Args)]
+pub(in crate::cli) struct EvalGraphDecisionArgs {
+    #[arg(long, default_value = crate::eval::graph_decision::DEFAULT_DATASET_PATH)]
+    pub(in crate::cli) dataset: String,
+    #[arg(long, short = 'k', default_value = "5")]
+    pub(in crate::cli) k: usize,
+    #[arg(long, default_value = crate::eval::graph_decision::DEFAULT_REPORT_PATH)]
+    pub(in crate::cli) json_out: String,
+    #[arg(long)]
+    pub(in crate::cli) json: bool,
+}

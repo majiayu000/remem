@@ -1,5 +1,5 @@
 mod display;
-mod run;
+pub(in crate::eval) mod run;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -9,6 +9,6 @@ pub use run::{
     run_dataset_path,
 };
 pub use types::{
-    EvidenceRef, GoldenDataset, GoldenEvalReport, GoldenMemory, GoldenQuery, MetricAverages,
-    QueryEvaluation, QueryMetrics, QueryStatus,
+    CategoryEvaluation, EvidenceRef, GoldenDataset, GoldenEvalReport, GoldenMemory, GoldenQuery,
+    MetricAverages, QueryEvaluation, QueryMetrics, QueryStatus,
 };
