@@ -33,15 +33,19 @@ pub fn count_legacy_migration_candidates(
     limit: i64,
 ) -> Result<usize> {
     let limit = limit.max(1);
+    let now = chrono::Utc::now().timestamp();
     let count: i64 = if let Some(project) = project {
         conn.query_row(
             "SELECT COUNT(*) FROM (
                  SELECT id FROM pending_observations
-                 WHERE status = 'pending' AND project = ?1
+                 WHERE project = ?1
+                   AND (status = 'pending'
+                        OR (status = 'processing'
+                            AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))
                  ORDER BY created_at_epoch ASC, id ASC
                  LIMIT ?2
              )",
-            params![project, limit],
+            params![project, limit, now],
             |row| row.get(0),
         )?
     } else {
@@ -49,10 +53,12 @@ pub fn count_legacy_migration_candidates(
             "SELECT COUNT(*) FROM (
                  SELECT id FROM pending_observations
                  WHERE status = 'pending'
+                    OR (status = 'processing'
+                        AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?2))
                  ORDER BY created_at_epoch ASC, id ASC
                  LIMIT ?1
              )",
-            params![limit],
+            params![limit, now],
             |row| row.get(0),
         )?
     };
@@ -74,7 +80,7 @@ pub fn migrate_legacy_pending(
         let host = capture_host_for_row(&row.host, fallback_host)?;
         let event_id = legacy_event_id(row.id);
         let content = legacy_capture_content(&row);
-        let outcome = db::record_captured_event_with_id(
+        let outcome = db::record_captured_event_with_id_and_created_at(
             &tx,
             &CaptureEventInput {
                 host,
@@ -88,10 +94,12 @@ pub fn migrate_legacy_pending(
                 task_kind: Some(ExtractionTaskKind::ObservationExtract),
             },
             Some(&event_id),
+            row.created_at_epoch,
         )?;
         let extraction_task_id = outcome.extraction_task_id.ok_or_else(|| {
             anyhow::anyhow!("legacy pending migration did not enqueue extraction")
         })?;
+        let now = chrono::Utc::now().timestamp();
         let changed = tx.execute(
             "UPDATE pending_observations
              SET status = 'migrated',
@@ -100,8 +108,11 @@ pub fn migrate_legacy_pending(
                  next_retry_epoch = NULL,
                  last_error = NULL,
                  updated_at_epoch = ?2
-             WHERE id = ?1 AND status = 'pending'",
-            params![row.id, chrono::Utc::now().timestamp()],
+             WHERE id = ?1
+               AND (status = 'pending'
+                    OR (status = 'processing'
+                        AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))",
+            params![row.id, now, now],
         )?;
         if changed != 1 {
             bail!("legacy pending row {} changed while migrating", row.id);
@@ -127,24 +138,30 @@ fn select_legacy_pending_rows(
     limit: i64,
 ) -> Result<Vec<LegacyPendingRow>> {
     let limit = limit.max(1);
+    let now = chrono::Utc::now().timestamp();
     let sql = if project.is_some() {
         "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
          FROM pending_observations
-         WHERE status = 'pending' AND project = ?1
+         WHERE project = ?1
+           AND (status = 'pending'
+                OR (status = 'processing'
+                    AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))
          ORDER BY created_at_epoch ASC, id ASC
          LIMIT ?2"
     } else {
         "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
          FROM pending_observations
          WHERE status = 'pending'
+            OR (status = 'processing'
+                AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?2))
          ORDER BY created_at_epoch ASC, id ASC
          LIMIT ?1"
     };
     let mut stmt = conn.prepare(sql)?;
     let rows = if let Some(project) = project {
-        stmt.query_map(params![project, limit], row_from_db)?
+        stmt.query_map(params![project, limit, now], row_from_db)?
     } else {
-        stmt.query_map(params![limit], row_from_db)?
+        stmt.query_map(params![limit, now], row_from_db)?
     };
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)

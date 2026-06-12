@@ -89,6 +89,26 @@ pub fn record_captured_event_with_id(
     event_id_override: Option<&str>,
 ) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
+    record_captured_event_inner(conn, input, event_id_override, now, now)
+}
+
+pub fn record_captured_event_with_id_and_created_at(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+    created_at_epoch: i64,
+) -> Result<CaptureEventOutcome> {
+    let now = chrono::Utc::now().timestamp();
+    record_captured_event_inner(conn, input, event_id_override, created_at_epoch, now)
+}
+
+fn record_captured_event_inner(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+    created_at_epoch: i64,
+    now: i64,
+) -> Result<CaptureEventOutcome> {
     let inserted_at = now;
     let sanitized_content = redact_capture_content(input.content);
     let content_hash = exact_hash(&sanitized_content);
@@ -123,7 +143,7 @@ pub fn record_captured_event_with_id(
             content_hash,
             token_estimate,
             retention_class,
-            now,
+            created_at_epoch,
             inserted_at
         ],
     )?;

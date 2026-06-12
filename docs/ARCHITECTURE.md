@@ -19,7 +19,7 @@
 ┌──────────────────────┐  ┌──────────────────────────────────┐
 │  MCP Server (stdio)  │  │  Background Worker (detached)     │
 │                      │  │                                    │
-│  search              │  │  1. flush (batch→obs, ≤15/batch)  │
+│  search              │  │  1. extract (capture→derived)       │
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │
@@ -32,7 +32,7 @@
 ┌───────────────────────────────────────────────────────────┐
 │              ~/.remem/remem.db (SQLite + WAL)              │
 │                                                            │
-│  pending_observations → observations → compressed          │
+│  captured_events → extraction_tasks → observations         │
 │  memories (decision/bugfix/preference/discovery/...)       │
 │  session_summaries    workstreams    FTS5 full-text index   │
 │  summarize_cooldown   ai_usage_events                      │
@@ -196,10 +196,11 @@ New session starts
 ### 4. Legacy Pending Queue Recovery
 
 Runtime capture no longer writes `pending_observations`, and `session-init`
-does not auto-flush that legacy queue. Old pending rows have an explicit replay
-path instead: `remem pending migrate-legacy` records equivalent
-`captured_events`, enqueues `observation_extract` tasks, then marks the legacy
-rows `migrated`. Rows stored with `host = unknown` require `--host
+does not auto-flush that legacy queue. Old pending rows and expired legacy
+processing rows have an explicit replay path instead: `remem pending
+migrate-legacy` records equivalent `captured_events` with the legacy event
+timestamp, enqueues `observation_extract` tasks, then marks the legacy rows
+`migrated`. Rows stored with `host = unknown` require `--host
 claude-code|codex-cli` so replayed evidence has a valid v2 capture identity.
 Failed legacy rows stay visible through pending admin commands; retry them back
 to `pending` before migration or purge them explicitly.
