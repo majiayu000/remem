@@ -5,16 +5,18 @@ use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
 
+use super::commit_signals::query_recent_commit_messages;
 use super::filters::{
     push_context_related_filter, push_excluded_type_filter, push_owner_excluded_filter,
     push_owner_included_filter,
 };
+use super::hybrid_context::query_hybrid_context_memories;
+use super::implicit_query::build_implicit_context_query;
 use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
 use super::types::{ContextLoadError, HiddenDuplicateGroup, LoadedContext, SessionSummaryBrief};
 
-const BASENAME_SEARCH_LIMIT: i64 = 20;
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
 const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
@@ -37,8 +39,37 @@ pub(super) fn load_context_data_with_policy(
     collect_diagnostics: bool,
 ) -> LoadedContext {
     let mut errors = Vec::new();
-    let mut memory_selection =
-        load_project_memories(conn, project, current_branch, policy, collect_diagnostics);
+    let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
+        .unwrap_or_else(|e| {
+            let message = format!("failed to load recent summaries for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("sessions", message));
+            Vec::new()
+        });
+    let workstreams =
+        crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(|e| {
+            let message = format!("failed to load active workstreams for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("workstreams", message));
+            Vec::new()
+        });
+    let commit_messages = query_recent_commit_messages(conn, project, current_branch, 3)
+        .unwrap_or_else(|e| {
+            let message = format!("failed to load recent git commit messages for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("commits", message));
+            Vec::new()
+        });
+    let mut memory_selection = load_project_memories(
+        conn,
+        project,
+        current_branch,
+        policy,
+        collect_diagnostics,
+        &commit_messages,
+        &summaries,
+        &workstreams,
+    );
     errors.append(&mut memory_selection.errors);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
@@ -54,21 +85,6 @@ pub(super) fn load_context_data_with_policy(
         errors.push(ContextLoadError::new("lessons", message));
         Vec::new()
     });
-
-    let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
-        .unwrap_or_else(|e| {
-            let message = format!("failed to load recent summaries for {project}: {e}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("sessions", message));
-            Vec::new()
-        });
-    let workstreams =
-        crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(|e| {
-            let message = format!("failed to load active workstreams for {project}: {e}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("workstreams", message));
-            Vec::new()
-        });
 
     LoadedContext {
         memories,
@@ -101,6 +117,9 @@ fn load_project_memories(
     current_branch: Option<&str>,
     policy: &ContextPolicy,
     collect_diagnostics: bool,
+    commit_messages: &[String],
+    summaries: &[SessionSummaryBrief],
+    workstreams: &[crate::workstream::WorkStream],
 ) -> ContextMemorySelection {
     let mut memories = Vec::new();
     let mut errors = Vec::new();
@@ -111,6 +130,37 @@ fn load_project_memories(
         .section(SectionKind::MemoryIndex)
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
+    if let Some(implicit_query) = build_implicit_context_query(
+        project,
+        current_branch,
+        commit_messages,
+        summaries,
+        workstreams,
+    ) {
+        match query_hybrid_context_memories(
+            conn,
+            project,
+            &implicit_query,
+            current_branch,
+            excluded_types,
+            policy.limits.candidate_fetch_limit as i64,
+        ) {
+            Ok(retrieved) => {
+                for memory in retrieved {
+                    if seen_ids.insert(memory.id) {
+                        memories.push(memory);
+                    }
+                }
+            }
+            Err(e) => {
+                let message =
+                    format!("failed to retrieve hybrid context memories for {project}: {e}");
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("memories", message));
+            }
+        }
+    }
+
     let recent = query_owner_included_memory_rows(
         conn,
         project,
@@ -128,29 +178,6 @@ fn load_project_memories(
     for row in recent {
         if seen_ids.insert(row.memory.id) {
             memories.push(row.memory);
-        }
-    }
-
-    let project_query = project.rsplit('/').next().unwrap_or(project);
-    match query_owner_included_memory_rows(
-        conn,
-        project,
-        Some(project_query),
-        current_branch,
-        excluded_types,
-        BASENAME_SEARCH_LIMIT,
-    ) {
-        Ok(searched) => {
-            for row in searched {
-                if seen_ids.insert(row.memory.id) {
-                    memories.push(row.memory);
-                }
-            }
-        }
-        Err(e) => {
-            let message = format!("failed to search context memories for {project}: {e}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("memories", message));
         }
     }
 

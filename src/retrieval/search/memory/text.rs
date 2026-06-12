@@ -6,8 +6,8 @@ use rusqlite::Connection;
 use crate::memory::{self, Memory};
 
 use super::super::common::{
-    paginate_memories, sanitize_fts_query, weighted_rank_score, weighted_ranked_fuse,
-    WeightedRankedChannel, WeightedRankedHit,
+    paginate_memories, rank_normalized_score, sanitize_fts_query, weighted_rank_score,
+    weighted_ranked_fuse, WeightedRankedChannel, WeightedRankedHit,
 };
 use super::{
     ChannelContribution, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
@@ -461,10 +461,6 @@ fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChann
             hits: &channel.hits,
         })
         .collect()
-}
-
-fn rank_normalized_score(rank: usize) -> f64 {
-    1.0 / (rank as f64 + 1.0)
 }
 
 fn vector_similarity_score(distance: f32) -> f64 {

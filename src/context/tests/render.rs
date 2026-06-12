@@ -595,7 +595,7 @@ fn render_context_output_exposes_primary_memory_query_failures() {
         .contains("- memories: failed to load recent context memories for /tmp/remem"));
     assert!(rendered
         .output
-        .contains("- memories: failed to search context memories for /tmp/remem"));
+        .contains("- memories: failed to retrieve hybrid context memories for /tmp/remem"));
     assert!(!rendered.output.contains("No previous sessions found."));
 }
 

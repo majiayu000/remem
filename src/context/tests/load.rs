@@ -28,9 +28,9 @@ fn load_context_data_records_primary_memory_query_failures() {
     assert!(memory_errors.iter().any(|error| error
         .message
         .contains("failed to load recent context memories")));
-    assert!(memory_errors
-        .iter()
-        .any(|error| error.message.contains("failed to search context memories")));
+    assert!(memory_errors.iter().any(|error| error
+        .message
+        .contains("failed to retrieve hybrid context memories")));
 }
 
 #[test]
@@ -636,7 +636,7 @@ fn load_context_data_excludes_global_non_preferences_from_main_memory_pool() {
 }
 
 #[test]
-fn load_context_data_excludes_global_non_preferences_from_basename_search() {
+fn load_context_data_excludes_global_non_preferences_from_hybrid_retrieval() {
     let conn = Connection::open_in_memory().unwrap();
     setup_context_schema(&conn);
     let project = "/tmp/remem";
@@ -656,7 +656,7 @@ fn load_context_data_excludes_global_non_preferences_from_basename_search() {
         Some("older-local-memory"),
         "decision",
         "Older local remem decision",
-        "A project-local decision should still appear through basename search.",
+        "A project-local decision should still appear through hybrid retrieval.",
         now - 10,
     );
     insert_memory(
