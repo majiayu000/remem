@@ -446,9 +446,27 @@ mod tests {
             report.graph_edges_retrieval_decision,
             GraphEdgesRetrievalDecision::RemainFrozenPendingLiteralEval
         );
-        assert!(report.checks.all_checks_passed);
+        assert!(!report.checks.all_checks_passed);
         assert!(!report.checks.safe_to_wire_entity_bfs);
+        assert!(!report.checks.benefit_threshold_met);
+        assert!(!report.checks.non_multi_hop_zero_regression);
         assert!(report.deltas.multi_hop_evidence_recall_at_k < BENEFIT_THRESHOLD);
+        let standard_non_multi = report
+            .standard
+            .non_multi_hop_slices
+            .metrics
+            .as_ref()
+            .context("standard non-multi-hop metrics")?;
+        let entity_bfs_non_multi = report
+            .entity_bfs
+            .non_multi_hop_slices
+            .metrics
+            .as_ref()
+            .context("entity-BFS non-multi-hop metrics")?;
+        assert!(
+            entity_bfs_non_multi.precision_at_k < standard_non_multi.precision_at_k,
+            "entity-BFS precision should remain a blocking regression"
+        );
         Ok(())
     }
 

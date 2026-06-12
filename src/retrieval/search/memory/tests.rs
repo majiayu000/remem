@@ -237,6 +237,151 @@ fn semantic_vector_channel_recalls_paraphrase_without_lexical_overlap() -> Resul
 }
 
 #[test]
+fn search_abstains_when_entity_match_lacks_claim_evidence() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "synthetic/kestrelnook",
+            title: "Kestrelnook Nebulalatch Owner",
+            content: "NebulaLatch is owned by Team Mica.",
+            scope: "project",
+            updated_at_epoch: 100,
+        },
+    )?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 2,
+            project: "synthetic/kestrelnook",
+            title: "Kestrelnook Nebulalatch Quorum Current",
+            content: "current NebulaLatch quorum is 7.",
+            scope: "project",
+            updated_at_epoch: 90,
+        },
+    )?;
+    for id in [1, 2] {
+        crate::retrieval::entity::link_entities(
+            &conn,
+            id,
+            &["KestrelNook".to_string(), "NebulaLatch".to_string()],
+        )?;
+    }
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("Has Project KestrelNook migrated NebulaLatch to Oracle Cloud?"),
+        Some("synthetic/kestrelnook"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert!(memories.is_empty(), "{memories:#?}");
+    assert!(
+        explain.filtered_result_count > 0,
+        "entity/FTS candidates should be filtered by evidence gate: {explain:#?}"
+    );
+    assert!(explain.claim_terms.iter().any(|term| term == "migrated"));
+    Ok(())
+}
+
+#[test]
+fn evidence_gate_preserves_entity_match_with_supported_claim() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "synthetic/kestrelnook",
+            title: "Kestrelnook Nebulalatch Quorum Current",
+            content: "current NebulaLatch quorum is 7.",
+            scope: "project",
+            updated_at_epoch: 100,
+        },
+    )?;
+    crate::retrieval::entity::link_entities(
+        &conn,
+        1,
+        &["KestrelNook".to_string(), "NebulaLatch".to_string()],
+    )?;
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("Current NebulaLatch quorum for Project kestrelnook?"),
+        Some("synthetic/kestrelnook"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    assert_eq!(explain.filtered_result_count, 0);
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == 1)
+        .context("expected retained result in explain")?;
+    assert!(result.evidence_confidence >= explain.min_evidence_confidence);
+    assert!(explain.claim_terms.iter().any(|term| term == "quorum"));
+    Ok(())
+}
+
+#[test]
+fn evidence_gate_preserves_family_relation_aliases() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "personal",
+            title: "Family update from Melanie",
+            content: "Melanie mentioned her son Tom and her daughter Sarah.",
+            scope: "project",
+            updated_at_epoch: 100,
+        },
+    )?;
+    crate::retrieval::entity::link_entities(
+        &conn,
+        1,
+        &[
+            "Melanie".to_string(),
+            "Tom".to_string(),
+            "Sarah".to_string(),
+        ],
+    )?;
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("Melanie kids"),
+        Some("personal"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    assert!(explain.claim_terms.iter().any(|term| term == "kids"));
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == 1)
+        .context("expected retained family relation result")?;
+    assert!(result.evidence_confidence >= explain.min_evidence_confidence);
+    Ok(())
+}
+
+#[test]
 fn search_explain_reports_disabled_vector_channel_when_table_is_missing() -> Result<()> {
     let conn = setup_explain_conn()?;
     conn.execute("DROP TABLE memory_embeddings", [])?;
