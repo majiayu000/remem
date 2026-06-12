@@ -30,6 +30,7 @@ pub(super) struct LoadedContext {
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
+    pub memory_abstained: bool,
     pub errors: Vec<ContextLoadError>,
     pub owner_traces: Vec<OwnerTrace>,
     pub owner_counts: OwnerCounts,

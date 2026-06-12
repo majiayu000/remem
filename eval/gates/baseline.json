@@ -42,6 +42,7 @@
     "golden.slice.temporal.precision_at_k": 0.25,
     "golden.slice.temporal.recall_at_k": 1.0,
     "golden.total_queries": 50.0,
+    "injection.abstention_false_positive_bound": 1.0,
     "injection.all_checks": 1.0,
     "injection.expected_memory_recall": 1.0,
     "injection.forbidden_memory_exclusion": 1.0

@@ -2,6 +2,9 @@
   "version": "2026-06-12",
   "default_max_drop": 0.0,
   "metrics": {
+    "injection.abstention_false_positive_bound": {
+      "max_drop": 0.0
+    },
     "golden.slice.abstention.abstention_pass_rate": {
       "max_drop": 0.0
     },

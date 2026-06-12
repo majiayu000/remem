@@ -5,6 +5,7 @@ use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
 
+use super::abstention::filter_recent_rows_by_task_embedding;
 use super::commit_signals::query_recent_commit_messages;
 use super::filters::{
     push_context_related_filter, push_excluded_type_filter, push_owner_excluded_filter,
@@ -91,6 +92,7 @@ pub(super) fn load_context_data_with_policy(
         lessons,
         summaries,
         workstreams,
+        memory_abstained: memory_selection.abstained,
         errors,
         owner_traces: memory_selection.owner_traces,
         owner_counts: memory_selection.owner_counts,
@@ -100,14 +102,15 @@ pub(super) fn load_context_data_with_policy(
 
 struct ContextMemorySelection {
     memories: Vec<Memory>,
+    abstained: bool,
     errors: Vec<ContextLoadError>,
     owner_traces: Vec<OwnerTrace>,
     owner_counts: OwnerCounts,
     diagnostics: super::types::ContextDiagnostics,
 }
 
-struct ContextMemoryRow {
-    memory: Memory,
+pub(super) struct ContextMemoryRow {
+    pub(super) memory: Memory,
     owner: OwnerMetadata,
 }
 
@@ -125,11 +128,15 @@ fn load_project_memories(
     let mut errors = Vec::new();
     let mut traces = Vec::new();
     let mut seen_ids = HashSet::new();
+    let mut abstained = false;
+    let mut task_abstention_query = None;
 
     let excluded_types = policy
         .section(SectionKind::MemoryIndex)
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
+    let has_task_signals =
+        !commit_messages.is_empty() || !summaries.is_empty() || !workstreams.is_empty();
     if let Some(implicit_query) = build_implicit_context_query(
         project,
         current_branch,
@@ -146,9 +153,13 @@ fn load_project_memories(
             policy.limits.candidate_fetch_limit as i64,
         ) {
             Ok(retrieved) => {
-                for memory in retrieved {
-                    if seen_ids.insert(memory.id) {
-                        memories.push(memory);
+                if retrieved.is_empty() && has_task_signals {
+                    task_abstention_query = Some(implicit_query);
+                } else {
+                    for memory in retrieved {
+                        if seen_ids.insert(memory.id) {
+                            memories.push(memory);
+                        }
                     }
                 }
             }
@@ -161,23 +172,54 @@ fn load_project_memories(
         }
     }
 
-    let recent = query_owner_included_memory_rows(
-        conn,
-        project,
-        None,
-        current_branch,
-        excluded_types,
-        policy.limits.candidate_fetch_limit as i64,
-    )
-    .unwrap_or_else(|e| {
-        let message = format!("failed to load recent context memories for {project}: {e}");
-        crate::log::error("context", &message);
-        errors.push(ContextLoadError::new("memories", message));
-        Vec::new()
-    });
-    for row in recent {
-        if seen_ids.insert(row.memory.id) {
-            memories.push(row.memory);
+    if !abstained {
+        let recent_limit = if task_abstention_query.is_some() {
+            policy
+                .limits
+                .candidate_fetch_limit
+                .saturating_mul(20)
+                .max(30) as i64
+        } else {
+            policy.limits.candidate_fetch_limit as i64
+        };
+        let recent = query_owner_included_memory_rows(
+            conn,
+            project,
+            None,
+            current_branch,
+            excluded_types,
+            recent_limit,
+        )
+        .unwrap_or_else(|e| {
+            let message = format!("failed to load recent context memories for {project}: {e}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("memories", message));
+            Vec::new()
+        });
+        let recent = match task_abstention_query.as_deref() {
+            Some(task_query) => filter_recent_rows_by_task_embedding(
+                conn,
+                task_query,
+                recent,
+                policy.limits.candidate_fetch_limit,
+            )
+            .unwrap_or_else(|e| {
+                let message =
+                    format!("failed to evaluate abstention rescue memories for {project}: {e}");
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("memories", message));
+                abstained = true;
+                Vec::new()
+            }),
+            None => recent,
+        };
+        if task_abstention_query.is_some() && recent.is_empty() {
+            abstained = true;
+        }
+        for row in recent {
+            if seen_ids.insert(row.memory.id) {
+                memories.push(row.memory);
+            }
         }
     }
 
@@ -229,6 +271,7 @@ fn load_project_memories(
 
     ContextMemorySelection {
         memories: selected,
+        abstained,
         errors,
         owner_traces: traces,
         owner_counts,

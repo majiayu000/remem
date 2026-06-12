@@ -1,6 +1,7 @@
 use crate::memory::{Memory, MemoryType};
 use std::collections::HashMap;
 
+use super::super::audit::memory_render_metadata;
 use super::super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::super::memory_traits::is_memory_self_diagnostic;
 use super::super::policy::ContextLimits;
@@ -76,6 +77,7 @@ pub(in crate::context) fn render_core_memory_with_limits(
             &mut total_chars,
             memory,
             limits.core_char_limit,
+            now,
         ) {
             selected_ids.insert(memory.id);
             *type_counts.entry(memory.memory_type.as_str()).or_default() += 1;
@@ -97,6 +99,7 @@ pub(in crate::context) fn render_core_memory_with_limits(
             &mut total_chars,
             memory,
             limits.core_char_limit,
+            now,
         );
     }
 
@@ -113,8 +116,12 @@ pub(in crate::context) fn render_core_memory_with_limits(
     for (memory, preview) in selected {
         let date = format_epoch_short(memory.updated_at_epoch);
         output.push_str(&format!(
-            "**#{} {}** ({}, {})\n",
-            memory.id, memory.title, memory.memory_type, date
+            "**#{} {}** ({}, {}; {})\n",
+            memory.id,
+            memory.title,
+            memory.memory_type,
+            date,
+            memory_render_metadata(memory, now)
         ));
         output.push_str(&preview);
         output.push('\n');
@@ -131,13 +138,15 @@ fn push_selected_memory<'a>(
     total_chars: &mut usize,
     memory: &'a Memory,
     max_chars: usize,
+    now_epoch: i64,
 ) -> bool {
     let header = format!(
-        "**#{} {}** ({}, {})\n",
+        "**#{} {}** ({}, {}; {})\n",
         memory.id,
         memory.title,
         memory.memory_type,
-        format_epoch_short(memory.updated_at_epoch)
+        format_epoch_short(memory.updated_at_epoch),
+        memory_render_metadata(memory, now_epoch)
     );
     let fixed_chars = char_len(&header) + 1;
     if *total_chars + fixed_chars >= max_chars {

@@ -14,10 +14,13 @@ pub(super) use index::render_memory_index;
 #[cfg(test)]
 pub(super) use index::render_memory_index_with_limits;
 pub(super) use index::render_memory_index_with_limits_excluding;
+pub(super) use index::render_memory_index_with_summary;
 pub(super) use lessons::render_lessons_with_limit;
+pub(super) use lessons::render_lessons_with_summary;
 #[cfg(test)]
 pub(super) use sessions::render_recent_sessions;
 pub(super) use sessions::render_recent_sessions_with_limit;
 #[cfg(test)]
 pub(super) use workstreams::render_workstreams;
 pub(super) use workstreams::render_workstreams_with_limits;
+pub(super) use workstreams::render_workstreams_with_summary;

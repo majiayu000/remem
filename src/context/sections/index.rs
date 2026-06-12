@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::memory::{Memory, MemoryType};
 
+use super::super::audit::memory_render_metadata;
 use super::super::format::{
     char_len, format_epoch_short, truncate_chars_with_ellipsis, type_label,
 };
@@ -28,8 +29,23 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
     limits: &ContextLimits,
     excluded_ids: &HashSet<i64>,
 ) -> usize {
+    render_memory_index_with_summary(output, memories, limits, excluded_ids).count
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(in crate::context) struct IndexRenderSummary {
+    pub count: usize,
+    pub ids: Vec<i64>,
+}
+
+pub(in crate::context) fn render_memory_index_with_summary(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
+) -> IndexRenderSummary {
     if limits.memory_index_limit == 0 || limits.memory_index_char_limit == 0 {
-        return 0;
+        return IndexRenderSummary::default();
     }
 
     let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
@@ -45,9 +61,10 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
             .push(memory);
     }
     if by_type.is_empty() {
-        return 0;
+        return IndexRenderSummary::default();
     }
 
+    let now = chrono::Utc::now().timestamp();
     let mut display_order = MemoryType::ALL
         .iter()
         .copied()
@@ -58,6 +75,7 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
     let mut body = String::new();
     let mut total_chars = 0usize;
     let mut rendered_count = 0usize;
+    let mut rendered_ids = Vec::new();
     let mut ordered_types = HashSet::new();
     for memory_type in display_order {
         let memory_type_key = memory_type.as_str();
@@ -73,6 +91,8 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
                 memories_for_type,
                 limits.memory_index_char_limit,
                 &mut total_chars,
+                &mut rendered_ids,
+                now,
             );
         }
     }
@@ -93,17 +113,22 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
                     memories_for_type,
                     limits.memory_index_char_limit,
                     &mut total_chars,
+                    &mut rendered_ids,
+                    now,
                 );
             }
         }
     }
     if rendered_count == 0 {
-        return 0;
+        return IndexRenderSummary::default();
     }
     output.push_str("## Index\n");
     output.push_str(&body);
     output.push('\n');
-    rendered_count
+    IndexRenderSummary {
+        count: rendered_count,
+        ids: rendered_ids,
+    }
 }
 
 fn push_memory_index_line(
@@ -113,6 +138,8 @@ fn push_memory_index_line(
     memories: &[&Memory],
     max_chars: usize,
     total_chars: &mut usize,
+    rendered_ids: &mut Vec<i64>,
+    now_epoch: i64,
 ) -> usize {
     let section_label = if label == memory_type {
         memory_type.to_string()
@@ -131,7 +158,13 @@ fn push_memory_index_line(
     let mut first = true;
     for memory in memories.iter().take(10) {
         let date = format_epoch_short(memory.updated_at_epoch);
-        let item = format!("#{} {} ({})", memory.id, memory.title, date);
+        let item = format!(
+            "#{} {} ({}; {})",
+            memory.id,
+            memory.title,
+            date,
+            memory_render_metadata(memory, now_epoch)
+        );
         let separator = if first { "" } else { " | " };
         let next_len = char_len(separator) + char_len(&item);
         if *total_chars + line_chars + next_len > max_chars {
@@ -150,12 +183,14 @@ fn push_memory_index_line(
             line.push_str(separator);
             line.push_str(&truncated);
             line_chars += char_len(separator) + char_len(&truncated);
+            rendered_ids.push(memory.id);
             rendered += 1;
             break;
         }
         line.push_str(separator);
         line.push_str(&item);
         line_chars += next_len;
+        rendered_ids.push(memory.id);
         rendered += 1;
         first = false;
     }

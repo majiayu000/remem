@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::db;
 
+use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
 use super::injection_gate::{
@@ -13,16 +14,18 @@ use super::injection_gate::{
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
-use super::ownership::OwnerCounts;
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
     empty_state_output, render_core_memory_with_limits, render_lessons_with_limit,
-    render_memory_index_with_limits_excluding, render_recent_sessions_with_limit,
-    render_workstreams_with_limits,
+    render_lessons_with_summary, render_memory_index_with_limits_excluding,
+    render_memory_index_with_summary, render_recent_sessions_with_limit,
+    render_workstreams_with_limits, render_workstreams_with_summary,
 };
 use super::types::{ContextLoadError, ContextRequest};
+mod stats;
 mod timer;
+pub(in crate::context) use stats::{ContextRenderStats, SectionRenderStats};
 use timer::log_context_timer;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
@@ -30,6 +33,7 @@ pub(in crate::context) use super::debug::build_context_debug_trace;
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
     pub(in crate::context) stats: ContextRenderStats,
+    pub(in crate::context) audit_items: Vec<ContextAuditItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,11 +276,16 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             return Ok(());
         }
     };
-    let (mut decision, stats, precheck) = if use_gate {
+    let (mut decision, stats, precheck, audit_items) = if use_gate {
         let precheck =
             pre_render_context_gate(&conn, &invocation, &request, &policy, debug_enabled);
         if let Some(decision) = precheck.decision {
-            (decision, ContextRenderStats::default(), precheck.precheck)
+            (
+                decision,
+                ContextRenderStats::default(),
+                precheck.precheck,
+                Vec::new(),
+            )
         } else {
             let rendered =
                 render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
@@ -286,7 +295,12 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 rendered.output,
                 precheck.data_version.as_deref(),
             );
-            (decision, rendered.stats, precheck.precheck)
+            (
+                decision,
+                rendered.stats,
+                precheck.precheck,
+                rendered.audit_items,
+            )
         }
     } else {
         let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
@@ -301,11 +315,22 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             },
             rendered.stats,
             ContextGatePrecheck::Off,
+            rendered.audit_items,
         )
     };
     if debug_enabled {
         let decision_for_debug = decision.clone();
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
+    }
+    if !audit_items.is_empty() {
+        if let Err(error) =
+            record_context_injection_items(&conn, &invocation, &decision, &audit_items)
+        {
+            crate::log::warn(
+                "context-audit",
+                &format!("failed to write audit rows: {error}"),
+            );
+        }
     }
     print!("{}", decision.output);
     log_context_timer(timer, &request, &decision, &stats, precheck);
@@ -409,10 +434,12 @@ fn render_context_output_with_policy(
         return Ok(RenderedContext {
             output: empty_context_output(request),
             stats: empty_stats(request),
+            audit_items: Vec::new(),
         });
     }
 
     let mut output = String::new();
+    let (mut lesson_ids, mut index_ids, mut workstream_ids) = (Vec::new(), Vec::new(), Vec::new());
     output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
@@ -456,14 +483,15 @@ fn render_context_output_with_policy(
 
     if !loaded.lessons.is_empty() {
         let before = char_len(&output);
-        let lesson_count = render_lessons_with_limit(
+        let lesson_summary = render_lessons_with_summary(
             &mut output,
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
         );
+        lesson_ids = lesson_summary.ids;
         stats.lessons = SectionRenderStats {
-            count: lesson_count,
+            count: lesson_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
     }
@@ -480,27 +508,29 @@ fn render_context_output_with_policy(
         };
         let before = char_len(&output);
         let core_ids = core_summary.ids.into_iter().collect();
-        let index_count = render_memory_index_with_limits_excluding(
+        let index_summary = render_memory_index_with_summary(
             &mut output,
             &loaded.memories,
             &render_limits,
             &core_ids,
         );
+        index_ids = index_summary.ids;
         stats.index = SectionRenderStats {
-            count: index_count,
+            count: index_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
     }
     if !loaded.workstreams.is_empty() {
         let before = char_len(&output);
-        let workstream_count = render_workstreams_with_limits(
+        let workstream_summary = render_workstreams_with_summary(
             &mut output,
             &loaded.workstreams,
             policy.section_item_limit(SectionKind::Workstreams, 5),
             policy.section_char_limit(SectionKind::Workstreams, 1_200),
         );
+        workstream_ids = workstream_summary.ids;
         stats.workstreams = SectionRenderStats {
-            count: workstream_count,
+            count: workstream_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
     }
@@ -541,7 +571,18 @@ fn render_context_output_with_policy(
         policy.limits.total_char_limit,
         &stats_footer,
     );
-    Ok(RenderedContext { output, stats })
+    let audit_items = build_context_audit_items(
+        &loaded,
+        &stats.core_ids,
+        &index_ids,
+        &lesson_ids,
+        &workstream_ids,
+    );
+    Ok(RenderedContext {
+        output,
+        stats,
+        audit_items,
+    })
 }
 
 fn open_context_connection_or_error(
@@ -576,7 +617,11 @@ fn render_context_open_error(
     stats.total_char_limit = policy.limits.total_char_limit;
     stats.output_chars = char_len(&output);
     enforce_total_char_limit_preserving_footer(&mut output, policy.limits.total_char_limit, "");
-    RenderedContext { output, stats }
+    RenderedContext {
+        output,
+        stats,
+        audit_items: Vec::new(),
+    }
 }
 
 fn context_error_output(request: &ContextRequest, errors: &[ContextLoadError]) -> String {
@@ -667,33 +712,6 @@ fn render_preferences_to_buffer(
     Ok((output, details))
 }
 
-#[derive(Debug, Clone, Default)]
-pub(in crate::context) struct SectionRenderStats {
-    pub count: usize,
-    pub chars: usize,
-}
-
-#[derive(Debug, Clone, Default)]
-pub(in crate::context) struct ContextRenderStats {
-    pub host: String,
-    pub branch: Option<String>,
-    pub hook_source: Option<String>,
-    pub total_char_limit: usize,
-    pub memories_loaded: usize,
-    pub core: SectionRenderStats,
-    pub lessons: SectionRenderStats,
-    pub index: SectionRenderStats,
-    pub preferences: SectionRenderStats,
-    pub project_preferences: usize,
-    pub global_preferences: usize,
-    pub sessions: SectionRenderStats,
-    pub workstreams: SectionRenderStats,
-    pub owner_counts: OwnerCounts,
-    pub core_ids: Vec<i64>,
-    pub output_chars: usize,
-    pub truncated: bool,
-}
-
 #[cfg(test)]
 pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats) -> String {
     build_context_stats_footer_with_style(stats, false)
@@ -754,21 +772,6 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     let mut truncated: String = output.chars().take(keep_chars).collect();
     truncated.push_str(marker);
     *output = truncated;
-}
-
-#[cfg(test)]
-pub(in crate::context) fn build_context_header(
-    project: &str,
-    current_branch: Option<&str>,
-    hook_source: Option<&str>,
-) -> String {
-    build_context_header_with_style(
-        project,
-        current_branch,
-        hook_source,
-        super::host::HostKind::Unknown,
-        false,
-    )
 }
 
 fn build_context_header_with_style(
