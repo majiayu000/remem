@@ -1,9 +1,12 @@
 pub mod claude_memory;
+mod commit_signals;
 mod debug;
 mod diagnostics;
 mod filters;
 mod format;
 mod host;
+mod hybrid_context;
+mod implicit_query;
 mod injection_gate;
 mod invocation;
 mod memory_traits;

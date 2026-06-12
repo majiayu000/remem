@@ -365,7 +365,7 @@ fn encode_embedding(embedding: &[f32]) -> Vec<u8> {
     out
 }
 
-fn decode_embedding(blob: &[u8], dimensions: i64) -> Result<Vec<f32>> {
+pub(crate) fn decode_embedding(blob: &[u8], dimensions: i64) -> Result<Vec<f32>> {
     if dimensions != EMBEDDING_DIMENSIONS as i64 {
         anyhow::bail!(
             "embedding dimensions must be {}, got {}",
@@ -386,7 +386,7 @@ fn decode_embedding(blob: &[u8], dimensions: i64) -> Result<Vec<f32>> {
         .collect())
 }
 
-fn cosine_distance(a: &[f32], b: &[f32]) -> Result<f32> {
+pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> Result<f32> {
     if a.len() != b.len() {
         anyhow::bail!(
             "embedding dimensions differ: query={} stored={}",

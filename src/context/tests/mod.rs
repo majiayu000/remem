@@ -6,6 +6,7 @@ mod diagnostics;
 mod load;
 mod ownership;
 mod render;
+mod retrieval;
 mod sessions;
 
 pub(super) fn sample_memory(id: i64, memory_type: &str, title: &str) -> Memory {

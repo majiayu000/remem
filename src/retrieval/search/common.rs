@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::memory::Memory;
 
-pub(super) fn sanitize_fts_query(raw: &str) -> String {
+pub(crate) fn sanitize_fts_query(raw: &str) -> String {
     let tokens: Vec<String> = raw
         .split_whitespace()
         .map(|token| {
@@ -18,18 +18,18 @@ pub(super) fn sanitize_fts_query(raw: &str) -> String {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct WeightedRankedHit {
+pub(crate) struct WeightedRankedHit {
     pub id: i64,
     pub normalized_score: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct WeightedRankedChannel<'a> {
+pub(crate) struct WeightedRankedChannel<'a> {
     pub weight: f64,
     pub hits: &'a [WeightedRankedHit],
 }
 
-pub(super) fn weighted_ranked_fuse(
+pub(crate) fn weighted_ranked_fuse(
     channels: &[WeightedRankedChannel<'_>],
     k: f64,
 ) -> Vec<(i64, f64)> {
@@ -52,9 +52,13 @@ pub(super) fn weighted_ranked_fuse(
     results
 }
 
-pub(super) fn weighted_rank_score(weight: f64, k: f64, rank: usize, normalized_score: f64) -> f64 {
+pub(crate) fn weighted_rank_score(weight: f64, k: f64, rank: usize, normalized_score: f64) -> f64 {
     let rank_score = 1.0 / (k + rank as f64 + 1.0);
     weight * rank_score * (1.0 + normalized_score.clamp(0.0, 1.0))
+}
+
+pub(crate) fn rank_normalized_score(rank: usize) -> f64 {
+    1.0 / (rank as f64 + 1.0)
 }
 
 pub(super) fn paginate_memories(memories: Vec<Memory>, limit: i64, offset: i64) -> Vec<Memory> {
