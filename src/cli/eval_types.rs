@@ -39,3 +39,15 @@ pub(in crate::cli) struct EvalGraphDecisionArgs {
     #[arg(long)]
     pub(in crate::cli) json: bool,
 }
+
+#[derive(Args)]
+pub(in crate::cli) struct EvalWeightGridArgs {
+    #[arg(long, default_value = crate::eval::weight_grid::DEFAULT_DATASET_PATH)]
+    pub(in crate::cli) dataset: String,
+    #[arg(long, short = 'k', default_value = "5")]
+    pub(in crate::cli) k: usize,
+    #[arg(long, default_value = crate::eval::weight_grid::DEFAULT_REPORT_PATH)]
+    pub(in crate::cli) json_out: String,
+    #[arg(long)]
+    pub(in crate::cli) json: bool,
+}

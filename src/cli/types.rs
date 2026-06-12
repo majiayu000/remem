@@ -452,6 +452,8 @@ pub(super) enum Commands {
     EvalExtraction(super::eval_types::EvalExtractionArgs),
     #[command(name = "eval-graph-decision")]
     EvalGraphDecision(super::eval_types::EvalGraphDecisionArgs),
+    #[command(name = "eval-weight-grid")]
+    EvalWeightGrid(super::eval_types::EvalWeightGridArgs),
     #[command(name = "eval-gates")]
     EvalGates(super::eval_types::EvalGatesArgs),
     /// Run local retrieval diagnostics.
@@ -500,7 +502,6 @@ pub(super) enum Commands {
         action: ImportAction,
     },
 }
-
 #[derive(Subcommand)]
 pub(in crate::cli) enum ContextGateAction {
     /// Show recent read-only context injection rows.
@@ -519,7 +520,6 @@ pub(in crate::cli) enum ContextGateAction {
         json: bool,
     },
 }
-
 #[derive(Subcommand)]
 pub(in crate::cli) enum ModelAction {
     /// Show the currently effective memory AI model configuration.

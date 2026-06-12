@@ -423,3 +423,4 @@ pub mod graph_decision;
 pub mod injection;
 pub mod local;
 pub mod metrics;
+pub mod weight_grid;

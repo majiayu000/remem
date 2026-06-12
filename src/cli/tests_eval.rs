@@ -97,3 +97,28 @@ fn cli_parses_eval_graph_decision_options() {
         _ => panic!("expected eval-graph-decision command"),
     }
 }
+
+#[test]
+fn cli_parses_eval_weight_grid_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-weight-grid",
+        "--dataset",
+        "fixtures/golden.json",
+        "--json-out",
+        "/tmp/weight-grid.json",
+        "--json",
+        "-k",
+        "7",
+    ]);
+
+    match cli.command {
+        Commands::EvalWeightGrid(args) => {
+            assert_eq!(args.dataset, "fixtures/golden.json");
+            assert_eq!(args.json_out, "/tmp/weight-grid.json");
+            assert_eq!(args.k, 7);
+            assert!(args.json);
+        }
+        _ => panic!("expected eval-weight-grid command"),
+    }
+}
