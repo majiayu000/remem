@@ -20,6 +20,7 @@ pub mod scope_cleanup;
 pub mod search_context;
 pub(crate) mod semantic_dedup;
 pub mod service;
+pub mod staleness;
 pub mod state_key;
 pub mod store;
 pub mod types;
@@ -31,5 +32,6 @@ pub use crate::retrieval::memory_search::{
 pub use promote::{promote_summary_to_memory_candidates, slugify_for_topic};
 
 pub use events::*;
+pub use staleness::*;
 pub use store::*;
 pub use types::*;

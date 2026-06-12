@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::params;
 use std::collections::HashSet;
 
-use crate::memory::Memory;
+use crate::memory::{age_staleness_label, memory_staleness as shared_memory_staleness, Memory};
 
 use super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
@@ -135,23 +135,7 @@ pub(in crate::context) fn memory_provenance(memory: &Memory) -> String {
 }
 
 pub(in crate::context) fn memory_staleness(memory: &Memory, now_epoch: i64) -> String {
-    let age = age_staleness(memory.updated_at_epoch, now_epoch);
-    format!("status={}; staleness={age}", memory.status)
-}
-
-fn age_staleness_label(updated_at_epoch: i64, now_epoch: i64) -> String {
-    format!("staleness={}", age_staleness(updated_at_epoch, now_epoch))
-}
-
-fn age_staleness(updated_at_epoch: i64, now_epoch: i64) -> &'static str {
-    let age_days = now_epoch.saturating_sub(updated_at_epoch) / 86_400;
-    if age_days <= 30 {
-        "fresh"
-    } else if age_days <= 90 {
-        "aging"
-    } else {
-        "old"
-    }
+    shared_memory_staleness(memory, now_epoch)
 }
 
 pub(in crate::context) fn record_context_injection_items(

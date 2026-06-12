@@ -395,6 +395,7 @@ fn build_explain(
         })
         .collect();
     let id_to_score: HashMap<i64, f64> = fused.iter().copied().collect();
+    let now_epoch = chrono::Utc::now().timestamp();
     let results = paged
         .iter()
         .enumerate()
@@ -405,6 +406,7 @@ fn build_explain(
             project: memory.project.clone(),
             scope: memory.scope.clone(),
             visibility: visibility_label(memory, project).to_string(),
+            staleness: memory::memory_staleness_label(memory, now_epoch),
             contributions: contributions_for(memory.id, &plan.channels),
         })
         .collect();

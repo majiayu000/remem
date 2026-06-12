@@ -192,10 +192,19 @@ mod tests {
         let explain_json: Value = serde_json::from_slice(&explain_body)?;
 
         assert_eq!(explain_json["data"][0]["id"], memory_id);
+        assert_eq!(explain_json["data"][0]["staleness"]["status"], "active");
+        assert_eq!(
+            explain_json["data"][0]["staleness"]["source_anchor"],
+            "untracked"
+        );
         assert_eq!(explain_json["explain"]["query"], "aurora");
         assert_eq!(
             explain_json["explain"]["results"][0]["memory_id"],
             memory_id
+        );
+        assert_eq!(
+            explain_json["explain"]["results"][0]["staleness"]["status"],
+            "active"
         );
         Ok(())
     }

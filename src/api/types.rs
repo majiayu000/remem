@@ -59,6 +59,7 @@ pub(super) struct MemoryItem {
     pub project: String,
     pub scope: String,
     pub status: String,
+    pub staleness: crate::memory::MemoryStalenessLabel,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

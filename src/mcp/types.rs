@@ -205,6 +205,8 @@ pub(super) struct SearchResult {
     pub updated_at: String,
     pub project: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staleness: Option<crate::memory::MemoryStalenessLabel>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -89,6 +89,12 @@ fn sample_explain() -> SearchExplain {
             project: "proj".to_string(),
             scope: "project".to_string(),
             visibility: "project-local".to_string(),
+            staleness: crate::memory::MemoryStalenessLabel {
+                status: "active".to_string(),
+                age: "fresh",
+                source_anchor: "untracked",
+                label: "status=active; staleness=fresh; source_anchor=untracked".to_string(),
+            },
             contributions: vec![ChannelContribution {
                 channel: "fts".to_string(),
                 rank: 1,
