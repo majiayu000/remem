@@ -722,9 +722,6 @@ fn replay_range_stays_failed_when_followup_fails_before_parent_done() {
     assert_eq!(followup.id, followup_id);
     mark_extraction_task_failed(&conn, followup.id, "worker-c", "followup failed")
         .expect("followup failure should mark replay range failed");
-    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
-        .expect("parent replay task should finish");
-
     let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
     assert_eq!(ranges.len(), 1);
     assert_eq!(ranges[0].status, "failed");
@@ -738,6 +735,11 @@ fn replay_range_stays_failed_when_followup_fails_before_parent_done() {
     );
     assert_eq!(task_status(&conn, followup_id).0, "done");
     assert_eq!(task_status(&conn, task_id).0, "done");
+    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
+        .expect("parent replay task should finish");
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].status, "quarantined");
 }
 
 #[test]

@@ -286,6 +286,7 @@ pub(crate) fn mark_replay_range_replayed_if_done(
              SELECT replay_range_id FROM extraction_tasks
              WHERE id = ?1 AND status = 'done' AND replay_range_id IS NOT NULL
          )
+           AND status != 'quarantined'
            AND NOT EXISTS (
              SELECT 1 FROM extraction_tasks t
              WHERE t.replay_range_id = extraction_replay_ranges.id
