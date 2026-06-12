@@ -193,9 +193,7 @@ fn run_sandbox_eval_inner(
         .is_some_and(|output| output.contains("Migration locking fix"));
     let user_prompt_submit_memory_recall =
         InjectionRateMetric::new(usize::from(user_prompt_submit_passed), 1);
-    let user_prompt_submit_abstention_passed = user_prompt_abstention_context
-        .as_deref()
-        .is_none_or(|output| !output.contains(ABSTENTION_FORBIDDEN_TITLE));
+    let user_prompt_submit_abstention_passed = user_prompt_abstention_context.is_none();
     let user_prompt_submit_abstention_false_positive_bound =
         InjectionRateMetric::new(usize::from(user_prompt_submit_abstention_passed), 1);
     let all_checks_passed = expected_memory_recall.is_perfect()
@@ -220,9 +218,7 @@ fn run_sandbox_eval_inner(
             .push("UserPromptSubmit missing expected memory: Migration locking fix".to_string());
     }
     if !user_prompt_submit_abstention_passed {
-        failing_examples.push(format!(
-            "UserPromptSubmit rendered unrelated memory: {ABSTENTION_FORBIDDEN_TITLE}"
-        ));
+        failing_examples.push("UserPromptSubmit rendered unexpected additionalContext".to_string());
     }
 
     let mut cases = expected_cases;
