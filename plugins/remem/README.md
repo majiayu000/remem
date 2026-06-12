@@ -2,7 +2,7 @@
 
 This directory contains a local Codex plugin wrapper for remem.
 
-The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install hooks. Automatic SessionStart context injection and Stop summarization require an explicit activation step.
+The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install hooks. Automatic SessionStart context injection and Stop summarization require explicit hook trust or activation.
 
 This is a development foundation. The plugin now manages a version-matched
 local runtime under plugin storage for local checkout testing, so it no longer
@@ -79,6 +79,29 @@ The same server exposes `/mcp` with tool descriptors and the
 `ui://remem/dashboard.html` resource for Apps SDK-style testing. Do not add
 `apps` to `.codex-plugin/plugin.json` until `.app.json` can point at a real app
 id.
+
+## Packaged Hooks
+
+The plugin ships reviewable Codex hook definitions in
+`hooks/hooks.json`. Those hooks call the plugin wrapper, not a global remem
+binary:
+
+```bash
+node "${PLUGIN_ROOT}/scripts/remem-hook.js" session-start
+node "${PLUGIN_ROOT}/scripts/remem-hook.js" stop
+```
+
+`remem-hook.js` resolves the version-matched plugin runtime and delegates to:
+
+```bash
+remem context --host codex-cli
+remem summarize --host codex-cli
+```
+
+The plugin manifest intentionally does not add a top-level `hooks` field
+because current plugin validation rejects that field. Keep these hook files as
+the trust-review source until Codex plugin hook ingestion accepts a manifest
+hook pointer.
 
 ## Hook Activation
 

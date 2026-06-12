@@ -10,6 +10,7 @@ const {
   buildSnapshot,
   createServer,
   handleJsonRpc,
+  packagedHooksSummary,
   parseArgs,
   toolDescriptors,
   UI_RESOURCE
@@ -470,6 +471,7 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /remem_timeline_report/);
     assert.match(widget, /remem_workstreams_list/);
     assert.match(widget, /remem_workstream_update/);
+    assert.match(widget, /Packaged plugin hooks/);
     assert.match(widget, /\/api\/governance-preview/);
     assert.match(widget, /\/api\/timeline-around/);
     assert.match(widget, /\/api\/workstream-update/);
@@ -692,4 +694,23 @@ test("activation summary is explicit about dry-run content", () => {
   assert.equal(summary.mentions_mcp, true);
   assert.equal(summary.writes_config, true);
   assert.equal(summary.line_count, 2);
+  assert.equal(summary.packaged_hooks.available, true);
+  assert.deepEqual(summary.packaged_hooks.events, ["SessionStart", "Stop"]);
+  assert.deepEqual(
+    summary.packaged_hooks.commands.map((hook) => [hook.event, hook.command]),
+    [
+      ["SessionStart", 'node "${PLUGIN_ROOT}/scripts/remem-hook.js" session-start'],
+      ["Stop", 'node "${PLUGIN_ROOT}/scripts/remem-hook.js" stop']
+    ]
+  );
+});
+
+test("packaged hooks summary reads reviewable plugin hook definitions", () => {
+  const summary = packagedHooksSummary();
+
+  assert.equal(summary.available, true);
+  assert.match(summary.path, /plugins\/remem\/hooks\/hooks\.json$/);
+  assert.deepEqual(summary.events, ["SessionStart", "Stop"]);
+  assert.equal(summary.commands[0].timeout, 15);
+  assert.equal(summary.commands[1].timeout, 120);
 });

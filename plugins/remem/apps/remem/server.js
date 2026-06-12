@@ -323,8 +323,27 @@ function activationSummary(text) {
     line_count: lines.length,
     writes_config: lines.some((line) => /write|would write|update|install/i.test(line)),
     mentions_hooks: lines.some((line) => /hook/i.test(line)),
-    mentions_mcp: lines.some((line) => /mcp/i.test(line))
+    mentions_mcp: lines.some((line) => /mcp/i.test(line)),
+    packaged_hooks: packagedHooksSummary()
   };
+}
+
+function packagedHooksSummary(options = {}) {
+  const hooksPath = path.join(pluginRoot(options), "hooks", "hooks.json");
+  try {
+    const config = readJson(hooksPath);
+    const hooks = config.hooks && typeof config.hooks === "object" ? config.hooks : {};
+    const commands = Object.entries(hooks).flatMap(([event, entries]) =>
+      (Array.isArray(entries) ? entries : []).flatMap((entry) =>
+        (Array.isArray(entry.hooks) ? entry.hooks : [])
+          .filter((hook) => typeof hook.command === "string")
+          .map((hook) => ({ event, command: hook.command, timeout: hook.timeout }))
+      )
+    );
+    return { available: true, path: hooksPath, events: Object.keys(hooks), commands };
+  } catch (error) {
+    return { available: false, path: hooksPath, error: error.message, events: [], commands: [] };
+  }
 }
 
 function createBackend(options = {}) {
@@ -735,6 +754,7 @@ module.exports = {
   dataDir,
   handleJsonRpc,
   isLoopbackHost,
+  packagedHooksSummary,
   parseArgs,
   readJson,
   runProcess,
