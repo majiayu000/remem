@@ -287,6 +287,65 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
     assert_eq!(memory_owner_key, "/tmp/remem");
     assert_eq!(memory_state_key, "decision-worker-loop");
     assert_eq!(current_memory_id, memory_id);
+    let event_epoch: i64 = conn.query_row(
+        "SELECT created_at_epoch FROM captured_events WHERE id = ?1",
+        params![task
+            .high_watermark_event_id
+            .ok_or_else(|| anyhow::anyhow!("task watermark"))?],
+        |row| row.get(0),
+    )?;
+    let (
+        fact_project,
+        fact_subject,
+        fact_predicate,
+        fact_object,
+        fact_valid_from,
+        fact_source_memory_id,
+        fact_evidence,
+        fact_confidence,
+        fact_status,
+    ): (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        String,
+        f64,
+        String,
+    ) = conn.query_row(
+        "SELECT project, subject, predicate, object, valid_from_epoch,
+                source_memory_id, source_event_ids, confidence, status
+         FROM memory_facts
+         WHERE source_memory_id = ?1",
+        params![memory_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+            ))
+        },
+    )?;
+    assert_eq!(fact_project, "/tmp/remem");
+    assert_eq!(fact_subject, "decision-worker-loop");
+    assert_eq!(fact_predicate, "affects_project");
+    assert_eq!(fact_object, "/tmp/remem");
+    assert_eq!(fact_valid_from, event_epoch);
+    assert_eq!(fact_source_memory_id, memory_id);
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&fact_evidence)?,
+        serde_json::from_str::<Vec<i64>>(&evidence)?
+    );
+    assert_eq!(fact_confidence, 0.92);
+    assert_eq!(fact_status, "active");
     Ok(())
 }
 

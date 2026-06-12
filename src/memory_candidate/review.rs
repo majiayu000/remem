@@ -469,6 +469,25 @@ mod tests {
         )?;
         assert_eq!(status, "approved");
         assert_eq!(source_candidate_id, id);
+        let (fact_predicate, fact_source_memory_id, fact_evidence): (String, i64, String) = conn
+            .query_row(
+                "SELECT predicate, source_memory_id, source_event_ids
+                 FROM memory_facts
+                 WHERE source_memory_id = ?1",
+                params![memory_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        let candidate_evidence: String = conn.query_row(
+            "SELECT evidence_event_ids FROM memory_candidates WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(fact_predicate, "affects_project");
+        assert_eq!(fact_source_memory_id, memory_id);
+        assert_eq!(
+            serde_json::from_str::<Vec<i64>>(&fact_evidence)?,
+            serde_json::from_str::<Vec<i64>>(&candidate_evidence)?
+        );
         Ok(())
     }
 
