@@ -297,12 +297,11 @@ fn validate_trusted_provenance(
             bail!("trusted graph edge source event id {event_id} does not exist");
         }
     }
-    if provenance.source_candidate_id.is_none() {
-        bail!("trusted graph edge requires source candidate id");
-    }
-    if provenance.source_operation_id.is_none() {
-        bail!("trusted graph edge requires source operation id");
-    }
+    crate::memory::graph_provenance::validate_trusted_source_candidate(
+        conn,
+        provenance.source_candidate_id,
+        provenance.source_operation_id,
+    )?;
     if provenance.confidence.is_none() {
         bail!("trusted graph edge requires confidence");
     }

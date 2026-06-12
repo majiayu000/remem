@@ -7,6 +7,7 @@ pub mod facts;
 pub mod format;
 pub mod governance;
 pub mod graph_contract;
+pub(crate) mod graph_provenance;
 pub mod lesson;
 pub mod lifecycle;
 pub mod operation;
