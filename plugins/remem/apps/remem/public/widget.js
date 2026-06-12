@@ -131,11 +131,17 @@ function renderCounts(status) {
 }
 function renderActivation(activation) {
   const stateClass = activation?.mentions_hooks ? "warn" : "ok";
+  const hookLines = activation?.packaged_hooks?.commands?.map(
+    (hook) => `${hook.event}: ${hook.command}`
+  ) || [];
   $("activation-summary").innerHTML = `
     <span class="pill ${stateClass}">${activation?.mentions_hooks ? "hooks preview" : "no hook plan"}</span>
     <div class="subtle">${activation?.line_count || 0} dry-run line(s)</div>
   `;
-  $("activation-plan").textContent = activation?.plan_text || "";
+  $("activation-plan").textContent = [
+    activation?.plan_text || "",
+    hookLines.length ? `Packaged plugin hooks:\n${hookLines.join("\n")}` : ""
+  ].filter(Boolean).join("\n\n");
 }
 function renderHealth(snapshot) {
   const doctor = snapshot.doctor || {};

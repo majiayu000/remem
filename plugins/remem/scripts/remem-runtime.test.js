@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
 const {
@@ -12,6 +13,7 @@ const {
   copyRuntime,
   ensureRuntimeSync,
   ensureRuntime,
+  expectedVersion,
   installRuntime,
   inspectRuntime,
   managedBinaryPath,
@@ -41,6 +43,29 @@ function writeFakeRemem(file, version) {
       `  printf 'remem ${version} (schema v34)\\n'`,
       "  exit 0",
       "fi",
+      "exit 0",
+      ""
+    ].join("\n")
+  );
+  fs.chmodSync(file, 0o755);
+}
+
+function shellQuote(value) {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function writeRecordingRemem(file, version, argsPath, stdinPath) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"--version\" ]; then",
+      `  printf 'remem ${version} (schema v34)\\n'`,
+      "  exit 0",
+      "fi",
+      `printf '%s\\n' "$@" > ${shellQuote(argsPath)}`,
+      `cat > ${shellQuote(stdinPath)}`,
       "exit 0",
       ""
     ].join("\n")
@@ -235,6 +260,83 @@ test("activation dry-run uses local runtime without writing plugin runtime files
   assert.equal(status, 0);
   assert.equal(fs.existsSync(managedBinaryPath(fx)), false);
   assert.equal(fs.existsSync(runtimeMetadataPath(fx)), false);
+});
+
+test("packaged Codex hooks call the plugin runtime hook wrapper", () => {
+  const hooksPath = path.join(__dirname, "..", "hooks", "hooks.json");
+  const hooks = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
+
+  assert.equal(
+    hooks.hooks.SessionStart[0].hooks[0].command,
+    'node "${PLUGIN_ROOT}/scripts/remem-hook.js" session-start'
+  );
+  assert.equal(hooks.hooks.SessionStart[0].hooks[0].timeout, 15);
+  assert.equal(
+    hooks.hooks.Stop[0].hooks[0].command,
+    'node "${PLUGIN_ROOT}/scripts/remem-hook.js" stop'
+  );
+  assert.equal(hooks.hooks.Stop[0].hooks[0].timeout, 120);
+  assert.equal(hooks.hooks.PostToolUse, undefined);
+});
+
+test("remem-hook session-start delegates to Codex context through explicit runtime", () => {
+  const dir = tempDir("remem-plugin-hook-");
+  const fake = path.join(dir, "remem");
+  const argsPath = path.join(dir, "args.txt");
+  const stdinPath = path.join(dir, "stdin.json");
+  writeRecordingRemem(fake, expectedVersion(), argsPath, stdinPath);
+
+  const input = '{"session_id":"sess-1","cwd":"/tmp/remem"}';
+  const result = spawnSync(process.execPath, [path.join(__dirname, "remem-hook.js"), "session-start"], {
+    encoding: "utf8",
+    input,
+    env: {
+      ...process.env,
+      REMEM_BINARY: fake,
+      REMEM_PLUGIN_DATA: path.join(dir, "data")
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(fs.readFileSync(argsPath, "utf8").trim().split(/\n/), [
+    "context",
+    "--host",
+    "codex-cli"
+  ]);
+  assert.equal(fs.readFileSync(stdinPath, "utf8"), input);
+});
+
+test("remem-hook stop delegates to Codex summarize and rejects unknown actions", () => {
+  const dir = tempDir("remem-plugin-hook-");
+  const fake = path.join(dir, "remem");
+  const argsPath = path.join(dir, "args.txt");
+  const stdinPath = path.join(dir, "stdin.json");
+  const env = {
+    ...process.env,
+    REMEM_BINARY: fake,
+    REMEM_PLUGIN_DATA: path.join(dir, "data")
+  };
+  writeRecordingRemem(fake, expectedVersion(), argsPath, stdinPath);
+
+  const ok = spawnSync(process.execPath, [path.join(__dirname, "remem-hook.js"), "stop"], {
+    encoding: "utf8",
+    input: '{"session_id":"sess-2"}',
+    env
+  });
+
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.deepEqual(fs.readFileSync(argsPath, "utf8").trim().split(/\n/), [
+    "summarize",
+    "--host",
+    "codex-cli"
+  ]);
+
+  const rejected = spawnSync(process.execPath, [path.join(__dirname, "remem-hook.js"), "observe"], {
+    encoding: "utf8",
+    env
+  });
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /Usage: remem-hook\.js session-start\|stop/);
 });
 
 test("darwin arm64 runtimes require ad-hoc codesign", () => {
