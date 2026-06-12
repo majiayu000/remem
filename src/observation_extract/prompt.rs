@@ -1,4 +1,5 @@
 use crate::db;
+use crate::memory::format::xml_escape_text;
 
 use super::{EvidenceEvent, EvidenceRange, SessionSummaryContext};
 
@@ -149,8 +150,9 @@ fn extraction_run_date(range: &EvidenceRange) -> String {
 }
 
 fn redact_extract_content(content: &str) -> String {
-    crate::adapter::common::redact_sensitive_text(content)
-        .replace("[REDACTED]", "[REDACTED_SECRET]")
+    let redacted = crate::adapter::common::redact_sensitive_text(content)
+        .replace("[REDACTED]", "[REDACTED_SECRET]");
+    xml_escape_text(&redacted)
 }
 
 fn format_epoch_date(epoch: i64) -> Option<String> {
