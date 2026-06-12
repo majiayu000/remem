@@ -66,7 +66,8 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
             created_at_epoch INTEGER NOT NULL,
-            lease_expires_epoch INTEGER
+            lease_expires_epoch INTEGER,
+            replay_range_id INTEGER
         );
         CREATE TABLE extraction_replay_ranges (
             id INTEGER PRIMARY KEY,

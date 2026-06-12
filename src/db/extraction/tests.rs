@@ -727,6 +727,21 @@ fn replay_range_stays_failed_when_followup_fails_before_parent_done() {
     assert_eq!(ranges[0].status, "failed");
     assert_eq!(
         count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
+        0
+    );
+    assert_eq!(
+        retry_extraction_replay_ranges(&conn, None, 10).expect("retry should skip active siblings"),
+        0
+    );
+    assert_eq!(
+        quarantine_extraction_replay_ranges(&conn, None, 10)
+            .expect("quarantine should skip active siblings"),
+        0
+    );
+    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
+        .expect("parent replay task should finish");
+    assert_eq!(
+        count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
         1
     );
     assert_eq!(
@@ -735,8 +750,6 @@ fn replay_range_stays_failed_when_followup_fails_before_parent_done() {
     );
     assert_eq!(task_status(&conn, followup_id).0, "done");
     assert_eq!(task_status(&conn, task_id).0, "done");
-    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
-        .expect("parent replay task should finish");
     let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
     assert_eq!(ranges.len(), 1);
     assert_eq!(ranges[0].status, "quarantined");

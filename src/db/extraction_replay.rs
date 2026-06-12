@@ -68,6 +68,12 @@ pub fn count_retryable_extraction_replay_ranges(
              FROM extraction_replay_ranges r
              JOIN projects p ON p.id = r.project_id
              WHERE r.status IN ('pending', 'failed')
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM extraction_tasks t
+                 WHERE t.replay_range_id = r.id
+                   AND t.status IN ('pending', 'processing')
+               )
                AND (?1 IS NULL OR p.project_path = ?1)
              ORDER BY r.updated_at_epoch ASC, r.id ASC
              LIMIT ?2
@@ -88,6 +94,12 @@ fn query_retryable_replay_range_ids(
          FROM extraction_replay_ranges r
          JOIN projects p ON p.id = r.project_id
          WHERE r.status IN ('pending', 'failed')
+           AND NOT EXISTS (
+             SELECT 1
+             FROM extraction_tasks t
+             WHERE t.replay_range_id = r.id
+               AND t.status IN ('pending', 'processing')
+           )
            AND (?1 IS NULL OR p.project_path = ?1)
          ORDER BY r.updated_at_epoch ASC, r.id ASC
          LIMIT ?2",

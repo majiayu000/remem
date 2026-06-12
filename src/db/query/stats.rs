@@ -303,15 +303,27 @@ fn query_extraction_replay_range_stats(conn: &Connection) -> Result<ExtractionRe
     Ok(ExtractionReplayRangeStats {
         retryable: conn.query_row(
             "SELECT COUNT(*)
-             FROM extraction_replay_ranges
-             WHERE status IN ('pending', 'failed')",
+             FROM extraction_replay_ranges r
+             WHERE r.status IN ('pending', 'failed')
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM extraction_tasks t
+                 WHERE t.replay_range_id = r.id
+                   AND t.status IN ('pending', 'processing')
+               )",
             [],
             |row| row.get(0),
         )?,
         active: conn.query_row(
             "SELECT COUNT(*)
-             FROM extraction_replay_ranges
-             WHERE status = 'requeued'",
+             FROM extraction_replay_ranges r
+             WHERE r.status = 'requeued'
+                OR (r.status IN ('pending', 'failed') AND EXISTS (
+                 SELECT 1
+                 FROM extraction_tasks t
+                 WHERE t.replay_range_id = r.id
+                   AND t.status IN ('pending', 'processing')
+               ))",
             [],
             |row| row.get(0),
         )?,
