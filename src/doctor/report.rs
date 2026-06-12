@@ -7,9 +7,11 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::capture_capability::check_capture_capabilities;
+use super::capture_liveness::check_capture_liveness;
 use super::database::{
-    check_capture_drops, check_database, check_disk_space, check_pending_queue,
-    check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
+    check_capture_drops, check_database, check_declared_empty_surfaces, check_disk_space,
+    check_pending_queue, check_promotion_funnel, check_raw_archive_ingest, check_temporal_facts,
+    check_worker_daemon,
 };
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::native_memory::check_native_memory_sync;
@@ -84,11 +86,21 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_checks(&mut checks, &mut on_check, check_hooks)?;
     push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;
+    let started = Instant::now();
+    let check = check_capture_liveness(shared_db.conn(), &checks)
+        .with_duration_ms(duration_ms(started.elapsed()));
+    push_ready_check(&mut checks, &mut on_check, check)?;
     push_check(&mut checks, &mut on_check, || {
         check_raw_archive_ingest(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_capture_drops(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_declared_empty_surfaces(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_promotion_funnel(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_temporal_facts(shared_db.conn())

@@ -1,4 +1,5 @@
 mod capture_capability;
+mod capture_liveness;
 mod database;
 mod environment;
 pub(crate) mod health_action;

@@ -86,6 +86,26 @@ fn load_status_report() -> Result<StatusReport> {
                 .oldest_pending_extraction_epoch
                 .map(|epoch| now.saturating_sub(epoch)),
         },
+        promotion_funnel: PromotionFunnelStatus {
+            captured_events: stats.captured_events,
+            observations: stats.total_observations,
+            observation_rate_percent: percent(stats.total_observations, stats.captured_events),
+            candidates: stats.total_memory_candidates,
+            candidate_rate_percent: percent(
+                stats.total_memory_candidates,
+                stats.total_observations,
+            ),
+            promoted: stats.promoted_memory_candidates,
+            promoted_rate_percent: percent(
+                stats.promoted_memory_candidates,
+                stats.total_memory_candidates,
+            ),
+            pending_review: stats.pending_review_memory_candidates,
+            pending_review_rate_percent: percent(
+                stats.pending_review_memory_candidates,
+                stats.total_memory_candidates,
+            ),
+        },
         pending_observations: PendingObservationStatus {
             ready: stats.ready_pending_observations,
             delayed: stats.delayed_pending_observations,
@@ -216,6 +236,32 @@ fn print_status_report(report: &StatusReport) {
         println!("  Oldest task:  {:>6}s", age_secs);
     }
     println!();
+    println!("Promotion funnel:");
+    println!(
+        "  Events -> obs: {:>6}/{:<6} ({:>5.1}%)",
+        report.promotion_funnel.observations,
+        report.promotion_funnel.captured_events,
+        report.promotion_funnel.observation_rate_percent
+    );
+    println!(
+        "  Obs -> cand:   {:>6}/{:<6} ({:>5.1}%)",
+        report.promotion_funnel.candidates,
+        report.promotion_funnel.observations,
+        report.promotion_funnel.candidate_rate_percent
+    );
+    println!(
+        "  Cand promoted:{:>6}/{:<6} ({:>5.1}%)",
+        report.promotion_funnel.promoted,
+        report.promotion_funnel.candidates,
+        report.promotion_funnel.promoted_rate_percent
+    );
+    println!(
+        "  Cand pending: {:>6}/{:<6} ({:>5.1}%)",
+        report.promotion_funnel.pending_review,
+        report.promotion_funnel.candidates,
+        report.promotion_funnel.pending_review_rate_percent
+    );
+    println!();
     println!("Pending observations:");
     println!("  Ready:        {:>6}", report.pending_observations.ready);
     println!("  Delayed:      {:>6}", report.pending_observations.delayed);
@@ -291,6 +337,14 @@ fn worker_health_tag(healthy: bool, heartbeat_age_secs: Option<i64>) -> &'static
     }
 }
 
+fn percent(numerator: i64, denominator: i64) -> f64 {
+    if denominator <= 0 {
+        0.0
+    } else {
+        (numerator as f64 * 100.0) / denominator as f64
+    }
+}
+
 fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_action::HealthAction> {
     queue_actions_with_replay(
         report.pending_observations.failed,
@@ -310,6 +364,7 @@ pub(super) struct StatusReport {
     pub totals: StatusTotals,
     pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
+    pub promotion_funnel: PromotionFunnelStatus,
     pub pending_observations: PendingObservationStatus,
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
     pub jobs: JobStatus,
@@ -366,6 +421,19 @@ pub(super) struct CapturePipelineStatus {
     pub pending_graph_candidates: i64,
     pub oldest_task_epoch: Option<i64>,
     pub oldest_task_age_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct PromotionFunnelStatus {
+    pub captured_events: i64,
+    pub observations: i64,
+    pub observation_rate_percent: f64,
+    pub candidates: i64,
+    pub candidate_rate_percent: f64,
+    pub promoted: i64,
+    pub promoted_rate_percent: f64,
+    pub pending_review: i64,
+    pub pending_review_rate_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -465,6 +533,17 @@ mod tests {
                 oldest_task_epoch: Some(10),
                 oldest_task_age_secs: Some(11),
             },
+            promotion_funnel: PromotionFunnelStatus {
+                captured_events: 5,
+                observations: 4,
+                observation_rate_percent: 80.0,
+                candidates: 3,
+                candidate_rate_percent: 75.0,
+                promoted: 2,
+                promoted_rate_percent: 66.66666666666667,
+                pending_review: 1,
+                pending_review_rate_percent: 33.333333333333336,
+            },
             pending_observations: PendingObservationStatus {
                 ready: 12,
                 delayed: 13,
@@ -532,6 +611,11 @@ mod tests {
         );
         assert_eq!(parsed["capture_pipeline"]["extract_todo"], 6);
         assert_eq!(parsed["capture_pipeline"]["pending_graph_candidates"], 10);
+        assert_eq!(parsed["promotion_funnel"]["captured_events"], 5);
+        assert_eq!(parsed["promotion_funnel"]["observations"], 4);
+        assert_eq!(parsed["promotion_funnel"]["candidates"], 3);
+        assert_eq!(parsed["promotion_funnel"]["promoted"], 2);
+        assert_eq!(parsed["promotion_funnel"]["pending_review"], 1);
         assert_eq!(parsed["pending_observations"]["failed"], 16);
         assert_eq!(
             parsed["candidate_promotion"][0]["review_status"],

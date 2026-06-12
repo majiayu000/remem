@@ -29,7 +29,8 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY
         );
         CREATE TABLE raw_messages (
-            id INTEGER PRIMARY KEY
+            id INTEGER PRIMARY KEY,
+            created_at_epoch INTEGER NOT NULL
         );
         CREATE TABLE raw_ingest_failures (
             id INTEGER PRIMARY KEY,
@@ -41,7 +42,9 @@ fn setup_stats_schema(conn: &Connection) {
             created_at_epoch INTEGER NOT NULL
         );
         CREATE TABLE captured_events (
-            id INTEGER PRIMARY KEY
+            id INTEGER PRIMARY KEY,
+            created_at_epoch INTEGER NOT NULL,
+            inserted_at_epoch INTEGER NOT NULL
         );
         CREATE TABLE memory_facts (
             id INTEGER PRIMARY KEY,
@@ -179,8 +182,11 @@ fn query_system_stats_and_related_views_share_one_definition() {
         [],
     )
     .expect("raw ingest failure insert should succeed");
-    conn.execute("INSERT INTO captured_events (id) VALUES (1)", [])
-        .expect("captured event insert should succeed");
+    conn.execute(
+        "INSERT INTO captured_events (id, created_at_epoch, inserted_at_epoch) VALUES (1, 120, 130)",
+        [],
+    )
+    .expect("captured event insert should succeed");
     conn.execute(
         "INSERT INTO capture_drop_events
          (host_id, session_id, project, tool_name, reason, detail, created_at_epoch)
@@ -285,6 +291,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
         SystemStats {
             active_memories: 3,
             active_observations: 1,
+            total_observations: 2,
             session_summaries: 1,
             raw_messages: 0,
             raw_ingest_failures: 1,
@@ -295,6 +302,8 @@ fn query_system_stats_and_related_views_share_one_definition() {
             latest_raw_ingest_failure_path: Some("/bad/transcript.jsonl".to_string()),
             latest_raw_ingest_failure_message: Some("bad jsonl".to_string()),
             captured_events: 1,
+            latest_captured_event_epoch: Some(130),
+            latest_capture_activity_epoch: Some(170),
             capture_drop_events: 1,
             actionable_capture_drops: 0,
             unrecovered_capture_spills: 0,
@@ -310,6 +319,9 @@ fn query_system_stats_and_related_views_share_one_definition() {
             quarantined_extraction_replay_ranges: 1,
             oldest_pending_extraction_epoch: Some(90),
             pending_memory_candidates: 1,
+            total_memory_candidates: 1,
+            promoted_memory_candidates: 0,
+            pending_review_memory_candidates: 1,
             pending_graph_candidates: 2,
             pending_observations: 2,
             ready_pending_observations: 1,
