@@ -199,6 +199,95 @@ fn test_global_preferences_keep_same_topic_across_owner_groups() -> Result<()> {
 }
 
 #[test]
+fn add_preference_reuses_semantic_near_duplicate() -> Result<()> {
+    let conn = setup_test_db();
+
+    let first_id = add_preference(
+        &conn,
+        "test/proj",
+        "Prefer small reversible changes and include verification output for every fix.",
+        false,
+    )?;
+    let second_id = add_preference(
+        &conn,
+        "test/proj",
+        "Prefer small reversible code changes with verification output for each fix.",
+        false,
+    )?;
+
+    assert_eq!(second_id, first_id);
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE project = 'test/proj'
+           AND memory_type = 'preference'
+           AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 1);
+    Ok(())
+}
+
+#[test]
+fn semantic_preference_dedup_keeps_project_scope_isolated() -> Result<()> {
+    let conn = setup_test_db();
+
+    let first_id = add_preference(
+        &conn,
+        "first/proj",
+        "Prefer small reversible changes and include verification output for every fix.",
+        false,
+    )?;
+    let second_id = add_preference(
+        &conn,
+        "second/proj",
+        "Prefer small reversible code changes with verification output for each fix.",
+        false,
+    )?;
+
+    assert_ne!(second_id, first_id);
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE memory_type = 'preference'
+           AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 2);
+    Ok(())
+}
+
+#[test]
+fn semantic_preference_dedup_keeps_opposite_preferences_separate() -> Result<()> {
+    let conn = setup_test_db();
+
+    let first_id = add_preference(
+        &conn,
+        "test/proj",
+        "Never force push branches; require explicit approval before rewriting history.",
+        false,
+    )?;
+    let second_id = add_preference(
+        &conn,
+        "test/proj",
+        "Always force push branches when they are behind; do not ask for approval.",
+        false,
+    )?;
+
+    assert_ne!(second_id, first_id);
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE project = 'test/proj'
+           AND memory_type = 'preference'
+           AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 2);
+    Ok(())
+}
+
+#[test]
 fn test_preferences_use_state_key_current_view_per_owner() -> Result<()> {
     let conn = setup_test_db();
     insert_preference_row(

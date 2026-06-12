@@ -101,13 +101,16 @@ pub fn plan_direct_save(
     let state_key =
         crate::memory::state_key::derive_state_key(memory_type, topic_key, title, content)
             .map(|decision| decision.state_key);
-    let existing = existing_memory_for_direct_save(
+    let existing_match = existing_memory_for_direct_save(
         conn,
         project,
         scope,
         memory_type,
         topic_key,
         state_key.as_deref(),
+        title,
+        content,
+        branch,
         now,
     )?;
     let input = MemoryOperationInput {
@@ -122,22 +125,34 @@ pub fn plan_direct_save(
         source_candidate_id,
         confidence,
     };
-    let plan = match existing {
-        Some(existing) if existing.matches_noop_write(title, content, files, branch, now) => {
+    let plan = match existing_match {
+        Some(existing_match)
+            if existing_match
+                .memory
+                .matches_noop_write(title, content, files, branch, now) =>
+        {
             MemoryOperationPlan::new(
                 MemoryLifecycleOp::Noop,
                 state_key,
                 "existing active memory already represents this fact",
             )
-            .with_target_memory_id(Some(existing.id))
+            .with_target_memory_id(Some(existing_match.memory.id))
             .with_noop_reason("already represented by active memory")
         }
-        Some(existing) => MemoryOperationPlan::new(
-            MemoryLifecycleOp::Update,
-            state_key,
-            "existing state/topic memory will be updated",
-        )
-        .with_target_memory_id(Some(existing.id)),
+        Some(existing_match) => {
+            let reason = match existing_match.source {
+                ExistingMemoryMatchSource::TopicKey | ExistingMemoryMatchSource::StateKey => {
+                    "existing state/topic memory will be updated".to_string()
+                }
+                ExistingMemoryMatchSource::Semantic { similarity } => {
+                    format!(
+                        "semantic duplicate memory will be updated (similarity {similarity:.3})"
+                    )
+                }
+            };
+            MemoryOperationPlan::new(MemoryLifecycleOp::Update, state_key, reason)
+                .with_target_memory_id(Some(existing_match.memory.id))
+        }
         None => MemoryOperationPlan::new(
             MemoryLifecycleOp::Add,
             state_key,
@@ -241,6 +256,19 @@ struct ExistingMemory {
     expires_at_epoch: Option<i64>,
 }
 
+#[derive(Debug)]
+struct ExistingMemoryMatch {
+    memory: ExistingMemory,
+    source: ExistingMemoryMatchSource,
+}
+
+#[derive(Debug)]
+enum ExistingMemoryMatchSource {
+    TopicKey,
+    StateKey,
+    Semantic { similarity: f32 },
+}
+
 impl ExistingMemory {
     fn matches_noop_write(
         &self,
@@ -273,10 +301,13 @@ fn existing_memory_for_direct_save(
     memory_type: &str,
     topic_key: Option<&str>,
     state_key: Option<&str>,
+    title: &str,
+    content: &str,
+    branch: Option<&str>,
     now_epoch: i64,
-) -> Result<Option<ExistingMemory>> {
+) -> Result<Option<ExistingMemoryMatch>> {
     if let Some(topic_key) = topic_key.filter(|topic_key| !topic_key.is_empty()) {
-        let existing_id = conn
+        let existing = conn
             .query_row(
                 "SELECT id, title, content, status, files, branch, expires_at_epoch FROM memories
                  WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
@@ -289,26 +320,58 @@ fn existing_memory_for_direct_save(
             )
             .optional()
             .context("check existing durable memory for topic_key upsert")?;
-        if existing_id.is_some() {
-            return Ok(existing_id);
+        if let Some(memory) = existing {
+            return Ok(Some(ExistingMemoryMatch {
+                memory,
+                source: ExistingMemoryMatchSource::TopicKey,
+            }));
         }
     }
 
-    let Some(state_key) = state_key else {
-        return Ok(None);
-    };
-    let (owner_scope, owner_key) = owner_for_scope(project, scope);
-    let Some(id) = crate::memory::state_key::current_memory_id(
+    if let Some(state_key) = state_key {
+        let (owner_scope, owner_key) = owner_for_scope(project, scope);
+        if let Some(id) = crate::memory::state_key::current_memory_id(
+            conn,
+            owner_scope,
+            &owner_key,
+            memory_type,
+            state_key,
+            now_epoch,
+        )? {
+            if let Some(memory) = load_existing_memory(conn, id)? {
+                return Ok(Some(ExistingMemoryMatch {
+                    memory,
+                    source: ExistingMemoryMatchSource::StateKey,
+                }));
+            }
+        }
+    }
+
+    if let Some(duplicate) = crate::memory::semantic_dedup::find_curated_duplicate(
         conn,
-        owner_scope,
-        &owner_key,
+        project,
+        scope,
         memory_type,
-        state_key,
+        title,
+        content,
+        topic_key,
+        branch,
         now_epoch,
-    )?
-    else {
-        return Ok(None);
-    };
+    )? {
+        if let Some(memory) = load_existing_memory(conn, duplicate.memory_id)? {
+            return Ok(Some(ExistingMemoryMatch {
+                memory,
+                source: ExistingMemoryMatchSource::Semantic {
+                    similarity: duplicate.similarity,
+                },
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+fn load_existing_memory(conn: &Connection, id: i64) -> Result<Option<ExistingMemory>> {
     conn.query_row(
         "SELECT id, title, content, status, files, branch, expires_at_epoch
          FROM memories WHERE id = ?1",

@@ -77,6 +77,110 @@ fn save_lesson_reinforces_duplicate_topic() {
 }
 
 #[test]
+fn save_lesson_reinforces_semantic_near_duplicate() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let first_id = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s1"),
+            project: "/repo",
+            topic_key: Some("lesson-build-loop-a"),
+            title: "Avoid build failure loops",
+            content: "Lesson: after repeated build failures, stop and challenge the hypothesis before editing again.",
+            confidence: 0.6,
+            source_evidence: Some("first run"),
+            files: None,
+            branch: None,
+            scope: "project",
+            created_at_epoch: None,
+            stale_after_epoch: None,
+        },
+    )
+    ?;
+    let second_id = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s2"),
+            project: "/repo",
+            topic_key: Some("lesson-build-loop-b"),
+            title: "Break repeated build failures",
+            content: "Lesson: when build failures repeat, pause and challenge the hypothesis before more edits.",
+            confidence: 0.9,
+            source_evidence: Some("second run"),
+            files: None,
+            branch: None,
+            scope: "project",
+            created_at_epoch: None,
+            stale_after_epoch: None,
+        },
+    )
+    ?;
+
+    assert_eq!(second_id, first_id);
+    let metadata =
+        get_lesson_metadata(&conn, first_id)?.ok_or_else(|| anyhow::anyhow!("metadata missing"))?;
+    assert_eq!(metadata.reinforcement_count, 2);
+    assert_eq!(metadata.confidence, 0.9);
+    assert_eq!(metadata.source_evidence.as_deref(), Some("second run"));
+    Ok(())
+}
+
+#[test]
+fn semantic_lesson_dedup_keeps_branch_scope_isolated() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let first_id = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s1"),
+            project: "/repo",
+            topic_key: Some("lesson-build-loop-main"),
+            title: "Avoid build failure loops",
+            content: "Lesson: after repeated build failures, stop and challenge the hypothesis before editing again.",
+            confidence: 0.6,
+            source_evidence: Some("main branch"),
+            files: None,
+            branch: Some("main"),
+            scope: "project",
+            created_at_epoch: None,
+            stale_after_epoch: None,
+        },
+    )?;
+    let second_id = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s2"),
+            project: "/repo",
+            topic_key: Some("lesson-build-loop-feature"),
+            title: "Break repeated build failures",
+            content: "Lesson: when build failures repeat, pause and challenge the hypothesis before more edits.",
+            confidence: 0.9,
+            source_evidence: Some("feature branch"),
+            files: None,
+            branch: Some("feature"),
+            scope: "project",
+            created_at_epoch: None,
+            stale_after_epoch: None,
+        },
+    )?;
+
+    assert_ne!(second_id, first_id);
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE project = '/repo'
+           AND memory_type = 'lesson'
+           AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 2);
+    Ok(())
+}
+
+#[test]
 fn save_lesson_reinforcement_clears_stale_deadline() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
@@ -126,9 +230,26 @@ fn list_lessons_for_context_filters_low_confidence_and_stale() {
     setup_memory_schema(&conn);
     let now = chrono::Utc::now().timestamp();
 
-    for (idx, confidence, stale_after_epoch) in
-        [(1, 0.9, None), (2, 0.2, None), (3, 0.8, Some(now - 1))]
-    {
+    for (idx, confidence, stale_after_epoch, content) in [
+        (
+            1,
+            0.9,
+            None,
+            "Lesson: active evidence-backed fixes need fresh verification output.",
+        ),
+        (
+            2,
+            0.2,
+            None,
+            "Lesson: low confidence notes should stay below the context threshold.",
+        ),
+        (
+            3,
+            0.8,
+            Some(now - 1),
+            "Lesson: stale remediation notes expire after their review window.",
+        ),
+    ] {
         save_lesson(
             &conn,
             &SaveLessonRequest {
@@ -136,7 +257,7 @@ fn list_lessons_for_context_filters_low_confidence_and_stale() {
                 project: "/repo",
                 topic_key: Some(&format!("lesson-{idx}")),
                 title: &format!("Lesson {idx}"),
-                content: "Lesson: use evidence-backed fixes for recurring failures.",
+                content,
                 confidence,
                 source_evidence: None,
                 files: None,
@@ -311,6 +432,7 @@ fn is_lesson_candidate_requires_actionable_signal() {
 }
 
 fn save_ranked_lesson(conn: &Connection, title: &str, confidence: f64) -> anyhow::Result<i64> {
+    let content = format!("Lesson: {title} has a distinct ranking signal for context ordering.");
     save_lesson(
         conn,
         &SaveLessonRequest {
@@ -318,7 +440,7 @@ fn save_ranked_lesson(conn: &Connection, title: &str, confidence: f64) -> anyhow
             project: "/repo",
             topic_key: Some(title),
             title,
-            content: "Lesson: keep deterministic ranking when many lessons compete for context.",
+            content: &content,
             confidence,
             source_evidence: None,
             files: None,

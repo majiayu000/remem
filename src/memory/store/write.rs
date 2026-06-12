@@ -111,6 +111,19 @@ pub fn insert_memory_full(
             )?;
         }
     }
+    if existing_id.is_none() {
+        existing_id = crate::memory::semantic_dedup::find_curated_duplicate_id(
+            conn,
+            project,
+            scope,
+            memory_type,
+            title,
+            content,
+            topic_key,
+            branch,
+            now,
+        )?;
+    }
 
     if let Some(id) = existing_id {
         return with_memory_savepoint(conn, || {
