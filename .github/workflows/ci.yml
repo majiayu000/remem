@@ -23,5 +23,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
-      - run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
+      - name: Run eval regression gates
+        run: cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
+      - name: Upload eval gate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remem-eval-gates
+          path: /tmp/remem-eval-gates.json
       - run: cargo test

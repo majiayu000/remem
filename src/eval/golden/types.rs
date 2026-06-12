@@ -192,6 +192,9 @@ pub struct CategoryEvaluation {
     pub scored_queries: usize,
     pub abstention_queries: usize,
     pub abstention_passed: usize,
+    pub query_tokens_per_query: f64,
+    pub retrieval_latency_p50_ms: f64,
+    pub retrieval_latency_p95_ms: f64,
     pub metrics: Option<MetricAverages>,
 }
 
@@ -209,6 +212,8 @@ pub struct QueryEvaluation {
     pub missing_evidence_refs: Vec<EvidenceRef>,
     pub matched_refs: usize,
     pub expected_refs: usize,
+    pub query_tokens: usize,
+    pub retrieval_latency_ms: f64,
     pub metrics: Option<QueryMetrics>,
 }
 

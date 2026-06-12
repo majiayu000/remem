@@ -114,6 +114,7 @@ impl Display for GoldenEvalReport {
             for (slice, evaluation) in &self.by_slice {
                 if let Some(metrics) = evaluation.metrics.as_ref() {
                     write_metrics(f, slice, metrics, self.k)?;
+                    write_observability(f, slice, evaluation)?;
                 } else {
                     writeln!(
                         f,
@@ -123,6 +124,7 @@ impl Display for GoldenEvalReport {
                         evaluation.abstention_queries,
                         evaluation.total_queries
                     )?;
+                    write_observability(f, slice, evaluation)?;
                 }
             }
         }
@@ -133,6 +135,7 @@ impl Display for GoldenEvalReport {
             for (category, evaluation) in &self.by_category {
                 if let Some(metrics) = evaluation.metrics.as_ref() {
                     write_metrics(f, category, metrics, self.k)?;
+                    write_observability(f, category, evaluation)?;
                 } else {
                     writeln!(
                         f,
@@ -142,6 +145,7 @@ impl Display for GoldenEvalReport {
                         evaluation.abstention_queries,
                         evaluation.total_queries
                     )?;
+                    write_observability(f, category, evaluation)?;
                 }
             }
         }
@@ -191,5 +195,21 @@ fn write_metrics(
         metrics.ndcg_at_10,
         k,
         metrics.evidence_recall_at_k
+    )?;
+    Ok(())
+}
+
+fn write_observability(
+    f: &mut Formatter<'_>,
+    label: &str,
+    evaluation: &super::types::CategoryEvaluation,
+) -> FmtResult {
+    writeln!(
+        f,
+        "       observability {}: tokens/query={:.1} p50={:.2}ms p95={:.2}ms",
+        label,
+        evaluation.query_tokens_per_query,
+        evaluation.retrieval_latency_p50_ms,
+        evaluation.retrieval_latency_p95_ms
     )
 }

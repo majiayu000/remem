@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection};
@@ -15,6 +16,8 @@ struct CategoryAccumulator {
     total_queries: usize,
     abstention_queries: usize,
     abstention_passed: usize,
+    query_tokens: usize,
+    retrieval_latencies_ms: Vec<f64>,
     metrics: MetricSums,
 }
 
@@ -76,6 +79,7 @@ pub fn evaluate_dataset(
     let mut abstention_passed = 0usize;
 
     for query in &dataset.queries {
+        let started = Instant::now();
         let results = crate::retrieval::search::search_with_branch(
             conn,
             Some(&query.query),
@@ -86,7 +90,9 @@ pub fn evaluate_dataset(
             false,
             query.branch.as_deref(),
         )?;
-        let evaluation = evaluate_query(query, &results, k);
+        let retrieval_latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let query_tokens = estimate_query_tokens(&query.query);
+        let evaluation = evaluate_query(query, &results, k, query_tokens, retrieval_latency_ms);
         let category = categories.entry(query.category.clone()).or_default();
         record_bucket(category, query, &evaluation);
         let slice = slices.entry(query.slice_label().to_string()).or_default();
@@ -136,6 +142,10 @@ fn record_bucket(
     evaluation: &QueryEvaluation,
 ) {
     bucket.total_queries += 1;
+    bucket.query_tokens += evaluation.query_tokens;
+    bucket
+        .retrieval_latencies_ms
+        .push(evaluation.retrieval_latency_ms);
     if query.expects_abstention() {
         bucket.abstention_queries += 1;
         if evaluation.status == QueryStatus::Pass {
@@ -147,11 +157,21 @@ fn record_bucket(
 }
 
 fn bucket_evaluation(bucket: CategoryAccumulator) -> CategoryEvaluation {
+    let query_tokens_per_query = if bucket.total_queries == 0 {
+        0.0
+    } else {
+        bucket.query_tokens as f64 / bucket.total_queries as f64
+    };
+    let retrieval_latency_p50_ms = percentile(bucket.retrieval_latencies_ms.clone(), 50.0);
+    let retrieval_latency_p95_ms = percentile(bucket.retrieval_latencies_ms, 95.0);
     CategoryEvaluation {
         total_queries: bucket.total_queries,
         scored_queries: bucket.metrics.averages().map_or(0, |m| m.count),
         abstention_queries: bucket.abstention_queries,
         abstention_passed: bucket.abstention_passed,
+        query_tokens_per_query,
+        retrieval_latency_p50_ms,
+        retrieval_latency_p95_ms,
         metrics: bucket.metrics.averages(),
     }
 }
@@ -402,6 +422,8 @@ fn evaluate_query(
     query: &GoldenQuery,
     results: &[crate::memory::Memory],
     k: usize,
+    query_tokens: usize,
+    retrieval_latency_ms: f64,
 ) -> QueryEvaluation {
     let expected_refs = query.expected_refs();
     if query.expects_abstention() {
@@ -422,6 +444,8 @@ fn evaluate_query(
             missing_evidence_refs: Vec::new(),
             matched_refs: 0,
             expected_refs: expected_refs.len(),
+            query_tokens,
+            retrieval_latency_ms,
             metrics: None,
         };
     }
@@ -440,6 +464,8 @@ fn evaluate_query(
             missing_evidence_refs: Vec::new(),
             matched_refs: 0,
             expected_refs: 0,
+            query_tokens,
+            retrieval_latency_ms,
             metrics: None,
         };
     }
@@ -467,8 +493,23 @@ fn evaluate_query(
         missing_evidence_refs,
         matched_refs,
         expected_refs: expected_refs.len(),
+        query_tokens,
+        retrieval_latency_ms,
         metrics: Some(metrics),
     }
+}
+
+fn estimate_query_tokens(query: &str) -> usize {
+    query.len().div_ceil(4).max(1)
+}
+
+fn percentile(mut values: Vec<f64>, percentile: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.sort_by(|a, b| a.total_cmp(b));
+    let rank = ((percentile / 100.0) * (values.len().saturating_sub(1) as f64)).ceil() as usize;
+    values[rank.min(values.len() - 1)]
 }
 
 fn score_results(

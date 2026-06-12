@@ -107,3 +107,22 @@ The JSON report includes:
 - over-saved prediction count and over-save penalty
 - observation and candidate replay request SHA-256 fingerprints
 - per-case missing, unexpected, and forbidden predictions
+
+## Eval Regression Gates
+
+`remem eval-gates` runs the CI regression gate for golden retrieval,
+SessionStart injection, and extraction quality:
+
+```bash
+remem eval-gates --json-out /tmp/remem-eval-gates.json
+```
+
+The gate compares current deterministic eval metrics with
+`eval/gates/baseline.json` using thresholds from `eval/gates/thresholds.json`.
+It prints a delta table in CI and writes the full JSON artifact, including the
+source eval reports. Golden eval artifacts include per-slice estimated
+tokens/query plus p50/p95 retrieval latency for trend inspection; latency is not
+used as a hard gate.
+
+The hidden `--simulate-golden-regression` flag is used by maintainers to prove
+the gate fails on a constructed retrieval regression before changing defaults.
