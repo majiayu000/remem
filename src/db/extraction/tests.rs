@@ -643,6 +643,57 @@ fn replay_followup_stays_scoped_to_replay_range() {
 }
 
 #[test]
+fn replay_range_stays_failed_when_followup_fails_before_parent_done() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(
+        &conn,
+        "sess-replay-followup-failure",
+        ExtractionTaskKind::ObservationExtract,
+    )
+    .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    defer_claimed_extraction_task(&conn, &claimed, "worker-a", "bad model output", 30)
+        .expect("defer should exhaust");
+    retry_extraction_replay_ranges(&conn, None, 10).expect("retry should enqueue");
+    let replay = claim_next_extraction_task(&mut conn, "worker-b", 60)
+        .expect("claim should succeed")
+        .expect("replay task should be claimable");
+    let followup_id = enqueue_followup_extraction_task(
+        &conn,
+        &replay,
+        ExtractionTaskKind::MemoryCandidate,
+        replay
+            .high_watermark_event_id
+            .expect("replay should have watermark"),
+    )
+    .expect("followup should enqueue");
+
+    let followup = claim_next_extraction_task(&mut conn, "worker-c", 60)
+        .expect("claim should succeed")
+        .expect("followup task should be claimable");
+    assert_eq!(followup.id, followup_id);
+    mark_extraction_task_failed(&conn, followup.id, "worker-c", "followup failed")
+        .expect("followup failure should mark replay range failed");
+    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
+        .expect("parent replay task should finish");
+
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].status, "failed");
+    assert_eq!(
+        count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
+        1
+    );
+}
+
+#[test]
 fn quarantine_extraction_replay_ranges_removes_retryable_ranges() {
     let mut conn = setup_conn();
     let task_id = insert_task(&conn, "sess-quarantine", ExtractionTaskKind::SessionRollup)

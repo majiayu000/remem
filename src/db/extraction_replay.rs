@@ -288,7 +288,7 @@ pub(crate) fn mark_replay_range_replayed_if_done(
            AND NOT EXISTS (
              SELECT 1 FROM extraction_tasks t
              WHERE t.replay_range_id = extraction_replay_ranges.id
-               AND t.status IN ('pending', 'processing')
+               AND t.status != 'done'
          )",
         params![task_id, now],
     )?;

@@ -452,6 +452,20 @@ fn query_system_stats_defaults_capture_drops_when_table_is_absent() -> anyhow::R
     Ok(())
 }
 
+#[test]
+fn query_system_stats_defaults_replay_ranges_when_table_is_absent() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    conn.execute("DROP TABLE extraction_replay_ranges", [])?;
+
+    let system = query_system_stats(&conn)?;
+
+    assert_eq!(system.retryable_extraction_replay_ranges, 0);
+    assert_eq!(system.active_extraction_replay_ranges, 0);
+    assert_eq!(system.quarantined_extraction_replay_ranges, 0);
+    Ok(())
+}
+
 fn insert_usage(
     conn: &Connection,
     project: &str,
