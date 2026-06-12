@@ -22,7 +22,7 @@
           "content": "I will pause further edits and reassess the root cause before changing more code."
         }
       ],
-      "observation_output": "<observation>\n<type>decision</type>\n<title>Build-fix loop guard</title>\n<narrative>After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.</narrative>\n<confidence>0.91</confidence>\n</observation>",
+      "observation_output": "{\"observations\":[{\"type\":\"decision\",\"title\":\"Build-fix loop guard\",\"subtitle\":null,\"narrative\":\"After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.\",\"facts\":[],\"concepts\":[],\"files_read\":[],\"files_modified\":[],\"confidence\":0.91}]}",
       "candidate_output": "<memory_candidate>\n<scope>project</scope>\n<type>lesson</type>\n<topic_key>build-fix-loop-guard</topic_key>\n<risk_class>medium</risk_class>\n<confidence>0.87</confidence>\n<text>After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.</text>\n</memory_candidate>",
       "expected_observations": [
         {
@@ -78,7 +78,7 @@
           "content": "The design keeps automatic extraction as the main memory capture channel and treats manual saves as supplemental."
         }
       ],
-      "observation_output": "<observation>\n<type>decision</type>\n<title>Automatic capture is primary</title>\n<narrative>Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are only supplemental.</narrative>\n<confidence>0.95</confidence>\n</observation>",
+      "observation_output": "{\"observations\":[{\"type\":\"decision\",\"title\":\"Automatic capture is primary\",\"subtitle\":null,\"narrative\":\"Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are only supplemental.\",\"facts\":[],\"concepts\":[],\"files_read\":[],\"files_modified\":[],\"confidence\":0.95}]}",
       "candidate_output": "<memory_candidate>\n<scope>project</scope>\n<type>architecture</type>\n<topic_key>automatic-capture-primary</topic_key>\n<risk_class>medium</risk_class>\n<confidence>0.9</confidence>\n<text>Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are supplemental.</text>\n</memory_candidate>",
       "expected_observations": [
         {
