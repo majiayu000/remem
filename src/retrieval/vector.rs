@@ -120,6 +120,10 @@ pub fn upsert_memory_embedding_for_row(conn: &Connection, memory_id: i64) -> Res
 }
 
 pub fn backfill_missing_memory_embeddings(conn: &Connection, limit: i64) -> Result<usize> {
+    reindex_memory_embeddings(conn, limit)
+}
+
+pub fn reindex_memory_embeddings(conn: &Connection, limit: i64) -> Result<usize> {
     if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
         return Ok(0);
     }
@@ -132,36 +136,36 @@ pub fn backfill_missing_memory_embeddings(conn: &Connection, limit: i64) -> Resu
     let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type
          FROM memories m
          LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE (e.memory_id IS NULL OR e.model <> ?1 OR e.dimensions <> ?2)
+         WHERE (e.memory_id IS NULL
+                OR e.model <> ?1
+                OR e.dimensions <> ?2
+                OR e.updated_at_epoch < m.updated_at_epoch)
            AND m.status IN ('active', 'stale', 'archived')
          ORDER BY m.updated_at_epoch DESC, m.id DESC
          LIMIT ?3";
-    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-        Box::new(target.model.clone()),
-        Box::new(target.dimensions as i64),
-    ];
-    values.push(Box::new(limit));
-    let refs = crate::db::to_sql_refs(&values);
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(refs.as_slice(), |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        params![target.model.as_str(), target.dimensions as i64, limit],
+        |row| {
+            Ok(MemoryEmbeddingReindexCandidate {
+                id: row.get(0)?,
+                topic_key: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                memory_type: row.get(4)?,
+            })
+        },
+    )?;
     let pending = crate::db::query::collect_rows(rows)?;
     let count = pending.len();
-    for (id, topic_key, title, content, memory_type) in pending {
+    for candidate in pending {
         upsert_memory_embedding(
             conn,
-            id,
-            &title,
-            &content,
-            &memory_type,
-            topic_key.as_deref(),
+            candidate.id,
+            &candidate.title,
+            &candidate.content,
+            &candidate.memory_type,
+            candidate.topic_key.as_deref(),
         )?;
     }
     Ok(count)
@@ -171,16 +175,11 @@ pub fn pending_memory_embedding_count(conn: &Connection) -> Result<i64> {
     if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
         return Ok(0);
     }
-    let target = super::embedding::configured_backfill_target()?;
-    let sql = "SELECT COUNT(*)
-               FROM memories m
-               LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-               WHERE (e.memory_id IS NULL OR e.model <> ?1 OR e.dimensions <> ?2)
-                 AND m.status IN ('active', 'stale', 'archived')";
-    let values: Vec<Box<dyn rusqlite::types::ToSql>> =
-        vec![Box::new(target.model), Box::new(target.dimensions as i64)];
-    let refs = crate::db::to_sql_refs(&values);
-    Ok(conn.query_row(sql, refs.as_slice(), |row| row.get(0))?)
+    count_pending_memory_embedding_reindex(conn)
+}
+
+pub fn pending_memory_embedding_reindex_count(conn: &Connection) -> Result<i64> {
+    count_pending_memory_embedding_reindex(conn)
 }
 
 pub fn embedding_count(conn: &Connection) -> Result<i64> {
@@ -192,6 +191,34 @@ pub fn embedding_count(conn: &Connection) -> Result<i64> {
             row.get(0)
         })?,
     )
+}
+
+struct MemoryEmbeddingReindexCandidate {
+    id: i64,
+    topic_key: Option<String>,
+    title: String,
+    content: String,
+    memory_type: String,
+}
+
+fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
+    if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
+        return Ok(0);
+    }
+    let target = super::embedding::configured_backfill_target()?;
+    let sql = "SELECT COUNT(*)
+               FROM memories m
+               LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+               WHERE (e.memory_id IS NULL
+                      OR e.model <> ?1
+                      OR e.dimensions <> ?2
+                      OR e.updated_at_epoch < m.updated_at_epoch)
+                 AND m.status IN ('active', 'stale', 'archived')";
+    Ok(conn.query_row(
+        sql,
+        params![target.model.as_str(), target.dimensions as i64],
+        |row| row.get(0),
+    )?)
 }
 
 pub fn embed_query_text(query: &str) -> Vec<f32> {
@@ -256,7 +283,7 @@ pub fn vector_search_embedding_filtered(
         && super::vector_candidates::matching_memory_count(conn, filters)? > 0
     {
         return Ok(VectorSearchOutcome::disabled(
-            "memory_embeddings table is empty; run `remem backfill-embeddings --limit 1000`",
+            "memory_embeddings table is empty; run `remem reindex-embeddings --limit 1000`",
         ));
     }
 
@@ -265,7 +292,7 @@ pub fn vector_search_embedding_filtered(
         && super::vector_candidates::matching_memory_count(conn, filters)? > 0
     {
         return Ok(VectorSearchOutcome::disabled(format!(
-            "memory_embeddings has no rows for model={} dimensions={}; run `remem backfill-embeddings --limit 1000`",
+            "memory_embeddings has no rows for model={} dimensions={}; run `remem reindex-embeddings --limit 1000`",
             profile.model, profile.dimensions
         )));
     }
@@ -461,248 +488,4 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
 }
 
 #[cfg(test)]
-mod tests {
-    use anyhow::Result;
-    use rusqlite::Connection;
-
-    use super::*;
-
-    fn setup_conn() -> Result<Connection> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        Ok(conn)
-    }
-
-    fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
-        conn.execute(
-            "INSERT INTO memories
-             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
-             VALUES (?1, '/repo', 'Credential store', 'SQLCipher encrypts secrets at rest.', 'architecture', 1, 1, 'active')",
-            params![id],
-        )?;
-        Ok(())
-    }
-
-    #[test]
-    fn vector_search_returns_nearest_memory_embedding() -> Result<()> {
-        let conn = setup_conn()?;
-        conn.execute(
-            "INSERT INTO memories
-             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
-             VALUES
-             (1, '/repo', 'Credential store', 'SQLCipher encrypts secrets at rest.', 'architecture', 1, 1, 'active'),
-             (2, '/repo', 'Posting workflow', 'Publish social media drafts after review.', 'procedure', 1, 1, 'active')",
-            [],
-        )?;
-        upsert_memory_embedding(
-            &conn,
-            1,
-            "Credential store",
-            "SQLCipher encrypts secrets at rest.",
-            "architecture",
-            None,
-        )?;
-        upsert_memory_embedding(
-            &conn,
-            2,
-            "Posting workflow",
-            "Publish social media drafts after review.",
-            "procedure",
-            None,
-        )?;
-
-        let query = embed_query_text("How do we protect private persisted data?");
-        let outcome = vector_search_filtered(
-            &conn,
-            &query,
-            VectorSearchFilters {
-                project: Some("/repo"),
-                ..VectorSearchFilters::default()
-            },
-            5,
-        )?;
-
-        assert!(outcome.disabled_reason.is_none());
-        assert_eq!(outcome.hits[0].memory_id, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn vector_search_respects_filters() -> Result<()> {
-        let conn = setup_conn()?;
-        for (id, project, branch, memory_type, status) in [
-            (1, "/repo", Some("main"), "architecture", "active"),
-            (2, "/other", Some("main"), "architecture", "active"),
-            (3, "/repo", Some("feature"), "architecture", "active"),
-            (4, "/repo", Some("main"), "decision", "active"),
-            (5, "/repo", Some("main"), "architecture", "stale"),
-        ] {
-            conn.execute(
-                "INSERT INTO memories
-                 (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status, branch)
-                 VALUES (?1, ?2, 'Credential store', 'SQLCipher encrypts secrets at rest.', ?3, 1, 1, ?4, ?5)",
-                params![id, project, memory_type, status, branch],
-            )?;
-            upsert_memory_embedding(
-                &conn,
-                id,
-                "Credential store",
-                "SQLCipher encrypts secrets at rest.",
-                memory_type,
-                None,
-            )?;
-        }
-
-        let query = embed_query_text("protect private persisted data");
-        let outcome = vector_search_filtered(
-            &conn,
-            &query,
-            VectorSearchFilters {
-                project: Some("/repo"),
-                branch: Some("main"),
-                memory_type: Some("architecture"),
-                include_stale: false,
-            },
-            10,
-        )?;
-        let ids: Vec<i64> = outcome.hits.iter().map(|hit| hit.memory_id).collect();
-
-        assert_eq!(ids, vec![1]);
-        Ok(())
-    }
-
-    #[test]
-    fn explicit_embedding_backfill_covers_all_statuses_across_batches() -> Result<()> {
-        let conn = setup_conn()?;
-        for id in 1..=1_002 {
-            let status = match id {
-                1 => "stale",
-                2 => "archived",
-                _ => "active",
-            };
-            conn.execute(
-                "INSERT INTO memories
-                 (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
-                 VALUES (?1, '/repo', 'Backfill memory', 'Backfill should cover all visible statuses.', 'decision', 1, ?1, ?2)",
-                params![id, status],
-            )?;
-        }
-
-        ensure_vec_table(&conn)?;
-        assert_eq!(backfill_missing_memory_embeddings(&conn, 1_000)?, 1_000);
-        assert_eq!(backfill_missing_memory_embeddings(&conn, 1_000)?, 2);
-
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM memory_embeddings", [], |row| {
-            row.get(0)
-        })?;
-        assert_eq!(count, 1_002);
-        for status in ["stale", "archived"] {
-            let status_count: i64 = conn.query_row(
-                "SELECT COUNT(*)
-                 FROM memory_embeddings e
-                 JOIN memories m ON m.id = e.memory_id
-                 WHERE m.status = ?1",
-                [status],
-                |row| row.get(0),
-            )?;
-            assert_eq!(status_count, 1);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn vector_search_ignores_embeddings_from_other_models() -> Result<()> {
-        let conn = setup_conn()?;
-        insert_test_memory(&conn, 1)?;
-        upsert_memory_embedding(
-            &conn,
-            1,
-            "Credential store",
-            "SQLCipher encrypts secrets at rest.",
-            "architecture",
-            None,
-        )?;
-
-        let query = TextEmbedding::new("remote-test-model", vec![0.1, 0.2, 0.3])?;
-        let outcome = vector_search_embedding_filtered(
-            &conn,
-            &query,
-            VectorSearchFilters {
-                project: Some("/repo"),
-                ..VectorSearchFilters::default()
-            },
-            5,
-        )?;
-
-        assert!(outcome.hits.is_empty());
-        assert!(outcome
-            .disabled_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("remote-test-model"));
-        Ok(())
-    }
-
-    #[test]
-    fn backfill_rebuilds_embeddings_from_stale_model() -> Result<()> {
-        let conn = setup_conn()?;
-        insert_test_memory(&conn, 1)?;
-        let stale_blob = vec![0u8; 3 * std::mem::size_of::<f32>()];
-        conn.execute(
-            "INSERT INTO memory_embeddings
-             (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
-             VALUES (1, ?1, 3, 'old-model', 'old-hash', 1)",
-            params![stale_blob],
-        )?;
-
-        assert_eq!(pending_memory_embedding_count(&conn)?, 1);
-        assert_eq!(backfill_missing_memory_embeddings(&conn, 100)?, 1);
-
-        let row: (String, i64) = conn.query_row(
-            "SELECT model, dimensions FROM memory_embeddings WHERE memory_id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(row.0, DEFAULT_EMBEDDING_MODEL);
-        assert_eq!(row.1, EMBEDDING_DIMENSIONS as i64);
-        assert_eq!(pending_memory_embedding_count(&conn)?, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn empty_vector_table_with_memories_is_reported_as_disabled() -> Result<()> {
-        let conn = setup_conn()?;
-        conn.execute(
-            "INSERT INTO memories
-             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
-             VALUES (1, '/repo', 'Needs embedding', 'Backfill should be explicit.', 'decision', 1, 1, 'active')",
-            [],
-        )?;
-        let query = embed_query_text("needs embedding");
-
-        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
-
-        assert!(outcome.hits.is_empty());
-        assert!(outcome
-            .disabled_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("backfill-embeddings"));
-        Ok(())
-    }
-
-    #[test]
-    fn missing_vector_table_is_reported_as_disabled() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        let query = embed_query_text("anything");
-        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
-
-        assert!(outcome
-            .disabled_reason
-            .as_deref()
-            .unwrap_or("")
-            .contains("memory_embeddings table is missing"));
-        assert!(outcome.hits.is_empty());
-        Ok(())
-    }
-}
+mod tests;

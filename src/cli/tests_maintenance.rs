@@ -30,3 +30,12 @@ fn cli_parses_backfill_embeddings_limit() {
         _ => panic!("expected backfill-embeddings command"),
     }
 }
+
+#[test]
+fn cli_parses_reindex_embeddings_alias() {
+    let cli = Cli::parse_from(["remem", "reindex-embeddings", "--limit", "50"]);
+    match cli.command {
+        Commands::BackfillEmbeddings { limit } => assert_eq!(limit, 50),
+        _ => panic!("expected reindex-embeddings alias"),
+    }
+}
