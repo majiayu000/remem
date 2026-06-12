@@ -7,6 +7,7 @@
 pub mod adapter;
 pub mod ai;
 pub mod api;
+mod atomic_file;
 mod build_info;
 pub mod cli;
 pub mod context;
