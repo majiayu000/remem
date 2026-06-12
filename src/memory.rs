@@ -15,6 +15,7 @@ pub mod preference;
 pub mod procedure;
 pub mod promote;
 pub mod raw_archive;
+pub(crate) mod raw_transcript;
 pub mod scope_cleanup;
 pub mod search_context;
 pub mod service;
