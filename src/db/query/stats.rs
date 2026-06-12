@@ -11,6 +11,7 @@ use super::shared::collect_rows;
 pub struct SystemStats {
     pub active_memories: i64,
     pub active_observations: i64,
+    pub total_observations: i64,
     pub session_summaries: i64,
     pub raw_messages: i64,
     pub raw_ingest_failures: i64,
@@ -21,6 +22,8 @@ pub struct SystemStats {
     pub latest_raw_ingest_failure_path: Option<String>,
     pub latest_raw_ingest_failure_message: Option<String>,
     pub captured_events: i64,
+    pub latest_captured_event_epoch: Option<i64>,
+    pub latest_capture_activity_epoch: Option<i64>,
     pub capture_drop_events: i64,
     pub actionable_capture_drops: i64,
     pub unrecovered_capture_spills: i64,
@@ -36,6 +39,9 @@ pub struct SystemStats {
     pub quarantined_extraction_replay_ranges: i64,
     pub oldest_pending_extraction_epoch: Option<i64>,
     pub pending_memory_candidates: i64,
+    pub total_memory_candidates: i64,
+    pub promoted_memory_candidates: i64,
+    pub pending_review_memory_candidates: i64,
     pub pending_graph_candidates: i64,
     pub pending_observations: i64,
     pub ready_pending_observations: i64,
@@ -86,6 +92,26 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
     let raw_ingest = query_raw_ingest_failure_stats(conn)?;
     let capture_drop = crate::db::query_capture_drop_stats(conn)?;
+    let captured_events =
+        conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
+    let latest_captured_event_epoch = conn.query_row(
+        "SELECT MAX(inserted_at_epoch) FROM captured_events",
+        [],
+        |row| row.get(0),
+    )?;
+    let latest_raw_message_epoch = conn.query_row(
+        "SELECT MAX(created_at_epoch) FROM raw_messages",
+        [],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+    let latest_capture_activity_epoch = [
+        latest_captured_event_epoch,
+        capture_drop.latest_epoch,
+        latest_raw_message_epoch,
+    ]
+    .into_iter()
+    .flatten()
+    .max();
     let replay_ranges = query_extraction_replay_range_stats(conn)?;
     let worker_heartbeat = crate::db::worker::latest_daemon_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_daemon_worker_heartbeat(
@@ -103,6 +129,9 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             [],
             |row| row.get(0),
         )?,
+        total_observations: conn.query_row("SELECT COUNT(*) FROM observations", [], |row| {
+            row.get(0)
+        })?,
         session_summaries: conn.query_row("SELECT COUNT(*) FROM session_summaries", [], |row| {
             row.get(0)
         })?,
@@ -114,9 +143,9 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         latest_raw_ingest_failure_kind: raw_ingest.latest_kind,
         latest_raw_ingest_failure_path: raw_ingest.latest_path,
         latest_raw_ingest_failure_message: raw_ingest.latest_message,
-        captured_events: conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| {
-            row.get(0)
-        })?,
+        captured_events,
+        latest_captured_event_epoch,
+        latest_capture_activity_epoch,
         capture_drop_events: capture_drop.total,
         actionable_capture_drops: capture_drop.actionable,
         unrecovered_capture_spills: capture_drop.unrecovered_spills,
@@ -156,6 +185,20 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             |row| row.get(0),
         )?,
         pending_memory_candidates: conn.query_row(
+            "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'pending_review'",
+            [],
+            |row| row.get(0),
+        )?,
+        total_memory_candidates: conn.query_row("SELECT COUNT(*) FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?,
+        promoted_memory_candidates: conn.query_row(
+            "SELECT COUNT(*) FROM memory_candidates
+             WHERE review_status IN ('auto_promoted', 'approved', 'edited')",
+            [],
+            |row| row.get(0),
+        )?,
+        pending_review_memory_candidates: conn.query_row(
             "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'pending_review'",
             [],
             |row| row.get(0),

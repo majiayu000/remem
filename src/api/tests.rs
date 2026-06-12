@@ -391,6 +391,7 @@ async fn status_handler_matches_shared_system_stats() {
     assert_eq!(payload["memories"], stats.active_memories);
     assert_eq!(payload["observations"], stats.active_observations);
     assert_eq!(payload["captured_events"], stats.captured_events);
+    assert_eq!(payload["total_observations"], stats.total_observations);
     assert_eq!(
         payload["pending_extraction_tasks"],
         stats.pending_extraction_tasks
@@ -399,4 +400,60 @@ async fn status_handler_matches_shared_system_stats() {
         payload["pending_graph_candidates"],
         stats.pending_graph_candidates
     );
+    assert_eq!(
+        payload["promotion_funnel"]["captured_events"],
+        stats.captured_events
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["observations"],
+        stats.total_observations
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["candidates"],
+        stats.total_memory_candidates
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["promoted"],
+        stats.promoted_memory_candidates
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["pending_review"],
+        stats.pending_review_memory_candidates
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["observation_rate_percent"],
+        serde_json::json!(expected_percent(
+            stats.total_observations,
+            stats.captured_events
+        ))
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["candidate_rate_percent"],
+        serde_json::json!(expected_percent(
+            stats.total_memory_candidates,
+            stats.total_observations
+        ))
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["promoted_rate_percent"],
+        serde_json::json!(expected_percent(
+            stats.promoted_memory_candidates,
+            stats.total_memory_candidates
+        ))
+    );
+    assert_eq!(
+        payload["promotion_funnel"]["pending_review_rate_percent"],
+        serde_json::json!(expected_percent(
+            stats.pending_review_memory_candidates,
+            stats.total_memory_candidates
+        ))
+    );
+}
+
+fn expected_percent(numerator: i64, denominator: i64) -> f64 {
+    if denominator <= 0 {
+        0.0
+    } else {
+        (numerator as f64 * 100.0) / denominator as f64
+    }
 }
