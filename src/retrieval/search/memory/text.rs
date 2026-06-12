@@ -21,6 +21,31 @@ const ENTITY_WEIGHT: f64 = 1.25;
 const TEMPORAL_WEIGHT: f64 = 1.0;
 const LIKE_FALLBACK_WEIGHT: f64 = 0.25;
 
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SearchWeights {
+    pub fts: f64,
+    pub vector: f64,
+    pub entity: f64,
+    pub temporal: f64,
+    pub like_fallback: f64,
+    pub max_vector_distance: f32,
+    pub rrf_k: f64,
+}
+
+impl Default for SearchWeights {
+    fn default() -> Self {
+        Self {
+            fts: FTS_WEIGHT,
+            vector: VECTOR_WEIGHT,
+            entity: ENTITY_WEIGHT,
+            temporal: TEMPORAL_WEIGHT,
+            like_fallback: LIKE_FALLBACK_WEIGHT,
+            max_vector_distance: MAX_VECTOR_DISTANCE,
+            rrf_k: RRF_K,
+        }
+    }
+}
+
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
     pub explain: SearchExplain,
@@ -33,6 +58,7 @@ struct QuerySearchPlan {
     temporal_range: Option<(i64, i64)>,
     temporal_field: Option<String>,
     fetch_limit: i64,
+    weights: SearchWeights,
     channels: Vec<NamedChannel>,
 }
 
@@ -105,6 +131,31 @@ pub(super) fn search_with_query(
     include_stale: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
+    search_with_query_weights(
+        conn,
+        query_text,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        SearchWeights::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn search_with_query_weights(
+    conn: &Connection,
+    query_text: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+    weights: SearchWeights,
+) -> Result<Vec<Memory>> {
     let plan = build_query_search_plan(
         conn,
         query_text,
@@ -114,13 +165,14 @@ pub(super) fn search_with_query(
         offset,
         include_stale,
         branch,
+        weights,
     )?;
     if plan.channels.is_empty() {
         return Ok(vec![]);
     }
 
     let channel_inputs = weighted_channel_inputs(&plan.channels);
-    let final_ids: Vec<i64> = weighted_ranked_fuse(&channel_inputs, RRF_K)
+    let final_ids: Vec<i64> = weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
         .iter()
         .map(|(id, _)| *id)
         .collect();
@@ -147,6 +199,7 @@ pub(super) fn search_with_query_explain(
         offset,
         include_stale,
         branch,
+        SearchWeights::default(),
     )?;
     if plan.channels.is_empty() {
         return Ok(QuerySearchWithExplain {
@@ -165,7 +218,7 @@ pub(super) fn search_with_query_explain(
                 fts_query: plan.fts_query,
                 temporal_range: plan.temporal_range,
                 temporal_field: plan.temporal_field,
-                rrf_k: RRF_K,
+                rrf_k: plan.weights.rrf_k,
                 channels: vec![],
                 results: vec![],
                 has_more: false,
@@ -175,7 +228,7 @@ pub(super) fn search_with_query_explain(
     }
 
     let channel_inputs = weighted_channel_inputs(&plan.channels);
-    let fused = weighted_ranked_fuse(&channel_inputs, RRF_K);
+    let fused = weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k);
     let final_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = load_ordered_memories(conn, &final_ids)?;
     let paged = paginate_memories(ordered, limit, offset);
@@ -206,6 +259,7 @@ fn build_query_search_plan(
     offset: i64,
     include_stale: bool,
     branch: Option<&str>,
+    weights: SearchWeights,
 ) -> Result<QuerySearchPlan> {
     let page_target = (limit.max(1) + offset.max(0) + 1).max(2);
     let fetch = page_target * 3;
@@ -240,7 +294,7 @@ fn build_query_search_plan(
         if !fts.is_empty() {
             channels.push(NamedChannel::enabled_with_hits(
                 "fts",
-                FTS_WEIGHT,
+                weights.fts,
                 fts_normalized_hits(&fts),
             ));
         }
@@ -256,7 +310,7 @@ fn build_query_search_plan(
         include_stale,
     )?;
     if !entity_ids.is_empty() {
-        channels.push(NamedChannel::enabled("entity", ENTITY_WEIGHT, entity_ids));
+        channels.push(NamedChannel::enabled("entity", weights.entity, entity_ids));
     }
 
     if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {
@@ -277,7 +331,7 @@ fn build_query_search_plan(
         if !temporal_ids.is_empty() {
             channels.push(NamedChannel::enabled(
                 "temporal",
-                TEMPORAL_WEIGHT,
+                weights.temporal,
                 temporal_ids,
             ));
         }
@@ -296,20 +350,20 @@ fn build_query_search_plan(
         fetch as usize,
     )?;
     if let Some(reason) = vector_outcome.disabled_reason {
-        channels.push(NamedChannel::disabled("vector", VECTOR_WEIGHT, reason));
+        channels.push(NamedChannel::disabled("vector", weights.vector, reason));
     } else {
         let hits = vector_outcome
             .hits
             .into_iter()
-            .filter(|hit| hit.distance <= MAX_VECTOR_DISTANCE)
+            .filter(|hit| hit.distance <= weights.max_vector_distance)
             .map(|hit| WeightedRankedHit {
                 id: hit.memory_id,
-                normalized_score: vector_similarity_score(hit.distance),
+                normalized_score: vector_similarity_score(hit.distance, weights),
             })
             .collect();
         channels.push(NamedChannel::enabled_with_hits(
             "vector",
-            VECTOR_WEIGHT,
+            weights.vector,
             hits,
         ));
     }
@@ -317,13 +371,13 @@ fn build_query_search_plan(
     if core_refs.is_empty() {
         channels.push(NamedChannel::disabled(
             "like_fallback",
-            LIKE_FALLBACK_WEIGHT,
+            weights.like_fallback,
             "no core terms for LIKE fallback",
         ));
     } else if channels.iter().any(NamedChannel::has_hits) {
         channels.push(NamedChannel::disabled(
             "like_fallback",
-            LIKE_FALLBACK_WEIGHT,
+            weights.like_fallback,
             "stronger retrieval channels returned hits",
         ));
     } else {
@@ -340,13 +394,13 @@ fn build_query_search_plan(
         if like.is_empty() {
             channels.push(NamedChannel::disabled(
                 "like_fallback",
-                LIKE_FALLBACK_WEIGHT,
+                weights.like_fallback,
                 "LIKE fallback returned no hits",
             ));
         } else {
             channels.push(NamedChannel::enabled(
                 "like_fallback",
-                LIKE_FALLBACK_WEIGHT,
+                weights.like_fallback,
                 like.iter().map(|memory| memory.id).collect(),
             ));
         }
@@ -359,6 +413,7 @@ fn build_query_search_plan(
         temporal_range,
         temporal_field,
         fetch_limit: fetch,
+        weights,
         channels,
     })
 }
@@ -407,7 +462,7 @@ fn build_explain(
             scope: memory.scope.clone(),
             visibility: visibility_label(memory, project).to_string(),
             staleness: memory::memory_staleness_label(memory, now_epoch),
-            contributions: contributions_for(memory.id, &plan.channels),
+            contributions: contributions_for(memory.id, plan),
         })
         .collect();
     SearchExplain {
@@ -424,7 +479,7 @@ fn build_explain(
         fts_query: plan.fts_query.clone(),
         temporal_range: plan.temporal_range,
         temporal_field: plan.temporal_field.clone(),
-        rrf_k: RRF_K,
+        rrf_k: plan.weights.rrf_k,
         channels,
         results,
         has_more: false,
@@ -432,8 +487,8 @@ fn build_explain(
     }
 }
 
-fn contributions_for(memory_id: i64, channels: &[NamedChannel]) -> Vec<ChannelContribution> {
-    channels
+fn contributions_for(memory_id: i64, plan: &QuerySearchPlan) -> Vec<ChannelContribution> {
+    plan.channels
         .iter()
         .filter_map(|channel| {
             channel
@@ -445,7 +500,7 @@ fn contributions_for(memory_id: i64, channels: &[NamedChannel]) -> Vec<ChannelCo
                     rank: index + 1,
                     score: weighted_rank_score(
                         channel.weight,
-                        RRF_K,
+                        plan.weights.rrf_k,
                         index,
                         channel.hits[index].normalized_score,
                     ),
@@ -465,8 +520,8 @@ fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChann
         .collect()
 }
 
-fn vector_similarity_score(distance: f32) -> f64 {
-    let threshold = f64::from(MAX_VECTOR_DISTANCE);
+fn vector_similarity_score(distance: f32, weights: SearchWeights) -> f64 {
+    let threshold = f64::from(weights.max_vector_distance);
     ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
 }
 

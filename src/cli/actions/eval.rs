@@ -145,3 +145,32 @@ pub(in crate::cli) fn run_eval_graph_decision(
     crate::eval::graph_decision::ensure_graph_decision_gate(&report)?;
     Ok(())
 }
+
+pub(in crate::cli) fn run_eval_weight_grid(
+    dataset_path: &str,
+    k: usize,
+    json_out: &str,
+    json: bool,
+) -> Result<()> {
+    let report =
+        crate::eval::weight_grid::run_weight_grid(crate::eval::weight_grid::WeightGridOptions {
+            dataset_path: dataset_path.to_string(),
+            k,
+        })?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("create weight grid eval directory {}", parent.display())
+            })?;
+        }
+    }
+    fs::write(json_out, &report_json)
+        .with_context(|| format!("write weight grid eval JSON {json_out}"))?;
+    if json {
+        println!("{report_json}");
+    } else {
+        print!("{report}");
+    }
+    Ok(())
+}
