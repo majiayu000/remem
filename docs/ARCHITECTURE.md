@@ -193,25 +193,25 @@ New session starts
        └─ Recent session summaries (request/completed)
 ```
 
-### 4. Stale Queue Recovery (Claude Code UserPromptSubmit → session_init)
+### 4. Legacy Pending Queue Recovery
 
-```
-New message submitted
-       │
-       ├─ Register/update session
-       │
-       ▼
-  Scan same-project pending older than 10 minutes
-       │
-       └─ Auto flush → prevent low-activity session observation loss
-```
+Runtime capture no longer writes `pending_observations`, and `session-init`
+does not auto-flush that legacy queue. Old pending rows have an explicit replay
+path instead: `remem pending migrate-legacy` records equivalent
+`captured_events`, enqueues `observation_extract` tasks, then marks the legacy
+rows `migrated`. Rows stored with `host = unknown` require `--host
+claude-code|codex-cli` so replayed evidence has a valid v2 capture identity.
+Failed legacy rows stay visible through pending admin commands; retry them back
+to `pending` before migration or purge them explicitly.
 
 ## Memory Lifecycle
 
 ```
-Tool operations ──→ pending_observations (raw queue, ≤4KB/event)
+Tool operations ──→ captured_events (raw capture ledger)
                          │
-                         ▼ flush (≤15 events/batch, single AI call)
+                         ▼ extraction_tasks (coalesced reliable work)
+                         │
+                         ▼ observation_extract (single AI call per range)
                   observations (structured memory)
                          │
              ┌───────────┼───────────┐
@@ -470,9 +470,21 @@ Retention matrix:
 ## Database Schema
 
 ```sql
--- Tool event queue
+-- Raw capture ledger
+captured_events (host_id, workspace_id, project_id, session_row_id, session_id,
+                 event_id, event_type, role, tool_name, content_text,
+                 content_blob_id, content_hash, created_at_epoch)
+
+-- Reliable extraction scheduler
+extraction_tasks (task_kind, host_id, workspace_id, project_id, session_row_id,
+                  status, idempotency_key, cursor_event_id,
+                  high_watermark_event_id, attempts, lease_owner,
+                  lease_expires_epoch)
+
+-- Legacy queue kept only for explicit admin migration/replay
 pending_observations (session_id, project, tool_name, tool_input, tool_response, cwd,
-                      created_at_epoch, lease_owner, lease_expires_epoch)
+                      created_at_epoch, status[pending|processing|failed|migrated],
+                      lease_owner, lease_expires_epoch)
 
 -- Structured observations (AI-distilled from tool events)
 observations (memory_session_id, project, type, title, subtitle, narrative, facts, concepts,

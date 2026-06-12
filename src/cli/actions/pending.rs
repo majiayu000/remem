@@ -2,7 +2,11 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::cli::types::PendingAction;
-use crate::db::{self, pending::admin::FailedPendingRow, ExtractionReplayRange};
+use crate::db::{
+    self,
+    pending::admin::{FailedPendingRow, LegacyPendingMigration},
+    ExtractionReplayRange,
+};
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     match action {
@@ -89,6 +93,59 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                     "Purged {} failed rows older than {} day(s).",
                     count, older_than_days
                 );
+            }
+        }
+        PendingAction::MigrateLegacy {
+            project,
+            host,
+            limit,
+            dry_run,
+            json,
+        } => {
+            if dry_run {
+                let conn = db::open_db_read_only()?;
+                let count = db::pending::admin::count_legacy_migration_candidates(
+                    &conn,
+                    project.as_deref(),
+                    limit,
+                )?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&PendingMigrateLegacyJson {
+                            project,
+                            limit: limit.max(1),
+                            count,
+                            migrated: Vec::new(),
+                        })?
+                    );
+                } else {
+                    println!("Would migrate {} legacy pending row(s).", count);
+                }
+            } else {
+                let mut conn = db::open_db()?;
+                let migrated = db::pending::admin::migrate_legacy_pending(
+                    &mut conn,
+                    project.as_deref(),
+                    host.as_deref(),
+                    limit,
+                )?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&PendingMigrateLegacyJson {
+                            project,
+                            limit: limit.max(1),
+                            count: migrated.len(),
+                            migrated,
+                        })?
+                    );
+                } else {
+                    println!(
+                        "Migrated {} legacy pending row(s) into captured_events.",
+                        migrated.len()
+                    );
+                }
             }
         }
         PendingAction::ListExtractionRanges {
@@ -184,6 +241,14 @@ struct PendingListFailedJson {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct PendingMigrateLegacyJson {
+    project: Option<String>,
+    limit: i64,
+    count: usize,
+    migrated: Vec<LegacyPendingMigration>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct PendingExtractionRangesJson {
     project: Option<String>,
     limit: i64,
@@ -221,6 +286,33 @@ mod tests {
         assert_eq!(parsed["project"], "proj");
         assert_eq!(parsed["count"], 1);
         assert_eq!(parsed["failed"][0]["tool_name"], "Bash");
+        Ok(())
+    }
+
+    #[test]
+    fn cli_pending_migrate_legacy_json_is_machine_parseable(
+    ) -> std::result::Result<(), serde_json::Error> {
+        let output = PendingMigrateLegacyJson {
+            project: Some("proj".to_string()),
+            limit: 1,
+            count: 1,
+            migrated: vec![LegacyPendingMigration {
+                pending_id: 7,
+                event_id: "legacy-pending-7".to_string(),
+                captured_event_id: 11,
+                extraction_task_id: 13,
+                host: "codex-cli".to_string(),
+                project: "proj".to_string(),
+                session_id: "session-1".to_string(),
+            }],
+        };
+
+        let text = serde_json::to_string(&output)?;
+        let parsed: Value = serde_json::from_str(&text)?;
+
+        assert_eq!(parsed["count"], 1);
+        assert_eq!(parsed["migrated"][0]["event_id"], "legacy-pending-7");
+        assert_eq!(parsed["migrated"][0]["host"], "codex-cli");
         Ok(())
     }
 }
