@@ -51,7 +51,33 @@ fn detects_over_saved_observations_and_candidates() {
                 token_estimate: None,
                 created_at_epoch: None,
             }],
-            observation_output: "<observation>\n<type>decision</type>\n<narrative>Keep the verified build loop rule.</narrative>\n<confidence>0.9</confidence>\n</observation>\n<observation>\n<type>discovery</type>\n<narrative>Invent an unsupported preference.</narrative>\n<confidence>0.7</confidence>\n</observation>".to_string(),
+            observation_output: serde_json::json!({
+                "observations": [
+                    {
+                        "type": "decision",
+                        "title": "Verified build loop rule",
+                        "subtitle": null,
+                        "narrative": "Keep the verified build loop rule.",
+                        "facts": [],
+                        "concepts": [],
+                        "files_read": [],
+                        "files_modified": [],
+                        "confidence": 0.9
+                    },
+                    {
+                        "type": "discovery",
+                        "title": "Unsupported preference",
+                        "subtitle": null,
+                        "narrative": "Invent an unsupported preference.",
+                        "facts": [],
+                        "concepts": [],
+                        "files_read": [],
+                        "files_modified": [],
+                        "confidence": 0.7
+                    }
+                ]
+            })
+            .to_string(),
             candidate_output: "<memory_candidate>\n<scope>project</scope>\n<type>lesson</type>\n<topic_key>verified-build-loop-rule</topic_key>\n<risk_class>medium</risk_class>\n<confidence>0.85</confidence>\n<text>Keep the verified build loop rule.</text>\n</memory_candidate>\n<memory_candidate>\n<scope>project</scope>\n<type>preference</type>\n<topic_key>unsupported-preference</topic_key>\n<risk_class>high</risk_class>\n<confidence>0.8</confidence>\n<text>Invent an unsupported preference.</text>\n</memory_candidate>".to_string(),
             expected_observations: vec![ObservationExpectation {
                 id: "obs-rule".to_string(),

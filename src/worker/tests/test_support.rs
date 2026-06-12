@@ -47,11 +47,21 @@ rm -f "$stdin_path"
 exit 0
 fi
 cat <<'EOF' > "$output_path"
-<observation>
-  <type>decision</type>
-  <title>Codex worker flush</title>
-  <narrative>Queued Codex observation persisted.</narrative>
-</observation>
+{
+  "observations": [
+    {
+      "type": "decision",
+      "title": "Codex worker flush",
+      "subtitle": null,
+      "narrative": "Queued Codex observation persisted.",
+      "facts": [],
+      "concepts": [],
+      "files_read": [],
+      "files_modified": [],
+      "confidence": 0.9
+    }
+  ]
+}
 EOF
 rm -f "$stdin_path"
 "#;

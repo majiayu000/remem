@@ -157,7 +157,8 @@ fn validate_candidate_ref(
 }
 
 fn evaluate_case(case: &ExtractionCase) -> Result<ExtractionCaseReport> {
-    let predicted_observations = parse_observation_predictions(&case.observation_output);
+    let predicted_observations = parse_observation_predictions(&case.observation_output)
+        .with_context(|| format!("parse observation predictions for case {}", case.id))?;
     let predicted_candidates = parse_candidate_predictions(&case.candidate_output)?;
     let observation_request_sha256 = sha256_hex(&build_observation_request(case));
     let candidate_request_sha256 =
@@ -197,17 +198,22 @@ fn evaluate_case(case: &ExtractionCase) -> Result<ExtractionCaseReport> {
     })
 }
 
-fn parse_observation_predictions(output: &str) -> Vec<ObservationPrediction> {
-    crate::memory::format::parse_observations(output)
-        .into_iter()
-        .enumerate()
-        .map(|(index, observation)| ObservationPrediction {
-            index,
-            observation_type: observation.obs_type.clone(),
-            text: crate::observation_extract::observation_text(&observation),
-            confidence: observation.confidence,
-        })
-        .collect()
+fn parse_observation_predictions(output: &str) -> Result<Vec<ObservationPrediction>> {
+    match crate::observation_extract::parse_observation_extract_response(output)? {
+        crate::observation_extract::ObservationExtractResponse::NoObservations => Ok(Vec::new()),
+        crate::observation_extract::ObservationExtractResponse::Observations(observations) => {
+            Ok(observations
+                .into_iter()
+                .enumerate()
+                .map(|(index, observation)| ObservationPrediction {
+                    index,
+                    observation_type: observation.obs_type.clone(),
+                    text: crate::observation_extract::observation_text(&observation),
+                    confidence: observation.confidence,
+                })
+                .collect())
+        }
+    }
 }
 
 fn parse_candidate_predictions(output: &str) -> Result<Vec<CandidatePrediction>> {
