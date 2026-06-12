@@ -1,4 +1,4 @@
-use super::synonyms::SYNONYMS;
+use super::translations::CJK_EN_TRANSLATIONS;
 
 pub(super) fn is_cjk(c: char) -> bool {
     matches!(
@@ -50,7 +50,7 @@ pub(super) fn segment_cjk(text: &str) -> Vec<String> {
         for len in (2..=4).rev() {
             if i + len <= chars.len() {
                 let candidate: String = chars[i..i + len].iter().collect();
-                if SYNONYMS.contains_key(candidate.as_str()) {
+                if CJK_EN_TRANSLATIONS.contains_key(candidate.as_str()) {
                     best_len = len;
                     break;
                 }

@@ -5,14 +5,16 @@ use super::tokenize::tokenize_mixed;
 fn expand_english_to_chinese() {
     let expanded = expand_query("encrypt");
     assert!(expanded.contains(&"加密".to_string()));
-    assert!(expanded.contains(&"sqlcipher".to_string()));
+    assert!(!expanded.contains(&"encryption".to_string()));
+    assert!(!expanded.contains(&"sqlcipher".to_string()));
 }
 
 #[test]
 fn expand_chinese_to_english() {
     let expanded = expand_query("数据库");
     assert!(expanded.contains(&"database".to_string()));
-    assert!(expanded.contains(&"sqlite".to_string()));
+    assert!(expanded.contains(&"db".to_string()));
+    assert!(!expanded.contains(&"sqlite".to_string()));
 }
 
 #[test]
@@ -106,6 +108,14 @@ fn cjk_segmentation_memory_quality() {
         "should expand to quality: {:?}",
         expanded
     );
+}
+
+#[test]
+fn retired_monolingual_expansions_do_not_expand() {
+    let expanded = expand_query("search");
+    assert!(expanded.contains(&"搜索".to_string()));
+    assert!(!expanded.contains(&"fts".to_string()));
+    assert!(!expanded.contains(&"查询".to_string()));
 }
 
 #[test]

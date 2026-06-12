@@ -682,7 +682,7 @@ fn search_mixed_chinese_english() -> Result<()> {
 
     let results = search::search(&conn, Some("Letta 框架"), None, None, 10, 0, true)?;
     assert!(!results.is_empty(), "should find at least 1 result");
-    // With OR semantics + synonym expansion, both "Letta 框架分析" and "Letta overview" may match
+    // OR semantics may match either mixed-script result.
     assert!(
         results[0].title.contains("Letta"),
         "first result should contain query term"
