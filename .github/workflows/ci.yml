@@ -23,5 +23,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
-      - run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
+      - name: Run extraction baseline gate
+        run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
+      - name: Run eval regression gates
+        run: cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
+      - name: Prove eval gate blocks constructed regression
+        run: |
+          set +e
+          cargo run -- eval-gates --simulate-golden-regression --json-out /tmp/remem-eval-gates-regression.json > /tmp/remem-eval-gates-regression.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/remem-eval-gates-regression.log
+          if [ "$code" -eq 0 ]; then
+            echo "expected simulated eval regression to fail"
+            exit 1
+          fi
+          grep -q "golden.slice.temporal.hit_at_k regressed" /tmp/remem-eval-gates-regression.log
+      - name: Upload eval gate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remem-eval-gates
+          path: |
+            /tmp/remem-extraction-eval.json
+            /tmp/remem-eval-gates.json
+            /tmp/remem-eval-gates-regression.json
+            /tmp/remem-eval-gates-regression.log
       - run: cargo test

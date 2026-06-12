@@ -450,6 +450,8 @@ pub(super) enum Commands {
     },
     #[command(name = "eval-extraction")]
     EvalExtraction(super::eval_types::EvalExtractionArgs),
+    #[command(name = "eval-gates")]
+    EvalGates(super::eval_types::EvalGatesArgs),
     /// Run local retrieval diagnostics.
     EvalLocal,
     /// Backfill entity records for existing memories.

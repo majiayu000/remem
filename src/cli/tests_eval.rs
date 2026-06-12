@@ -46,3 +46,29 @@ fn cli_parses_eval_extraction_options() {
         _ => panic!("expected eval-extraction command"),
     }
 }
+
+#[test]
+fn cli_parses_eval_gates_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-gates",
+        "--baseline",
+        "fixtures/baseline.json",
+        "--thresholds",
+        "fixtures/thresholds.json",
+        "--golden-dataset",
+        "fixtures/golden.json",
+        "--json-out",
+        "/tmp/eval-gates.json",
+    ]);
+
+    match cli.command {
+        Commands::EvalGates(args) => {
+            assert_eq!(args.baseline, "fixtures/baseline.json");
+            assert_eq!(args.thresholds, "fixtures/thresholds.json");
+            assert_eq!(args.golden_dataset, "fixtures/golden.json");
+            assert_eq!(args.json_out.as_deref(), Some("/tmp/eval-gates.json"));
+        }
+        _ => panic!("expected eval-gates command"),
+    }
+}
