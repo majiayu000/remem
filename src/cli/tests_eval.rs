@@ -72,3 +72,28 @@ fn cli_parses_eval_gates_options() {
         _ => panic!("expected eval-gates command"),
     }
 }
+
+#[test]
+fn cli_parses_eval_graph_decision_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-graph-decision",
+        "--dataset",
+        "fixtures/golden.json",
+        "--json-out",
+        "/tmp/graph-decision.json",
+        "--json",
+        "-k",
+        "7",
+    ]);
+
+    match cli.command {
+        Commands::EvalGraphDecision(args) => {
+            assert_eq!(args.dataset, "fixtures/golden.json");
+            assert_eq!(args.json_out, "/tmp/graph-decision.json");
+            assert_eq!(args.k, 7);
+            assert!(args.json);
+        }
+        _ => panic!("expected eval-graph-decision command"),
+    }
+}

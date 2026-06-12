@@ -1,0 +1,2472 @@
+{
+  "version": "2026-06-12",
+  "dataset_path": "eval/golden.json",
+  "k": 5,
+  "benefit_threshold": 0.05,
+  "latency_budget_p95_ms": 1000.0,
+  "decision": "freeze_graph_edges_retrieval_channel",
+  "decision_reason": "Entity BFS did not clear the pre-registered 5% multi-hop evidence-recall gain threshold; do not wire graph_edges into retrieval by default.",
+  "standard": {
+    "mode": "standard",
+    "overall": {
+      "total_queries": 50,
+      "scored_queries": 40,
+      "abstention_queries": 10,
+      "abstention_passed": 0,
+      "query_tokens_per_query": 12.88,
+      "retrieval_latency_p50_ms": 9.129916999999999,
+      "retrieval_latency_p95_ms": 10.02725,
+      "metrics": {
+        "count": 40,
+        "hit_at_k": 0.75,
+        "mrr_at_10": 0.6708333333333333,
+        "precision_at_k": 0.2250000000000001,
+        "recall_at_k": 0.75,
+        "ndcg_at_10": 0.6569288667454157,
+        "evidence_recall_at_k": 0.75
+      }
+    },
+    "multi_hop_slice": {
+      "total_queries": 10,
+      "scored_queries": 10,
+      "abstention_queries": 0,
+      "abstention_passed": 0,
+      "query_tokens_per_query": 19.6,
+      "retrieval_latency_p50_ms": 9.362957999999999,
+      "retrieval_latency_p95_ms": 9.441167,
+      "metrics": {
+        "count": 10,
+        "hit_at_k": 1.0,
+        "mrr_at_10": 0.95,
+        "precision_at_k": 0.39999999999999997,
+        "recall_at_k": 1.0,
+        "ndcg_at_10": 0.827715466981663,
+        "evidence_recall_at_k": 1.0
+      }
+    },
+    "non_multi_hop_slices": {
+      "total_queries": 40,
+      "scored_queries": 30,
+      "abstention_queries": 10,
+      "abstention_passed": 0,
+      "query_tokens_per_query": 11.2,
+      "retrieval_latency_p50_ms": 8.979583,
+      "retrieval_latency_p95_ms": 10.072833999999999,
+      "metrics": {
+        "count": 30,
+        "hit_at_k": 0.6666666666666666,
+        "mrr_at_10": 0.5777777777777777,
+        "precision_at_k": 0.16666666666666666,
+        "recall_at_k": 0.6666666666666666,
+        "ndcg_at_10": 0.6,
+        "evidence_recall_at_k": 0.6666666666666666
+      }
+    },
+    "query_summaries": [
+      {
+        "id": "paraphrase-01",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 1,
+        "retrieved_ids": [
+          31
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.86475,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-02",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 3,
+        "retrieved_ids": [
+          12,
+          33,
+          22
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.912167,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-03",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 0,
+        "retrieved_ids": [],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.811917000000001,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-04",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 1,
+        "retrieved_ids": [
+          24
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.575416,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-05",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 0,
+        "retrieved_ids": [],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.856083,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-06",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 1,
+        "retrieved_ids": [
+          26
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.994208,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-07",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 3,
+        "retrieved_ids": [
+          17,
+          43,
+          27
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.84875,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-08",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 2,
+        "retrieved_ids": [
+          28,
+          45
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.680334,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-09",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 3,
+        "retrieved_ids": [
+          19,
+          47,
+          29
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.63475,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-10",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 3,
+        "retrieved_ids": [
+          20,
+          49,
+          30
+        ],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.747625,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-01",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          11,
+          31,
+          1,
+          21
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.176791,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-02",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          12,
+          33,
+          22,
+          2
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.998000000000001,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-03",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          13,
+          35,
+          3,
+          23
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.050958,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-04",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          14,
+          37,
+          24,
+          4
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.161875,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-05",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          15,
+          39,
+          5,
+          25
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.202292,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-06",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          16,
+          41,
+          26,
+          6
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.264415999999999,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-07",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          17,
+          43,
+          7,
+          27
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.927916,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-08",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          18,
+          45,
+          28,
+          8
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.562291,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-09",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          19,
+          47,
+          29,
+          9
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.397417,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "knowledge-update-10",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          20,
+          49,
+          30,
+          10
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.02725,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-01",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          21,
+          1,
+          11,
+          31
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.072833999999999,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-02",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          22,
+          12,
+          33,
+          2
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.477416,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-03",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          13,
+          35,
+          23,
+          3
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.951375,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-04",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          24,
+          37,
+          14,
+          4
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.462,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-05",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          15,
+          39,
+          25,
+          5
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.129916999999999,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-06",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          26,
+          16,
+          41,
+          6
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.829959,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-07",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          17,
+          43,
+          27,
+          7
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.956000000000001,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-08",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          28,
+          18,
+          45,
+          8
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.001083,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-09",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          19,
+          47,
+          29,
+          9
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.814,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "temporal-10",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          30,
+          20,
+          49,
+          10
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.979583,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-01",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 4,
+        "retrieved_ids": [
+          11,
+          31,
+          1,
+          21
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 9.648875,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-02",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          12,
+          33,
+          22
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.746291,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-03",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 4,
+        "retrieved_ids": [
+          13,
+          35,
+          23,
+          3
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.586583,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-04",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          14,
+          37,
+          24
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.271208,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-05",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          15,
+          39,
+          25
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.455833,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-06",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          41,
+          16,
+          26
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.097874999999998,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-07",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          43,
+          17,
+          27
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.33075,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-08",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          18,
+          45,
+          28
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.269416999999999,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-09",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 3,
+        "retrieved_ids": [
+          47,
+          19,
+          29
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.283333,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "abstention-10",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          49,
+          20,
+          30,
+          50,
+          10
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 8.576084,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-01",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          31,
+          11,
+          1,
+          21,
+          32
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.441167,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-02",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          33,
+          12,
+          22,
+          2,
+          34
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.338166,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-03",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          35,
+          13,
+          23,
+          3,
+          36
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.409832999999999,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-04",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          37,
+          14,
+          24,
+          4,
+          38
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.379375000000001,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-05",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          39,
+          15,
+          25,
+          5,
+          40
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.376542,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-06",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          41,
+          16,
+          26,
+          6,
+          42
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.292666,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-07",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          43,
+          17,
+          27,
+          7,
+          44
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.362957999999999,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-08",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          18,
+          45,
+          28,
+          8,
+          46
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.261833000000001,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-09",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          47,
+          19,
+          29,
+          9,
+          48
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.287500000000001,
+        "hops": null,
+        "entities_discovered": []
+      },
+      {
+        "id": "multi-hop-10",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          49,
+          20,
+          30,
+          10,
+          50
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 9.322416,
+        "hops": null,
+        "entities_discovered": []
+      }
+    ]
+  },
+  "entity_bfs": {
+    "mode": "entity_bfs",
+    "overall": {
+      "total_queries": 50,
+      "scored_queries": 40,
+      "abstention_queries": 10,
+      "abstention_passed": 0,
+      "query_tokens_per_query": 12.88,
+      "retrieval_latency_p50_ms": 12.179499999999999,
+      "retrieval_latency_p95_ms": 13.938834,
+      "metrics": {
+        "count": 40,
+        "hit_at_k": 0.95,
+        "mrr_at_10": 0.7208333333333333,
+        "precision_at_k": 0.24250000000000016,
+        "recall_at_k": 0.95,
+        "ndcg_at_10": 0.7430641783600943,
+        "evidence_recall_at_k": 0.95
+      }
+    },
+    "multi_hop_slice": {
+      "total_queries": 10,
+      "scored_queries": 10,
+      "abstention_queries": 0,
+      "abstention_passed": 0,
+      "query_tokens_per_query": 19.6,
+      "retrieval_latency_p50_ms": 13.644708,
+      "retrieval_latency_p95_ms": 14.207709000000001,
+      "metrics": {
+        "count": 10,
+        "hit_at_k": 1.0,
+        "mrr_at_10": 0.95,
+        "precision_at_k": 0.39999999999999997,
+        "recall_at_k": 1.0,
+        "ndcg_at_10": 0.827715466981663,
+        "evidence_recall_at_k": 1.0
+      }
+    },
+    "non_multi_hop_slices": {
+      "total_queries": 40,
+      "scored_queries": 30,
+      "abstention_queries": 10,
+      "abstention_passed": 0,
+      "query_tokens_per_query": 11.2,
+      "retrieval_latency_p50_ms": 12.069792,
+      "retrieval_latency_p95_ms": 12.866958,
+      "metrics": {
+        "count": 30,
+        "hit_at_k": 0.9333333333333333,
+        "mrr_at_10": 0.6444444444444444,
+        "precision_at_k": 0.19000000000000009,
+        "recall_at_k": 0.9333333333333333,
+        "ndcg_at_10": 0.7148470821529048,
+        "evidence_recall_at_k": 0.9333333333333333
+      }
+    },
+    "query_summaries": [
+      {
+        "id": "paraphrase-01",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          31,
+          21,
+          11,
+          1,
+          32
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.734541,
+        "hops": 2,
+        "entities_discovered": [
+          "Kestrelnook",
+          "Nebulalatch",
+          "Owner",
+          "Team",
+          "Mica"
+        ]
+      },
+      {
+        "id": "paraphrase-02",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          12,
+          33,
+          22,
+          2,
+          34
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.707334,
+        "hops": 2,
+        "entities_discovered": [
+          "Lumenquay",
+          "Harbormint",
+          "Signer",
+          "Current",
+          "Toma",
+          "Reed",
+          "Owner",
+          "Team",
+          "Brine",
+          "Temporal",
+          "02"
+        ]
+      },
+      {
+        "id": "paraphrase-03",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 0,
+        "retrieved_ids": [],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 8.635541,
+        "hops": 1,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-04",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          24,
+          37,
+          14,
+          4
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.057291,
+        "hops": 2,
+        "entities_discovered": [
+          "Brindleforge",
+          "Temporal",
+          "04",
+          "KilnGuard"
+        ]
+      },
+      {
+        "id": "paraphrase-05",
+        "slice": "paraphrase",
+        "status": "MISS",
+        "result_count": 0,
+        "retrieved_ids": [],
+        "matched_refs": 0,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 9.155875,
+        "hops": 1,
+        "entities_discovered": []
+      },
+      {
+        "id": "paraphrase-06",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 4,
+        "retrieved_ids": [
+          26,
+          41,
+          16,
+          6
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.736208000000001,
+        "hops": 2,
+        "entities_discovered": [
+          "Hollowspan",
+          "Temporal",
+          "06",
+          "SpanDrift"
+        ]
+      },
+      {
+        "id": "paraphrase-07",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          17,
+          43,
+          27,
+          7,
+          44
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.834667,
+        "hops": 2,
+        "entities_discovered": [
+          "Paleravine",
+          "Ravinerelay",
+          "Region",
+          "Current",
+          "Owner",
+          "Team",
+          "Mesa",
+          "Temporal",
+          "07",
+          "Pax",
+          "Rune"
+        ]
+      },
+      {
+        "id": "paraphrase-08",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          28,
+          45,
+          18,
+          8,
+          46
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 10.967541,
+        "hops": 2,
+        "entities_discovered": [
+          "Copperoven",
+          "Temporal",
+          "08",
+          "OvenBell",
+          "Owner",
+          "Team",
+          "Hearth"
+        ]
+      },
+      {
+        "id": "paraphrase-09",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          19,
+          47,
+          29,
+          9,
+          48
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.261917,
+        "hops": 2,
+        "entities_discovered": [
+          "Cyanward",
+          "Wardroster",
+          "Source",
+          "Current",
+          "Owner",
+          "Team",
+          "Aster",
+          "Temporal",
+          "09"
+        ]
+      },
+      {
+        "id": "paraphrase-10",
+        "slice": "paraphrase",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          20,
+          49,
+          30,
+          10,
+          50
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.806875,
+        "hops": 2,
+        "entities_discovered": [
+          "Violetdome",
+          "Domepermit",
+          "Approver",
+          "Current",
+          "Vera",
+          "Knox",
+          "Owner",
+          "Team",
+          "Zenith",
+          "Temporal",
+          "10"
+        ]
+      },
+      {
+        "id": "knowledge-update-01",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          11,
+          31,
+          1,
+          21,
+          32
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.535041999999999,
+        "hops": 2,
+        "entities_discovered": [
+          "Kestrelnook",
+          "Quorum",
+          "Owner",
+          "Team",
+          "Mica",
+          "Violet",
+          "Rail",
+          "Allowance",
+          "Mira",
+          "Vale",
+          "Temporal",
+          "01",
+          "NightJar"
+        ]
+      },
+      {
+        "id": "knowledge-update-02",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          12,
+          33,
+          22,
+          2,
+          34
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.990708,
+        "hops": 2,
+        "entities_discovered": [
+          "Lumenquay",
+          "Signer",
+          "Toma",
+          "Reed",
+          "Owner",
+          "Team",
+          "Brine",
+          "Temporal",
+          "02",
+          "Orange",
+          "Dock",
+          "Window"
+        ]
+      },
+      {
+        "id": "knowledge-update-03",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          13,
+          35,
+          3,
+          23,
+          36
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.179499999999999,
+        "hops": 2,
+        "entities_discovered": [
+          "Cinderbloom",
+          "Shard",
+          "Owner",
+          "Team",
+          "Fern",
+          "Gray",
+          "Grove",
+          "Pruning",
+          "Nia",
+          "Sol",
+          "Temporal",
+          "03"
+        ]
+      },
+      {
+        "id": "knowledge-update-04",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          14,
+          37,
+          24,
+          4,
+          38
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.6455,
+        "hops": 2,
+        "entities_discovered": [
+          "Brindleforge",
+          "Threshold",
+          "83C",
+          "Owner",
+          "Team",
+          "Ember",
+          "Temporal",
+          "04",
+          "Blue",
+          "Kiln",
+          "Inspection",
+          "Oren",
+          "Pike"
+        ]
+      },
+      {
+        "id": "knowledge-update-05",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          15,
+          39,
+          5,
+          25,
+          40
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.839,
+        "hops": 2,
+        "entities_discovered": [
+          "Vellumspire",
+          "Retention",
+          "112",
+          "Owner",
+          "Team",
+          "Quill",
+          "Red",
+          "Archive",
+          "Allowance",
+          "Ivo",
+          "Lane",
+          "Temporal",
+          "05"
+        ]
+      },
+      {
+        "id": "knowledge-update-06",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          16,
+          41,
+          26,
+          6,
+          42
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.85075,
+        "hops": 2,
+        "entities_discovered": [
+          "Hollowspan",
+          "Owner",
+          "Sana",
+          "Holt",
+          "Team",
+          "Arch",
+          "Temporal",
+          "06",
+          "Green",
+          "Span",
+          "Revert"
+        ]
+      },
+      {
+        "id": "knowledge-update-07",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          17,
+          43,
+          7,
+          27,
+          44
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.069792,
+        "hops": 2,
+        "entities_discovered": [
+          "Paleravine",
+          "Region",
+          "Owner",
+          "Team",
+          "Mesa",
+          "White",
+          "Ravine",
+          "Handoff",
+          "Pax",
+          "Rune",
+          "Temporal",
+          "07"
+        ]
+      },
+      {
+        "id": "knowledge-update-08",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          18,
+          45,
+          28,
+          8,
+          46
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 11.936542,
+        "hops": 2,
+        "entities_discovered": [
+          "Copperoven",
+          "Route",
+          "Owner",
+          "Team",
+          "Hearth",
+          "Temporal",
+          "08",
+          "Copper",
+          "Oven",
+          "Alert",
+          "Lina",
+          "Moss"
+        ]
+      },
+      {
+        "id": "knowledge-update-09",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          19,
+          47,
+          29,
+          9,
+          48
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.090958,
+        "hops": 2,
+        "entities_discovered": [
+          "Cyanward",
+          "Source",
+          "Owner",
+          "Team",
+          "Aster",
+          "Temporal",
+          "09",
+          "Cyan",
+          "Ward",
+          "Schedule",
+          "Miko",
+          "Ash"
+        ]
+      },
+      {
+        "id": "knowledge-update-10",
+        "slice": "knowledge_update",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          20,
+          49,
+          30,
+          10,
+          50
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.622625,
+        "hops": 2,
+        "entities_discovered": [
+          "Violetdome",
+          "Approver",
+          "Vera",
+          "Knox",
+          "Owner",
+          "Team",
+          "Zenith",
+          "Temporal",
+          "10",
+          "Purple",
+          "Observatory",
+          "Authorization"
+        ]
+      },
+      {
+        "id": "temporal-01",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          21,
+          1,
+          11,
+          31,
+          32
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.743625,
+        "hops": 2,
+        "entities_discovered": [
+          "Kestrelnook",
+          "Temporal",
+          "01",
+          "Violet",
+          "Rail",
+          "Allowance",
+          "Mira",
+          "Vale",
+          "Nebulalatch",
+          "Quorum",
+          "Current",
+          "Owner",
+          "Team",
+          "Mica"
+        ]
+      },
+      {
+        "id": "temporal-02",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          22,
+          12,
+          33,
+          2,
+          34
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.096166,
+        "hops": 2,
+        "entities_discovered": [
+          "Lumenquay",
+          "Temporal",
+          "02",
+          "Signer",
+          "Current",
+          "Toma",
+          "Reed",
+          "Owner",
+          "Team",
+          "Brine",
+          "Orange",
+          "Dock",
+          "Window"
+        ]
+      },
+      {
+        "id": "temporal-03",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          13,
+          35,
+          23,
+          3,
+          36
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.175625,
+        "hops": 2,
+        "entities_discovered": [
+          "Cinderbloom",
+          "Shard",
+          "Current",
+          "Owner",
+          "Team",
+          "Fern",
+          "Temporal",
+          "03",
+          "Gray",
+          "Grove",
+          "Pruning",
+          "Nia",
+          "Sol"
+        ]
+      },
+      {
+        "id": "temporal-04",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          24,
+          37,
+          14,
+          4,
+          38
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.866958,
+        "hops": 2,
+        "entities_discovered": [
+          "Brindleforge",
+          "Temporal",
+          "04",
+          "Owner",
+          "Team",
+          "Ember",
+          "Threshold",
+          "Current",
+          "83C",
+          "Blue",
+          "Kiln",
+          "Inspection",
+          "Oren",
+          "Pike"
+        ]
+      },
+      {
+        "id": "temporal-05",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          15,
+          39,
+          25,
+          5,
+          40
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.840834000000001,
+        "hops": 2,
+        "entities_discovered": [
+          "Vellumspire",
+          "Retention",
+          "Current",
+          "112",
+          "Owner",
+          "Team",
+          "Quill",
+          "Temporal",
+          "05",
+          "Red",
+          "Archive",
+          "Allowance",
+          "Ivo",
+          "Lane"
+        ]
+      },
+      {
+        "id": "temporal-06",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          26,
+          16,
+          41,
+          6,
+          42
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.142125,
+        "hops": 2,
+        "entities_discovered": [
+          "Hollowspan",
+          "Temporal",
+          "06",
+          "Owner",
+          "Current",
+          "Sana",
+          "Holt",
+          "Team",
+          "Arch",
+          "Green",
+          "Span",
+          "Revert"
+        ]
+      },
+      {
+        "id": "temporal-07",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          17,
+          43,
+          27,
+          7,
+          44
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.482334,
+        "hops": 2,
+        "entities_discovered": [
+          "Paleravine",
+          "Region",
+          "Current",
+          "Owner",
+          "Team",
+          "Mesa",
+          "Temporal",
+          "07",
+          "Pax",
+          "Rune",
+          "White",
+          "Ravine",
+          "Handoff"
+        ]
+      },
+      {
+        "id": "temporal-08",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          28,
+          18,
+          45,
+          8,
+          46
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.472083,
+        "hops": 2,
+        "entities_discovered": [
+          "Copperoven",
+          "Temporal",
+          "08",
+          "Route",
+          "Current",
+          "Owner",
+          "Team",
+          "Hearth",
+          "Copper",
+          "Oven",
+          "Alert",
+          "Lina",
+          "Moss"
+        ]
+      },
+      {
+        "id": "temporal-09",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          19,
+          47,
+          29,
+          9,
+          48
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.346792,
+        "hops": 2,
+        "entities_discovered": [
+          "Cyanward",
+          "Source",
+          "Current",
+          "Owner",
+          "Team",
+          "Aster",
+          "Temporal",
+          "09",
+          "Cyan",
+          "Ward",
+          "Schedule",
+          "Miko",
+          "Ash"
+        ]
+      },
+      {
+        "id": "temporal-10",
+        "slice": "temporal",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          30,
+          20,
+          49,
+          10,
+          50
+        ],
+        "matched_refs": 1,
+        "expected_refs": 1,
+        "retrieval_latency_ms": 12.787583,
+        "hops": 2,
+        "entities_discovered": [
+          "Violetdome",
+          "Temporal",
+          "10",
+          "Approver",
+          "Current",
+          "Vera",
+          "Knox",
+          "Owner",
+          "Team",
+          "Zenith",
+          "Purple",
+          "Observatory",
+          "Authorization"
+        ]
+      },
+      {
+        "id": "abstention-01",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          11,
+          31,
+          1,
+          21,
+          32
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 12.7,
+        "hops": 2,
+        "entities_discovered": [
+          "Quorum",
+          "Current",
+          "Owner",
+          "Team",
+          "Mica",
+          "Violet",
+          "Rail",
+          "Allowance",
+          "Mira",
+          "Vale",
+          "Temporal",
+          "01",
+          "NightJar"
+        ]
+      },
+      {
+        "id": "abstention-02",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          12,
+          33,
+          22,
+          2,
+          34
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 11.525916,
+        "hops": 2,
+        "entities_discovered": [
+          "Lumenquay",
+          "Signer",
+          "Current",
+          "Toma",
+          "Reed",
+          "Owner",
+          "Team",
+          "Brine",
+          "Temporal",
+          "02"
+        ]
+      },
+      {
+        "id": "abstention-03",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          13,
+          35,
+          23,
+          3,
+          36
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 12.542124999999999,
+        "hops": 2,
+        "entities_discovered": [
+          "Cinderbloom",
+          "Shard",
+          "Current",
+          "Owner",
+          "Team",
+          "Fern",
+          "Temporal",
+          "03",
+          "Gray",
+          "Grove",
+          "Pruning",
+          "Nia",
+          "Sol",
+          "Project"
+        ]
+      },
+      {
+        "id": "abstention-04",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          14,
+          37,
+          24,
+          4,
+          38
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 11.070875000000001,
+        "hops": 2,
+        "entities_discovered": [
+          "Brindleforge",
+          "Threshold",
+          "Current",
+          "83C",
+          "Owner",
+          "Team",
+          "Ember",
+          "Temporal",
+          "04"
+        ]
+      },
+      {
+        "id": "abstention-05",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          15,
+          39,
+          25,
+          5,
+          40
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 11.467292,
+        "hops": 2,
+        "entities_discovered": [
+          "Vellumspire",
+          "Retention",
+          "Current",
+          "112",
+          "Owner",
+          "Team",
+          "Quill",
+          "Temporal",
+          "05"
+        ]
+      },
+      {
+        "id": "abstention-06",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          41,
+          16,
+          26,
+          6,
+          42
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 11.031541,
+        "hops": 2,
+        "entities_discovered": [
+          "Hollowspan",
+          "Owner",
+          "Team",
+          "Arch",
+          "Current",
+          "Sana",
+          "Holt",
+          "Temporal",
+          "06"
+        ]
+      },
+      {
+        "id": "abstention-07",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          43,
+          17,
+          27,
+          7,
+          44
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 11.134666999999999,
+        "hops": 2,
+        "entities_discovered": [
+          "Paleravine",
+          "Owner",
+          "Team",
+          "Mesa",
+          "Region",
+          "Current",
+          "Temporal",
+          "07",
+          "Pax",
+          "Rune"
+        ]
+      },
+      {
+        "id": "abstention-08",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          18,
+          45,
+          28,
+          8,
+          46
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 10.612417,
+        "hops": 2,
+        "entities_discovered": [
+          "Copperoven",
+          "Route",
+          "Current",
+          "Owner",
+          "Team",
+          "Hearth",
+          "Temporal",
+          "08"
+        ]
+      },
+      {
+        "id": "abstention-09",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          47,
+          19,
+          29,
+          9,
+          48
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 10.605125,
+        "hops": 2,
+        "entities_discovered": [
+          "Cyanward",
+          "Owner",
+          "Team",
+          "Aster",
+          "Source",
+          "Current",
+          "Temporal",
+          "09"
+        ]
+      },
+      {
+        "id": "abstention-10",
+        "slice": "abstention",
+        "status": "FAIL",
+        "result_count": 5,
+        "retrieved_ids": [
+          49,
+          20,
+          30,
+          50,
+          10
+        ],
+        "matched_refs": 0,
+        "expected_refs": 0,
+        "retrieval_latency_ms": 12.9835,
+        "hops": 1,
+        "entities_discovered": [
+          "Violetdome",
+          "Owner",
+          "Team",
+          "Zenith",
+          "Approver",
+          "Current",
+          "Vera",
+          "Knox",
+          "Temporal",
+          "10",
+          "Pager",
+          "Purple",
+          "Observatory",
+          "Authorization",
+          "Project"
+        ]
+      },
+      {
+        "id": "multi-hop-01",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          31,
+          11,
+          1,
+          21,
+          32
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.496875000000001,
+        "hops": 1,
+        "entities_discovered": [
+          "Kestrelnook",
+          "Owner",
+          "Team",
+          "Mica",
+          "Quorum",
+          "Current",
+          "Violet",
+          "Rail",
+          "Allowance",
+          "Mira",
+          "Vale",
+          "Temporal",
+          "01",
+          "NightJar",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-02",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          33,
+          12,
+          22,
+          2,
+          34
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.177417,
+        "hops": 1,
+        "entities_discovered": [
+          "Lumenquay",
+          "Owner",
+          "Team",
+          "Brine",
+          "Signer",
+          "Current",
+          "Toma",
+          "Reed",
+          "Temporal",
+          "02",
+          "Orange",
+          "Dock",
+          "Window",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-03",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          35,
+          13,
+          23,
+          3,
+          36
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.649,
+        "hops": 1,
+        "entities_discovered": [
+          "Cinderbloom",
+          "Owner",
+          "Team",
+          "Fern",
+          "Shard",
+          "Current",
+          "Temporal",
+          "03",
+          "Gray",
+          "Grove",
+          "Pruning",
+          "Nia",
+          "Sol",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-04",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          37,
+          14,
+          24,
+          4,
+          38
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 14.207709000000001,
+        "hops": 1,
+        "entities_discovered": [
+          "Brindleforge",
+          "Owner",
+          "Team",
+          "Ember",
+          "Threshold",
+          "Current",
+          "83C",
+          "Temporal",
+          "04",
+          "Blue",
+          "Kiln",
+          "Inspection",
+          "Oren",
+          "Pike",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-05",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          39,
+          15,
+          25,
+          5,
+          40
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.938834,
+        "hops": 1,
+        "entities_discovered": [
+          "Vellumspire",
+          "Owner",
+          "Team",
+          "Quill",
+          "Retention",
+          "Current",
+          "112",
+          "Temporal",
+          "05",
+          "Red",
+          "Archive",
+          "Allowance",
+          "Ivo",
+          "Lane",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-06",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          41,
+          16,
+          26,
+          6,
+          42
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.231084000000001,
+        "hops": 1,
+        "entities_discovered": [
+          "Hollowspan",
+          "Owner",
+          "Team",
+          "Arch",
+          "Current",
+          "Sana",
+          "Holt",
+          "Temporal",
+          "06",
+          "Green",
+          "Span",
+          "Revert",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-07",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          43,
+          17,
+          27,
+          7,
+          44
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.644708,
+        "hops": 1,
+        "entities_discovered": [
+          "Paleravine",
+          "Owner",
+          "Team",
+          "Mesa",
+          "Region",
+          "Current",
+          "Temporal",
+          "07",
+          "Pax",
+          "Rune",
+          "White",
+          "Ravine",
+          "Handoff",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-08",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          18,
+          45,
+          28,
+          8,
+          46
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.631375,
+        "hops": 1,
+        "entities_discovered": [
+          "Copperoven",
+          "Route",
+          "Current",
+          "Owner",
+          "Team",
+          "Hearth",
+          "Temporal",
+          "08",
+          "Copper",
+          "Oven",
+          "Alert",
+          "Lina",
+          "Moss",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-09",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          47,
+          19,
+          29,
+          9,
+          48
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 13.524750000000001,
+        "hops": 1,
+        "entities_discovered": [
+          "Cyanward",
+          "Owner",
+          "Team",
+          "Aster",
+          "Source",
+          "Current",
+          "Temporal",
+          "09",
+          "Cyan",
+          "Ward",
+          "Schedule",
+          "Miko",
+          "Ash",
+          "Pager"
+        ]
+      },
+      {
+        "id": "multi-hop-10",
+        "slice": "multi_hop",
+        "status": "HIT",
+        "result_count": 5,
+        "retrieved_ids": [
+          49,
+          20,
+          30,
+          10,
+          50
+        ],
+        "matched_refs": 2,
+        "expected_refs": 2,
+        "retrieval_latency_ms": 14.119833,
+        "hops": 1,
+        "entities_discovered": [
+          "Violetdome",
+          "Owner",
+          "Team",
+          "Zenith",
+          "Approver",
+          "Current",
+          "Vera",
+          "Knox",
+          "Temporal",
+          "10",
+          "Purple",
+          "Observatory",
+          "Authorization",
+          "Pager"
+        ]
+      }
+    ]
+  },
+  "deltas": {
+    "multi_hop_recall_at_k": 0.0,
+    "multi_hop_evidence_recall_at_k": 0.0,
+    "multi_hop_ndcg_at_10": 0.0,
+    "non_multi_hop_recall_at_k": 0.2666666666666667,
+    "non_multi_hop_evidence_recall_at_k": 0.2666666666666667,
+    "non_multi_hop_ndcg_at_10": 0.11484708215290484,
+    "p95_latency_ms": 3.9115839999999995
+  },
+  "checks": {
+    "benefit_threshold_met": false,
+    "non_multi_hop_zero_regression": true,
+    "p95_latency_within_budget": true,
+    "all_checks_passed": true
+  },
+  "notes": [
+    "Entity BFS is the existing explicit multi-hop expansion through memory_entities plus FTS mention fallback; this report does not wire first-class graph_edges traversal.",
+    "A freeze decision keeps graph_edges available for provenance/candidates but blocks retrieval-channel rollout until a future pre-registered eval shows a material gain."
+  ]
+}

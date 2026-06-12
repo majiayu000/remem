@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
@@ -111,5 +112,36 @@ pub(in crate::cli) fn run_eval_gates(
     if !report.summary.passed {
         bail!("eval-gates checks failed");
     }
+    Ok(())
+}
+
+pub(in crate::cli) fn run_eval_graph_decision(
+    dataset_path: &str,
+    k: usize,
+    json_out: &str,
+    json: bool,
+) -> Result<()> {
+    let report = crate::eval::graph_decision::run_graph_decision_eval(
+        crate::eval::graph_decision::GraphDecisionEvalOptions {
+            dataset_path: dataset_path.to_string(),
+            k,
+        },
+    )?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!("create graph decision eval directory {}", parent.display())
+            })?;
+        }
+    }
+    fs::write(json_out, &report_json)
+        .with_context(|| format!("write graph decision eval JSON {json_out}"))?;
+    if json {
+        println!("{report_json}");
+    } else {
+        print!("{report}");
+    }
+    crate::eval::graph_decision::ensure_graph_decision_gate(&report)?;
     Ok(())
 }

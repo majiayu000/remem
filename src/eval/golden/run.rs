@@ -12,7 +12,7 @@ use super::types::{
 const RANK_K: usize = 10;
 
 #[derive(Default)]
-struct CategoryAccumulator {
+pub(in crate::eval) struct CategoryAccumulator {
     total_queries: usize,
     abstention_queries: usize,
     abstention_passed: usize,
@@ -136,7 +136,7 @@ pub fn evaluate_dataset(
     })
 }
 
-fn record_bucket(
+pub(in crate::eval) fn record_bucket(
     bucket: &mut CategoryAccumulator,
     query: &GoldenQuery,
     evaluation: &QueryEvaluation,
@@ -156,7 +156,7 @@ fn record_bucket(
     }
 }
 
-fn bucket_evaluation(bucket: CategoryAccumulator) -> CategoryEvaluation {
+pub(in crate::eval) fn bucket_evaluation(bucket: CategoryAccumulator) -> CategoryEvaluation {
     let query_tokens_per_query = if bucket.total_queries == 0 {
         0.0
     } else {
@@ -373,7 +373,10 @@ fn corpus_memory_matches_query_filter(memory: &crate::memory::Memory, query: &Go
     true
 }
 
-fn seed_fixture_corpus(conn: &Connection, corpus: &[GoldenMemory]) -> Result<()> {
+pub(in crate::eval) fn seed_fixture_corpus(
+    conn: &Connection,
+    corpus: &[GoldenMemory],
+) -> Result<()> {
     for (index, memory) in corpus.iter().enumerate() {
         let id = crate::memory::insert_memory_full(
             conn,
@@ -418,7 +421,7 @@ fn corpus_memory_label(index: usize, memory: &GoldenMemory) -> String {
         .unwrap_or_else(|| format!("#{}", index + 1))
 }
 
-fn evaluate_query(
+pub(in crate::eval) fn evaluate_query(
     query: &GoldenQuery,
     results: &[crate::memory::Memory],
     k: usize,
@@ -499,11 +502,11 @@ fn evaluate_query(
     }
 }
 
-fn estimate_query_tokens(query: &str) -> usize {
+pub(in crate::eval) fn estimate_query_tokens(query: &str) -> usize {
     query.len().div_ceil(4).max(1)
 }
 
-fn percentile(mut values: Vec<f64>, percentile: f64) -> f64 {
+pub(in crate::eval) fn percentile(mut values: Vec<f64>, percentile: f64) -> f64 {
     if values.is_empty() {
         return 0.0;
     }

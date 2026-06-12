@@ -419,6 +419,7 @@ pub mod gates {
 }
 pub mod golden;
 pub mod governance;
+pub mod graph_decision;
 pub mod injection;
 pub mod local;
 pub mod metrics;
