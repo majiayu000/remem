@@ -85,8 +85,13 @@ fn count_context_candidate_pool(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    super::query::push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
-    super::query::push_excluded_type_filter(excluded_types, &mut idx, &mut conditions, &mut params);
+    super::filters::push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
+    super::filters::push_excluded_type_filter(
+        excluded_types,
+        &mut idx,
+        &mut conditions,
+        &mut params,
+    );
 
     let sql = format!(
         "SELECT COUNT(*) FROM memories WHERE {}",
@@ -110,8 +115,13 @@ fn query_context_lifecycle_exclusions(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    super::query::push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
-    super::query::push_excluded_type_filter(excluded_types, &mut idx, &mut conditions, &mut params);
+    super::filters::push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
+    super::filters::push_excluded_type_filter(
+        excluded_types,
+        &mut idx,
+        &mut conditions,
+        &mut params,
+    );
     conditions.push(
         "(status IN ('stale', 'superseded') \
           OR (status = 'active' AND expires_at_epoch IS NOT NULL \

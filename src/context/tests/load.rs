@@ -1,4 +1,3 @@
-use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 use rusqlite::Connection;
 
@@ -8,24 +7,30 @@ use super::super::render::{enforce_total_char_limit, enforce_total_char_limit_pr
 use super::{insert_global_memory, insert_memory, insert_memory_with_branch, setup_context_schema};
 
 #[test]
-fn load_context_data_logs_primary_memory_query_failures() {
-    let data_dir = ScopedTestDataDir::new("context-primary-memory-error-log");
+fn load_context_data_records_primary_memory_query_failures() {
     let conn = match Connection::open_in_memory() {
         Ok(conn) => conn,
         Err(error) => panic!("in-memory connection should open: {error}"),
     };
+    setup_context_schema(&conn);
+    conn.execute("DROP TABLE memories", []).unwrap();
     let policy = ContextPolicy::from_limits(ContextLimits::default());
 
     let loaded = load_context_data_with_policy(&conn, "/tmp/remem", None, &policy, true);
 
     assert!(loaded.memories.is_empty());
-    let log_path = data_dir.path.join("remem.log");
-    let log = match std::fs::read_to_string(&log_path) {
-        Ok(log) => log,
-        Err(error) => panic!("log should be readable at {}: {error}", log_path.display()),
-    };
-    assert!(log.contains("[ERROR] [context] failed to load recent context memories"));
-    assert!(log.contains("[ERROR] [context] failed to search context memories"));
+    let memory_errors = loaded
+        .errors
+        .iter()
+        .filter(|error| error.section == "memories")
+        .collect::<Vec<_>>();
+    assert_eq!(memory_errors.len(), 2);
+    assert!(memory_errors.iter().any(|error| error
+        .message
+        .contains("failed to load recent context memories")));
+    assert!(memory_errors
+        .iter()
+        .any(|error| error.message.contains("failed to search context memories")));
 }
 
 #[test]
