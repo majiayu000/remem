@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import argparse
 import sys
 import tomllib
 from pathlib import Path
@@ -100,6 +101,15 @@ def release_versions() -> tuple[set[str], str | None]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Require release metadata versions to match Cargo.toml."
+    )
+    parser.add_argument(
+        "--expected-version",
+        help="Optional bare version that Cargo.toml and release metadata must match.",
+    )
+    args = parser.parse_args()
+
     cargo = cargo_package_version()
     locked = lock_version()
     plugin = plugin_version()
@@ -107,6 +117,8 @@ def main() -> int:
     releases, base_url = release_versions()
 
     errors: list[str] = []
+    if args.expected_version and cargo != args.expected_version:
+        errors.append(f"Cargo.toml version is {cargo}, expected tag version {args.expected_version}")
     if locked != cargo:
         errors.append(f"Cargo.lock remem-ai version is {locked}, expected {cargo}")
     if plugin != cargo:

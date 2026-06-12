@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
       - name: Check version sync
-        run: python3 scripts/ci/check_plugin_version_sync.py
+        run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
       - uses: actions/download-artifact@v8.0.1
         with:
           path: artifacts
@@ -92,7 +92,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - name: Check version sync
-        run: python3 scripts/ci/check_plugin_version_sync.py
+        run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
       - name: Test npm wrapper
         run: node --test npm/remem/scripts/install.test.js
       - name: Publish npm wrapper
