@@ -139,6 +139,7 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
     let db_path = crate::db::db_path();
 
     if key_path.exists() {
+        ensure_env_key_matches_persisted_key_if_set(&key_path)?;
         let conn = crate::db::open_db().with_context(|| {
             format!(
                 "open remem database with existing SQLCipher key {}; run `remem status` after fixing the reported database/key error",
@@ -198,6 +199,27 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
         created_key: true,
         encrypted_existing_db: db_existed,
     })
+}
+
+fn ensure_env_key_matches_persisted_key_if_set(key_path: &Path) -> Result<()> {
+    let Some(env_key) = std::env::var_os("REMEM_CIPHER_KEY") else {
+        return Ok(());
+    };
+    let env_key = env_key.to_string_lossy();
+    if env_key.trim().is_empty() {
+        return Ok(());
+    }
+    let env_key = crate::db::parse_cipher_key(&env_key).context("parse REMEM_CIPHER_KEY")?;
+    let persisted = std::fs::read_to_string(key_path)
+        .with_context(|| format!("read existing SQLCipher key file {}", key_path.display()))?;
+    let persisted_key = crate::db::parse_cipher_key(&persisted)
+        .with_context(|| format!("parse SQLCipher key file {}", key_path.display()))?;
+    ensure!(
+        env_key.is_some() && env_key == persisted_key,
+        "REMEM_CIPHER_KEY does not match existing SQLCipher key file {}; unset REMEM_CIPHER_KEY or update it to the same persisted key before running `remem install`",
+        key_path.display()
+    );
+    Ok(())
 }
 
 fn ensure_existing_db_can_be_encrypted_without_key(db_path: &Path, key_path: &Path) -> Result<()> {

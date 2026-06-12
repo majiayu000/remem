@@ -111,6 +111,52 @@ fn ensure_runtime_store_ready_refuses_env_only_key_without_key_file() {
 }
 
 #[test]
+fn ensure_runtime_store_ready_rejects_env_key_mismatch_with_persisted_key() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-runtime-env-key-mismatch");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.path.join(".key"), format!("v2:{}", "7".repeat(64)))?;
+    std::env::set_var("REMEM_CIPHER_KEY", format!("v2:{}", "8".repeat(64)));
+    test_dir.remove_db_files();
+
+    let result = ensure_runtime_store_ready();
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    let err = result.expect_err("install must not initialize DB with a key that differs from .key");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("does not match existing SQLCipher key file"),
+        "got: {message}"
+    );
+    assert!(
+        !test_dir.db_path().exists(),
+        "mismatched env key must not create a database"
+    );
+    Ok(())
+}
+
+#[test]
+fn ensure_runtime_store_ready_treats_empty_env_key_as_unset() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-runtime-empty-env-key");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.path.join(".key"), format!("v2:{}", "7".repeat(64)))?;
+    std::env::set_var("REMEM_CIPHER_KEY", "");
+    test_dir.remove_db_files();
+
+    let result = ensure_runtime_store_ready();
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    let ready = result?;
+
+    assert!(!ready.created_key);
+    assert!(test_dir.db_path().exists());
+    let conn = crate::db::open_db_read_only()?;
+    let stats = crate::db::query_system_stats(&conn)?;
+    assert_eq!(stats.active_memories, 0);
+    Ok(())
+}
+
+#[test]
 fn build_hooks_contains_expected_claude_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::ClaudeCode);
     assert_eq!(
