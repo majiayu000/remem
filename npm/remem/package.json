@@ -26,7 +26,8 @@
   ],
   "files": [
     "bin/",
-    "scripts/",
+    "scripts/install.js",
+    "scripts/platform.js",
     "README.md"
   ],
   "keywords": [

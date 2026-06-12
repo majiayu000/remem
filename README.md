@@ -37,7 +37,7 @@ brew install majiayu000/tap/remem
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # Pin a specific release or install into a custom bin directory
-REMEM_VERSION=v0.4.5 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_VERSION=v0.5.39 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
@@ -161,12 +161,8 @@ Currently published:
 - Homebrew: `brew install majiayu000/tap/remem`
 - GitHub Releases: prebuilt binaries for macOS and Linux on x64/arm64
 - crates.io: `cargo install remem-ai --bin remem`
+- npm: `npm install -g @majiayu000/remem`
 - Source build: `cargo build --release`
-
-Prepared but not published:
-
-- npm wrapper package in `npm/remem`; publish requires npm auth or an
-  `NPM_TOKEN` secret
 
 Good next channels:
 
