@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
+pub use super::vector_candidates::VECTOR_SEARCH_CANDIDATE_LIMIT;
+
 pub const EMBEDDING_DIMENSIONS: usize = 768;
 pub const DEFAULT_EMBEDDING_MODEL: &str = "remem-local-feature-hash-v1";
 
@@ -15,6 +17,7 @@ pub struct VectorHit {
 pub struct VectorSearchOutcome {
     pub hits: Vec<VectorHit>,
     pub disabled_reason: Option<String>,
+    pub candidates_scanned: usize,
 }
 
 impl VectorSearchOutcome {
@@ -22,13 +25,20 @@ impl VectorSearchOutcome {
         Self {
             hits: vec![],
             disabled_reason: Some(reason.into()),
+            candidates_scanned: 0,
         }
     }
 
     pub fn ready(hits: Vec<VectorHit>) -> Self {
+        let candidates_scanned = hits.len();
+        Self::ready_with_scan_count(hits, candidates_scanned)
+    }
+
+    pub fn ready_with_scan_count(hits: Vec<VectorHit>, candidates_scanned: usize) -> Self {
         Self {
             hits,
             disabled_reason: None,
+            candidates_scanned,
         }
     }
 }
@@ -51,14 +61,7 @@ pub fn load_vec_extension(_conn: &Connection) -> Result<()> {
 }
 
 pub fn ensure_vec_table(conn: &Connection) -> Result<()> {
-    create_embedding_table(conn)?;
-    loop {
-        let backfilled = backfill_missing_memory_embeddings(conn, 1_000)?;
-        if backfilled < 1_000 {
-            break;
-        }
-    }
-    Ok(())
+    create_embedding_table(conn)
 }
 
 pub fn upsert_embedding(conn: &Connection, memory_id: i64, embedding: &[f32]) -> Result<()> {
@@ -224,42 +227,33 @@ pub fn vector_search_filtered(
             "memory_embeddings table is missing; run migrations/backfill",
         ));
     }
-
-    let mut conditions = vec![crate::memory::memory_current_filter_sql(
-        "m.status",
-        "m.expires_at_epoch",
-        filters.include_stale,
-    )];
-    if !filters.include_stale {
-        conditions.push(crate::memory::memory_state_key_current_filter_sql("m"));
-    }
-    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    let mut idx = 1;
-
-    if let Some(project) = filters.project {
-        conditions.push(format!("(m.project = ?{idx} OR m.scope = 'global')"));
-        param_values.push(Box::new(project.to_string()));
-        idx += 1;
-    }
-    if let Some(branch) = filters.branch {
-        conditions.push(format!("(m.branch = ?{idx} OR m.branch IS NULL)"));
-        param_values.push(Box::new(branch.to_string()));
-        idx += 1;
-    }
-    if let Some(memory_type) = filters.memory_type {
-        conditions.push(format!("m.memory_type = ?{idx}"));
-        param_values.push(Box::new(memory_type.to_string()));
+    if embedding_count(conn)? == 0
+        && super::vector_candidates::matching_memory_count(conn, filters)? > 0
+    {
+        return Ok(VectorSearchOutcome::disabled(
+            "memory_embeddings table is empty; run `remem backfill-embeddings --limit 1000`",
+        ));
     }
 
+    let candidate_ids = super::vector_candidates::select_candidate_ids(conn, filters, limit)?;
+    let candidates_scanned = candidate_ids.len();
+    if candidate_ids.is_empty() {
+        return Ok(VectorSearchOutcome::ready_with_scan_count(vec![], 0));
+    }
+    let placeholders = std::iter::repeat_n("?", candidate_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
-        "SELECT m.id, e.embedding, e.dimensions
-         FROM memory_embeddings e
-         JOIN memories m ON m.id = e.memory_id
-         WHERE {}",
-        conditions.join(" AND ")
+        "SELECT memory_id, embedding, dimensions
+         FROM memory_embeddings
+         WHERE memory_id IN ({placeholders})"
     );
-    let mut stmt = conn.prepare(&sql)?;
+    let param_values = candidate_ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect::<Vec<_>>();
     let refs = crate::db::to_sql_refs(&param_values);
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -268,7 +262,6 @@ pub fn vector_search_filtered(
         ))
     })?;
     let candidates = crate::db::query::collect_rows(rows)?;
-
     let mut hits = Vec::new();
     for (memory_id, blob, dimensions) in candidates {
         let embedding = decode_embedding(&blob, dimensions)
@@ -286,7 +279,10 @@ pub fn vector_search_filtered(
             .then_with(|| a.memory_id.cmp(&b.memory_id))
     });
     hits.truncate(limit);
-    Ok(VectorSearchOutcome::ready(hits))
+    Ok(VectorSearchOutcome::ready_with_scan_count(
+        hits,
+        candidates_scanned,
+    ))
 }
 
 pub fn find_similar_observations(
@@ -718,7 +714,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_vec_table_backfills_all_statuses_across_batches() -> Result<()> {
+    fn explicit_embedding_backfill_covers_all_statuses_across_batches() -> Result<()> {
         let conn = setup_conn()?;
         for id in 1..=1_002 {
             let status = match id {
@@ -735,6 +731,8 @@ mod tests {
         }
 
         ensure_vec_table(&conn)?;
+        assert_eq!(backfill_missing_memory_embeddings(&conn, 1_000)?, 1_000);
+        assert_eq!(backfill_missing_memory_embeddings(&conn, 1_000)?, 2);
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM memory_embeddings", [], |row| {
             row.get(0)
@@ -751,6 +749,28 @@ mod tests {
             )?;
             assert_eq!(status_count, 1);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_vector_table_with_memories_is_reported_as_disabled() -> Result<()> {
+        let conn = setup_conn()?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (1, '/repo', 'Needs embedding', 'Backfill should be explicit.', 'decision', 1, 1, 'active')",
+            [],
+        )?;
+        let query = embed_query_text("needs embedding");
+
+        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
+
+        assert!(outcome.hits.is_empty());
+        assert!(outcome
+            .disabled_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("backfill-embeddings"));
         Ok(())
     }
 
