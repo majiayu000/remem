@@ -76,13 +76,25 @@ pub struct TemporalFact {
 pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>) -> Result<i64> {
     validate_input(input)?;
     let now = chrono::Utc::now().timestamp();
+
+    let tx = conn.transaction()?;
+    let id = insert_temporal_fact_in_current_tx(&tx, input, now)?;
+    tx.commit()?;
+    Ok(id)
+}
+
+pub(crate) fn insert_temporal_fact_in_current_tx(
+    conn: &Connection,
+    input: &TemporalFactInput<'_>,
+    now: i64,
+) -> Result<i64> {
+    validate_input(input)?;
     let learned_at = input.learned_at_epoch.unwrap_or(now);
     let superseded_at = input.valid_from_epoch.unwrap_or(learned_at);
     let source_event_ids = serde_json::to_string(input.source_event_ids)?;
 
-    let tx = conn.transaction()?;
     if let Some(old_id) = input.supersedes_fact_id {
-        let old_fact: Option<(String, Option<i64>)> = tx
+        let old_fact: Option<(String, Option<i64>)> = conn
             .query_row(
                 "SELECT project, valid_from_epoch FROM memory_facts WHERE id = ?1",
                 [old_id],
@@ -106,7 +118,7 @@ pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>
             ),
             None => bail!("cannot supersede missing memory fact {old_id}"),
         }
-        tx.execute(
+        conn.execute(
             "UPDATE memory_facts
              SET status = 'stale',
                  valid_to_epoch = CASE
@@ -119,7 +131,7 @@ pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>
         )?;
     }
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO memory_facts
          (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
           learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
@@ -141,8 +153,7 @@ pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>
             now
         ],
     )?;
-    let id = tx.last_insert_rowid();
-    tx.commit()?;
+    let id = conn.last_insert_rowid();
     Ok(id)
 }
 

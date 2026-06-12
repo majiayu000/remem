@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{candidate_title, CandidateRoute, ParsedMemoryCandidate};
 use crate::memory::lifecycle::MemoryLifecycleOp;
@@ -155,6 +155,16 @@ pub(super) fn promote_candidate_to_memory_with_route(
                 ..Default::default()
             },
         )?;
+        insert_candidate_event_time_fact(
+            conn,
+            &memory_project,
+            memory_id,
+            candidate,
+            &evidence_event_ids,
+        )
+        .with_context(|| {
+            format!("failed to write temporal fact for promoted candidate id={candidate_id}")
+        })?;
         Ok(CandidateApplyOutcome {
             memory_id: Some(memory_id),
             promoted: true,
@@ -411,6 +421,55 @@ fn insert_routed_memory(
     refresh_memory_entities(conn, memory_id, title, &candidate.text)?;
     crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
     Ok(memory_id)
+}
+
+fn insert_candidate_event_time_fact(
+    conn: &Connection,
+    memory_project: &str,
+    memory_id: i64,
+    candidate: &ParsedMemoryCandidate,
+    evidence_event_ids: &[i64],
+) -> Result<i64> {
+    let valid_from_epoch = evidence_valid_from_epoch(conn, evidence_event_ids)?;
+    crate::memory::facts::insert_temporal_fact_in_current_tx(
+        conn,
+        &crate::memory::facts::TemporalFactInput {
+            project: memory_project,
+            subject: &candidate.topic_key,
+            predicate: crate::memory::facts::FactPredicate::AffectsProject,
+            object: memory_project,
+            valid_from_epoch: Some(valid_from_epoch),
+            valid_to_epoch: None,
+            learned_at_epoch: None,
+            source_memory_id: Some(memory_id),
+            source_observation_id: None,
+            source_event_ids: evidence_event_ids,
+            confidence: candidate.confidence,
+            supersedes_fact_id: None,
+        },
+        chrono::Utc::now().timestamp(),
+    )
+}
+
+fn evidence_valid_from_epoch(conn: &Connection, evidence_event_ids: &[i64]) -> Result<i64> {
+    if evidence_event_ids.is_empty() {
+        bail!("candidate promotion requires evidence_event_ids for temporal fact");
+    }
+    let mut earliest = None;
+    for event_id in evidence_event_ids {
+        let epoch: i64 = conn
+            .query_row(
+                "SELECT created_at_epoch FROM captured_events WHERE id = ?1",
+                [event_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .with_context(|| {
+                format!("candidate evidence event id={event_id} missing for temporal fact")
+            })?;
+        earliest = Some(earliest.map_or(epoch, |current: i64| current.min(epoch)));
+    }
+    earliest.context("candidate promotion requires evidence_event_ids for temporal fact")
 }
 
 fn insert_lesson_metadata(
