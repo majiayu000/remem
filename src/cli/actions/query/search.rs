@@ -333,10 +333,18 @@ fn render_search_explain(explain: &SearchExplain) -> String {
         "  core_terms: [{}]\n",
         explain.core_terms.join(", ")
     ));
+    output.push_str(&format!(
+        "  claim_terms: [{}]\n",
+        explain.claim_terms.join(", ")
+    ));
     output.push_str(&format!("  fts_query: {:?}\n", explain.fts_query));
     output.push_str(&format!("  temporal_range: {:?}\n", explain.temporal_range));
     output.push_str(&format!("  temporal_field: {:?}\n", explain.temporal_field));
     output.push_str(&format!("  rrf_k: {:.1}\n", explain.rrf_k));
+    output.push_str(&format!(
+        "  evidence_gate: min_confidence={:.2} filtered={}\n",
+        explain.min_evidence_confidence, explain.filtered_result_count
+    ));
     output.push_str("  channels:\n");
     for channel in &explain.channels {
         if !channel.enabled {
@@ -361,10 +369,11 @@ fn render_search_explain(explain: &SearchExplain) -> String {
     output.push_str("  results:\n");
     for result in &explain.results {
         output.push_str(&format!(
-            "    [{}] rank={} score={:.6} visibility={} scope={} project={}\n",
+            "    [{}] rank={} score={:.6} evidence_confidence={:.2} visibility={} scope={} project={}\n",
             result.memory_id,
             result.final_rank,
             result.final_score,
+            result.evidence_confidence,
             result.visibility,
             result.scope,
             result.project

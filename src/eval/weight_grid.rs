@@ -263,6 +263,15 @@ fn default_candidate_grid() -> Vec<SearchWeights> {
             }
         }
     }
+    for min_evidence_confidence in [0.0, 0.5, default.min_evidence_confidence, 0.75, 1.0] {
+        push_unique(
+            &mut candidates,
+            SearchWeights {
+                min_evidence_confidence,
+                ..default
+            },
+        );
+    }
     candidates
 }
 
@@ -291,6 +300,11 @@ fn compare_candidates(
             left.weights
                 .like_fallback
                 .total_cmp(&right.weights.like_fallback)
+        })
+        .then_with(|| {
+            left.weights
+                .min_evidence_confidence
+                .total_cmp(&right.weights.min_evidence_confidence)
         })
 }
 
@@ -373,6 +387,7 @@ fn weight_distance(candidate: SearchWeights, default: SearchWeights) -> f64 {
         + (candidate.like_fallback - default.like_fallback).abs()
         + f64::from((candidate.max_vector_distance - default.max_vector_distance).abs())
         + (candidate.rrf_k - default.rrf_k).abs()
+        + (candidate.min_evidence_confidence - default.min_evidence_confidence).abs()
 }
 
 impl Display for WeightGridReport {
@@ -396,7 +411,7 @@ impl Display for WeightGridReport {
         for candidate in self.candidates.iter().take(10) {
             writeln!(
                 f,
-                "  #{:02} score={:.4} dist={:.2} fts={:.2} vector={:.2} entity={:.2} temporal={:.2} like={:.2}",
+                "  #{:02} score={:.4} dist={:.2} fts={:.2} vector={:.2} entity={:.2} temporal={:.2} like={:.2} confidence={:.2}",
                 candidate.rank,
                 candidate.score,
                 candidate.distance_from_defaults,
@@ -404,7 +419,8 @@ impl Display for WeightGridReport {
                 candidate.weights.vector,
                 candidate.weights.entity,
                 candidate.weights.temporal,
-                candidate.weights.like_fallback
+                candidate.weights.like_fallback,
+                candidate.weights.min_evidence_confidence
             )?;
         }
         Ok(())
