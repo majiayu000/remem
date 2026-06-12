@@ -111,6 +111,23 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
         .results
         .iter()
         .any(|result| result.visibility == "global-overlay"));
+    let like = explain
+        .channels
+        .iter()
+        .find(|channel| channel.name == "like_fallback")
+        .context("like_fallback channel should be reported")?;
+    assert!(!like.enabled);
+    assert!(like
+        .disabled_reason
+        .as_deref()
+        .unwrap_or("")
+        .contains("stronger retrieval channels returned hits"));
+    assert!(explain.results.iter().all(|result| {
+        result
+            .contributions
+            .iter()
+            .all(|contribution| contribution.channel != "like_fallback")
+    }));
     assert!(explain.results.iter().all(|result| {
         !result.contributions.is_empty()
             && result
@@ -118,6 +135,56 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
                 .iter()
                 .all(|contribution| contribution.score > 0.0)
     }));
+    Ok(())
+}
+
+#[test]
+fn like_fallback_only_participates_when_stronger_channels_are_empty() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "DB schema migration",
+            content: "Updated AI model",
+            scope: "project",
+            updated_at_epoch: 100,
+        },
+    )?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 2,
+            project: "/repo",
+            title: "Other topic entirely",
+            content: "Nothing relevant",
+            scope: "project",
+            updated_at_epoch: 90,
+        },
+    )?;
+
+    let (memories, explain) =
+        search_with_branch_explain(&conn, Some("DB"), Some("/repo"), None, 5, 0, false, None)?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    let like = explain
+        .channels
+        .iter()
+        .find(|channel| channel.name == "like_fallback")
+        .context("like_fallback channel should be reported")?;
+    assert!(like.enabled, "{like:#?}");
+    assert_eq!(like.hits.first().map(|hit| hit.memory_id), Some(1));
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == 1)
+        .context("LIKE fallback result should be explained")?;
+    assert!(result
+        .contributions
+        .iter()
+        .any(|contribution| contribution.channel == "like_fallback" && contribution.score > 0.0));
     Ok(())
 }
 

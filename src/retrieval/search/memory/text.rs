@@ -5,13 +5,21 @@ use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
 
-use super::super::common::{paginate_memories, rrf_fuse, sanitize_fts_query};
+use super::super::common::{
+    paginate_memories, sanitize_fts_query, weighted_rank_score, weighted_ranked_fuse,
+    WeightedRankedChannel, WeightedRankedHit,
+};
 use super::{
     ChannelContribution, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
 };
 
 const RRF_K: f64 = 60.0;
 const MAX_VECTOR_DISTANCE: f32 = 0.51;
+const FTS_WEIGHT: f64 = 2.5;
+const VECTOR_WEIGHT: f64 = 3.0;
+const ENTITY_WEIGHT: f64 = 1.25;
+const TEMPORAL_WEIGHT: f64 = 1.0;
+const LIKE_FALLBACK_WEIGHT: f64 = 0.25;
 
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
@@ -30,29 +38,48 @@ struct QuerySearchPlan {
 
 struct NamedChannel {
     name: &'static str,
+    weight: f64,
     disabled_reason: Option<String>,
-    ids: Vec<i64>,
+    hits: Vec<WeightedRankedHit>,
 }
 
 impl NamedChannel {
-    fn enabled(name: &'static str, ids: Vec<i64>) -> Self {
+    fn enabled(name: &'static str, weight: f64, ids: Vec<i64>) -> Self {
+        let hits = ids
+            .into_iter()
+            .enumerate()
+            .map(|(rank, id)| WeightedRankedHit {
+                id,
+                normalized_score: rank_normalized_score(rank),
+            })
+            .collect();
+        Self::enabled_with_hits(name, weight, hits)
+    }
+
+    fn enabled_with_hits(name: &'static str, weight: f64, hits: Vec<WeightedRankedHit>) -> Self {
         Self {
             name,
+            weight,
             disabled_reason: None,
-            ids,
+            hits,
         }
     }
 
-    fn disabled(name: &'static str, reason: impl Into<String>) -> Self {
+    fn disabled(name: &'static str, weight: f64, reason: impl Into<String>) -> Self {
         Self {
             name,
+            weight,
             disabled_reason: Some(reason.into()),
-            ids: vec![],
+            hits: vec![],
         }
     }
 
     fn is_enabled(&self) -> bool {
         self.disabled_reason.is_none()
+    }
+
+    fn has_hits(&self) -> bool {
+        self.is_enabled() && !self.hits.is_empty()
     }
 }
 
@@ -92,12 +119,8 @@ pub(super) fn search_with_query(
         return Ok(vec![]);
     }
 
-    let channel_ids: Vec<Vec<i64>> = plan
-        .channels
-        .iter()
-        .map(|channel| channel.ids.clone())
-        .collect();
-    let final_ids: Vec<i64> = rrf_fuse(&channel_ids, RRF_K)
+    let channel_inputs = weighted_channel_inputs(&plan.channels);
+    let final_ids: Vec<i64> = weighted_ranked_fuse(&channel_inputs, RRF_K)
         .iter()
         .map(|(id, _)| *id)
         .collect();
@@ -151,12 +174,8 @@ pub(super) fn search_with_query_explain(
         });
     }
 
-    let channel_ids: Vec<Vec<i64>> = plan
-        .channels
-        .iter()
-        .map(|channel| channel.ids.clone())
-        .collect();
-    let fused = rrf_fuse(&channel_ids, RRF_K);
+    let channel_inputs = weighted_channel_inputs(&plan.channels);
+    let fused = weighted_ranked_fuse(&channel_inputs, RRF_K);
     let final_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = load_ordered_memories(conn, &final_ids)?;
     let paged = paginate_memories(ordered, limit, offset);
@@ -208,7 +227,7 @@ fn build_query_search_plan(
     if !long_tokens.is_empty() {
         let safe_query = sanitize_fts_query(&long_tokens.join(" "));
         fts_query = Some(safe_query.clone());
-        let fts = memory::search_memories_fts_filtered(
+        let fts = memory::search_memories_fts_hits_filtered(
             conn,
             &safe_query,
             project,
@@ -218,9 +237,12 @@ fn build_query_search_plan(
             include_stale,
             branch,
         )?;
-        let ids: Vec<i64> = fts.iter().map(|memory| memory.id).collect();
-        if !ids.is_empty() {
-            channels.push(NamedChannel::enabled("fts", ids));
+        if !fts.is_empty() {
+            channels.push(NamedChannel::enabled_with_hits(
+                "fts",
+                FTS_WEIGHT,
+                fts_normalized_hits(&fts),
+            ));
         }
     }
 
@@ -234,7 +256,7 @@ fn build_query_search_plan(
         include_stale,
     )?;
     if !entity_ids.is_empty() {
-        channels.push(NamedChannel::enabled("entity", entity_ids));
+        channels.push(NamedChannel::enabled("entity", ENTITY_WEIGHT, entity_ids));
     }
 
     if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {
@@ -253,7 +275,11 @@ fn build_query_search_plan(
             include_stale,
         )?;
         if !temporal_ids.is_empty() {
-            channels.push(NamedChannel::enabled("temporal", temporal_ids));
+            channels.push(NamedChannel::enabled(
+                "temporal",
+                TEMPORAL_WEIGHT,
+                temporal_ids,
+            ));
         }
     }
 
@@ -270,34 +296,60 @@ fn build_query_search_plan(
         fetch as usize,
     )?;
     if let Some(reason) = vector_outcome.disabled_reason {
-        channels.push(NamedChannel::disabled("vector", reason));
+        channels.push(NamedChannel::disabled("vector", VECTOR_WEIGHT, reason));
     } else {
-        channels.push(NamedChannel::enabled(
+        let hits = vector_outcome
+            .hits
+            .into_iter()
+            .filter(|hit| hit.distance <= MAX_VECTOR_DISTANCE)
+            .map(|hit| WeightedRankedHit {
+                id: hit.memory_id,
+                normalized_score: vector_similarity_score(hit.distance),
+            })
+            .collect();
+        channels.push(NamedChannel::enabled_with_hits(
             "vector",
-            vector_outcome
-                .hits
-                .into_iter()
-                .filter(|hit| hit.distance <= MAX_VECTOR_DISTANCE)
-                .map(|hit| hit.memory_id)
-                .collect(),
+            VECTOR_WEIGHT,
+            hits,
         ));
     }
 
-    let like = memory::search_memories_like_filtered(
-        conn,
-        &core_refs,
-        project,
-        memory_type,
-        fetch,
-        0,
-        include_stale,
-        branch,
-    )?;
-    if !like.is_empty() {
-        channels.push(NamedChannel::enabled(
+    if core_refs.is_empty() {
+        channels.push(NamedChannel::disabled(
             "like_fallback",
-            like.iter().map(|memory| memory.id).collect(),
+            LIKE_FALLBACK_WEIGHT,
+            "no core terms for LIKE fallback",
         ));
+    } else if channels.iter().any(NamedChannel::has_hits) {
+        channels.push(NamedChannel::disabled(
+            "like_fallback",
+            LIKE_FALLBACK_WEIGHT,
+            "stronger retrieval channels returned hits",
+        ));
+    } else {
+        let like = memory::search_memories_like_filtered(
+            conn,
+            &core_refs,
+            project,
+            memory_type,
+            fetch,
+            0,
+            include_stale,
+            branch,
+        )?;
+        if like.is_empty() {
+            channels.push(NamedChannel::disabled(
+                "like_fallback",
+                LIKE_FALLBACK_WEIGHT,
+                "LIKE fallback returned no hits",
+            ));
+        } else {
+            channels.push(NamedChannel::enabled(
+                "like_fallback",
+                LIKE_FALLBACK_WEIGHT,
+                like.iter().map(|memory| memory.id).collect(),
+            ));
+        }
     }
 
     Ok(QuerySearchPlan {
@@ -332,11 +384,11 @@ fn build_explain(
             enabled: channel.is_enabled(),
             disabled_reason: channel.disabled_reason.clone(),
             hits: channel
-                .ids
+                .hits
                 .iter()
                 .enumerate()
-                .map(|(index, id)| ChannelHit {
-                    memory_id: *id,
+                .map(|(index, hit)| ChannelHit {
+                    memory_id: hit.id,
                     rank: index + 1,
                 })
                 .collect(),
@@ -383,14 +435,64 @@ fn contributions_for(memory_id: i64, channels: &[NamedChannel]) -> Vec<ChannelCo
         .iter()
         .filter_map(|channel| {
             channel
-                .ids
+                .hits
                 .iter()
-                .position(|id| *id == memory_id)
+                .position(|hit| hit.id == memory_id)
                 .map(|index| ChannelContribution {
                     channel: channel.name.to_string(),
                     rank: index + 1,
-                    score: 1.0 / (RRF_K + index as f64 + 1.0),
+                    score: weighted_rank_score(
+                        channel.weight,
+                        RRF_K,
+                        index,
+                        channel.hits[index].normalized_score,
+                    ),
                 })
+        })
+        .collect()
+}
+
+fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChannel<'_>> {
+    channels
+        .iter()
+        .filter(|channel| channel.has_hits())
+        .map(|channel| WeightedRankedChannel {
+            weight: channel.weight,
+            hits: &channel.hits,
+        })
+        .collect()
+}
+
+fn rank_normalized_score(rank: usize) -> f64 {
+    1.0 / (rank as f64 + 1.0)
+}
+
+fn vector_similarity_score(distance: f32) -> f64 {
+    let threshold = f64::from(MAX_VECTOR_DISTANCE);
+    ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
+}
+
+fn fts_normalized_hits(
+    hits: &[crate::retrieval::memory_search::FtsMemoryHit],
+) -> Vec<WeightedRankedHit> {
+    let best = hits
+        .iter()
+        .map(|hit| hit.score)
+        .fold(f64::INFINITY, f64::min);
+    let worst = hits
+        .iter()
+        .map(|hit| hit.score)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let spread = worst - best;
+    hits.iter()
+        .enumerate()
+        .map(|(rank, hit)| WeightedRankedHit {
+            id: hit.memory.id,
+            normalized_score: if spread.abs() < f64::EPSILON {
+                rank_normalized_score(rank)
+            } else {
+                ((worst - hit.score) / spread).clamp(0.0, 1.0)
+            },
         })
         .collect()
 }

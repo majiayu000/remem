@@ -1,6 +1,6 @@
 {
   "name": "@majiayu000/remem",
-  "version": "0.5.46",
+  "version": "0.5.47",
   "description": "Persistent memory for Claude Code and Codex",
   "license": "MIT",
   "homepage": "https://github.com/majiayu000/remem#readme",
