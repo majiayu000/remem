@@ -177,12 +177,28 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
     let cipher_key = crate::db::CipherKey::Raw(key);
 
     if db_existed {
-        crate::db::encrypt_database(&cipher_key).with_context(|| {
-            format!(
+        let encrypted_path = db_path.with_extension("db.enc");
+        let backup_path = db_path.with_extension("db.bak");
+        let encrypted_existed = encrypted_path.exists();
+        let backup_existed = backup_path.exists();
+        if let Err(error) = crate::db::encrypt_database(&cipher_key) {
+            let mut error = error.context(format!(
                 "encrypt existing remem database {}; run `remem encrypt` manually and rerun `remem install`",
                 db_path.display()
-            )
-        })?;
+            ));
+            if let Err(rollback_error) = rollback_generated_key_after_encrypt_failure(
+                &key_path,
+                &cipher_key,
+                &db_path,
+                encrypted_existed,
+                backup_existed,
+            ) {
+                error = error.context(format!(
+                    "rollback generated key after failed database encryption: {rollback_error}"
+                ));
+            }
+            return Err(error);
+        }
     }
 
     let conn = crate::db::open_db().with_context(|| {
@@ -220,6 +236,55 @@ fn ensure_env_key_matches_persisted_key_if_set(key_path: &Path) -> Result<()> {
         key_path.display()
     );
     Ok(())
+}
+
+fn rollback_generated_key_after_encrypt_failure(
+    key_path: &Path,
+    generated_key: &crate::db::CipherKey,
+    db_path: &Path,
+    encrypted_existed_before: bool,
+    backup_existed_before: bool,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    let encrypted_path = db_path.with_extension("db.enc");
+    let backup_path = db_path.with_extension("db.bak");
+
+    if !db_path.exists() && !backup_existed_before && backup_path.exists() {
+        if let Err(error) = std::fs::rename(&backup_path, db_path) {
+            errors.push(format!(
+                "restore {} from {}: {}",
+                db_path.display(),
+                backup_path.display(),
+                error
+            ));
+        }
+    }
+
+    if !encrypted_existed_before && encrypted_path.exists() {
+        if let Err(error) = std::fs::remove_file(&encrypted_path) {
+            errors.push(format!("remove {}: {}", encrypted_path.display(), error));
+        }
+    }
+
+    match std::fs::read_to_string(key_path) {
+        Ok(contents) if contents == generated_key.stored_value() => {
+            if let Err(error) = std::fs::remove_file(key_path) {
+                errors.push(format!("remove {}: {}", key_path.display(), error));
+            }
+        }
+        Ok(_) => errors.push(format!(
+            "leave {} because its contents changed after generation",
+            key_path.display()
+        )),
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => errors.push(format!("read {}: {}", key_path.display(), error)),
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        bail!("{}", errors.join("; "))
+    }
 }
 
 fn ensure_existing_db_can_be_encrypted_without_key(db_path: &Path, key_path: &Path) -> Result<()> {

@@ -14,6 +14,7 @@ pub struct ScopedTestDataDir {
     _guard: MutexGuard<'static, ()>,
     previous: Option<OsString>,
     previous_allow_plaintext: Option<OsString>,
+    previous_cipher_key: Option<OsString>,
     pub path: PathBuf,
 }
 
@@ -22,6 +23,7 @@ impl ScopedTestDataDir {
         let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("REMEM_DATA_DIR");
         let previous_allow_plaintext = std::env::var_os("REMEM_ALLOW_PLAINTEXT_DB");
+        let previous_cipher_key = std::env::var_os("REMEM_CIPHER_KEY");
         let unique = format!(
             "remem-test-{}-{}-{}",
             label,
@@ -39,6 +41,7 @@ impl ScopedTestDataDir {
             _guard: guard,
             previous,
             previous_allow_plaintext,
+            previous_cipher_key,
             path,
         }
     }
@@ -68,6 +71,11 @@ impl Drop for ScopedTestDataDir {
             std::env::set_var("REMEM_ALLOW_PLAINTEXT_DB", previous);
         } else {
             std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+        }
+        if let Some(previous) = self.previous_cipher_key.as_ref() {
+            std::env::set_var("REMEM_CIPHER_KEY", previous);
+        } else {
+            std::env::remove_var("REMEM_CIPHER_KEY");
         }
         let _ = std::fs::remove_dir_all(&self.path);
     }

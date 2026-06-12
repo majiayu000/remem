@@ -57,6 +57,44 @@ fn ensure_runtime_store_ready_encrypts_existing_plaintext_db() -> anyhow::Result
 }
 
 #[test]
+fn ensure_runtime_store_ready_rolls_back_key_when_encryption_fails() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-runtime-existing-db-encrypt-fail");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    std::fs::create_dir_all(&test_dir.path)?;
+    {
+        let conn = rusqlite::Connection::open(test_dir.db_path())?;
+        conn.execute("CREATE TABLE existing_probe(id INTEGER PRIMARY KEY)", [])?;
+    }
+    let encrypted_temp_path = test_dir.db_path().with_extension("db.enc");
+    std::fs::create_dir(&encrypted_temp_path)?;
+
+    let err = ensure_runtime_store_ready()
+        .expect_err("install must fail when the encrypted temp database path is blocked");
+
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("encrypt existing remem database"),
+        "got: {message}"
+    );
+    assert!(
+        !test_dir.path.join(".key").exists(),
+        "failed encryption must remove the generated key file"
+    );
+    assert!(
+        test_dir.db_path().exists(),
+        "failed encryption must leave the source database in place"
+    );
+    let header = std::fs::read(test_dir.db_path())?;
+    assert_eq!(&header[..16], b"SQLite format 3\0");
+    assert!(
+        encrypted_temp_path.is_dir(),
+        "pre-existing temp path must not be removed by rollback"
+    );
+    Ok(())
+}
+
+#[test]
 fn ensure_runtime_store_ready_refuses_existing_non_plaintext_db_without_key() -> anyhow::Result<()>
 {
     let test_dir = ScopedTestDataDir::new("install-runtime-existing-encrypted-db");
