@@ -1,11 +1,13 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use sha2::{Digest, Sha256};
 
+use super::embedding::TextEmbedding;
 pub use super::vector_candidates::VECTOR_SEARCH_CANDIDATE_LIMIT;
 
-pub const EMBEDDING_DIMENSIONS: usize = 768;
-pub const DEFAULT_EMBEDDING_MODEL: &str = "remem-local-feature-hash-v1";
+pub use super::embedding::{
+    LOCAL_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS,
+    LOCAL_EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VectorHit {
@@ -83,14 +85,15 @@ pub fn upsert_memory_embedding(
     memory_type: &str,
     topic_key: Option<&str>,
 ) -> Result<()> {
-    let embedding = embed_memory_text(title, content, memory_type, topic_key);
-    let content_hash = embedding_content_hash(title, content, memory_type, topic_key);
+    let embedding = super::embedding::embed_memory(title, content, memory_type, topic_key)?;
+    let content_hash =
+        super::embedding::embedding_content_hash(title, content, memory_type, topic_key);
     upsert_embedding_with_metadata(
         conn,
         memory_id,
-        DEFAULT_EMBEDDING_MODEL,
+        embedding.model(),
         &content_hash,
-        &embedding,
+        embedding.values(),
         chrono::Utc::now().timestamp(),
     )
     .with_context(|| format!("memory embedding upsert failed for memory id={memory_id}"))
@@ -125,16 +128,22 @@ pub fn backfill_missing_memory_embeddings(conn: &Connection, limit: i64) -> Resu
         return Ok(0);
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type
+    let target = super::embedding::configured_backfill_target()?;
+    let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type
          FROM memories m
          LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE e.memory_id IS NULL
+         WHERE (e.memory_id IS NULL OR e.model <> ?1 OR e.dimensions <> ?2)
            AND m.status IN ('active', 'stale', 'archived')
          ORDER BY m.updated_at_epoch DESC, m.id DESC
-         LIMIT ?1",
-    )?;
-    let rows = stmt.query_map([limit], |row| {
+         LIMIT ?3";
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+        Box::new(target.model.clone()),
+        Box::new(target.dimensions as i64),
+    ];
+    values.push(Box::new(limit));
+    let refs = crate::db::to_sql_refs(&values);
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(refs.as_slice(), |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, Option<String>>(1)?,
@@ -158,6 +167,22 @@ pub fn backfill_missing_memory_embeddings(conn: &Connection, limit: i64) -> Resu
     Ok(count)
 }
 
+pub fn pending_memory_embedding_count(conn: &Connection) -> Result<i64> {
+    if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
+        return Ok(0);
+    }
+    let target = super::embedding::configured_backfill_target()?;
+    let sql = "SELECT COUNT(*)
+               FROM memories m
+               LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+               WHERE (e.memory_id IS NULL OR e.model <> ?1 OR e.dimensions <> ?2)
+                 AND m.status IN ('active', 'stale', 'archived')";
+    let values: Vec<Box<dyn rusqlite::types::ToSql>> =
+        vec![Box::new(target.model), Box::new(target.dimensions as i64)];
+    let refs = crate::db::to_sql_refs(&values);
+    Ok(conn.query_row(sql, refs.as_slice(), |row| row.get(0))?)
+}
+
 pub fn embedding_count(conn: &Connection) -> Result<i64> {
     if !table_exists(conn, "memory_embeddings")? {
         return Ok(0);
@@ -170,7 +195,7 @@ pub fn embedding_count(conn: &Connection) -> Result<i64> {
 }
 
 pub fn embed_query_text(query: &str) -> Vec<f32> {
-    embed_text(query)
+    super::embedding::embed_query_text_local(query)
 }
 
 pub fn embed_memory_text(
@@ -179,17 +204,7 @@ pub fn embed_memory_text(
     memory_type: &str,
     topic_key: Option<&str>,
 ) -> Vec<f32> {
-    let mut text = String::new();
-    text.push_str(memory_type);
-    text.push('\n');
-    if let Some(topic_key) = topic_key {
-        text.push_str(topic_key);
-        text.push('\n');
-    }
-    text.push_str(title);
-    text.push('\n');
-    text.push_str(content);
-    embed_text(&text)
+    super::embedding::embed_memory_text_local(title, content, memory_type, topic_key)
 }
 
 pub fn vector_search(
@@ -219,6 +234,16 @@ pub fn vector_search_filtered(
             query_embedding.len()
         );
     }
+    let embedding = TextEmbedding::new(DEFAULT_EMBEDDING_MODEL, query_embedding.to_vec())?;
+    vector_search_embedding_filtered(conn, &embedding, filters, limit)
+}
+
+pub fn vector_search_embedding_filtered(
+    conn: &Connection,
+    query_embedding: &TextEmbedding,
+    filters: VectorSearchFilters<'_>,
+    limit: usize,
+) -> Result<VectorSearchOutcome> {
     if limit == 0 {
         return Ok(VectorSearchOutcome::ready(vec![]));
     }
@@ -235,7 +260,18 @@ pub fn vector_search_filtered(
         ));
     }
 
-    let candidate_ids = super::vector_candidates::select_candidate_ids(conn, filters, limit)?;
+    let profile = query_embedding.profile();
+    if super::vector_candidates::matching_embedding_count(conn, filters, profile)? == 0
+        && super::vector_candidates::matching_memory_count(conn, filters)? > 0
+    {
+        return Ok(VectorSearchOutcome::disabled(format!(
+            "memory_embeddings has no rows for model={} dimensions={}; run `remem backfill-embeddings --limit 1000`",
+            profile.model, profile.dimensions
+        )));
+    }
+
+    let candidate_ids =
+        super::vector_candidates::select_candidate_ids(conn, filters, profile, limit)?;
     let candidates_scanned = candidate_ids.len();
     if candidate_ids.is_empty() {
         return Ok(VectorSearchOutcome::ready_with_scan_count(vec![], 0));
@@ -246,12 +282,16 @@ pub fn vector_search_filtered(
     let sql = format!(
         "SELECT memory_id, embedding, dimensions
          FROM memory_embeddings
-         WHERE memory_id IN ({placeholders})"
+         WHERE memory_id IN ({placeholders})
+           AND model = ?
+           AND dimensions = ?"
     );
-    let param_values = candidate_ids
+    let mut param_values = candidate_ids
         .iter()
         .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
         .collect::<Vec<_>>();
+    param_values.push(Box::new(profile.model.to_string()));
+    param_values.push(Box::new(profile.dimensions as i64));
     let refs = crate::db::to_sql_refs(&param_values);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| {
@@ -266,7 +306,7 @@ pub fn vector_search_filtered(
     for (memory_id, blob, dimensions) in candidates {
         let embedding = decode_embedding(&blob, dimensions)
             .with_context(|| format!("invalid embedding blob for memory id={memory_id}"))?;
-        let distance = cosine_distance(query_embedding, &embedding)?;
+        let distance = cosine_distance(query_embedding.values(), &embedding)?;
         hits.push(VectorHit {
             memory_id,
             distance,
@@ -327,14 +367,17 @@ fn upsert_embedding_with_metadata(
     embedding: &[f32],
     updated_at_epoch: i64,
 ) -> Result<()> {
-    if embedding.len() != EMBEDDING_DIMENSIONS {
-        anyhow::bail!(
-            "embedding must be {} dimensions, got {}",
-            EMBEDDING_DIMENSIONS,
-            embedding.len()
-        );
+    if model.trim().is_empty() {
+        anyhow::bail!("embedding model must not be empty");
+    }
+    if embedding.is_empty() {
+        anyhow::bail!("embedding vector must not be empty");
+    }
+    if embedding.iter().any(|value| !value.is_finite()) {
+        anyhow::bail!("embedding vector contains non-finite values");
     }
     let blob = encode_embedding(embedding);
+    let dimensions = embedding.len() as i64;
     conn.execute(
         "INSERT INTO memory_embeddings
          (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
@@ -348,7 +391,7 @@ fn upsert_embedding_with_metadata(
         params![
             memory_id,
             blob,
-            EMBEDDING_DIMENSIONS as i64,
+            dimensions,
             model,
             content_hash,
             updated_at_epoch
@@ -366,17 +409,15 @@ fn encode_embedding(embedding: &[f32]) -> Vec<u8> {
 }
 
 pub(crate) fn decode_embedding(blob: &[u8], dimensions: i64) -> Result<Vec<f32>> {
-    if dimensions != EMBEDDING_DIMENSIONS as i64 {
-        anyhow::bail!(
-            "embedding dimensions must be {}, got {}",
-            EMBEDDING_DIMENSIONS,
-            dimensions
-        );
+    if dimensions <= 0 {
+        anyhow::bail!("embedding dimensions must be positive, got {dimensions}");
     }
-    if blob.len() != EMBEDDING_DIMENSIONS * std::mem::size_of::<f32>() {
+    let dimensions = dimensions as usize;
+    let expected_bytes = dimensions * std::mem::size_of::<f32>();
+    if blob.len() != expected_bytes {
         anyhow::bail!(
             "embedding blob must be {} bytes, got {}",
-            EMBEDDING_DIMENSIONS * std::mem::size_of::<f32>(),
+            expected_bytes,
             blob.len()
         );
     }
@@ -408,108 +449,6 @@ pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> Result<f32> {
     Ok((1.0 - dot / (a_norm.sqrt() * b_norm.sqrt())).clamp(0.0, 2.0))
 }
 
-fn embed_text(text: &str) -> Vec<f32> {
-    let normalized = text.to_lowercase();
-    let mut vector = vec![0.0f32; EMBEDDING_DIMENSIONS];
-    for token in semantic_tokens(&normalized) {
-        add_feature(&mut vector, &format!("token:{token}"), 1.0);
-    }
-    for ngram in char_ngrams(&normalized) {
-        add_feature(&mut vector, &format!("ngram:{ngram}"), 0.35);
-    }
-    for (concept, phrases) in semantic_concepts() {
-        if phrases.iter().any(|phrase| normalized.contains(phrase)) {
-            add_feature(&mut vector, &format!("concept:{concept}"), 4.0);
-        }
-    }
-    normalize(&mut vector);
-    vector
-}
-
-fn semantic_tokens(text: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    for ch in text.chars() {
-        if ch.is_alphanumeric() || is_cjk(ch) {
-            current.push(ch);
-        } else if !current.is_empty() {
-            tokens.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
-fn char_ngrams(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text
-        .chars()
-        .filter(|ch| ch.is_alphanumeric() || is_cjk(*ch))
-        .collect();
-    let mut grams = Vec::new();
-    for width in [2usize, 3] {
-        if chars.len() < width {
-            continue;
-        }
-        grams.extend(
-            chars
-                .windows(width)
-                .map(|window| window.iter().collect::<String>()),
-        );
-    }
-    grams
-}
-
-fn add_feature(vector: &mut [f32], feature: &str, weight: f32) {
-    let digest = Sha256::digest(feature.as_bytes());
-    for offset in [0usize, 8, 16] {
-        let raw = u64::from_le_bytes([
-            digest[offset],
-            digest[offset + 1],
-            digest[offset + 2],
-            digest[offset + 3],
-            digest[offset + 4],
-            digest[offset + 5],
-            digest[offset + 6],
-            digest[offset + 7],
-        ]);
-        let idx = raw as usize % vector.len();
-        let sign = if raw & 1 == 0 { 1.0 } else { -1.0 };
-        vector[idx] += weight * sign;
-    }
-}
-
-fn normalize(vector: &mut [f32]) {
-    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
-    if norm == 0.0 {
-        return;
-    }
-    for value in vector {
-        *value /= norm;
-    }
-}
-
-fn embedding_content_hash(
-    title: &str,
-    content: &str,
-    memory_type: &str,
-    topic_key: Option<&str>,
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(memory_type.as_bytes());
-    hasher.update([0]);
-    if let Some(topic_key) = topic_key {
-        hasher.update(topic_key.as_bytes());
-    }
-    hasher.update([0]);
-    hasher.update(title.as_bytes());
-    hasher.update([0]);
-    hasher.update(content.as_bytes());
-    let digest = hasher.finalize();
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
     Ok(conn
         .query_row(
@@ -519,97 +458,6 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
         )
         .optional()?
         .is_some())
-}
-
-fn is_cjk(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{4E00}'..='\u{9FFF}' |
-        '\u{3400}'..='\u{4DBF}' |
-        '\u{F900}'..='\u{FAFF}'
-    )
-}
-
-fn semantic_concepts() -> &'static [(&'static str, &'static [&'static str])] {
-    &[
-        (
-            "data-security",
-            &[
-                "sqlcipher",
-                "encrypt",
-                "encrypted",
-                "encryption",
-                "secret",
-                "secrets",
-                "credential",
-                "credentials",
-                "private",
-                "confidential",
-                "protect",
-                "protected",
-                "at rest",
-                "persisted data",
-                "加密",
-                "密钥",
-            ],
-        ),
-        (
-            "transcript-capture",
-            &[
-                "transcript",
-                "raw archive",
-                "raw message",
-                "hook fallback",
-                "assistant message",
-                "conversation capture",
-                "jsonl",
-                "会话",
-                "原始消息",
-            ],
-        ),
-        (
-            "retrieval-quality",
-            &[
-                "semantic",
-                "embedding",
-                "vector",
-                "recall",
-                "search quality",
-                "paraphrase",
-                "检索",
-                "语义",
-                "召回",
-                "向量",
-            ],
-        ),
-        (
-            "current-state",
-            &[
-                "current decision",
-                "current state",
-                "supersede",
-                "supersedes",
-                "stale",
-                "replacement",
-                "现在",
-                "当前",
-                "替代",
-            ],
-        ),
-        (
-            "compression",
-            &[
-                "compress",
-                "compression",
-                "compaction",
-                "summarize",
-                "compressed",
-                "压缩",
-                "摘要",
-                "总结",
-            ],
-        ),
-    ]
 }
 
 #[cfg(test)]
@@ -623,6 +471,16 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         Ok(conn)
+    }
+
+    fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Credential store', 'SQLCipher encrypts secrets at rest.', 'architecture', 1, 1, 'active')",
+            params![id],
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -749,6 +607,65 @@ mod tests {
             )?;
             assert_eq!(status_count, 1);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn vector_search_ignores_embeddings_from_other_models() -> Result<()> {
+        let conn = setup_conn()?;
+        insert_test_memory(&conn, 1)?;
+        upsert_memory_embedding(
+            &conn,
+            1,
+            "Credential store",
+            "SQLCipher encrypts secrets at rest.",
+            "architecture",
+            None,
+        )?;
+
+        let query = TextEmbedding::new("remote-test-model", vec![0.1, 0.2, 0.3])?;
+        let outcome = vector_search_embedding_filtered(
+            &conn,
+            &query,
+            VectorSearchFilters {
+                project: Some("/repo"),
+                ..VectorSearchFilters::default()
+            },
+            5,
+        )?;
+
+        assert!(outcome.hits.is_empty());
+        assert!(outcome
+            .disabled_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("remote-test-model"));
+        Ok(())
+    }
+
+    #[test]
+    fn backfill_rebuilds_embeddings_from_stale_model() -> Result<()> {
+        let conn = setup_conn()?;
+        insert_test_memory(&conn, 1)?;
+        let stale_blob = vec![0u8; 3 * std::mem::size_of::<f32>()];
+        conn.execute(
+            "INSERT INTO memory_embeddings
+             (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+             VALUES (1, ?1, 3, 'old-model', 'old-hash', 1)",
+            params![stale_blob],
+        )?;
+
+        assert_eq!(pending_memory_embedding_count(&conn)?, 1);
+        assert_eq!(backfill_missing_memory_embeddings(&conn, 100)?, 1);
+
+        let row: (String, i64) = conn.query_row(
+            "SELECT model, dimensions FROM memory_embeddings WHERE memory_id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(row.0, DEFAULT_EMBEDDING_MODEL);
+        assert_eq!(row.1, EMBEDDING_DIMENSIONS as i64);
+        assert_eq!(pending_memory_embedding_count(&conn)?, 0);
         Ok(())
     }
 

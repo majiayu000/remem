@@ -400,9 +400,14 @@ fn query_local_vector_channel(
         return Ok(vec![]);
     }
 
-    let mut conditions = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    let mut idx = 1;
+    let query_embedding = crate::retrieval::embedding::embed_query(query)?;
+    let profile = query_embedding.profile();
+    let mut conditions = vec!["e.model = ?1".to_string(), "e.dimensions = ?2".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+        Box::new(profile.model.to_string()),
+        Box::new(profile.dimensions as i64),
+    ];
+    let mut idx = 3;
     push_context_memory_filters(
         project,
         current_branch,
@@ -434,12 +439,12 @@ fn query_local_vector_channel(
             row.get::<_, i64>(2)?,
         ))
     })?;
-    let query_embedding = crate::retrieval::vector::embed_query_text(query);
     let mut hits = Vec::new();
     for row in crate::db::query::collect_rows(rows)? {
         let (memory_id, blob, dimensions) = row;
         let embedding = crate::retrieval::vector::decode_embedding(&blob, dimensions)?;
-        let distance = crate::retrieval::vector::cosine_distance(&query_embedding, &embedding)?;
+        let distance =
+            crate::retrieval::vector::cosine_distance(query_embedding.values(), &embedding)?;
         if distance <= MAX_VECTOR_DISTANCE {
             hits.push((memory_id, distance));
         }

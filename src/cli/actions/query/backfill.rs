@@ -73,13 +73,5 @@ pub(in crate::cli) fn run_backfill_embeddings(limit: i64) -> Result<()> {
 }
 
 fn count_missing_embeddings(conn: &Connection) -> Result<i64> {
-    Ok(conn.query_row(
-        "SELECT COUNT(*)
-         FROM memories m
-         LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE e.memory_id IS NULL
-           AND m.status IN ('active', 'stale', 'archived')",
-        [],
-        |row| row.get(0),
-    )?)
+    crate::retrieval::vector::pending_memory_embedding_count(conn)
 }

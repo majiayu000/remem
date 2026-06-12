@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.5.48"
+version = "0.5.49"
 edition = "2021"
 description = "Persistent memory for Claude Code and Codex — single binary, automatic context"
 license = "MIT"
@@ -36,7 +36,7 @@ anyhow = "1"
 fs2 = "0.4"
 tokio = { version = "1", features = ["full"] }
 rmcp = { version = "0.15", features = ["server", "transport-io", "macros"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 axum = { version = "0.8.8", features = ["json"] }
 getrandom = "0.3"
 toml_edit = "0.22"

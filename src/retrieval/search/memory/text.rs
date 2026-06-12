@@ -283,8 +283,8 @@ fn build_query_search_plan(
         }
     }
 
-    let query_embedding = crate::retrieval::vector::embed_query_text(query_text);
-    let vector_outcome = crate::retrieval::vector::vector_search_filtered(
+    let query_embedding = crate::retrieval::embedding::embed_query(query_text)?;
+    let vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
         conn,
         &query_embedding,
         crate::retrieval::vector::VectorSearchFilters {
