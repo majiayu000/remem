@@ -23,4 +23,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
+      - run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
       - run: cargo test

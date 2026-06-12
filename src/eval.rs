@@ -1,4 +1,5 @@
 pub mod e2e;
+pub mod extraction;
 pub mod golden;
 pub mod governance;
 pub mod injection;

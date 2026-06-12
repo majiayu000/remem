@@ -448,6 +448,8 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    #[command(name = "eval-extraction")]
+    EvalExtraction(super::eval_types::EvalExtractionArgs),
     /// Run local retrieval diagnostics.
     EvalLocal,
     /// Backfill entity records for existing memories.

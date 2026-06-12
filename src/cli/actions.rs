@@ -14,7 +14,9 @@ mod usage;
 
 pub(super) use admin::run_admin;
 pub(super) use config_command::run_config;
-pub(super) use eval::{run_eval, run_eval_e2e, run_eval_governance, run_eval_local};
+pub(super) use eval::{
+    run_eval, run_eval_e2e, run_eval_extraction, run_eval_governance, run_eval_local,
+};
 pub(super) use import::run_import;
 pub(super) use maintenance::{
     run_cleanup, run_dream, run_encrypt, run_governance, GovernanceCliRequest,

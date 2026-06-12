@@ -41,6 +41,55 @@ struct EvidenceRange {
     events: Vec<EvidenceEvent>,
 }
 
+pub(crate) struct ObservationPromptEvent<'a> {
+    pub(crate) id: i64,
+    pub(crate) event_type: &'a str,
+    pub(crate) role: Option<&'a str>,
+    pub(crate) tool_name: Option<&'a str>,
+    pub(crate) content: &'a str,
+    pub(crate) token_estimate: i64,
+    pub(crate) created_at_epoch: i64,
+}
+
+pub(crate) fn build_eval_extract_request(
+    project: &str,
+    host: &str,
+    session_id: Option<&str>,
+    events: &[ObservationPromptEvent<'_>],
+) -> String {
+    let event_ids = events.iter().map(|event| event.id).collect::<Vec<_>>();
+    let from_event_id = event_ids.iter().copied().min().unwrap_or(0);
+    let to_event_id = event_ids.iter().copied().max().unwrap_or(0);
+    let range = EvidenceRange {
+        from_event_id,
+        to_event_id,
+        event_ids,
+        events: events
+            .iter()
+            .map(|event| EvidenceEvent {
+                id: event.id,
+                event_type: event.event_type.to_string(),
+                role: event.role.map(str::to_string),
+                tool_name: event.tool_name.map(str::to_string),
+                content: event.content.to_string(),
+                token_estimate: event.token_estimate,
+                created_at_epoch: event.created_at_epoch,
+            })
+            .collect(),
+    };
+    let task = eval_task(
+        project,
+        host,
+        session_id,
+        db::ExtractionTaskKind::ObservationExtract,
+    );
+    format!(
+        "{}\n\n<user_prompt>\n{}\n</user_prompt>",
+        OBSERVATION_EXTRACT_SYSTEM,
+        build_extract_prompt(&task, &range)
+    )
+}
+
 pub(crate) async fn process(task: &db::ExtractionTask) -> Result<ObservationExtractResult> {
     let mut conn = db::open_db()?;
     let project = task.project.clone();
@@ -301,7 +350,7 @@ fn observation_exists(
     Ok(existing.is_some())
 }
 
-fn observation_text(observation: &ParsedObservation) -> String {
+pub(crate) fn observation_text(observation: &ParsedObservation) -> String {
     observation
         .narrative
         .clone()
@@ -339,6 +388,31 @@ fn build_extract_prompt(task: &db::ExtractionTask, range: &EvidenceRange) -> Str
         prompt.push_str("\n</event>\n\n");
     }
     prompt
+}
+
+fn eval_task(
+    project: &str,
+    host: &str,
+    session_id: Option<&str>,
+    task_kind: db::ExtractionTaskKind,
+) -> db::ExtractionTask {
+    db::ExtractionTask {
+        id: 0,
+        task_kind,
+        host_id: 0,
+        workspace_id: 0,
+        project_id: 0,
+        session_row_id: None,
+        host: host.to_string(),
+        project: project.to_string(),
+        session_id: session_id.map(str::to_string),
+        ai_profile: None,
+        priority: 0,
+        cursor_event_id: None,
+        high_watermark_event_id: None,
+        attempts: 0,
+        replay_range_id: None,
+    }
 }
 
 fn xml_attr(value: &str) -> String {

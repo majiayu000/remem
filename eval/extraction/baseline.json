@@ -1,0 +1,112 @@
+{
+  "metadata": {
+    "corpus": "eval/extraction/corpus.json",
+    "corpus_version": "2026-06-12",
+    "description": "Deterministic extraction-quality corpus for observation and memory-candidate parser outputs.",
+    "cases": 2,
+    "transcript_events": 5
+  },
+  "metrics": {
+    "observation_precision": {
+      "passed": 2,
+      "total": 2,
+      "rate": 1.0
+    },
+    "observation_recall": {
+      "passed": 2,
+      "total": 2,
+      "rate": 1.0
+    },
+    "candidate_precision": {
+      "passed": 2,
+      "total": 2,
+      "rate": 1.0
+    },
+    "candidate_recall": {
+      "passed": 2,
+      "total": 2,
+      "rate": 1.0
+    },
+    "forbidden_observation_exclusion": {
+      "passed": 2,
+      "total": 2,
+      "rate": 1.0
+    },
+    "forbidden_candidate_exclusion": {
+      "passed": 2,
+      "total": 2,
+      "rate": 1.0
+    },
+    "over_saved_predictions": 0,
+    "total_predictions": 4,
+    "over_save_penalty": 0.0,
+    "all_checks_passed": true
+  },
+  "cases": [
+    {
+      "id": "build-fix-loop-guard",
+      "transcript_events": 3,
+      "observation_request_sha256": "437263a2511ff81146c931822fa2e367a1d906f0c4f83627607440a8bffc687a",
+      "candidate_request_sha256": "a21e45990a9f9a11b49107714b0e2b0f644e6709eb617ddbca7837a503c76f3d",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.",
+          "confidence": 0.91
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "lesson",
+          "topic_key": "build-fix-loop-guard",
+          "risk_class": "medium",
+          "text": "After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "automatic-capture-primary",
+      "transcript_events": 2,
+      "observation_request_sha256": "e5f68e4b40772ab93175f682f2382c4e4ee9cd0dbaae3a97c18ae6c346a4d648",
+      "candidate_request_sha256": "c885dc5134cd6e9cf944bcb6cc341432b925c2a1a3a6101b36d2fe78721e28ee",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are only supplemental.",
+          "confidence": 0.95
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "architecture",
+          "topic_key": "automatic-capture-primary",
+          "risk_class": "medium",
+          "text": "Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are supplemental."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    }
+  ],
+  "failing_examples": []
+}

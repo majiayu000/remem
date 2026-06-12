@@ -84,3 +84,26 @@ Example:
   ]
 }
 ```
+
+## Extraction Quality Eval
+
+`remem eval-extraction` runs a deterministic extraction-quality check against a
+labeled transcript corpus and committed parser/model-output baseline.
+
+```bash
+remem eval-extraction --json --check-baseline
+```
+
+The corpus lives in `eval/extraction/corpus.json`; the committed baseline report
+lives in `eval/extraction/baseline.json`. CI runs the command above, so prompt,
+parser, replay fixture, and label changes that affect extraction metrics or
+request fingerprints must update the baseline intentionally.
+
+The JSON report includes:
+
+- observation precision and recall
+- memory-candidate precision and recall
+- forbidden-label exclusion rates
+- over-saved prediction count and over-save penalty
+- observation and candidate replay request SHA-256 fingerprints
+- per-case missing, unexpected, and forbidden predictions

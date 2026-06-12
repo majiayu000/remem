@@ -1,0 +1,124 @@
+{
+  "version": "2026-06-12",
+  "description": "Deterministic extraction-quality corpus for observation and memory-candidate parser outputs.",
+  "cases": [
+    {
+      "id": "build-fix-loop-guard",
+      "transcript": [
+        {
+          "id": "evt-1",
+          "role": "assistant",
+          "tool_name": "cargo check",
+          "content": "cargo check failed after the third attempted fix for the same compiler error."
+        },
+        {
+          "id": "evt-2",
+          "role": "user",
+          "content": "Stop and challenge the hypothesis after three consecutive failed fixes."
+        },
+        {
+          "id": "evt-3",
+          "role": "assistant",
+          "content": "I will pause further edits and reassess the root cause before changing more code."
+        }
+      ],
+      "observation_output": "<observation>\n<type>decision</type>\n<title>Build-fix loop guard</title>\n<narrative>After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.</narrative>\n<confidence>0.91</confidence>\n</observation>",
+      "candidate_output": "<memory_candidate>\n<scope>project</scope>\n<type>lesson</type>\n<topic_key>build-fix-loop-guard</topic_key>\n<risk_class>medium</risk_class>\n<confidence>0.87</confidence>\n<text>After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.</text>\n</memory_candidate>",
+      "expected_observations": [
+        {
+          "id": "obs-build-loop",
+          "observation_type": "decision",
+          "text_contains": [
+            "three consecutive failed build fixes",
+            "challenge the hypothesis"
+          ]
+        }
+      ],
+      "forbidden_observations": [
+        {
+          "id": "obs-zero-llm-cost",
+          "text_contains": [
+            "zero-llm"
+          ]
+        }
+      ],
+      "expected_candidates": [
+        {
+          "id": "cand-build-loop",
+          "scope": "project",
+          "memory_type": "lesson",
+          "topic_key": "build-fix-loop-guard",
+          "risk_class": "medium",
+          "text_contains": [
+            "three consecutive failed build fixes",
+            "challenge the hypothesis"
+          ]
+        }
+      ],
+      "forbidden_candidates": [
+        {
+          "id": "cand-zero-llm-cost",
+          "text_contains": [
+            "zero-llm"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "automatic-capture-primary",
+      "transcript": [
+        {
+          "id": "evt-4",
+          "role": "user",
+          "content": "Do not rely on Codex voluntarily calling save_memory. Automatic capture is the primary path."
+        },
+        {
+          "id": "evt-5",
+          "role": "assistant",
+          "content": "The design keeps automatic extraction as the main memory capture channel and treats manual saves as supplemental."
+        }
+      ],
+      "observation_output": "<observation>\n<type>decision</type>\n<title>Automatic capture is primary</title>\n<narrative>Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are only supplemental.</narrative>\n<confidence>0.95</confidence>\n</observation>",
+      "candidate_output": "<memory_candidate>\n<scope>project</scope>\n<type>architecture</type>\n<topic_key>automatic-capture-primary</topic_key>\n<risk_class>medium</risk_class>\n<confidence>0.9</confidence>\n<text>Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are supplemental.</text>\n</memory_candidate>",
+      "expected_observations": [
+        {
+          "id": "obs-auto-capture-primary",
+          "observation_type": "decision",
+          "text_contains": [
+            "must not depend on codex voluntarily calling save_memory",
+            "automatic extraction is the primary channel"
+          ]
+        }
+      ],
+      "forbidden_observations": [
+        {
+          "id": "obs-manual-save-enough",
+          "text_contains": [
+            "manual saves are sufficient"
+          ]
+        }
+      ],
+      "expected_candidates": [
+        {
+          "id": "cand-auto-capture-primary",
+          "scope": "project",
+          "memory_type": "architecture",
+          "topic_key": "automatic-capture-primary",
+          "risk_class": "medium",
+          "text_contains": [
+            "must not depend on codex voluntarily calling save_memory",
+            "automatic extraction is the primary channel"
+          ]
+        }
+      ],
+      "forbidden_candidates": [
+        {
+          "id": "cand-manual-save-enough",
+          "text_contains": [
+            "manual saves are sufficient"
+          ]
+        }
+      ]
+    }
+  ]
+}

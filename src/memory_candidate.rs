@@ -79,6 +79,14 @@ struct ObservationBatch {
     observations: Vec<SourceObservation>,
 }
 
+pub(crate) struct CandidatePromptObservation<'a> {
+    pub(crate) id: i64,
+    pub(crate) observation_type: &'a str,
+    pub(crate) text: &'a str,
+    pub(crate) evidence_event_ids: Vec<i64>,
+    pub(crate) confidence: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ParsedMemoryCandidate {
     pub(crate) scope: String,
@@ -87,6 +95,52 @@ pub(crate) struct ParsedMemoryCandidate {
     pub(crate) text: String,
     pub(crate) confidence: f64,
     pub(crate) risk_class: String,
+}
+
+pub(crate) fn parse_candidate_output(text: &str) -> Result<Vec<ParsedMemoryCandidate>> {
+    parse_memory_candidates(text)
+}
+
+pub(crate) fn build_eval_candidate_request(
+    project: &str,
+    host: &str,
+    session_id: Option<&str>,
+    observations: &[CandidatePromptObservation<'_>],
+) -> String {
+    let mut evidence_set = BTreeSet::new();
+    for observation in observations {
+        for event_id in &observation.evidence_event_ids {
+            evidence_set.insert(*event_id);
+        }
+    }
+    let from_event_id = evidence_set.iter().copied().min().unwrap_or(0);
+    let to_event_id = evidence_set.iter().copied().max().unwrap_or(0);
+    let batch = ObservationBatch {
+        from_event_id,
+        to_event_id,
+        evidence_event_ids: evidence_set.into_iter().collect(),
+        observations: observations
+            .iter()
+            .map(|observation| SourceObservation {
+                id: observation.id,
+                observation_type: observation.observation_type.to_string(),
+                text: observation.text.to_string(),
+                evidence_event_ids: observation.evidence_event_ids.clone(),
+                confidence: observation.confidence,
+            })
+            .collect(),
+    };
+    let task = eval_task(
+        project,
+        host,
+        session_id,
+        db::ExtractionTaskKind::MemoryCandidate,
+    );
+    format!(
+        "{}\n\n<user_prompt>\n{}\n</user_prompt>",
+        MEMORY_CANDIDATE_SYSTEM,
+        build_candidate_prompt(&task, &batch)
+    )
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -642,6 +696,31 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
         prompt.push_str("\n</observation>\n\n");
     }
     prompt
+}
+
+fn eval_task(
+    project: &str,
+    host: &str,
+    session_id: Option<&str>,
+    task_kind: db::ExtractionTaskKind,
+) -> db::ExtractionTask {
+    db::ExtractionTask {
+        id: 0,
+        task_kind,
+        host_id: 0,
+        workspace_id: 0,
+        project_id: 0,
+        session_row_id: None,
+        host: host.to_string(),
+        project: project.to_string(),
+        session_id: session_id.map(str::to_string),
+        ai_profile: None,
+        priority: 0,
+        cursor_event_id: None,
+        high_watermark_event_id: None,
+        attempts: 0,
+        replay_range_id: None,
+    }
 }
 
 #[cfg(test)]
