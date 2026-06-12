@@ -63,6 +63,7 @@ fn production_task_does_not_rescan_unstored_prior_bash_events() -> Result<()> {
         cursor_event_id: Some(old_high_watermark),
         high_watermark_event_id: Some(current_event_id),
         attempts: 0,
+        replay_range_id: None,
     };
 
     let promoted =

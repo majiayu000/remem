@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::cli::types::PendingAction;
-use crate::db::{self, pending::admin::FailedPendingRow};
+use crate::db::{self, pending::admin::FailedPendingRow, ExtractionReplayRange};
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     match action {
@@ -91,6 +91,85 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                 );
             }
         }
+        PendingAction::ListExtractionRanges {
+            project,
+            limit,
+            json,
+        } => {
+            let conn = db::open_db_read_only()?;
+            let ranges = db::list_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&PendingExtractionRangesJson {
+                        project,
+                        limit: limit.max(1),
+                        count: ranges.len(),
+                        ranges,
+                    })?
+                );
+                return Ok(());
+            }
+            if ranges.is_empty() {
+                println!("No exhausted extraction ranges.");
+                return Ok(());
+            }
+            println!("Exhausted extraction ranges ({}):", ranges.len());
+            for range in ranges {
+                let err = range
+                    .last_error
+                    .as_deref()
+                    .map(|message| db::truncate_str(message, 120).to_string())
+                    .unwrap_or_default();
+                println!(
+                    "  [{}] {} | {} | {} | events={}..{} | status={} | attempts={}",
+                    range.id,
+                    range.project,
+                    range.session_id.as_deref().unwrap_or("<none>"),
+                    range.task_kind,
+                    range.from_event_id,
+                    range.to_event_id,
+                    range.status,
+                    range.attempts
+                );
+                if !err.is_empty() {
+                    println!("      error: {}", err);
+                }
+            }
+        }
+        PendingAction::RetryExtractionRanges {
+            project,
+            limit,
+            dry_run,
+        } => {
+            if dry_run {
+                let conn = db::open_db_read_only()?;
+                let count =
+                    db::count_retryable_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                println!("Would requeue {} exhausted extraction range(s).", count);
+            } else {
+                let conn = db::open_db()?;
+                let count = db::retry_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                println!("Requeued {} exhausted extraction range(s).", count);
+            }
+        }
+        PendingAction::QuarantineExtractionRanges {
+            project,
+            limit,
+            dry_run,
+        } => {
+            if dry_run {
+                let conn = db::open_db_read_only()?;
+                let count =
+                    db::count_retryable_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                println!("Would quarantine {} exhausted extraction range(s).", count);
+            } else {
+                let conn = db::open_db()?;
+                let count =
+                    db::quarantine_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                println!("Quarantined {} exhausted extraction range(s).", count);
+            }
+        }
     }
 
     Ok(())
@@ -102,6 +181,14 @@ struct PendingListFailedJson {
     limit: i64,
     count: usize,
     failed: Vec<FailedPendingRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PendingExtractionRangesJson {
+    project: Option<String>,
+    limit: i64,
+    count: usize,
+    ranges: Vec<ExtractionReplayRange>,
 }
 
 #[cfg(test)]

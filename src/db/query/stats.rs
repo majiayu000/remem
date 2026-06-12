@@ -31,6 +31,9 @@ pub struct SystemStats {
     pub processing_extraction_tasks: i64,
     pub expired_processing_extraction_tasks: i64,
     pub failed_extraction_tasks: i64,
+    pub retryable_extraction_replay_ranges: i64,
+    pub active_extraction_replay_ranges: i64,
+    pub quarantined_extraction_replay_ranges: i64,
     pub oldest_pending_extraction_epoch: Option<i64>,
     pub pending_memory_candidates: i64,
     pub pending_graph_candidates: i64,
@@ -83,6 +86,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     let now = chrono::Utc::now().timestamp();
     let raw_ingest = query_raw_ingest_failure_stats(conn)?;
     let capture_drop = crate::db::query_capture_drop_stats(conn)?;
+    let replay_ranges = query_extraction_replay_range_stats(conn)?;
     let worker_heartbeat = crate::db::worker::latest_daemon_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_daemon_worker_heartbeat(
         conn,
@@ -143,6 +147,9 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             [],
             |row| row.get(0),
         )?,
+        retryable_extraction_replay_ranges: replay_ranges.retryable,
+        active_extraction_replay_ranges: replay_ranges.active,
+        quarantined_extraction_replay_ranges: replay_ranges.quarantined,
         oldest_pending_extraction_epoch: conn.query_row(
             "SELECT MIN(created_at_epoch) FROM extraction_tasks WHERE status = 'pending'",
             [],
@@ -279,6 +286,55 @@ struct RawIngestFailureStats {
     latest_kind: Option<String>,
     latest_path: Option<String>,
     latest_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ExtractionReplayRangeStats {
+    retryable: i64,
+    active: i64,
+    quarantined: i64,
+}
+
+fn query_extraction_replay_range_stats(conn: &Connection) -> Result<ExtractionReplayRangeStats> {
+    if !table_exists(conn, "extraction_replay_ranges")? {
+        return Ok(ExtractionReplayRangeStats::default());
+    }
+
+    Ok(ExtractionReplayRangeStats {
+        retryable: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_replay_ranges r
+             WHERE r.status IN ('pending', 'failed')
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM extraction_tasks t
+                 WHERE t.replay_range_id = r.id
+                   AND t.status IN ('pending', 'processing')
+               )",
+            [],
+            |row| row.get(0),
+        )?,
+        active: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_replay_ranges r
+             WHERE r.status = 'requeued'
+                OR (r.status IN ('pending', 'failed') AND EXISTS (
+                 SELECT 1
+                 FROM extraction_tasks t
+                 WHERE t.replay_range_id = r.id
+                   AND t.status IN ('pending', 'processing')
+               ))",
+            [],
+            |row| row.get(0),
+        )?,
+        quarantined: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_replay_ranges
+             WHERE status = 'quarantined'",
+            [],
+            |row| row.get(0),
+        )?,
+    })
 }
 
 fn query_raw_ingest_failure_stats(conn: &Connection) -> Result<RawIngestFailureStats> {

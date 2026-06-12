@@ -156,6 +156,7 @@ mod tests {
             cursor_event_id: Some(0),
             high_watermark_event_id: Some(3),
             attempts: 0,
+            replay_range_id: None,
         };
         let range = RollupRange {
             from_event_id: 1,

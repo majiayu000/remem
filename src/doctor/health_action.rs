@@ -32,6 +32,26 @@ pub(crate) fn queue_actions(
     stuck_jobs: i64,
     failed_extraction_tasks: i64,
 ) -> Vec<HealthAction> {
+    queue_actions_with_replay(
+        failed_pending_observations,
+        expired_processing_pending_observations,
+        expired_processing_extraction_tasks,
+        failed_jobs,
+        stuck_jobs,
+        failed_extraction_tasks,
+        0,
+    )
+}
+
+pub(crate) fn queue_actions_with_replay(
+    failed_pending_observations: i64,
+    expired_processing_pending_observations: i64,
+    expired_processing_extraction_tasks: i64,
+    failed_jobs: i64,
+    stuck_jobs: i64,
+    failed_extraction_tasks: i64,
+    retryable_extraction_replay_ranges: i64,
+) -> Vec<HealthAction> {
     let mut actions = Vec::new();
 
     if failed_pending_observations > 0 {
@@ -84,6 +104,21 @@ pub(crate) fn queue_actions(
                 "failed extraction tasks",
             ))
             .command("inspect counts", "remem status --json"),
+        );
+    }
+
+    if retryable_extraction_replay_ranges > 0 {
+        actions.push(
+            HealthAction::new(count_title(
+                retryable_extraction_replay_ranges,
+                "retryable extraction replay range",
+                "retryable extraction replay ranges",
+            ))
+            .command("inspect", "remem pending list-extraction-ranges --limit 20")
+            .command(
+                "preview retry",
+                "remem pending retry-extraction-ranges --dry-run",
+            ),
         );
     }
 

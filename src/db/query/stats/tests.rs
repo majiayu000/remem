@@ -66,7 +66,12 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
             created_at_epoch INTEGER NOT NULL,
-            lease_expires_epoch INTEGER
+            lease_expires_epoch INTEGER,
+            replay_range_id INTEGER
+        );
+        CREATE TABLE extraction_replay_ranges (
+            id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL
         );
         CREATE TABLE memory_candidates (
             id INTEGER PRIMARY KEY,
@@ -201,6 +206,11 @@ fn query_system_stats_and_related_views_share_one_definition() {
     )
     .expect("failed extraction task insert should succeed");
     conn.execute(
+        "INSERT INTO extraction_replay_ranges (status) VALUES ('pending'), ('failed'), ('requeued'), ('quarantined')",
+        [],
+    )
+    .expect("extraction replay range insert should succeed");
+    conn.execute(
         "INSERT INTO memory_candidates (review_status) VALUES ('pending_review')",
         [],
     )
@@ -295,6 +305,9 @@ fn query_system_stats_and_related_views_share_one_definition() {
             processing_extraction_tasks: 1,
             expired_processing_extraction_tasks: 1,
             failed_extraction_tasks: 1,
+            retryable_extraction_replay_ranges: 2,
+            active_extraction_replay_ranges: 1,
+            quarantined_extraction_replay_ranges: 1,
             oldest_pending_extraction_epoch: Some(90),
             pending_memory_candidates: 1,
             pending_graph_candidates: 2,
@@ -437,6 +450,20 @@ fn query_system_stats_defaults_capture_drops_when_table_is_absent() -> anyhow::R
     assert_eq!(system.unrecovered_capture_spills, 0);
     assert_eq!(system.latest_capture_drop_epoch, None);
     assert_eq!(system.latest_capture_drop_reason, None);
+    Ok(())
+}
+
+#[test]
+fn query_system_stats_defaults_replay_ranges_when_table_is_absent() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    conn.execute("DROP TABLE extraction_replay_ranges", [])?;
+
+    let system = query_system_stats(&conn)?;
+
+    assert_eq!(system.retryable_extraction_replay_ranges, 0);
+    assert_eq!(system.active_extraction_replay_ranges, 0);
+    assert_eq!(system.quarantined_extraction_replay_ranges, 0);
     Ok(())
 }
 
