@@ -184,6 +184,12 @@ mod tests {
         let default_body = to_bytes(default_response.into_body(), usize::MAX).await?;
         let default_json: Value = serde_json::from_slice(&default_body)?;
         assert!(default_json.get("explain").is_none());
+        assert_eq!(default_json["data"][0]["id"], memory_id);
+        assert_eq!(default_json["data"][0]["staleness"]["status"], "active");
+        assert_eq!(
+            default_json["data"][0]["staleness"]["source_anchor"],
+            "untracked"
+        );
 
         let explain_response = handle_search(State(DbState), Query(base_search_params(Some(true))))
             .await
