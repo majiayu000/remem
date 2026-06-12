@@ -62,7 +62,8 @@ pub fn save_lesson(conn: &Connection, req: &SaveLessonRequest<'_>) -> Result<i64
         scope,
         req.created_at_epoch,
     )?;
-    upsert_lesson_metadata(conn, id, req, existing_id.is_some())?;
+    let metadata_exists = get_lesson_metadata(conn, id)?.is_some();
+    upsert_lesson_metadata(conn, id, req, existing_id.is_some() || metadata_exists)?;
     Ok(id)
 }
 

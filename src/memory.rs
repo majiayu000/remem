@@ -18,6 +18,7 @@ pub mod raw_archive;
 pub(crate) mod raw_transcript;
 pub mod scope_cleanup;
 pub mod search_context;
+pub(crate) mod semantic_dedup;
 pub mod service;
 pub mod state_key;
 pub mod store;

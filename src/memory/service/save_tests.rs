@@ -35,6 +35,61 @@ fn repeated_lesson_save_reinforces_metadata_and_logs_update() -> anyhow::Result<
 }
 
 #[test]
+fn semantic_preference_duplicate_logs_update() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("semantic-preference-duplicate-update");
+    let conn = db::open_db()?;
+    let first = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer small reversible changes and include verification output for every fix."
+                .to_string(),
+            title: Some("Small reversible changes".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-a1b2c3d4".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let second = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer small reversible code changes with verification output for each fix."
+                .to_string(),
+            title: Some("Reversible verified changes".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-deadbeef".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.operation, "update");
+    let logs = conn
+        .prepare("SELECT operation, reason FROM memory_operation_log ORDER BY id ASC")?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(
+        logs.iter()
+            .map(|(operation, _)| operation.as_str())
+            .collect::<Vec<_>>(),
+        vec!["add", "update"]
+    );
+    assert!(
+        logs[1]
+            .1
+            .contains("semantic duplicate memory will be updated"),
+        "semantic update should be auditable, got: {}",
+        logs[1].1
+    );
+    Ok(())
+}
+
+#[test]
 fn direct_save_refreshes_expired_same_text_current_fact() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("save-expired-current-fact-refresh");
     let conn = db::open_db()?;
