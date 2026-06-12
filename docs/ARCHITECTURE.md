@@ -19,7 +19,7 @@
 ┌──────────────────────┐  ┌──────────────────────────────────┐
 │  MCP Server (stdio)  │  │  Background Worker (detached)     │
 │                      │  │                                    │
-│  search              │  │  1. flush (batch→obs, ≤15/batch)  │
+│  search              │  │  1. extract (capture→derived)       │
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │
@@ -32,7 +32,7 @@
 ┌───────────────────────────────────────────────────────────┐
 │              ~/.remem/remem.db (SQLite + WAL)              │
 │                                                            │
-│  pending_observations → observations → compressed          │
+│  captured_events → extraction_tasks → observations         │
 │  memories (decision/bugfix/preference/discovery/...)       │
 │  session_summaries    workstreams    FTS5 full-text index   │
 │  summarize_cooldown   ai_usage_events                      │
@@ -40,9 +40,9 @@
 ```
 
 Codex legacy `PostToolUse(Bash)` observe hooks are treated as opt-in only:
-they are skipped unless `REMEM_ENABLE_CODEX_BASH_OBSERVE=1` is set. This keeps
-Bash-heavy sessions from creating an unbounded pending-observation backlog
-before the coalesced capture path is enabled.
+they are skipped unless `REMEM_ENABLE_CODEX_BASH_OBSERVE=1` is set. Accepted
+events still enter the coalesced capture ledger; they do not create legacy
+`pending_observations` rows.
 
 The capture path is now present in the main database as a first production
 slice: hooks write append-only `captured_events`, large evidence goes to
@@ -58,7 +58,7 @@ promotion.
 | `memory.rs` | 838 | Memory CRUD, auto-promotion from summaries, FTS search |
 | `db.rs` | 728 | Data model + write ops + encryption + cleanup |
 | `db_query.rs` | 680 | Read queries: FTS search, timeline, shared status stats |
-| `observe_flush.rs` | 609 | Batch flush: pending→observations via AI |
+| `observe_flush.rs` | 609 | Legacy pending-observation flush support |
 | `workstream.rs` | 581 | WorkStream tracking across sessions (auto-create + fuzzy match) |
 | `mcp/server.rs` | 565 | MCP service runtime: tools, server lifecycle, tests |
 | `summarize.rs` | 501 | 3-gate + background worker + session summary + compression |
@@ -66,8 +66,8 @@ promotion.
 | `cli/actions.rs` | 385 | CLI command implementations and formatted output |
 | `context.rs` | 368 | Context rendering: preferences + core + index + workstreams + sessions |
 | `preference.rs` | 352 | Preference management: query, render, CLI ops |
-| `observe.rs` | 287 | Bash filter + event queuing + type checks |
-| `db_pending.rs` | 261 | Pending observations management |
+| `observe.rs` | 287 | Bash filter + capture ledger writes + type checks |
+| `db_pending.rs` | 261 | Legacy pending observations management |
 | `search.rs` | 251 | Search entry: filtered retrieval + pagination |
 | `ai.rs` | 244 | AI calls: HTTP-first + CLI fallback + model mapping |
 | `db_job.rs` | 244 | Background job queue |
@@ -101,10 +101,10 @@ Hook/session payload
 This path is intentionally light: it does not call an LLM and it does not
 create one job per tool call.
 
-### 2. Legacy Observation Capture (Claude PostToolUse → observe)
+### 2. Observation Capture (Claude PostToolUse → observe)
 
 ```
-Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
+Tool call ──→ Type check ──→ Bash filter ──→ captured_events
                │              │
                │              └─ Skip: git status/log/diff, ls, cat,
                │                      npm install, cargo build (read-only)
@@ -113,28 +113,32 @@ Tool call ──→ Type check ──→ Bash filter ──→ Queue to SQLite
                   Skip: Read, Glob, Grep, metadata-only tools
 ```
 
-Each queued event stores: session_id, project, tool_name, tool_input, tool_response (truncated to 4KB).
+Accepted events store normalized host/workspace/project/session identity plus
+redacted tool evidence in `captured_events`; large payloads spill to
+`event_blobs`. The write also coalesces one `observation_extract`
+`extraction_tasks` row per host/project/session/task kind.
 
-### 3. Batch Distillation (Stop → summarize → flush)
+### 3. Background Distillation (Stop → summarize + worker)
 
 ```
 Stop hook fires
        │
-       ├─ Gate 1: pending < 3 → skip (filter short sessions)
-       ├─ Gate 2: project cooldown 300s → skip (prevent duplicates)
-       ├─ Gate 3: message hash match → skip (prevent duplicate content)
-       │
-       ▼ pass all gates
-  spawn background worker (6ms return)
-       │
-       ├─ Worker re-checks Gate 2+3 (prevent parallel races)
-       ├─ Pre-record cooldown (claim slot)
+       ├─ Enqueue summary/compress/dream jobs
+       └─ Spawn background worker (6ms return)
        │
        ▼
-  flush_pending (≤15 events/batch)
+  summary worker claims job
        │
-       ├─ Inject existing memories (delta dedup)
-       ├─ Single AI call → structured observations
+       ├─ Gate 1: summary evidence too small → skip
+       ├─ Gate 2: project cooldown 300s → skip (prevent duplicates)
+       ├─ Gate 3: message hash match → skip (prevent duplicate content)
+       ├─ Acquire summarize_locks row (prevent parallel AI calls)
+       │
+       ▼
+  process extraction_tasks
+       │
+       ├─ Load captured_events range
+       ├─ Single AI call → structured observations/candidates
        ├─ File overlap detection → mark old observations stale
        │
        ▼
@@ -163,7 +167,7 @@ coverage columns; they may coexist in `session_summaries`, but recent-session
 context queries exclude rows with `session_row_id IS NOT NULL` so the two
 pipelines cannot surface duplicate user-facing session summaries.
 
-### 3. Context Injection (SessionStart → context)
+### 4. Context Injection (SessionStart → context)
 
 ```
 New session starts
@@ -193,25 +197,26 @@ New session starts
        └─ Recent session summaries (request/completed)
 ```
 
-### 4. Stale Queue Recovery (Claude Code UserPromptSubmit → session_init)
+### 5. Legacy Pending Queue Recovery
 
-```
-New message submitted
-       │
-       ├─ Register/update session
-       │
-       ▼
-  Scan same-project pending older than 10 minutes
-       │
-       └─ Auto flush → prevent low-activity session observation loss
-```
+Runtime capture no longer writes `pending_observations`, and `session-init`
+does not auto-flush that legacy queue. Old pending rows and expired legacy
+processing rows have an explicit replay path instead: `remem pending
+migrate-legacy` records equivalent `captured_events` with the legacy event
+timestamp, enqueues `observation_extract` tasks, then marks the legacy rows
+`migrated`. Rows stored with `host = unknown` require `--host
+claude-code|codex-cli` so replayed evidence has a valid v2 capture identity.
+Failed legacy rows stay visible through pending admin commands; retry them back
+to `pending` before migration or purge them explicitly.
 
 ## Memory Lifecycle
 
 ```
-Tool operations ──→ pending_observations (raw queue, ≤4KB/event)
+Tool operations ──→ captured_events (raw capture ledger)
                          │
-                         ▼ flush (≤15 events/batch, single AI call)
+                         ▼ extraction_tasks (coalesced reliable work)
+                         │
+                         ▼ observation_extract (single AI call per range)
                   observations (structured memory)
                          │
              ┌───────────┼───────────┐
@@ -234,7 +239,7 @@ session_summaries ──→ memories (auto-promoted)
                     "Your Preferences" section + Core + Index
 ```
 
-- **Incremental delta**: During flush, inject latest 10 existing memories so AI skips duplicates
+- **Incremental delta**: During extraction, inject latest 10 existing memories so AI skips duplicates
 - **File overlap staleness**: When new operations overwrite old files, old observations auto-marked stale
 - **Time decay**: FTS search ranked by relevance × time decay, stale observations further penalized
 - **Auto compression**: Projects with >100 observations: keep newest 50, merge oldest 30 into 1-2 summaries
@@ -244,17 +249,19 @@ session_summaries ──→ memories (auto-promoted)
 
 ## Rate Limiting
 
-Short-lived process model (each hook = independent process) cannot dedup via in-memory state. remem uses SQLite to implement 3-gate rate limiting:
+Short-lived process model (each hook = independent process) cannot dedup via
+in-memory state. remem uses SQLite state to rate-limit summary workers:
 
 | Gate | Mechanism | Intercepts |
 |------|-----------|------------|
-| Gate 1 | `pending < 3` skip | Short sessions (1-2 operations then exit) |
-| Gate 2 | Project cooldown 300s | Same-project rapid summarize |
-| Gate 3 | Message hash dedup | Identical assistant messages |
-| Worker double-check | Re-verify Gate 2+3 on entry | Parallel worker races |
-| Pre-claim | Record cooldown before AI call | Prevent parallel workers passing gate simultaneously |
+| Gate 1 | Empty/small assistant evidence skip | Metadata-only or contentless Stop payloads |
+| Gate 2 | `summarize_cooldown` after successful finalization | Same-project rapid summarize |
+| Gate 3 | Last message hash dedup | Identical assistant messages |
+| Worker lock | `summarize_locks` before AI call | Parallel worker races |
 
-`summarize_cooldown` table stores each project's last summarize time and message hash.
+`summarize_cooldown` stores each project's last successful summarize time and
+message hash. `summarize_locks` is the temporary per-project claim used while a
+summary AI call is in flight.
 
 ## AI Calls
 
@@ -470,9 +477,21 @@ Retention matrix:
 ## Database Schema
 
 ```sql
--- Tool event queue
+-- Raw capture ledger
+captured_events (host_id, workspace_id, project_id, session_row_id, session_id,
+                 event_id, event_type, role, tool_name, content_text,
+                 content_blob_id, content_hash, created_at_epoch)
+
+-- Reliable extraction scheduler
+extraction_tasks (task_kind, host_id, workspace_id, project_id, session_row_id,
+                  status, idempotency_key, cursor_event_id,
+                  high_watermark_event_id, attempts, lease_owner,
+                  lease_expires_epoch)
+
+-- Legacy queue kept only for explicit admin migration/replay
 pending_observations (session_id, project, tool_name, tool_input, tool_response, cwd,
-                      created_at_epoch, lease_owner, lease_expires_epoch)
+                      created_at_epoch, status[pending|processing|failed|migrated],
+                      lease_owner, lease_expires_epoch)
 
 -- Structured observations (AI-distilled from tool events)
 observations (memory_session_id, project, type, title, subtitle, narrative, facts, concepts,
@@ -523,7 +542,7 @@ memories_fts (title, content)                                    -- FTS5 trigram
 - **Executor-specific AI calls**: Anthropic HTTP is preferred when API credentials exist; Codex hosts can use `codex exec` with explicit model control
 - **Stop hook async**: Dispatcher returns in 6ms, `std::process::Command` spawns independent worker
 - **SQLite single-file + WAL**: Zero dependencies, FTS5 full-text search, WAL concurrent read/write
-- **Queue batch processing**: Claude Code PostToolUse only queues (<1ms), Stop processes ≤15 events in one AI call
+- **Coalesced capture processing**: Claude Code PostToolUse records capture evidence quickly; workers process coalesced extraction tasks
 - **Decision priority**: Summary fields ordered decisions > completed > learned, architectural knowledge most valuable
 - **Schema version control**: `PRAGMA user_version` skips repeated migration, reduces per-hook DB overhead
 - **Stable project key**: `parent/dirname@hash12`, readable prefix + canonical path hash, eliminates same-name directory collisions

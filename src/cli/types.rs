@@ -685,6 +685,23 @@ pub(in crate::cli) enum PendingAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Replay legacy pending rows into captured_events/extraction_tasks.
+    MigrateLegacy {
+        /// Restrict rows to one project path.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Host to use for rows stored with legacy host=unknown.
+        #[arg(long)]
+        host: Option<String>,
+        /// Maximum pending rows to migrate.
+        #[arg(long, short = 'n', default_value = "100")]
+        limit: i64,
+        /// Preview migration count without mutating rows.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// List exhausted extraction event ranges.
     ListExtractionRanges {
         #[arg(long, short)]

@@ -1,7 +1,8 @@
 use rusqlite::{params, Connection};
 
 use super::{
-    count_failed_purge_candidates, count_failed_retry_candidates, list_failed, purge_failed,
+    count_failed_purge_candidates, count_failed_retry_candidates,
+    count_legacy_migration_candidates, list_failed, migrate_legacy_pending, purge_failed,
     retry_failed,
 };
 use crate::{db, migrate::MIGRATIONS};
@@ -176,4 +177,284 @@ fn purge_failed_dry_run_count_respects_cutoff_without_deleting() {
         )
         .expect("old alpha should remain");
     assert_eq!(status, "failed");
+}
+
+#[test]
+fn migrate_legacy_pending_replays_rows_into_capture_pipeline() {
+    let mut conn = setup_conn();
+    let id = db::enqueue_pending(
+        &conn,
+        "codex-cli",
+        "sess-legacy",
+        "alpha",
+        "Edit",
+        Some(r#"{"file_path":"src/lib.rs"}"#),
+        Some("edited"),
+        Some("/tmp/remem"),
+    )
+    .expect("legacy row should enqueue");
+
+    let migrated = migrate_legacy_pending(&mut conn, Some("alpha"), None, 10)
+        .expect("legacy migration should succeed");
+
+    assert_eq!(migrated.len(), 1);
+    assert_eq!(migrated[0].pending_id, id);
+    assert_eq!(migrated[0].event_id, format!("legacy-pending-{id}"));
+    assert_eq!(migrated[0].host, "codex-cli");
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM pending_observations WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("legacy row should remain auditable");
+    assert_eq!(status, "migrated");
+    let (captured, tasks): (i64, i64) = conn
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM captured_events),
+                (SELECT COUNT(*) FROM extraction_tasks)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("capture counts should query");
+    assert_eq!(captured, 1);
+    assert_eq!(tasks, 1);
+    let captured_created_at: i64 = conn
+        .query_row("SELECT created_at_epoch FROM captured_events", [], |row| {
+            row.get(0)
+        })
+        .expect("captured timestamp should query");
+    let legacy_created_at: i64 = conn
+        .query_row(
+            "SELECT created_at_epoch FROM pending_observations WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .expect("legacy timestamp should query");
+    assert_eq!(captured_created_at, legacy_created_at);
+}
+
+#[test]
+fn migrate_legacy_pending_requires_host_for_unknown_rows() {
+    let mut conn = setup_conn();
+    let id = db::enqueue_pending(
+        &conn,
+        "unknown",
+        "sess-legacy",
+        "alpha",
+        "Edit",
+        Some(r#"{"file_path":"src/lib.rs"}"#),
+        None,
+        Some("/tmp/remem"),
+    )
+    .expect("legacy row should enqueue");
+
+    let error = migrate_legacy_pending(&mut conn, Some("alpha"), None, 10)
+        .expect_err("unknown legacy host should fail closed");
+
+    assert!(error.to_string().contains("--host"));
+    let (status, captured): (String, i64) = conn
+        .query_row(
+            "SELECT
+                (SELECT status FROM pending_observations WHERE id = ?1),
+                (SELECT COUNT(*) FROM captured_events)",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("rows should query");
+    assert_eq!(status, "pending");
+    assert_eq!(captured, 0);
+}
+
+#[test]
+fn migrate_legacy_pending_uses_fallback_host_and_is_idempotent() {
+    let mut conn = setup_conn();
+    let id = db::enqueue_pending(
+        &conn,
+        "unknown",
+        "sess-legacy",
+        "alpha",
+        "Bash",
+        Some(r#"{"command":"cargo test"}"#),
+        Some(r#"{"exitCode":0}"#),
+        Some("/tmp/remem"),
+    )
+    .expect("legacy row should enqueue");
+
+    assert_eq!(
+        count_legacy_migration_candidates(&conn, Some("alpha"), 10)
+            .expect("dry run count should query"),
+        1
+    );
+    let migrated = migrate_legacy_pending(&mut conn, Some("alpha"), Some("claude-code"), 10)
+        .expect("fallback host migration should succeed");
+    let second = migrate_legacy_pending(&mut conn, Some("alpha"), Some("claude-code"), 10)
+        .expect("second migration should be a no-op");
+
+    assert_eq!(migrated.len(), 1);
+    assert_eq!(migrated[0].pending_id, id);
+    assert_eq!(migrated[0].host, "claude-code");
+    assert!(second.is_empty());
+    assert_eq!(
+        count_legacy_migration_candidates(&conn, Some("alpha"), 10)
+            .expect("dry run count should query"),
+        0
+    );
+    let captured: i64 = conn
+        .query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))
+        .expect("capture count should query");
+    assert_eq!(captured, 1);
+}
+
+#[test]
+fn migrate_legacy_pending_dry_run_counts_expired_processing_rows() {
+    let conn = setup_conn();
+    let expired_id = db::enqueue_pending(
+        &conn,
+        "codex-cli",
+        "sess-expired",
+        "alpha",
+        "Edit",
+        Some(r#"{"file_path":"src/lib.rs"}"#),
+        None,
+        Some("/tmp/remem"),
+    )
+    .expect("expired row should enqueue");
+    let active_id = db::enqueue_pending(
+        &conn,
+        "codex-cli",
+        "sess-active",
+        "alpha",
+        "Edit",
+        Some(r#"{"file_path":"src/main.rs"}"#),
+        None,
+        Some("/tmp/remem"),
+    )
+    .expect("active row should enqueue");
+    let beta_id = db::enqueue_pending(
+        &conn,
+        "codex-cli",
+        "sess-beta",
+        "beta",
+        "Edit",
+        Some(r#"{"file_path":"src/db.rs"}"#),
+        None,
+        Some("/tmp/remem"),
+    )
+    .expect("beta row should enqueue");
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'old-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![expired_id, now - 1],
+    )
+    .expect("expired row should update");
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'live-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![active_id, now + 300],
+    )
+    .expect("active row should update");
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'old-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![beta_id, now - 1],
+    )
+    .expect("beta row should update");
+
+    assert_eq!(
+        count_legacy_migration_candidates(&conn, Some("alpha"), 10)
+            .expect("alpha dry-run count should query"),
+        1
+    );
+    assert_eq!(
+        count_legacy_migration_candidates(&conn, None, 10)
+            .expect("global dry-run count should query"),
+        2
+    );
+    let statuses = conn
+        .prepare("SELECT id, status FROM pending_observations ORDER BY id ASC")
+        .expect("status select should prepare")
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("status rows should query")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("status rows should collect");
+    assert_eq!(
+        statuses,
+        vec![
+            (expired_id, "processing".to_string()),
+            (active_id, "processing".to_string()),
+            (beta_id, "processing".to_string())
+        ]
+    );
+}
+
+#[test]
+fn migrate_legacy_pending_replays_expired_processing_rows() {
+    let mut conn = setup_conn();
+    let expired_id = db::enqueue_pending(
+        &conn,
+        "codex-cli",
+        "sess-expired",
+        "alpha",
+        "Edit",
+        Some(r#"{"file_path":"src/lib.rs"}"#),
+        None,
+        Some("/tmp/remem"),
+    )
+    .expect("expired row should enqueue");
+    let active_id = db::enqueue_pending(
+        &conn,
+        "codex-cli",
+        "sess-active",
+        "alpha",
+        "Edit",
+        Some(r#"{"file_path":"src/main.rs"}"#),
+        None,
+        Some("/tmp/remem"),
+    )
+    .expect("active row should enqueue");
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'old-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![expired_id, now - 1],
+    )
+    .expect("expired row should update");
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'processing', lease_owner = 'live-worker', lease_expires_epoch = ?2
+         WHERE id = ?1",
+        params![active_id, now + 300],
+    )
+    .expect("active row should update");
+
+    let migrated = migrate_legacy_pending(&mut conn, Some("alpha"), None, 10)
+        .expect("expired processing row should migrate");
+
+    assert_eq!(migrated.len(), 1);
+    assert_eq!(migrated[0].pending_id, expired_id);
+    let statuses = conn
+        .prepare("SELECT id, status FROM pending_observations ORDER BY id ASC")
+        .expect("status select should prepare")
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("status rows should query")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("status rows should collect");
+    assert_eq!(
+        statuses,
+        vec![
+            (expired_id, "migrated".to_string()),
+            (active_id, "processing".to_string())
+        ]
+    );
 }
