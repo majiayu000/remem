@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use super::synonyms::SYNONYMS;
 use super::tokenize::{is_cjk, segment_cjk, tokenize_mixed};
+use super::translations::CJK_EN_TRANSLATIONS;
 
 pub fn core_tokens(raw: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -30,16 +30,16 @@ pub fn expand_query(raw: &str) -> Vec<String> {
 
             if any_multi {
                 for segment in &segments {
-                    add_with_synonyms(segment, &mut expanded, &mut seen);
+                    add_with_translations(segment, &mut expanded, &mut seen);
                 }
                 if seen.insert(token.to_lowercase()) {
                     expanded.push(token.to_string());
                 }
             } else {
-                add_with_synonyms(token, &mut expanded, &mut seen);
+                add_with_translations(token, &mut expanded, &mut seen);
             }
         } else {
-            add_with_synonyms(token, &mut expanded, &mut seen);
+            add_with_translations(token, &mut expanded, &mut seen);
         }
     }
 
@@ -67,15 +67,15 @@ fn push_core_token(token: &str, tokens: &mut Vec<String>, seen: &mut HashSet<Str
     }
 }
 
-fn add_with_synonyms(token: &str, expanded: &mut Vec<String>, seen: &mut HashSet<String>) {
+fn add_with_translations(token: &str, expanded: &mut Vec<String>, seen: &mut HashSet<String>) {
     if seen.insert(token.to_lowercase()) {
         expanded.push(token.to_string());
     }
     let lower = token.to_lowercase();
-    if let Some(synonyms) = SYNONYMS.get(lower.as_str()) {
-        for synonym in *synonyms {
-            if seen.insert(synonym.to_lowercase()) {
-                expanded.push(synonym.to_string());
+    if let Some(translations) = CJK_EN_TRANSLATIONS.get(lower.as_str()) {
+        for translation in translations {
+            if seen.insert(translation.to_lowercase()) {
+                expanded.push((*translation).to_string());
             }
         }
     }

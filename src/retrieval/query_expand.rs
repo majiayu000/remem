@@ -1,6 +1,6 @@
 mod expand;
-mod synonyms;
 mod tokenize;
+mod translations;
 
 #[cfg(test)]
 mod tests;
