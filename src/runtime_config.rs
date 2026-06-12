@@ -230,11 +230,8 @@ fn read_config_doc_or_default() -> Result<DocumentMut> {
 }
 
 fn write_config_doc(path: &PathBuf, doc: &DocumentMut) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create config dir {}", parent.display()))?;
-    }
-    std::fs::write(path, doc.to_string()).with_context(|| format!("write {}", path.display()))
+    crate::atomic_file::write_atomic(path, doc.to_string())
+        .with_context(|| format!("write {}", path.display()))
 }
 
 fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
@@ -594,6 +591,26 @@ mod tests {
             assert_eq!(profile.model.as_deref(), Some("custom-mini"));
         });
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn config_write_failure_preserves_existing_runtime_config() -> Result<()> {
+        let path = temp_config_path("runtime-atomic-fail");
+        with_config_path(&path, || -> Result<()> {
+            let _atomic_guard = crate::atomic_file::failpoint_test_lock();
+            init_config()?;
+            let before = std::fs::read_to_string(&path)?;
+            crate::atomic_file::fail_next_rename_for_test();
+
+            let err = set_config_value("memory_ai.profiles.codex.model", "custom-mini")
+                .expect_err("injected atomic write failure must abort config update");
+            assert!(format!("{err:?}").contains("injected atomic write failure"));
+            assert_eq!(std::fs::read_to_string(&path)?, before);
+            crate::atomic_file::clear_failpoints_for_test();
+            Ok(())
+        })?;
+        let _ = std::fs::remove_file(path);
+        Ok(())
     }
 
     #[test]

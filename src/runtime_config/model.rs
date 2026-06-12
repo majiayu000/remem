@@ -159,11 +159,9 @@ pub fn rollback_model_config() -> Result<(PathBuf, PathBuf)> {
             backup_path.display()
         );
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create config dir {}", parent.display()))?;
-    }
-    std::fs::copy(&backup_path, &path)
+    let backup = std::fs::read_to_string(&backup_path)
+        .with_context(|| format!("read model config backup {}", backup_path.display()))?;
+    crate::atomic_file::write_atomic(&path, backup)
         .with_context(|| format!("restore {} from {}", path.display(), backup_path.display()))?;
     Ok((path, backup_path))
 }
@@ -357,6 +355,27 @@ mod tests {
         });
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(backup_path_for_config(&path));
+    }
+
+    #[test]
+    fn rollback_failure_preserves_active_config() -> Result<()> {
+        let path = temp_config_path("rollback-atomic-fail");
+        with_config_path(&path, || -> Result<()> {
+            let _atomic_guard = crate::atomic_file::failpoint_test_lock();
+            super::super::init_config()?;
+            set_model(Some(CODEX_HOST), None, "balanced", None, false)?;
+            let before = std::fs::read_to_string(&path)?;
+            crate::atomic_file::fail_next_rename_for_test();
+
+            let err = rollback_model_config().expect_err("injected failure must abort rollback");
+            assert!(format!("{err:?}").contains("injected atomic write failure"));
+            assert_eq!(std::fs::read_to_string(&path)?, before);
+            crate::atomic_file::clear_failpoints_for_test();
+            Ok(())
+        })?;
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(backup_path_for_config(&path));
+        Ok(())
     }
 
     #[test]

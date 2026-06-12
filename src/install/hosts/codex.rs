@@ -95,11 +95,7 @@ fn read_toml_doc(path: &Path) -> Result<DocumentMut> {
 }
 
 fn write_toml_doc(path: &Path, doc: &DocumentMut) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("创建目录 {} 失败", parent.display()))?;
-    }
-    std::fs::write(path, doc.to_string())
+    crate::atomic_file::write_atomic(path, doc.to_string())
         .with_context(|| format!("写入 {} 失败", path.display()))?;
     Ok(())
 }
@@ -306,6 +302,30 @@ codex_hooks = true
             hooks["Stop"][0]["hooks"][0]["command"],
             "/tmp/remem summarize --host codex-cli"
         );
+    }
+
+    #[test]
+    fn write_toml_failure_preserves_existing_file() -> Result<()> {
+        let _guard = crate::atomic_file::failpoint_test_lock();
+        let path = std::env::temp_dir().join(format!(
+            "remem-codex-toml-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, "[features]\nhooks = false\n")?;
+        let mut doc = DocumentMut::new();
+        enable_codex_hooks(&mut doc)?;
+        crate::atomic_file::fail_next_rename_for_test();
+
+        let err = write_toml_doc(&path, &doc).expect_err("injected failure must abort TOML write");
+        assert!(format!("{err:?}").contains("injected atomic write failure"));
+        assert_eq!(
+            std::fs::read_to_string(&path)?,
+            "[features]\nhooks = false\n"
+        );
+        crate::atomic_file::clear_failpoints_for_test();
+        let _ = std::fs::remove_file(path);
+        Ok(())
     }
 
     #[test]
