@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::{
@@ -313,8 +313,57 @@ fn exhaust_extraction_task(
     err: &str,
     now: i64,
 ) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    let current = tx
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .context("begin extraction exhaustion transaction")?;
+    let result = exhaust_extraction_task_locked(conn, task, lease_owner, attempts, err, now);
+    let (session_id, skipped_through, replay_range) = match result {
+        Ok(output) => {
+            conn.execute_batch("COMMIT")
+                .context("commit extraction exhaustion transaction")?;
+            output
+        }
+        Err(error) => {
+            if let Err(rollback_error) = conn.execute_batch("ROLLBACK") {
+                crate::log::error(
+                    "extraction",
+                    &format!(
+                        "rollback failed after extraction exhaustion error: {rollback_error}; \
+                         original error: {error:#}"
+                    ),
+                );
+                return Err(error.context(format!(
+                    "extraction exhaustion rollback also failed: {rollback_error}"
+                )));
+            }
+            return Err(error);
+        }
+    };
+    crate::log::error(
+        "extraction",
+        &format!(
+            "task {} exhausted after {} attempts; session={} cursor advanced to {} with replay_range={} so later events stay extractable: {}",
+            task.id,
+            attempts,
+            session_id.as_deref().unwrap_or("<unknown>"),
+            skipped_through,
+            replay_range
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            err
+        ),
+    );
+    Ok(())
+}
+
+fn exhaust_extraction_task_locked(
+    conn: &Connection,
+    task: &ExtractionTask,
+    lease_owner: &str,
+    attempts: i64,
+    err: &str,
+    now: i64,
+) -> Result<(Option<String>, i64, Option<i64>)> {
+    let current = conn
         .query_row(
             "SELECT t.task_kind, t.host_id, t.workspace_id, t.project_id, t.session_row_id,
                     t.high_watermark_event_id, t.replay_range_id, s.session_id
@@ -354,7 +403,7 @@ fn exhaust_extraction_task(
     let cursor = task.cursor_event_id.unwrap_or(0);
     let skipped_through = task.high_watermark_event_id.unwrap_or(cursor);
     let replay_range = if let Some(range_id) = replay_range_id {
-        tx.execute(
+        conn.execute(
             "UPDATE extraction_replay_ranges
              SET status = 'failed',
                  attempts = ?1,
@@ -366,7 +415,7 @@ fn exhaust_extraction_task(
         Some(range_id)
     } else if skipped_through > cursor {
         Some(record_exhausted_replay_range(
-            &tx,
+            conn,
             task.id,
             &task_kind,
             host_id,
@@ -392,7 +441,7 @@ fn exhaust_extraction_task(
         "failed"
     };
     let next_attempts = if still_has_later_events { 0 } else { attempts };
-    let updated = tx.execute(
+    let updated = conn.execute(
         "UPDATE extraction_tasks
              SET status = ?1,
                  attempts = ?2,
@@ -414,22 +463,7 @@ fn exhaust_extraction_task(
         ],
     )?;
     ensure_task_updated(updated, task.id)?;
-    tx.commit()?;
-    crate::log::error(
-        "extraction",
-        &format!(
-            "task {} exhausted after {} attempts; session={} cursor advanced to {} with replay_range={} so later events stay extractable: {}",
-            task.id,
-            attempts,
-            session_id.as_deref().unwrap_or("<unknown>"),
-            skipped_through,
-            replay_range
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
-            err
-        ),
-    );
-    Ok(())
+    Ok((session_id, skipped_through, replay_range))
 }
 
 pub fn mark_extraction_task_failed_or_retry(

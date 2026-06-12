@@ -275,7 +275,7 @@ pub(crate) fn mark_replay_range_replayed_if_done(
     task_id: i64,
     now: i64,
 ) -> Result<()> {
-    conn.execute(
+    let updated = conn.execute(
         "UPDATE extraction_replay_ranges
          SET status = 'replayed',
              replay_task_id = COALESCE(replay_task_id, ?1),
@@ -292,6 +292,35 @@ pub(crate) fn mark_replay_range_replayed_if_done(
          )",
         params![task_id, now],
     )?;
+    if updated > 0 {
+        conn.execute(
+            "UPDATE extraction_tasks
+             SET status = 'done',
+                 attempts = 0,
+                 lease_owner = NULL,
+                 lease_expires_epoch = NULL,
+                 next_retry_epoch = NULL,
+                 last_error = NULL,
+                 updated_at_epoch = ?2
+             WHERE id = (
+                 SELECT source_task_id
+                 FROM extraction_replay_ranges
+                 WHERE id = (
+                     SELECT replay_range_id
+                     FROM extraction_tasks
+                     WHERE id = ?1
+                 )
+             )
+               AND status = 'failed'
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM extraction_replay_ranges r
+                 WHERE r.source_task_id = extraction_tasks.id
+                   AND r.status != 'replayed'
+             )",
+            params![task_id, now],
+        )?;
+    }
     Ok(())
 }
 

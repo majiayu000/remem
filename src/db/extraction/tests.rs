@@ -573,6 +573,47 @@ fn retry_extraction_replay_range_creates_bounded_replay_task() {
 }
 
 #[test]
+fn replayed_range_clears_terminal_source_failure() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(
+        &conn,
+        "sess-replay-source-clear",
+        ExtractionTaskKind::ObservationExtract,
+    )
+    .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    defer_claimed_extraction_task(&conn, &claimed, "worker-a", "bad model output", 30)
+        .expect("defer should exhaust");
+    assert_eq!(task_status(&conn, task_id).0, "failed");
+
+    retry_extraction_replay_ranges(&conn, None, 10).expect("retry should enqueue");
+    let replay = claim_next_extraction_task(&mut conn, "worker-b", 60)
+        .expect("claim should succeed")
+        .expect("replay task should be claimable");
+    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
+        .expect("replay task should finish");
+
+    assert_eq!(
+        task_status(&conn, task_id).0,
+        "done",
+        "successful replay should clear the terminal source task failure"
+    );
+    assert!(
+        list_extraction_replay_ranges(&conn, None, 10)
+            .expect("ranges should list")
+            .is_empty(),
+        "replayed ranges should leave the operational queue"
+    );
+}
+
+#[test]
 fn replay_followup_stays_scoped_to_replay_range() {
     let mut conn = setup_conn();
     let task_id = insert_task(
