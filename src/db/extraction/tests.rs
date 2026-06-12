@@ -732,6 +732,12 @@ fn replay_range_stays_failed_when_followup_fails_before_parent_done() {
         count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
         1
     );
+    assert_eq!(
+        quarantine_extraction_replay_ranges(&conn, None, 10).expect("quarantine should succeed"),
+        1
+    );
+    assert_eq!(task_status(&conn, followup_id).0, "done");
+    assert_eq!(task_status(&conn, task_id).0, "done");
 }
 
 #[test]
@@ -749,6 +755,7 @@ fn quarantine_extraction_replay_ranges_removes_retryable_ranges() {
         .expect("task should be claimed");
     defer_claimed_extraction_task(&conn, &claimed, "worker-a", "still ambiguous", 30)
         .expect("defer should exhaust");
+    assert_eq!(task_status(&conn, task_id).0, "failed");
 
     assert_eq!(
         count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
@@ -764,4 +771,5 @@ fn quarantine_extraction_replay_ranges_removes_retryable_ranges() {
     let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
     assert_eq!(ranges.len(), 1);
     assert_eq!(ranges[0].status, "quarantined");
+    assert_eq!(task_status(&conn, task_id).0, "done");
 }
