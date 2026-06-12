@@ -37,7 +37,7 @@ brew install majiayu000/tap/remem
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # 固定版本、指定安装目录，或只安装二进制不改 hooks/MCP
-REMEM_VERSION=v0.5.39 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_VERSION=v0.5.40 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
