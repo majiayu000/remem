@@ -1,7 +1,12 @@
 use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::db::ExtractionTaskKind;
+use crate::db::{
+    extraction_replay::{
+        mark_replay_range_failed, mark_replay_range_replayed_if_done, record_exhausted_replay_range,
+    },
+    ExtractionTaskKind,
+};
 
 pub const EXTRACTION_TASK_MAX_ATTEMPTS: i64 = 5;
 
@@ -21,6 +26,7 @@ pub struct ExtractionTask {
     pub cursor_event_id: Option<i64>,
     pub high_watermark_event_id: Option<i64>,
     pub attempts: i64,
+    pub replay_range_id: Option<i64>,
 }
 
 pub fn enqueue_followup_extraction_task(
@@ -33,21 +39,40 @@ pub fn enqueue_followup_extraction_task(
         .session_row_id
         .ok_or_else(|| anyhow::anyhow!("follow-up extraction task requires session_row_id"))?;
     let now = chrono::Utc::now().timestamp();
-    let idempotency_key = format!(
-        "{}:{}:{}:{}",
-        source.host_id,
-        source.project_id,
-        session_row_id,
-        task_kind.as_str()
-    );
+    let idempotency_key = if let Some(replay_range_id) = source.replay_range_id {
+        format!(
+            "{}:{}:{}:{}:replay:{}",
+            source.host_id,
+            source.project_id,
+            session_row_id,
+            task_kind.as_str(),
+            replay_range_id
+        )
+    } else {
+        format!(
+            "{}:{}:{}:{}",
+            source.host_id,
+            source.project_id,
+            session_row_id,
+            task_kind.as_str()
+        )
+    };
+    let cursor_event_id = source.replay_range_id.and(source.cursor_event_id);
     conn.execute(
         "INSERT INTO extraction_tasks
          (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
           idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
-          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch, updated_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, NULL, ?8, 0, NULL, NULL, NULL, NULL, ?9, ?9)
+          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch,
+          updated_at_epoch, replay_range_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, 0, NULL, NULL, NULL, NULL,
+                 ?10, ?10, ?11)
          ON CONFLICT(idempotency_key) DO UPDATE SET
              high_watermark_event_id = MAX(COALESCE(extraction_tasks.high_watermark_event_id, 0), excluded.high_watermark_event_id),
+             cursor_event_id = CASE
+                 WHEN excluded.replay_range_id IS NOT NULL
+                  AND extraction_tasks.status IN ('done', 'failed') THEN excluded.cursor_event_id
+                 ELSE extraction_tasks.cursor_event_id
+             END,
              status = CASE
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN 'pending'
                  ELSE extraction_tasks.status
@@ -64,6 +89,7 @@ pub fn enqueue_followup_extraction_task(
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
                  ELSE extraction_tasks.next_retry_epoch
              END,
+             replay_range_id = COALESCE(extraction_tasks.replay_range_id, excluded.replay_range_id),
              updated_at_epoch = excluded.updated_at_epoch",
         params![
             task_kind.as_str(),
@@ -73,8 +99,10 @@ pub fn enqueue_followup_extraction_task(
             session_row_id,
             task_kind.priority(),
             idempotency_key,
+            cursor_event_id,
             high_watermark_event_id,
-            now
+            now,
+            source.replay_range_id
         ],
     )?;
     Ok(conn.query_row(
@@ -168,7 +196,8 @@ pub fn mark_extraction_task_done(
          WHERE id = ?2 AND lease_owner = ?3 AND status = 'processing'",
         params![now, task_id, lease_owner, completed_high_watermark_event_id],
     )?;
-    ensure_task_updated(updated, task_id)
+    ensure_task_updated(updated, task_id)?;
+    mark_replay_range_replayed_if_done(conn, task_id, now)
 }
 
 pub fn mark_extraction_task_failed(
@@ -195,7 +224,8 @@ pub fn mark_extraction_task_failed(
             lease_owner
         ],
     )?;
-    ensure_task_updated(updated, task_id)
+    ensure_task_updated(updated, task_id)?;
+    mark_replay_range_failed(conn, task_id, now, err)
 }
 
 pub fn defer_extraction_task(
@@ -205,15 +235,21 @@ pub fn defer_extraction_task(
     reason: &str,
     backoff_secs: i64,
 ) -> Result<()> {
+    let task = load_claimed_extraction_task(conn, task_id)?;
+    defer_claimed_extraction_task(conn, &task, lease_owner, reason, backoff_secs)
+}
+
+pub fn defer_claimed_extraction_task(
+    conn: &Connection,
+    task: &ExtractionTask,
+    lease_owner: &str,
+    reason: &str,
+    backoff_secs: i64,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    let attempts: i64 = conn.query_row(
-        "SELECT attempts FROM extraction_tasks WHERE id = ?1",
-        params![task_id],
-        |row| row.get(0),
-    )?;
-    let next_attempt = attempts + 1;
+    let next_attempt = task.attempts + 1;
     if next_attempt >= EXTRACTION_TASK_MAX_ATTEMPTS {
-        return exhaust_extraction_task(conn, task_id, lease_owner, next_attempt, reason, now);
+        return exhaust_extraction_task(conn, task, lease_owner, next_attempt, reason, now);
     }
 
     let updated = conn.execute(
@@ -231,11 +267,11 @@ pub fn defer_extraction_task(
             now + backoff_secs.max(1),
             crate::db::truncate_str(reason, 2000),
             now,
-            task_id,
+            task.id,
             lease_owner
         ],
     )?;
-    ensure_task_updated(updated, task_id)
+    ensure_task_updated(updated, task.id)
 }
 
 pub fn wait_extraction_task(
@@ -271,53 +307,125 @@ pub fn wait_extraction_task(
 // undeliverable range forever.
 fn exhaust_extraction_task(
     conn: &Connection,
-    task_id: i64,
+    task: &ExtractionTask,
     lease_owner: &str,
     attempts: i64,
     err: &str,
     now: i64,
 ) -> Result<()> {
-    // Single UPDATE ... RETURNING: a concurrent capture/enqueue can bump
-    // high_watermark_event_id at any moment (the coalesce path does not check
-    // the lease), so a separate SELECT before the UPDATE could log a range
-    // that no longer matches what this statement actually skipped. RETURNING
-    // yields the post-update row, so the logged cursor is exactly where the
-    // skip landed.
-    let row: Option<(Option<i64>, Option<String>)> = conn
+    let tx = conn.unchecked_transaction()?;
+    let current = tx
         .query_row(
-            "UPDATE extraction_tasks
+            "SELECT t.task_kind, t.host_id, t.workspace_id, t.project_id, t.session_row_id,
+                    t.high_watermark_event_id, t.replay_range_id, s.session_id
+             FROM extraction_tasks t
+             LEFT JOIN sessions s ON s.id = t.session_row_id
+             WHERE t.id = ?1 AND t.lease_owner = ?2 AND t.status = 'processing'",
+            params![task.id, lease_owner],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        task_kind,
+        host_id,
+        workspace_id,
+        project_id,
+        session_row_id,
+        current_high_watermark_event_id,
+        replay_range_id,
+        session_id,
+    )) = current
+    else {
+        bail!("extraction task {} is not leased by this worker", task.id);
+    };
+    let replay_range_id = task.replay_range_id.or(replay_range_id);
+
+    let cursor = task.cursor_event_id.unwrap_or(0);
+    let skipped_through = task.high_watermark_event_id.unwrap_or(cursor);
+    let replay_range = if let Some(range_id) = replay_range_id {
+        tx.execute(
+            "UPDATE extraction_replay_ranges
              SET status = 'failed',
                  attempts = ?1,
-                 cursor_event_id = COALESCE(high_watermark_event_id, cursor_event_id),
+                 last_error = ?2,
+                 updated_at_epoch = ?3
+             WHERE id = ?4",
+            params![attempts, crate::db::truncate_str(err, 2000), now, range_id],
+        )?;
+        Some(range_id)
+    } else if skipped_through > cursor {
+        Some(record_exhausted_replay_range(
+            &tx,
+            task.id,
+            &task_kind,
+            host_id,
+            workspace_id,
+            project_id,
+            session_row_id,
+            cursor + 1,
+            skipped_through,
+            attempts,
+            err,
+            now,
+        )?)
+    } else {
+        None
+    };
+
+    let still_has_later_events = current_high_watermark_event_id
+        .map(|high_watermark| high_watermark > skipped_through)
+        .unwrap_or(false);
+    let next_status = if still_has_later_events {
+        "pending"
+    } else {
+        "failed"
+    };
+    let next_attempts = if still_has_later_events { 0 } else { attempts };
+    let updated = tx.execute(
+        "UPDATE extraction_tasks
+             SET status = ?1,
+                 attempts = ?2,
+                 cursor_event_id = ?3,
                  lease_owner = NULL,
                  lease_expires_epoch = NULL,
                  next_retry_epoch = NULL,
-                 last_error = ?2,
-                 updated_at_epoch = ?3
-             WHERE id = ?4 AND lease_owner = ?5 AND status = 'processing'
-             RETURNING cursor_event_id,
-                       (SELECT s.session_id FROM sessions s WHERE s.id = session_row_id)",
-            params![
-                attempts,
-                crate::db::truncate_str(err, 2000),
-                now,
-                task_id,
-                lease_owner
-            ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let Some((skipped_through, session_id)) = row else {
-        bail!("extraction task {task_id} is not leased by this worker");
-    };
+                 last_error = ?4,
+                 updated_at_epoch = ?5
+             WHERE id = ?6 AND lease_owner = ?7 AND status = 'processing'",
+        params![
+            next_status,
+            next_attempts,
+            skipped_through,
+            crate::db::truncate_str(err, 2000),
+            now,
+            task.id,
+            lease_owner
+        ],
+    )?;
+    ensure_task_updated(updated, task.id)?;
+    tx.commit()?;
     crate::log::error(
         "extraction",
         &format!(
-            "task {} exhausted after {} attempts; session={} cursor advanced to {} (events up to and including it are skipped) so later events stay extractable: {}",
-            task_id,
+            "task {} exhausted after {} attempts; session={} cursor advanced to {} with replay_range={} so later events stay extractable: {}",
+            task.id,
             attempts,
             session_id.as_deref().unwrap_or("<unknown>"),
-            skipped_through.unwrap_or(0),
+            skipped_through,
+            replay_range
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
             err
         ),
     );
@@ -331,15 +439,21 @@ pub fn mark_extraction_task_failed_or_retry(
     err: &str,
     backoff_secs: i64,
 ) -> Result<()> {
+    let task = load_claimed_extraction_task(conn, task_id)?;
+    mark_claimed_extraction_task_failed_or_retry(conn, &task, lease_owner, err, backoff_secs)
+}
+
+pub fn mark_claimed_extraction_task_failed_or_retry(
+    conn: &Connection,
+    task: &ExtractionTask,
+    lease_owner: &str,
+    err: &str,
+    backoff_secs: i64,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    let attempts: i64 = conn.query_row(
-        "SELECT attempts FROM extraction_tasks WHERE id = ?1",
-        params![task_id],
-        |row| row.get(0),
-    )?;
-    let next_attempt = attempts + 1;
+    let next_attempt = task.attempts + 1;
     if next_attempt >= EXTRACTION_TASK_MAX_ATTEMPTS {
-        return exhaust_extraction_task(conn, task_id, lease_owner, next_attempt, err, now);
+        return exhaust_extraction_task(conn, task, lease_owner, next_attempt, err, now);
     }
 
     let updated = conn.execute(
@@ -357,18 +471,19 @@ pub fn mark_extraction_task_failed_or_retry(
             now + backoff_secs.max(1),
             crate::db::truncate_str(err, 2000),
             now,
-            task_id,
+            task.id,
             lease_owner
         ],
     )?;
-    ensure_task_updated(updated, task_id)
+    ensure_task_updated(updated, task.id)
 }
 
 fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<ExtractionTask> {
     let row = conn.query_row(
         "SELECT t.id, t.task_kind, t.host_id, t.workspace_id, t.project_id, t.session_row_id,
                 h.name, p.project_path, s.session_id,
-                t.priority, t.cursor_event_id, t.high_watermark_event_id, t.attempts
+                t.priority, t.cursor_event_id, t.high_watermark_event_id, t.attempts,
+                t.replay_range_id
          FROM extraction_tasks t
          JOIN hosts h ON h.id = t.host_id
          JOIN projects p ON p.id = t.project_id
@@ -390,6 +505,7 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
                 row.get::<_, Option<i64>>(10)?,
                 row.get::<_, Option<i64>>(11)?,
                 row.get::<_, i64>(12)?,
+                row.get::<_, Option<i64>>(13)?,
             ))
         },
     )?;
@@ -410,6 +526,7 @@ fn load_claimed_extraction_task(conn: &Connection, task_id: i64) -> Result<Extra
         cursor_event_id: row.10,
         high_watermark_event_id: row.11,
         attempts: row.12,
+        replay_range_id: row.13,
     })
 }
 

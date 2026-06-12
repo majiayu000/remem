@@ -55,7 +55,7 @@ pub(crate) async fn run_next(
         }
         Ok(Ok(ExtractionTaskOutcome::Deferred(msg))) => {
             let backoff = retry_backoff_secs(task.attempts);
-            db::defer_extraction_task(&conn, task.id, lease_owner, &msg, backoff)?;
+            db::defer_claimed_extraction_task(&conn, &task, lease_owner, &msg, backoff)?;
             crate::log::warn(
                 "worker",
                 &format!(
@@ -87,7 +87,13 @@ pub(crate) async fn run_next(
         Ok(Err(e)) => {
             let msg = e.to_string();
             let backoff = retry_backoff_secs(task.attempts);
-            db::mark_extraction_task_failed_or_retry(&conn, task.id, lease_owner, &msg, backoff)?;
+            db::mark_claimed_extraction_task_failed_or_retry(
+                &conn,
+                &task,
+                lease_owner,
+                &msg,
+                backoff,
+            )?;
             crate::log::warn(
                 "worker",
                 &format!(
@@ -101,7 +107,13 @@ pub(crate) async fn run_next(
         Err(_) => {
             let msg = format!("extraction task timed out after {}s", timeout_secs);
             let backoff = retry_backoff_secs(task.attempts);
-            db::mark_extraction_task_failed_or_retry(&conn, task.id, lease_owner, &msg, backoff)?;
+            db::mark_claimed_extraction_task_failed_or_retry(
+                &conn,
+                &task,
+                lease_owner,
+                &msg,
+                backoff,
+            )?;
             crate::log::warn(
                 "worker",
                 &format!("extraction id={} timeout (retry in {}s)", task.id, backoff),

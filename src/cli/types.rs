@@ -685,6 +685,33 @@ pub(in crate::cli) enum PendingAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// List exhausted extraction event ranges.
+    ListExtractionRanges {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "20")]
+        limit: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Requeue exhausted extraction event ranges.
+    RetryExtractionRanges {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "100")]
+        limit: i64,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Quarantine exhausted extraction event ranges.
+    QuarantineExtractionRanges {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, short = 'n', default_value = "100")]
+        limit: i64,
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]

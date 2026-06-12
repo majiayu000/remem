@@ -31,6 +31,9 @@ pub struct SystemStats {
     pub processing_extraction_tasks: i64,
     pub expired_processing_extraction_tasks: i64,
     pub failed_extraction_tasks: i64,
+    pub retryable_extraction_replay_ranges: i64,
+    pub active_extraction_replay_ranges: i64,
+    pub quarantined_extraction_replay_ranges: i64,
     pub oldest_pending_extraction_epoch: Option<i64>,
     pub pending_memory_candidates: i64,
     pub pending_graph_candidates: i64,
@@ -140,6 +143,27 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         )?,
         failed_extraction_tasks: conn.query_row(
             "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'failed'",
+            [],
+            |row| row.get(0),
+        )?,
+        retryable_extraction_replay_ranges: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_replay_ranges
+             WHERE status IN ('pending', 'failed')",
+            [],
+            |row| row.get(0),
+        )?,
+        active_extraction_replay_ranges: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_replay_ranges
+             WHERE status = 'requeued'",
+            [],
+            |row| row.get(0),
+        )?,
+        quarantined_extraction_replay_ranges: conn.query_row(
+            "SELECT COUNT(*)
+             FROM extraction_replay_ranges
+             WHERE status = 'quarantined'",
             [],
             |row| row.get(0),
         )?,

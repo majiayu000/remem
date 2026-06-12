@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::db;
 use crate::doctor::health_action::{
-    queue_actions, render_action_block, worker_once_fallback_human,
+    queue_actions_with_replay, render_action_block, worker_once_fallback_human,
 };
 
 pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
@@ -76,6 +76,9 @@ fn load_status_report() -> Result<StatusReport> {
             extract_running: stats.processing_extraction_tasks,
             extract_expired: stats.expired_processing_extraction_tasks,
             extract_failed: stats.failed_extraction_tasks,
+            retryable_replay_ranges: stats.retryable_extraction_replay_ranges,
+            active_replay_ranges: stats.active_extraction_replay_ranges,
+            quarantined_replay_ranges: stats.quarantined_extraction_replay_ranges,
             pending_candidates: stats.pending_memory_candidates,
             pending_graph_candidates: stats.pending_graph_candidates,
             oldest_task_epoch: stats.oldest_pending_extraction_epoch,
@@ -190,6 +193,18 @@ fn print_status_report(report: &StatusReport) {
         report.capture_pipeline.extract_failed
     );
     println!(
+        "  Replay todo:  {:>6}",
+        report.capture_pipeline.retryable_replay_ranges
+    );
+    println!(
+        "  Replay run:   {:>6}",
+        report.capture_pipeline.active_replay_ranges
+    );
+    println!(
+        "  Replay quar:  {:>6}",
+        report.capture_pipeline.quarantined_replay_ranges
+    );
+    println!(
         "  Candidates:   {:>6}",
         report.capture_pipeline.pending_candidates
     );
@@ -277,13 +292,14 @@ fn worker_health_tag(healthy: bool, heartbeat_age_secs: Option<i64>) -> &'static
 }
 
 fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_action::HealthAction> {
-    queue_actions(
+    queue_actions_with_replay(
         report.pending_observations.failed,
         report.pending_observations.expired,
         report.capture_pipeline.extract_expired,
         report.jobs.failed,
         report.jobs.stuck,
         report.capture_pipeline.extract_failed,
+        report.capture_pipeline.retryable_replay_ranges,
     )
 }
 
@@ -343,6 +359,9 @@ pub(super) struct CapturePipelineStatus {
     pub extract_running: i64,
     pub extract_expired: i64,
     pub extract_failed: i64,
+    pub retryable_replay_ranges: i64,
+    pub active_replay_ranges: i64,
+    pub quarantined_replay_ranges: i64,
     pub pending_candidates: i64,
     pub pending_graph_candidates: i64,
     pub oldest_task_epoch: Option<i64>,
@@ -438,6 +457,9 @@ mod tests {
                 extract_running: 7,
                 extract_expired: 0,
                 extract_failed: 0,
+                retryable_replay_ranges: 0,
+                active_replay_ranges: 0,
+                quarantined_replay_ranges: 0,
                 pending_candidates: 9,
                 pending_graph_candidates: 10,
                 oldest_task_epoch: Some(10),

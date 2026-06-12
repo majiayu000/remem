@@ -190,6 +190,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "graph_edge_source_candidate_integrity",
         sql: include_str!("../migrations/v037_graph_edge_source_candidate_integrity.sql"),
     },
+    Migration {
+        version: 38,
+        name: "extraction_replay_ranges",
+        sql: include_str!("../migrations/v038_extraction_replay_ranges.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

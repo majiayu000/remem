@@ -1,7 +1,7 @@
 use super::types::{Check, Status};
 use crate::db;
 use crate::doctor::health_action::{
-    queue_actions, render_inline_hints, worker_once_fallback_detail,
+    queue_actions, queue_actions_with_replay, render_inline_hints, worker_once_fallback_detail,
 };
 use rusqlite::Connection;
 
@@ -80,15 +80,41 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         stats.failed_jobs,
         stats.stuck_jobs,
     );
+    let replay_detail = if stats.retryable_extraction_replay_ranges > 0
+        || stats.active_extraction_replay_ranges > 0
+        || stats.quarantined_extraction_replay_ranges > 0
+    {
+        format!(
+            "; {} extraction replay ranges retryable, {} active, {} quarantined",
+            stats.retryable_extraction_replay_ranges,
+            stats.active_extraction_replay_ranges,
+            stats.quarantined_extraction_replay_ranges
+        )
+    } else {
+        String::new()
+    };
+    let detail = format!("{detail}{replay_detail}");
 
-    let actions = queue_actions(
-        stats.failed_pending_observations,
-        stats.expired_processing_pending_observations,
-        stats.expired_processing_extraction_tasks,
-        stats.failed_jobs,
-        stats.stuck_jobs,
-        stats.failed_extraction_tasks,
-    );
+    let actions = if stats.retryable_extraction_replay_ranges > 0 {
+        queue_actions_with_replay(
+            stats.failed_pending_observations,
+            stats.expired_processing_pending_observations,
+            stats.expired_processing_extraction_tasks,
+            stats.failed_jobs,
+            stats.stuck_jobs,
+            stats.failed_extraction_tasks,
+            stats.retryable_extraction_replay_ranges,
+        )
+    } else {
+        queue_actions(
+            stats.failed_pending_observations,
+            stats.expired_processing_pending_observations,
+            stats.expired_processing_extraction_tasks,
+            stats.failed_jobs,
+            stats.stuck_jobs,
+            stats.failed_extraction_tasks,
+        )
+    };
     let action_suffix = render_inline_hints(&actions)
         .map(|hints| format!("; actions: {hints}"))
         .unwrap_or_default();
@@ -105,6 +131,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     } else if stats.failed_pending_observations > 0
         || stats.failed_jobs > 0
         || stats.failed_extraction_tasks > 0
+        || stats.retryable_extraction_replay_ranges > 0
     {
         Check::new(
             "Pending queue",

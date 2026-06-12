@@ -1,6 +1,10 @@
 use rusqlite::params;
 
-use crate::db::{record_captured_event, CaptureEventInput};
+use crate::db::{
+    count_retryable_extraction_replay_ranges, list_extraction_replay_ranges,
+    quarantine_extraction_replay_ranges, record_captured_event, retry_extraction_replay_ranges,
+    CaptureEventInput,
+};
 
 use super::*;
 
@@ -389,6 +393,12 @@ fn defer_exhaustion_does_not_permanently_stall_session_extraction() {
     defer_extraction_task(&conn, task_id, "worker-a", "still ambiguous", 30)
         .expect("defer should exhaust");
 
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].source_task_id, task_id);
+    assert_eq!(ranges[0].status, "pending");
+    assert_eq!(Some(ranges[0].to_event_id), stuck_watermark);
+
     insert_task(&conn, "sess-defer-stall", ExtractionTaskKind::SessionRollup)
         .expect("new captured event should coalesce into the task");
 
@@ -472,4 +482,194 @@ fn enqueue_followup_revives_exhausted_task_with_fresh_retry_budget() {
     assert_eq!(status, "pending");
     assert_eq!(attempts, 0, "revived task needs a fresh retry budget");
     assert!(next_retry.is_none());
+}
+
+#[test]
+fn exhaustion_records_only_claimed_range_when_watermark_advances() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(
+        &conn,
+        "sess-claim-watermark",
+        ExtractionTaskKind::SessionRollup,
+    )
+    .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    let claimed_watermark = claimed
+        .high_watermark_event_id
+        .expect("claimed task should have a watermark");
+
+    insert_task(
+        &conn,
+        "sess-claim-watermark",
+        ExtractionTaskKind::SessionRollup,
+    )
+    .expect("new captured event should coalesce while the task is leased");
+    defer_claimed_extraction_task(&conn, &claimed, "worker-a", "still ambiguous", 30)
+        .expect("defer should exhaust the claimed range");
+
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(
+        ranges[0].from_event_id,
+        claimed.cursor_event_id.unwrap_or(0) + 1
+    );
+    assert_eq!(ranges[0].to_event_id, claimed_watermark);
+
+    let (status, attempts, next_retry, _) = task_status(&conn, task_id);
+    assert_eq!(status, "pending");
+    assert_eq!(attempts, 0);
+    assert!(next_retry.is_none());
+    let reclaimed = claim_next_extraction_task(&mut conn, "worker-b", 60)
+        .expect("claim should succeed")
+        .expect("later range should be claimable");
+    assert_eq!(reclaimed.id, task_id);
+    assert_eq!(reclaimed.cursor_event_id, Some(claimed_watermark));
+    assert!(
+        reclaimed.high_watermark_event_id > reclaimed.cursor_event_id,
+        "later event must remain available to the primary task"
+    );
+}
+
+#[test]
+fn retry_extraction_replay_range_creates_bounded_replay_task() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(&conn, "sess-replay", ExtractionTaskKind::ObservationExtract)
+        .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    defer_claimed_extraction_task(&conn, &claimed, "worker-a", "bad model output", 30)
+        .expect("defer should exhaust");
+    let range = list_extraction_replay_ranges(&conn, None, 10)
+        .expect("ranges should list")
+        .pop()
+        .expect("range should exist");
+
+    let retried = retry_extraction_replay_ranges(&conn, None, 10).expect("retry should enqueue");
+    assert_eq!(retried, 1);
+    let listed = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].status, "requeued");
+
+    let replay = claim_next_extraction_task(&mut conn, "worker-b", 60)
+        .expect("claim should succeed")
+        .expect("replay task should be claimable");
+    assert_ne!(replay.id, task_id);
+    assert_eq!(replay.replay_range_id, Some(range.id));
+    assert_eq!(replay.cursor_event_id, Some(range.from_event_id - 1));
+    assert_eq!(replay.high_watermark_event_id, Some(range.to_event_id));
+}
+
+#[test]
+fn replay_followup_stays_scoped_to_replay_range() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(
+        &conn,
+        "sess-replay-followup",
+        ExtractionTaskKind::ObservationExtract,
+    )
+    .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    defer_claimed_extraction_task(&conn, &claimed, "worker-a", "bad model output", 30)
+        .expect("defer should exhaust");
+    retry_extraction_replay_ranges(&conn, None, 10).expect("retry should enqueue");
+    let replay = claim_next_extraction_task(&mut conn, "worker-b", 60)
+        .expect("claim should succeed")
+        .expect("replay task should be claimable");
+
+    let followup_id = enqueue_followup_extraction_task(
+        &conn,
+        &replay,
+        ExtractionTaskKind::MemoryCandidate,
+        replay
+            .high_watermark_event_id
+            .expect("replay should have watermark"),
+    )
+    .expect("followup should enqueue");
+    let (cursor, high_watermark, replay_range_id): (Option<i64>, Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT cursor_event_id, high_watermark_event_id, replay_range_id
+             FROM extraction_tasks WHERE id = ?1",
+            params![followup_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("followup should query");
+    assert_eq!(cursor, replay.cursor_event_id);
+    assert_eq!(high_watermark, replay.high_watermark_event_id);
+    assert_eq!(replay_range_id, replay.replay_range_id);
+
+    mark_extraction_task_done(&conn, replay.id, "worker-b", replay.high_watermark_event_id)
+        .expect("replay task should finish");
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].status, "requeued");
+
+    let followup = claim_next_extraction_task(&mut conn, "worker-c", 60)
+        .expect("claim should succeed")
+        .expect("followup task should be claimable");
+    assert_eq!(followup.id, followup_id);
+    mark_extraction_task_done(
+        &conn,
+        followup.id,
+        "worker-c",
+        followup.high_watermark_event_id,
+    )
+    .expect("followup should finish");
+    assert!(
+        list_extraction_replay_ranges(&conn, None, 10)
+            .expect("ranges should list")
+            .is_empty(),
+        "range should disappear from operational list only after the replay chain finishes"
+    );
+}
+
+#[test]
+fn quarantine_extraction_replay_ranges_removes_retryable_ranges() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(&conn, "sess-quarantine", ExtractionTaskKind::SessionRollup)
+        .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let claimed = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    defer_claimed_extraction_task(&conn, &claimed, "worker-a", "still ambiguous", 30)
+        .expect("defer should exhaust");
+
+    assert_eq!(
+        count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
+        1
+    );
+    let quarantined =
+        quarantine_extraction_replay_ranges(&conn, None, 10).expect("quarantine should succeed");
+    assert_eq!(quarantined, 1);
+    assert_eq!(
+        count_retryable_extraction_replay_ranges(&conn, None, 10).expect("count should succeed"),
+        0
+    );
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].status, "quarantined");
 }
