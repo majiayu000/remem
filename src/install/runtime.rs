@@ -155,7 +155,7 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
         });
     }
 
-    if std::env::var_os("REMEM_CIPHER_KEY").is_some() {
+    if env_cipher_key_is_set()? {
         bail!(
             "REMEM_CIPHER_KEY is set but {} is missing; unset REMEM_CIPHER_KEY and run `remem install` again to create a persistent key file, or write the same key to {} before running `remem status`",
             key_path.display(),
@@ -166,6 +166,7 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
     let db_existed = db_path.exists();
     if db_existed {
         ensure_existing_db_can_be_encrypted_without_key(&db_path, &key_path)?;
+        ensure_auto_encrypt_backup_path_available(&db_path)?;
     }
 
     let key = crate::db::generate_cipher_key().with_context(|| {
@@ -217,6 +218,15 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
     })
 }
 
+fn env_cipher_key_is_set() -> Result<bool> {
+    let Some(env_key) = std::env::var_os("REMEM_CIPHER_KEY") else {
+        return Ok(false);
+    };
+    let env_key = env_key.to_string_lossy();
+    let env_key = crate::db::parse_cipher_key(&env_key).context("parse REMEM_CIPHER_KEY")?;
+    Ok(env_key.is_some())
+}
+
 fn ensure_env_key_matches_persisted_key_if_set(key_path: &Path) -> Result<()> {
     let Some(env_key) = std::env::var_os("REMEM_CIPHER_KEY") else {
         return Ok(());
@@ -234,6 +244,16 @@ fn ensure_env_key_matches_persisted_key_if_set(key_path: &Path) -> Result<()> {
         env_key.is_some() && env_key == persisted_key,
         "REMEM_CIPHER_KEY does not match existing SQLCipher key file {}; unset REMEM_CIPHER_KEY or update it to the same persisted key before running `remem install`",
         key_path.display()
+    );
+    Ok(())
+}
+
+fn ensure_auto_encrypt_backup_path_available(db_path: &Path) -> Result<()> {
+    let backup_path = db_path.with_extension("db.bak");
+    ensure!(
+        !backup_path.exists(),
+        "existing remem backup {} would be overwritten by automatic install encryption; move it aside or run `remem encrypt` manually, then rerun `remem install`",
+        backup_path.display()
     );
     Ok(())
 }

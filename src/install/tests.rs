@@ -57,6 +57,34 @@ fn ensure_runtime_store_ready_encrypts_existing_plaintext_db() -> anyhow::Result
 }
 
 #[test]
+fn ensure_runtime_store_ready_refuses_to_overwrite_existing_backup() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-runtime-existing-backup");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    std::fs::create_dir_all(&test_dir.path)?;
+    {
+        let conn = rusqlite::Connection::open(test_dir.db_path())?;
+        conn.execute("CREATE TABLE existing_probe(id INTEGER PRIMARY KEY)", [])?;
+    }
+    let backup_path = test_dir.db_path().with_extension("db.bak");
+    std::fs::write(&backup_path, b"existing backup")?;
+
+    let err = ensure_runtime_store_ready()
+        .expect_err("install must not overwrite an existing database backup");
+
+    let message = err.to_string();
+    assert!(message.contains("would be overwritten"), "got: {message}");
+    assert!(
+        !test_dir.path.join(".key").exists(),
+        "backup preflight failure must not create a key file"
+    );
+    assert_eq!(std::fs::read(&backup_path)?, b"existing backup");
+    let header = std::fs::read(test_dir.db_path())?;
+    assert_eq!(&header[..16], b"SQLite format 3\0");
+    Ok(())
+}
+
+#[test]
 fn ensure_runtime_store_ready_rolls_back_key_when_encryption_fails() -> anyhow::Result<()> {
     let test_dir = ScopedTestDataDir::new("install-runtime-existing-db-encrypt-fail");
     std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
@@ -191,6 +219,23 @@ fn ensure_runtime_store_ready_treats_empty_env_key_as_unset() -> anyhow::Result<
     let conn = crate::db::open_db_read_only()?;
     let stats = crate::db::query_system_stats(&conn)?;
     assert_eq!(stats.active_memories, 0);
+    Ok(())
+}
+
+#[test]
+fn ensure_runtime_store_ready_allows_empty_env_key_fresh() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-runtime-empty-env-key-fresh");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::env::set_var("REMEM_CIPHER_KEY", "");
+    test_dir.remove_db_files();
+
+    let ready = ensure_runtime_store_ready()?;
+
+    assert!(ready.created_key);
+    assert!(test_dir.path.join(".key").exists());
+    assert!(test_dir.db_path().exists());
+    let header = std::fs::read(test_dir.db_path())?;
+    assert_ne!(&header[..16], b"SQLite format 3\0");
     Ok(())
 }
 
