@@ -26,24 +26,6 @@ impl HookStrategy {
         }
     }
 
-    fn include_observe(self) -> bool {
-        matches!(self, Self::ClaudeCode)
-    }
-
-    fn observe_matcher(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task",
-            Self::Codex => "Bash",
-        }
-    }
-
-    fn observe_timeout_ms(self) -> i64 {
-        match self {
-            Self::ClaudeCode => 120000,
-            Self::Codex => 3000,
-        }
-    }
-
     fn runtime_host(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude-code",
@@ -96,12 +78,12 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
         );
     }
 
-    if strategy.include_observe() {
+    if matches!(strategy, HookStrategy::ClaudeCode) {
         hooks.insert(
             "PostToolUse".to_string(),
             json!([{
-                "matcher": strategy.observe_matcher(),
-                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": strategy.observe_timeout_ms() }]
+                "matcher": "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task",
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": 120000 }]
             }]),
         );
     }

@@ -6,6 +6,7 @@ use std::{
 use anyhow::Result;
 use rusqlite::Connection;
 
+use super::capture_capability::check_capture_capabilities;
 use super::database::{
     check_capture_drops, check_database, check_disk_space, check_pending_queue,
     check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
@@ -81,6 +82,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_check(&mut checks, &mut on_check, check_install_paths)?;
     push_check(&mut checks, &mut on_check, check_runtime_config)?;
     push_checks(&mut checks, &mut on_check, check_hooks)?;
+    push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;
     push_check(&mut checks, &mut on_check, || {
         check_raw_archive_ingest(shared_db.conn())

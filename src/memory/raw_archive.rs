@@ -179,16 +179,11 @@ pub fn drain_transcript(
             report.parse_errors += 1;
             continue;
         };
-        let role = match value["type"].as_str() {
-            Some("user") => ROLE_USER,
-            Some("assistant") => ROLE_ASSISTANT,
-            _ => {
-                report.skipped_messages += 1;
-                continue;
-            }
+        let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value) else {
+            report.skipped_messages += 1;
+            continue;
         };
-        let text = extract_message_text(&value);
-        if text.trim().is_empty() {
+        if message.text.trim().is_empty() {
             report.empty_messages += 1;
             continue;
         }
@@ -197,8 +192,8 @@ pub fn drain_transcript(
             conn,
             session_id,
             project,
-            role,
-            &text,
+            message.role,
+            &message.text,
             SOURCE_TRANSCRIPT,
             branch,
             cwd,
@@ -259,27 +254,6 @@ pub fn record_raw_ingest_failure(
         ],
     )?;
     Ok(())
-}
-
-fn extract_message_text(value: &serde_json::Value) -> String {
-    let content = &value["message"]["content"];
-    if let Some(array) = content.as_array() {
-        let parts: Vec<String> = array
-            .iter()
-            .filter_map(|entry| {
-                match entry["type"].as_str() {
-                    Some("text") => entry["text"].as_str().map(|s| s.to_string()),
-                    // user messages can carry plain strings under `content` too
-                    _ => None,
-                }
-            })
-            .collect();
-        return parts.join("\n");
-    }
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-    String::new()
 }
 
 #[derive(Debug, Clone)]
@@ -651,6 +625,47 @@ mod tests {
         )?;
         assert_eq!(kind, "insert_errors");
         assert_eq!(insert_errors, 1);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn drain_transcript_parses_codex_rollout_response_items() -> Result<()> {
+        let conn = setup_conn();
+        let path = write_temp_transcript(
+            "codex-rollout",
+            include_str!("../../tests/fixtures/codex-rollout-minimal.jsonl"),
+        )?;
+
+        let report = drain_transcript(
+            &conn,
+            path.to_string_lossy().as_ref(),
+            "codex-session",
+            "/proj",
+            None,
+            Some("/tmp/remem-codex-fixture"),
+        )?;
+
+        assert_eq!(report.inserted, 2, "{report:?}");
+        assert_eq!(report.parse_errors, 0);
+        assert_eq!(report.insert_errors, 0);
+
+        let rows = search_raw_messages(
+            &conn,
+            &RawSearchRequest {
+                query: "Codex rollout".to_string(),
+                project: Some("/proj".to_string()),
+                branch: None,
+                role: None,
+                limit: 10,
+                offset: 0,
+            },
+        )?;
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows.iter().any(|row| row.role == ROLE_USER));
+        assert!(rows.iter().any(|row| row.role == ROLE_ASSISTANT));
+        assert!(rows.iter().all(|row| row.source == SOURCE_TRANSCRIPT
+            && row.cwd.as_deref() == Some("/tmp/remem-codex-fixture")));
         std::fs::remove_file(path)?;
         Ok(())
     }
