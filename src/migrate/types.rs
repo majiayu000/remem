@@ -185,6 +185,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "capture_drop_events",
         sql: include_str!("../migrations/v036_capture_drop_events.sql"),
     },
+    Migration {
+        version: 37,
+        name: "graph_edge_source_candidate_integrity",
+        sql: include_str!("../migrations/v037_graph_edge_source_candidate_integrity.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

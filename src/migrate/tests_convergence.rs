@@ -174,6 +174,18 @@ fn table_indexes(conn: &Connection, table: &str) -> Result<Vec<String>> {
     Ok(indexes)
 }
 
+/// Return sorted trigger names for a table.
+fn table_triggers(conn: &Connection, table: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=?1 ORDER BY name",
+    )?;
+    let triggers = stmt
+        .query_map([table], |row| row.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(triggers)
+}
+
 /// Upgraded v10 DB must have the same columns as a fresh DB for all core tables.
 /// This single test catches ALL future column divergence across ALL tables.
 #[test]
@@ -249,6 +261,55 @@ fn indexes_match_after_upgrade() -> Result<()> {
         "index divergence between fresh and upgraded DB:\n  {}",
         mismatches.join("\n  ")
     );
+    Ok(())
+}
+
+#[test]
+fn graph_edges_candidate_integrity_triggers_match_after_upgrade() -> Result<()> {
+    let fresh = make_fresh_db()?;
+    let upgraded = make_upgraded_v10_db()?;
+
+    for table in [
+        "graph_edges",
+        "memory_candidates",
+        "graph_candidates",
+        "memory_operation_log",
+    ] {
+        let fresh_triggers = table_triggers(&fresh, table)?;
+        let upgraded_triggers = table_triggers(&upgraded, table)?;
+        assert_eq!(
+            fresh_triggers, upgraded_triggers,
+            "{table} triggers must converge between fresh and upgraded DBs"
+        );
+    }
+
+    for (table, trigger) in [
+        (
+            "graph_edges",
+            "graph_edges_validate_source_candidate_insert",
+        ),
+        (
+            "graph_edges",
+            "graph_edges_validate_source_candidate_update",
+        ),
+        ("memory_candidates", "graph_edges_memory_candidates_delete"),
+        (
+            "memory_candidates",
+            "graph_edges_memory_candidates_update_id",
+        ),
+        ("graph_candidates", "graph_edges_graph_candidates_delete"),
+        ("graph_candidates", "graph_edges_graph_candidates_update_id"),
+        (
+            "memory_operation_log",
+            "graph_edges_memory_operation_provenance_update",
+        ),
+    ] {
+        let triggers = table_triggers(&fresh, table)?;
+        assert!(
+            triggers.contains(&trigger.to_string()),
+            "missing graph edge candidate integrity trigger on {table}: {trigger}"
+        );
+    }
     Ok(())
 }
 

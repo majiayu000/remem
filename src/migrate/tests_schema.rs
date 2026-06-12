@@ -3,6 +3,96 @@ use rusqlite::{params, Connection};
 
 use super::{run_migrations, MIGRATIONS};
 
+struct GraphSchemaFixture {
+    now: i64,
+    project_id: i64,
+    episode_id: i64,
+    memory_id: i64,
+    other_memory_id: i64,
+    candidate_id: i64,
+    operation_id: i64,
+}
+
+fn setup_graph_schema_fixture(conn: &Connection) -> Result<GraphSchemaFixture> {
+    let now = 1_700_000_000_i64;
+    let host_id: i64 =
+        conn.query_row("SELECT id FROM hosts WHERE name = 'codex-cli'", [], |row| {
+            row.get(0)
+        })?;
+    conn.execute(
+        "INSERT INTO workspaces(root_path, git_remote, git_branch, created_at_epoch, updated_at_epoch)
+         VALUES ('/tmp/remem-graph-schema', 'origin', 'main', ?1, ?1)",
+        [now],
+    )?;
+    let workspace_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO projects(workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+         VALUES (?1, '/tmp/remem-graph-schema', 'tmp-remem-graph-schema', ?2, ?2)",
+        params![workspace_id, now],
+    )?;
+    let project_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO sessions(host_id, workspace_id, project_id, session_id, started_at_epoch,
+                              last_seen_at_epoch, status)
+         VALUES (?1, ?2, ?3, 'session-a', ?4, ?4, 'active')",
+        params![host_id, workspace_id, project_id, now],
+    )?;
+    let session_row_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO captured_events(host_id, workspace_id, project_id, session_row_id,
+                                     session_id, event_id, event_type, content_hash,
+                                     retention_class, created_at_epoch, inserted_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, 'session-a', 'event-a', 'message',
+                 'hash-a', 'default', ?5, ?5)",
+        params![host_id, workspace_id, project_id, session_row_id, now],
+    )?;
+    let episode_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memories(project, topic_key, title, content, memory_type,
+                              created_at_epoch, updated_at_epoch, status)
+         VALUES ('/tmp/remem-graph-schema', 'graph-schema', 'Graph schema',
+                 'Schema rejects graph self-edges.', 'decision', ?1, ?1, 'active')",
+        [now],
+    )?;
+    let memory_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memories(project, topic_key, title, content, memory_type,
+                              created_at_epoch, updated_at_epoch, status)
+         VALUES ('/tmp/remem-graph-schema', 'graph-schema-2', 'Graph schema 2',
+                 'Schema rejects dangling candidate provenance.', 'decision', ?1, ?1, 'active')",
+        [now],
+    )?;
+    let other_memory_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
+                                       evidence_event_ids, confidence, risk_class,
+                                       review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', 'graph-schema', 'Graph schema.',
+                 ?2, 0.9, 'low', 'accepted', ?3, ?3)",
+        params![project_id, format!("[{episode_id}]"), now],
+    )?;
+    let candidate_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memory_operation_log(operation, planner_version, actor, source,
+                                         source_candidate_id, result_memory_id,
+                                         confidence, reason, created_at_epoch)
+         VALUES ('add', 'graph-schema-test', 'test', 'memory_candidate',
+                 ?1, ?2, 0.9, 'test provenance', ?3)",
+        params![candidate_id, memory_id, now],
+    )?;
+    let operation_id = conn.last_insert_rowid();
+
+    Ok(GraphSchemaFixture {
+        now,
+        project_id,
+        episode_id,
+        memory_id,
+        other_memory_id,
+        candidate_id,
+        operation_id,
+    })
+}
+
 #[test]
 fn memory_ownership_migration_backfills_legacy_rows() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -240,66 +330,36 @@ fn graph_edges_reject_self_edges_at_schema_boundary() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
+    let fixture = setup_graph_schema_fixture(&conn)?;
 
-    let now = 1_700_000_000_i64;
-    let host_id: i64 =
-        conn.query_row("SELECT id FROM hosts WHERE name = 'codex-cli'", [], |row| {
-            row.get(0)
-        })?;
-    conn.execute(
-        "INSERT INTO workspaces(root_path, git_remote, git_branch, created_at_epoch, updated_at_epoch)
-         VALUES ('/tmp/remem-graph-schema', 'origin', 'main', ?1, ?1)",
-        [now],
-    )?;
-    let workspace_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO projects(workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
-         VALUES (?1, '/tmp/remem-graph-schema', 'tmp-remem-graph-schema', ?2, ?2)",
-        params![workspace_id, now],
-    )?;
-    let project_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO sessions(host_id, workspace_id, project_id, session_id, started_at_epoch,
-                              last_seen_at_epoch, status)
-         VALUES (?1, ?2, ?3, 'session-a', ?4, ?4, 'active')",
-        params![host_id, workspace_id, project_id, now],
-    )?;
-    let session_row_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO captured_events(host_id, workspace_id, project_id, session_row_id,
-                                     session_id, event_id, event_type, content_hash,
-                                     retention_class, created_at_epoch, inserted_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, 'session-a', 'event-a', 'message',
-                 'hash-a', 'default', ?5, ?5)",
-        params![host_id, workspace_id, project_id, session_row_id, now],
-    )?;
-    let episode_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO memories(project, topic_key, title, content, memory_type,
-                              created_at_epoch, updated_at_epoch, status)
-         VALUES ('/tmp/remem-graph-schema', 'graph-schema', 'Graph schema',
-                 'Schema rejects graph self-edges.', 'decision', ?1, ?1, 'active')",
-        [now],
-    )?;
-    let memory_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
-                                       evidence_event_ids, confidence, risk_class,
-                                       review_status, created_at_epoch, updated_at_epoch)
-         VALUES (?1, 'project', 'decision', 'graph-schema', 'Graph schema.',
-                 ?2, 0.9, 'low', 'accepted', ?3, ?3)",
-        params![project_id, format!("[{episode_id}]"), now],
-    )?;
-    let candidate_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO memory_operation_log(operation, planner_version, actor, source,
-                                         source_candidate_id, result_memory_id,
-                                         confidence, reason, created_at_epoch)
-         VALUES ('add', 'graph-schema-test', 'test', 'memory_candidate',
-                 ?1, ?2, 0.9, 'test provenance', ?3)",
-        params![candidate_id, memory_id, now],
-    )?;
-    let operation_id = conn.last_insert_rowid();
+    let err = conn
+        .execute(
+            "INSERT INTO graph_edges
+             (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+              source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+             created_at_epoch)
+             VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?1,
+                     ?2, ?3, ?4, 0.9, 'self edge', ?5)",
+            params![
+                fixture.memory_id,
+                format!("[{}]", fixture.episode_id),
+                fixture.candidate_id,
+                fixture.operation_id,
+                fixture.now
+            ],
+        )
+        .expect_err("raw SQL graph self-edge must fail");
+    assert!(err.to_string().contains("CHECK constraint failed"));
+
+    Ok(())
+}
+
+#[test]
+fn graph_edges_reject_dangling_source_candidate_at_schema_boundary() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    run_migrations(&conn)?;
+    let fixture = setup_graph_schema_fixture(&conn)?;
 
     let err = conn
         .execute(
@@ -307,18 +367,250 @@ fn graph_edges_reject_self_edges_at_schema_boundary() -> Result<()> {
              (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
               source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
               created_at_epoch)
-             VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?1,
-                     ?2, ?3, ?4, 0.9, 'self edge', ?5)",
+             VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?2,
+                     ?3, ?4, ?5, 0.9, 'dangling candidate', ?6)",
             params![
-                memory_id,
-                format!("[{episode_id}]"),
-                candidate_id,
-                operation_id,
-                now
+                fixture.memory_id,
+                fixture.other_memory_id,
+                format!("[{}]", fixture.episode_id),
+                fixture.candidate_id + 10_000,
+                fixture.operation_id,
+                fixture.now
             ],
         )
-        .expect_err("raw SQL graph self-edge must fail");
-    assert!(err.to_string().contains("CHECK constraint failed"));
+        .expect_err("raw SQL graph source_candidate_id must reference an existing candidate");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate missing"));
+
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+          source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+          created_at_epoch)
+         VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?2,
+                 ?3, ?4, ?5, 0.9, 'valid candidate', ?6)",
+        params![
+            fixture.memory_id,
+            fixture.other_memory_id,
+            format!("[{}]", fixture.episode_id),
+            fixture.candidate_id,
+            fixture.operation_id,
+            fixture.now
+        ],
+    )?;
+    let edge_id = conn.last_insert_rowid();
+
+    conn.execute(
+        "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
+                                       evidence_event_ids, confidence, risk_class,
+                                       review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', 'graph-schema-other', 'Other graph schema.',
+                 ?2, 0.9, 'low', 'accepted', ?3, ?3)",
+        params![
+            fixture.project_id,
+            format!("[{}]", fixture.episode_id),
+            fixture.now
+        ],
+    )?;
+    let other_candidate_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memory_operation_log(operation, planner_version, actor, source,
+                                         source_candidate_id, result_memory_id,
+                                         confidence, reason, created_at_epoch)
+         VALUES ('add', 'graph-schema-test', 'test', 'memory_candidate',
+                 ?1, ?2, 0.9, 'mismatched provenance', ?3)",
+        params![other_candidate_id, fixture.memory_id, fixture.now],
+    )?;
+    let mismatched_operation_id = conn.last_insert_rowid();
+    let err = conn
+        .execute(
+            "INSERT INTO graph_edges
+             (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+              source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+              created_at_epoch)
+             VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?2,
+                     ?3, ?4, ?5, 0.9, 'mismatched operation', ?6)",
+            params![
+                fixture.memory_id,
+                fixture.other_memory_id,
+                format!("[{}]", fixture.episode_id),
+                fixture.candidate_id,
+                mismatched_operation_id,
+                fixture.now
+            ],
+        )
+        .expect_err("operation provenance must reference the same source candidate");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate missing"));
+
+    let err = conn
+        .execute(
+            "UPDATE graph_edges SET source_operation_id = ?1 WHERE id = ?2",
+            params![mismatched_operation_id, edge_id],
+        )
+        .expect_err("retagging edge operation to a different candidate must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate missing"));
+
+    let err = conn
+        .execute(
+            "UPDATE graph_edges SET source_candidate_id = ?1 WHERE id = ?2",
+            params![fixture.candidate_id + 10_000, edge_id],
+        )
+        .expect_err("raw SQL graph source_candidate_id update must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate missing"));
+
+    let err = conn
+        .execute(
+            "UPDATE memory_candidates SET id = ?1 WHERE id = ?2",
+            params![fixture.candidate_id + 10_000, fixture.candidate_id],
+        )
+        .expect_err("updating a candidate used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate in use"));
+
+    let err = conn
+        .execute(
+            "UPDATE memory_operation_log SET source = 'graph_candidate' WHERE id = ?1",
+            [fixture.operation_id],
+        )
+        .expect_err("retagging operation provenance used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source operation in use"));
+
+    let err = conn
+        .execute(
+            "UPDATE memory_operation_log SET source_candidate_id = ?1 WHERE id = ?2",
+            params![other_candidate_id, fixture.operation_id],
+        )
+        .expect_err("retagging operation candidate used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source operation in use"));
+
+    let err = conn
+        .execute(
+            "DELETE FROM memory_candidates WHERE id = ?1",
+            [fixture.candidate_id],
+        )
+        .expect_err("deleting a candidate used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate in use"));
+
+    conn.execute(
+        "INSERT INTO graph_candidates(project_id, source_project, candidate_type, edge_type,
+                                      from_ref, to_ref, evidence_event_ids, confidence,
+                                      risk_class, reason, review_status, created_at_epoch,
+                                      updated_at_epoch)
+         VALUES (?1, '/tmp/remem-graph-schema', 'edge', 'duplicates',
+                 'memory:1', 'memory:2', ?2, 0.9, 'low', 'graph candidate',
+                 'approved', ?3, ?3)",
+        params![
+            fixture.project_id,
+            format!("[{}]", fixture.episode_id),
+            fixture.now
+        ],
+    )?;
+    let graph_candidate_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memory_operation_log(operation, planner_version, actor, source,
+                                         source_candidate_id, result_memory_id,
+                                         confidence, reason, created_at_epoch)
+         VALUES ('add', 'graph-schema-test', 'test', 'graph_candidate',
+                 ?1, ?2, 0.9, 'graph candidate provenance', ?3)",
+        params![graph_candidate_id, fixture.memory_id, fixture.now],
+    )?;
+    let graph_operation_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind, to_node_id,
+          source_event_ids, source_candidate_id, source_operation_id, confidence, reason,
+          created_at_epoch)
+         VALUES ('duplicates', 'trusted', 'memory', ?1, 'memory', ?2,
+                 ?3, ?4, ?5, 0.9, 'valid graph candidate', ?6)",
+        params![
+            fixture.memory_id,
+            fixture.other_memory_id,
+            format!("[{}]", fixture.episode_id),
+            graph_candidate_id,
+            graph_operation_id,
+            fixture.now
+        ],
+    )?;
+
+    let err = conn
+        .execute(
+            "UPDATE graph_edges SET source_candidate_id = ?1 WHERE source_operation_id = ?2",
+            params![graph_candidate_id + 10_000, graph_operation_id],
+        )
+        .expect_err("raw SQL graph candidate provenance update must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate missing"));
+
+    let err = conn
+        .execute(
+            "UPDATE graph_candidates SET id = ?1 WHERE id = ?2",
+            params![graph_candidate_id + 10_000, graph_candidate_id],
+        )
+        .expect_err("updating a graph candidate used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate in use"));
+
+    let err = conn
+        .execute(
+            "UPDATE memory_operation_log SET source = 'memory_candidate' WHERE id = ?1",
+            [graph_operation_id],
+        )
+        .expect_err("retagging graph operation provenance used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source operation in use"));
+
+    let err = conn
+        .execute(
+            "DELETE FROM graph_candidates WHERE id = ?1",
+            [graph_candidate_id],
+        )
+        .expect_err("deleting a graph candidate used by graph_edges must fail closed");
+    assert!(err
+        .to_string()
+        .contains("graph_edges source candidate in use"));
+
+    Ok(())
+}
+
+#[test]
+fn graph_edges_schema_installs_source_candidate_integrity_triggers() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    run_migrations(&conn)?;
+
+    for trigger in [
+        "graph_edges_validate_source_candidate_insert",
+        "graph_edges_validate_source_candidate_update",
+        "graph_edges_memory_candidates_delete",
+        "graph_edges_memory_candidates_update_id",
+        "graph_edges_graph_candidates_delete",
+        "graph_edges_graph_candidates_update_id",
+        "graph_edges_memory_operation_provenance_update",
+    ] {
+        let sql: String = conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
+            [trigger],
+            |row| row.get(0),
+        )?;
+        assert!(sql.contains("graph_edges"));
+    }
 
     Ok(())
 }
