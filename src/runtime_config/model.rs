@@ -365,7 +365,7 @@ mod tests {
             super::super::init_config()?;
             set_model(Some(CODEX_HOST), None, "balanced", None, false)?;
             let before = std::fs::read_to_string(&path)?;
-            crate::atomic_file::fail_next_rename_for_test();
+            crate::atomic_file::fail_next_rename_for_path_for_test(&path);
 
             let err = rollback_model_config().expect_err("injected failure must abort rollback");
             assert!(format!("{err:?}").contains("injected atomic write failure"));

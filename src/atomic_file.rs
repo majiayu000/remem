@@ -11,18 +11,18 @@ use anyhow::{Context, Result};
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
-static FAIL_NEXT_RENAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static FAIL_RENAME_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 #[cfg(test)]
 static FAILPOINT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) fn write_atomic(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<()> {
-    let path = path.as_ref();
-    let parent = parent_dir(path);
+    let path = resolve_final_path(path.as_ref())?;
+    let parent = parent_dir(&path);
     fs::create_dir_all(parent)
         .with_context(|| format!("create parent directory {}", parent.display()))?;
 
-    let temp_path = temp_path_for(path)?;
-    let result = write_via_temp(path, parent, &temp_path, contents.as_ref());
+    let temp_path = temp_path_for(&path)?;
+    let result = write_via_temp(&path, parent, &temp_path, contents.as_ref());
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
     }
@@ -43,7 +43,7 @@ fn write_via_temp(path: &Path, parent: &Path, temp_path: &Path, contents: &[u8])
     drop(file);
 
     #[cfg(test)]
-    if FAIL_NEXT_RENAME.swap(false, Ordering::SeqCst) {
+    if should_fail_rename_for_test(path) {
         bail!("injected atomic write failure before rename");
     }
 
@@ -61,6 +61,32 @@ fn copy_permissions_if_present(path: &Path, temp_file: &File) -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err).with_context(|| format!("read metadata {}", path.display())),
     }
+}
+
+fn resolve_final_path(path: &Path) -> Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..32 {
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let target = fs::read_link(&current)
+                    .with_context(|| format!("read symlink {}", current.display()))?;
+                current = if target.is_absolute() {
+                    target
+                } else {
+                    parent_dir(&current).join(target)
+                };
+            }
+            Ok(_) => return Ok(current),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(current),
+            Err(err) => {
+                return Err(err).with_context(|| format!("read metadata {}", current.display()));
+            }
+        }
+    }
+    anyhow::bail!(
+        "too many symlink hops while resolving atomic write path {}",
+        path.display()
+    );
 }
 
 fn temp_path_for(path: &Path) -> Result<PathBuf> {
@@ -95,20 +121,42 @@ fn sync_parent_dir(_parent: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-pub(crate) fn fail_next_rename_for_test() {
-    FAIL_NEXT_RENAME.store(true, Ordering::SeqCst);
+pub(crate) fn fail_next_rename_for_path_for_test(path: impl AsRef<Path>) {
+    let mut fail_path = match FAIL_RENAME_PATH.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *fail_path = Some(path.as_ref().to_path_buf());
 }
 
 #[cfg(test)]
 pub(crate) fn clear_failpoints_for_test() {
-    FAIL_NEXT_RENAME.store(false, Ordering::SeqCst);
+    let mut fail_path = match FAIL_RENAME_PATH.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *fail_path = None;
+}
+
+#[cfg(test)]
+fn should_fail_rename_for_test(path: &Path) -> bool {
+    let mut fail_path = match FAIL_RENAME_PATH.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if fail_path.as_deref() == Some(path) {
+        *fail_path = None;
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
 pub(crate) fn failpoint_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    FAILPOINT_TEST_LOCK
-        .lock()
-        .expect("atomic write failpoint lock should acquire")
+    match FAILPOINT_TEST_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }
 
 #[cfg(test)]
@@ -124,7 +172,7 @@ mod tests {
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         fs::write(&path, "old")?;
-        fail_next_rename_for_test();
+        fail_next_rename_for_path_for_test(&path);
 
         let err = write_atomic(&path, "new").expect_err("injected failure must abort");
         assert!(err.to_string().contains("injected atomic write failure"));
@@ -147,6 +195,60 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path)?, "new");
         let _ = fs::remove_file(path);
+        Ok(())
+    }
+
+    #[test]
+    fn rename_failpoint_is_path_scoped() -> Result<()> {
+        let _guard = failpoint_test_lock();
+        let path = std::env::temp_dir().join(format!(
+            "remem-atomic-write-scoped-{}-{}.txt",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let other = std::env::temp_dir().join(format!(
+            "remem-atomic-write-other-{}-{}.txt",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, "old")?;
+        fs::write(&other, "old")?;
+        fail_next_rename_for_path_for_test(&path);
+
+        write_atomic(&other, "new")?;
+        let err = write_atomic(&path, "new").expect_err("targeted failure must abort");
+
+        assert!(err.to_string().contains("injected atomic write failure"));
+        assert_eq!(fs::read_to_string(&other)?, "new");
+        assert_eq!(fs::read_to_string(&path)?, "old");
+        clear_failpoints_for_test();
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(other);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_target_is_updated_without_replacing_link() -> Result<()> {
+        let _guard = failpoint_test_lock();
+        let dir = std::env::temp_dir().join(format!(
+            "remem-atomic-write-symlink-{}-{}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir)?;
+        let target = dir.join("target.toml");
+        let link = dir.join("config.toml");
+        fs::write(&target, "old")?;
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        write_atomic(&link, "new")?;
+
+        assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&target)?, "new");
+        let _ = fs::remove_file(link);
+        let _ = fs::remove_file(target);
+        let _ = fs::remove_dir(dir);
         Ok(())
     }
 }

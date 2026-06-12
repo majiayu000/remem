@@ -315,7 +315,7 @@ codex_hooks = true
         std::fs::write(&path, "[features]\nhooks = false\n")?;
         let mut doc = DocumentMut::new();
         enable_codex_hooks(&mut doc)?;
-        crate::atomic_file::fail_next_rename_for_test();
+        crate::atomic_file::fail_next_rename_for_path_for_test(&path);
 
         let err = write_toml_doc(&path, &doc).expect_err("injected failure must abort TOML write");
         assert!(format!("{err:?}").contains("injected atomic write failure"));

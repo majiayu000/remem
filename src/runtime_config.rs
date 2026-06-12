@@ -600,7 +600,7 @@ mod tests {
             let _atomic_guard = crate::atomic_file::failpoint_test_lock();
             init_config()?;
             let before = std::fs::read_to_string(&path)?;
-            crate::atomic_file::fail_next_rename_for_test();
+            crate::atomic_file::fail_next_rename_for_path_for_test(&path);
 
             let err = set_config_value("memory_ai.profiles.codex.model", "custom-mini")
                 .expect_err("injected atomic write failure must abort config update");

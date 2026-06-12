@@ -31,7 +31,7 @@ mod tests {
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
         std::fs::write(&path, r#"{"existing":true}"#)?;
-        crate::atomic_file::fail_next_rename_for_test();
+        crate::atomic_file::fail_next_rename_for_path_for_test(&path);
 
         let err = write_json_file(&path, &serde_json::json!({"existing": false}))
             .expect_err("injected failure must abort JSON write");
