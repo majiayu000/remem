@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import re
+import argparse
 import sys
 import tomllib
 from pathlib import Path
@@ -14,6 +16,9 @@ CARGO_TOML = ROOT / "Cargo.toml"
 CARGO_LOCK = ROOT / "Cargo.lock"
 PLUGIN_JSON = ROOT / "plugins/remem/.codex-plugin/plugin.json"
 RELEASES_JSON = ROOT / "plugins/remem/runtimes/remem-releases.json"
+NPM_PACKAGE_JSON = ROOT / "npm/remem/package.json"
+NPM_INSTALL_JS = ROOT / "npm/remem/scripts/install.js"
+NPM_INSTALL_VERSION_SOURCE = 'require("../package.json").version'
 
 
 def read_json(path: Path) -> dict:
@@ -58,6 +63,22 @@ def plugin_version() -> str:
     return version
 
 
+def npm_version() -> str:
+    version = read_json(NPM_PACKAGE_JSON).get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("npm/remem/package.json is missing version")
+    return version
+
+
+def npm_install_version_source_error() -> str | None:
+    source = NPM_INSTALL_JS.read_text(encoding="utf-8")
+    if NPM_INSTALL_VERSION_SOURCE not in source:
+        return "npm/remem/scripts/install.js must read VERSION from package.json"
+    if re.search(r'\bVERSION\s*=\s*["\']', source):
+        return "npm/remem/scripts/install.js must not hardcode a VERSION string"
+    return None
+
+
 def release_versions() -> tuple[set[str], str | None]:
     manifest = read_json(RELEASES_JSON)
     versions = manifest.get("versions")
@@ -80,16 +101,33 @@ def release_versions() -> tuple[set[str], str | None]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Require release metadata versions to match Cargo.toml."
+    )
+    parser.add_argument(
+        "--expected-version",
+        help="Optional bare version that Cargo.toml and release metadata must match.",
+    )
+    args = parser.parse_args()
+
     cargo = cargo_package_version()
     locked = lock_version()
     plugin = plugin_version()
+    npm = npm_version()
     releases, base_url = release_versions()
 
     errors: list[str] = []
+    if args.expected_version and cargo != args.expected_version:
+        errors.append(f"Cargo.toml version is {cargo}, expected tag version {args.expected_version}")
     if locked != cargo:
         errors.append(f"Cargo.lock remem-ai version is {locked}, expected {cargo}")
     if plugin != cargo:
         errors.append(f"plugin.json version is {plugin}, expected {cargo}")
+    if npm != cargo:
+        errors.append(f"npm/remem/package.json version is {npm}, expected {cargo}")
+    npm_install_error = npm_install_version_source_error()
+    if npm_install_error is not None:
+        errors.append(npm_install_error)
     if releases != {cargo}:
         rendered = ", ".join(sorted(releases)) or "<none>"
         errors.append(f"remem-releases.json versions are {{{rendered}}}, expected only {{{cargo}}}")
@@ -105,14 +143,14 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         print(
             "Update Cargo.toml, Cargo.lock, plugins/remem/.codex-plugin/plugin.json, "
-            "and plugins/remem/runtimes/remem-releases.json together.",
+            "plugins/remem/runtimes/remem-releases.json, and npm/remem/package.json together.",
             file=sys.stderr,
         )
         return 1
 
     print(
         "plugin version sync: "
-        f"{cargo} across Cargo.toml, Cargo.lock, plugin.json, and remem-releases.json"
+        f"{cargo} across Cargo.toml, Cargo.lock, plugin.json, remem-releases.json, and npm"
     )
     return 0
 

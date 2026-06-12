@@ -37,7 +37,7 @@ brew install majiayu000/tap/remem
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
 # 固定版本、指定安装目录，或只安装二进制不改 hooks/MCP
-REMEM_VERSION=v0.4.5 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+REMEM_VERSION=v0.5.39 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
@@ -133,12 +133,8 @@ remem status
 - Homebrew：`brew install majiayu000/tap/remem`
 - GitHub Releases：macOS/Linux 的 x64/arm64 预编译二进制
 - crates.io：`cargo install remem-ai --bin remem`
+- npm：`npm install -g @majiayu000/remem`
 - 源码构建：`cargo build --release`
-
-已准备但尚未发布：
-
-- npm wrapper package 位于 `npm/remem`；真正 publish 需要 npm 登录或
-  `NPM_TOKEN` secret
 
 适合继续扩展的渠道：
 
