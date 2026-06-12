@@ -189,6 +189,10 @@ pub mod gates {
             injection.metrics.forbidden_memory_exclusion.rate,
         );
         metrics.insert(
+            "injection.abstention_false_positive_bound".to_string(),
+            injection.metrics.abstention_false_positive_bound.rate,
+        );
+        metrics.insert(
             "injection.all_checks".to_string(),
             bool_metric(injection.metrics.all_checks_passed),
         );

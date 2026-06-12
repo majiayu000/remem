@@ -6,9 +6,8 @@ use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::super::invocation::ContextInvocation;
 use super::super::policy::ContextLimits;
 use super::super::render::{
-    append_context_gate_debug_trace, build_context_header, build_context_stats_footer,
-    empty_context_output, generate_context_for_test, render_context_output, ContextRenderStats,
-    SectionRenderStats,
+    append_context_gate_debug_trace, build_context_stats_footer, empty_context_output,
+    generate_context_for_test, render_context_output, ContextRenderStats, SectionRenderStats,
 };
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
@@ -17,7 +16,7 @@ use super::super::sections::{
     render_recent_sessions_with_limit, render_workstreams, render_workstreams_with_limits,
 };
 use super::super::types::{ContextRequest, SessionSummaryBrief};
-use super::{sample_memory, sample_memory_with_epoch, sample_workstream};
+use super::{insert_memory, sample_memory, sample_memory_with_epoch, sample_workstream};
 
 #[test]
 fn render_recent_sessions_truncates_completed_line() {
@@ -173,6 +172,24 @@ fn render_memory_index_excludes_lessons() {
 }
 
 #[test]
+fn render_core_memory_includes_provenance_and_staleness_labels() {
+    let mut output = String::new();
+    let now = chrono::Utc::now().timestamp();
+    let memories = vec![sample_memory_with_epoch(
+        42,
+        "decision",
+        "Labeled decision",
+        now,
+    )];
+
+    render_core_memory(&mut output, &memories);
+
+    assert!(output.contains("src=memory:#42"));
+    assert!(output.contains("status=active"));
+    assert!(output.contains("staleness=fresh"));
+}
+
+#[test]
 fn render_lessons_respects_item_and_char_limits() {
     let mut output = String::new();
     let lessons = vec![
@@ -280,6 +297,17 @@ fn render_workstreams_includes_next_action_when_present() {
     render_workstreams(&mut output, &workstreams);
 
     assert!(output.contains("#7 [active] Refactor context -> split renderers"));
+}
+
+#[test]
+fn render_workstreams_includes_blockers_when_present() {
+    let mut output = String::new();
+    let mut workstream = sample_workstream(7, "Refactor context", Some("split renderers"));
+    workstream.blockers = Some("waiting for review".to_string());
+
+    render_workstreams(&mut output, &[workstream]);
+
+    assert!(output.contains("blockers: waiting for review"));
 }
 
 #[test]
@@ -455,7 +483,13 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
 
 #[test]
 fn context_header_marks_compact_reload_visibly() {
-    let header = build_context_header("/tmp/remem", Some("main"), Some("compact"));
+    let header = super::super::style::context_header(
+        "/tmp/remem",
+        Some("main"),
+        Some("compact"),
+        HostKind::Unknown,
+        false,
+    );
 
     assert!(header.starts_with("remem context"));
     assert!(header.contains("├─ project: /tmp/remem"));
@@ -624,6 +658,119 @@ fn strict_context_pipeline_opens_one_database_connection() -> anyhow::Result<()>
     generate_context_for_test(invocation, true)?;
 
     assert_eq!(crate::db::test_support::runtime_connection_open_count(), 1);
+    Ok(())
+}
+
+#[test]
+fn context_audit_rows_reconstruct_injected_memories_for_session() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-audit-injected");
+    let conn = crate::db::test_support::runtime_connection()?;
+    insert_memory(
+        &conn,
+        1,
+        data_dir.path.to_string_lossy().as_ref(),
+        Some("audit-memory"),
+        "decision",
+        "Audit decision",
+        "Audit body",
+        chrono::Utc::now().timestamp(),
+    );
+    drop(conn);
+
+    generate_context_for_test(
+        ContextInvocation {
+            cwd: data_dir.path.to_string_lossy().to_string(),
+            project: data_dir.path.to_string_lossy().to_string(),
+            session_id: Some("sess-audit-injected".to_string()),
+            transcript_path: None,
+            source: Some("session_start".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+            debug: false,
+            force: true,
+            gate_mode: None,
+        },
+        true,
+    )?;
+
+    let conn = crate::db::test_support::runtime_connection()?;
+    let row: (i64, String, String, String) = conn.query_row(
+        "SELECT memory_id, status, channel, provenance
+         FROM context_injection_items
+         WHERE session_id = 'sess-audit-injected' AND status = 'injected'
+         ORDER BY render_order LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+
+    assert_eq!(row.0, 1);
+    assert_eq!(row.1, "injected");
+    assert!(matches!(row.2.as_str(), "core" | "index"));
+    assert!(row.3.contains("src=memory:#1"));
+    Ok(())
+}
+
+#[test]
+fn context_audit_records_abstention_for_unmatched_task_signal() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-audit-abstain");
+    let project = data_dir.path.to_string_lossy().to_string();
+    let conn = crate::db::test_support::runtime_connection()?;
+    insert_memory(
+        &conn,
+        1,
+        &project,
+        Some("unrelated-recent"),
+        "decision",
+        "Unrelated recent deployment note",
+        "Legacy release checklist for cache warmup.",
+        chrono::Utc::now().timestamp(),
+    );
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, description, status, progress, next_action, blockers,
+          created_at_epoch, updated_at_epoch, completed_at_epoch)
+         VALUES (?1, 'Prompt-aware task with no match', NULL, 'active', NULL,
+                 'Investigate quantum telemetry routing', NULL, 1, 1, NULL)",
+        [project.as_str()],
+    )?;
+    drop(conn);
+
+    generate_context_for_test(
+        ContextInvocation {
+            cwd: project.clone(),
+            project,
+            session_id: Some("sess-audit-abstain".to_string()),
+            transcript_path: None,
+            source: Some("session_start".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+            debug: false,
+            force: true,
+            gate_mode: None,
+        },
+        true,
+    )?;
+
+    let conn = crate::db::test_support::runtime_connection()?;
+    let abstained: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM context_injection_items
+         WHERE session_id = 'sess-audit-abstain'
+           AND status = 'abstained'
+           AND drop_reason = 'no_relevant_context'",
+        [],
+        |row| row.get(0),
+    )?;
+    let unrelated_injected: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM context_injection_items
+         WHERE session_id = 'sess-audit-abstain'
+           AND status = 'injected'
+           AND title = 'Unrelated recent deployment note'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(abstained, 1);
+    assert_eq!(unrelated_injected, 0);
     Ok(())
 }
 

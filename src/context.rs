@@ -1,3 +1,5 @@
+mod abstention;
+mod audit;
 pub mod claude_memory;
 mod commit_signals;
 mod debug;

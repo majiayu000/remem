@@ -441,6 +441,10 @@ fn injection_key(invocation: &ContextInvocation) -> String {
     format!("fallback:{}:{}", invocation.project, cwd)
 }
 
+pub(in crate::context) fn injection_key_for_audit(invocation: &ContextInvocation) -> String {
+    injection_key(invocation)
+}
+
 fn fallback_cwd_key(cwd: &str) -> String {
     let path = Path::new(cwd);
     std::fs::canonicalize(path)

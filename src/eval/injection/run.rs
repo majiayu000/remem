@@ -11,8 +11,10 @@ use super::types::{
 
 const PROJECT: &str = "/tmp/remem-injection-eval/repo";
 const OTHER_PROJECT: &str = "/tmp/remem-injection-eval/other";
+const ABSTENTION_PROJECT: &str = "/tmp/remem-injection-eval/abstain";
 const HOST: &str = "codex-cli";
 const CURRENT_BRANCH: &str = "main";
+const ABSTENTION_FORBIDDEN_TITLE: &str = "Unrelated recent deployment note";
 
 #[derive(Clone, Copy)]
 struct FixtureMemory {
@@ -108,6 +110,18 @@ const FIXTURE_MEMORIES: &[FixtureMemory] = &[
         updated_offset: -2,
         expected: InjectionExpectation::Filler,
     },
+    FixtureMemory {
+        id: 7,
+        project: ABSTENTION_PROJECT,
+        topic_key: "inject-abstention-unrelated",
+        title: ABSTENTION_FORBIDDEN_TITLE,
+        content: "Legacy release checklist for cache warmup.",
+        memory_type: "decision",
+        branch: None,
+        status: "active",
+        updated_offset: 40,
+        expected: InjectionExpectation::Filler,
+    },
 ];
 
 pub fn run_sandbox_eval(options: InjectionEvalOptions) -> Result<InjectionEvalReport> {
@@ -130,6 +144,13 @@ fn run_sandbox_eval_inner(
     let snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render SessionStart injection context")?;
+    let abstention_snapshot = crate::context::session_start_eval_snapshot(
+        ABSTENTION_PROJECT,
+        ABSTENTION_PROJECT,
+        Some(CURRENT_BRANCH),
+        HOST,
+    )
+    .context("render abstention SessionStart injection context")?;
 
     let expected_cases = evaluate_cases(&snapshot.rendered_output, InjectionExpectation::Expected);
     let forbidden_cases =
@@ -142,14 +163,25 @@ fn run_sandbox_eval_inner(
         forbidden_cases.iter().filter(|case| case.matched).count(),
         forbidden_cases.len(),
     );
-    let all_checks_passed =
-        expected_memory_recall.is_perfect() && forbidden_memory_exclusion.is_perfect();
+    let abstention_passed = !abstention_snapshot
+        .rendered_output
+        .contains(ABSTENTION_FORBIDDEN_TITLE);
+    let abstention_false_positive_bound =
+        InjectionRateMetric::new(usize::from(abstention_passed), 1);
+    let all_checks_passed = expected_memory_recall.is_perfect()
+        && forbidden_memory_exclusion.is_perfect()
+        && abstention_false_positive_bound.is_perfect();
     let mut failing_examples = Vec::new();
     for case in expected_cases.iter().filter(|case| !case.matched) {
         failing_examples.push(format!("missing expected memory: {}", case.title));
     }
     for case in forbidden_cases.iter().filter(|case| !case.matched) {
         failing_examples.push(format!("rendered forbidden memory: {}", case.title));
+    }
+    if !abstention_passed {
+        failing_examples.push(format!(
+            "abstention rendered unrelated memory: {ABSTENTION_FORBIDDEN_TITLE}"
+        ));
     }
 
     let mut cases = expected_cases;
@@ -178,6 +210,7 @@ fn run_sandbox_eval_inner(
         metrics: InjectionMetricSummary {
             expected_memory_recall,
             forbidden_memory_exclusion,
+            abstention_false_positive_bound,
             all_checks_passed,
         },
         cases,
@@ -239,6 +272,14 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
             ],
         )?;
     }
+    tx.execute(
+        "INSERT INTO workstreams
+         (id, project, title, description, status, progress, next_action, blockers,
+          created_at_epoch, updated_at_epoch, completed_at_epoch)
+         VALUES (1, ?1, 'Prompt-aware task with no memory match', NULL, 'active',
+                 NULL, 'Investigate quantum telemetry routing', NULL, ?2, ?2, NULL)",
+        params![ABSTENTION_PROJECT, now],
+    )?;
     tx.commit()?;
     Ok(())
 }

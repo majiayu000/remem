@@ -195,6 +195,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "extraction_replay_ranges",
         sql: include_str!("../migrations/v038_extraction_replay_ranges.sql"),
     },
+    Migration {
+        version: 39,
+        name: "context_injection_items",
+        sql: include_str!("../migrations/v039_context_injection_items.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

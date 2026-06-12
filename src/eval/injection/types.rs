@@ -45,6 +45,7 @@ pub struct InjectionEvalMetadata {
 pub struct InjectionMetricSummary {
     pub expected_memory_recall: InjectionRateMetric,
     pub forbidden_memory_exclusion: InjectionRateMetric,
+    pub abstention_false_positive_bound: InjectionRateMetric,
     pub all_checks_passed: bool,
 }
 
@@ -79,6 +80,13 @@ impl Display for InjectionEvalReport {
             self.metrics.forbidden_memory_exclusion.passed,
             self.metrics.forbidden_memory_exclusion.total,
             self.metrics.forbidden_memory_exclusion.rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "abstention_false_positive_bound: {}/{} ({:.1}%)",
+            self.metrics.abstention_false_positive_bound.passed,
+            self.metrics.abstention_false_positive_bound.total,
+            self.metrics.abstention_false_positive_bound.rate * 100.0
         )?;
         writeln!(
             f,
