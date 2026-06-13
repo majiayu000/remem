@@ -349,6 +349,17 @@ pub(super) fn check_promotion_funnel(conn: Option<&Connection>) -> Check {
             Status::Warn,
             format!("{detail}; promotion is not producing candidates"),
         )
+    } else if stats.total_memory_candidates > 0
+        && stats.promoted_memory_candidates == 0
+        && stats.pending_review_memory_candidates == stats.total_memory_candidates
+    {
+        Check::new(
+            "Promotion funnel",
+            Status::Warn,
+            format!(
+                "{detail}; candidates are all pending review, so automatic capture is not producing usable memories"
+            ),
+        )
     } else {
         Check::new("Promotion funnel", Status::Ok, detail)
     }
@@ -595,6 +606,43 @@ mod tests {
         assert!(check
             .detail
             .contains("promotion is not producing candidates"));
+        Ok(())
+    }
+
+    #[test]
+    fn promotion_funnel_warns_when_all_candidates_stay_pending_review() -> anyhow::Result<()> {
+        let conn = setup_conn()?;
+        record_capture(&conn)?;
+        crate::db::insert_observation(
+            &conn,
+            "sess-doctor",
+            "/tmp/remem-doctor",
+            "feature",
+            Some("observed feature"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            1,
+        )?;
+        conn.execute(
+            "INSERT INTO memory_candidates
+             (scope, memory_type, topic_key, text, evidence_event_ids, confidence,
+              risk_class, review_status, created_at_epoch, updated_at_epoch)
+             VALUES ('project', 'decision', 'doctor-promotion',
+                     'Doctor should flag stalled candidate review.', '[1]', 0.9,
+                     'low', 'pending_review', 1, 1)",
+            [],
+        )?;
+
+        let check = check_promotion_funnel(Some(&conn));
+
+        assert!(matches!(check.status, Status::Warn));
+        assert!(check.detail.contains("candidates=1"));
+        assert!(check.detail.contains("candidates are all pending review"));
         Ok(())
     }
 }
