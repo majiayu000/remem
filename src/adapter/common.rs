@@ -365,6 +365,7 @@ fn redact_sensitive_line(line: &str) -> String {
     }
 
     let mut previous_was_bearer = false;
+    let line = redact_inline_sensitive_assignments(line);
     line.split_whitespace()
         .map(|token| {
             let redacted = if previous_was_bearer {
@@ -379,6 +380,111 @@ fn redact_sensitive_line(line: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn redact_inline_sensitive_assignments(line: &str) -> String {
+    let mut output = String::with_capacity(line.len());
+    let mut scan_cursor = 0usize;
+    let mut output_cursor = 0usize;
+    while let Some((separator, ch)) = find_next_assignment_separator(line, scan_cursor) {
+        let Some(key_start) = assignment_key_start(line, separator) else {
+            scan_cursor = separator + ch.len_utf8();
+            continue;
+        };
+        let key = &line[key_start..separator];
+        if !is_sensitive_key(key) {
+            scan_cursor = separator + ch.len_utf8();
+            continue;
+        }
+
+        output.push_str(&line[output_cursor..separator + ch.len_utf8()]);
+        let (prefix_end, value_end) =
+            sensitive_assignment_value_bounds(line, separator + ch.len_utf8());
+        output.push_str(&line[separator + ch.len_utf8()..prefix_end]);
+        output.push_str("[REDACTED]");
+        scan_cursor = value_end;
+        output_cursor = value_end;
+    }
+
+    if output_cursor == 0 {
+        return line.to_string();
+    }
+    output.push_str(&line[output_cursor..]);
+    output
+}
+
+fn find_next_assignment_separator(line: &str, cursor: usize) -> Option<(usize, char)> {
+    line[cursor..]
+        .char_indices()
+        .find_map(|(offset, ch)| matches!(ch, '=' | ':').then_some((cursor + offset, ch)))
+}
+
+fn assignment_key_start(line: &str, separator: usize) -> Option<usize> {
+    let mut key_end = separator;
+    while let Some((idx, ch)) = line[..key_end].char_indices().next_back() {
+        if ch.is_ascii_whitespace() || matches!(ch, '"' | '\'' | '`') {
+            key_end = idx;
+            continue;
+        }
+        break;
+    }
+
+    let mut start = key_end;
+    for (idx, ch) in line[..key_end].char_indices().rev() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+            start = idx;
+            continue;
+        }
+        break;
+    }
+    (start < key_end).then_some(start)
+}
+
+fn sensitive_assignment_value_bounds(line: &str, value_offset: usize) -> (usize, usize) {
+    let prefix_end = skip_ascii_whitespace(line, value_offset);
+    let Some((quote_offset, quote)) = line[prefix_end..]
+        .char_indices()
+        .next()
+        .filter(|(_, ch)| matches!(ch, '"' | '\''))
+        .map(|(offset, ch)| (prefix_end + offset, ch))
+    else {
+        return (prefix_end, unquoted_sensitive_value_end(line, prefix_end));
+    };
+
+    let value_start = quote_offset + quote.len_utf8();
+    let value_end = line[value_start..]
+        .char_indices()
+        .find_map(|(offset, ch)| (ch == quote).then_some(value_start + offset))
+        .unwrap_or(line.len());
+    (value_start, value_end)
+}
+
+fn skip_ascii_whitespace(line: &str, offset: usize) -> usize {
+    line[offset..]
+        .char_indices()
+        .find_map(|(relative, ch)| (!ch.is_ascii_whitespace()).then_some(offset + relative))
+        .unwrap_or(line.len())
+}
+
+fn unquoted_sensitive_value_end(line: &str, value_start: usize) -> usize {
+    let first_end = line[value_start..]
+        .char_indices()
+        .find_map(|(relative, ch)| {
+            (ch.is_ascii_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&'))
+                .then_some(value_start + relative)
+        })
+        .unwrap_or(line.len());
+    if !line[value_start..first_end].eq_ignore_ascii_case("bearer") {
+        return first_end;
+    }
+    let second_start = skip_ascii_whitespace(line, first_end);
+    line[second_start..]
+        .char_indices()
+        .find_map(|(relative, ch)| {
+            (ch.is_ascii_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&'))
+                .then_some(second_start + relative)
+        })
+        .unwrap_or(line.len())
 }
 
 fn split_sensitive_assignment(line: &str) -> Option<(&str, &str)> {

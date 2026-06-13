@@ -129,6 +129,30 @@ fn hook_payload_preview_redacts_valid_sensitive_json_fields() {
 }
 
 #[test]
+fn hook_payload_preview_redacts_malformed_inline_sensitive_assignments() {
+    let payload = r#"{"session_id":"s","api_key":"short-secret","token=plain-short"#;
+
+    let preview = redact_hook_payload_preview(payload, 1_000);
+
+    assert!(preview.contains("[REDACTED]"));
+    assert!(preview.contains(r#""session_id":"s""#));
+    assert!(!preview.contains("short-secret"));
+    assert!(!preview.contains("plain-short"));
+}
+
+#[test]
+fn text_redaction_catches_command_key_assignments_with_short_values() {
+    let redacted = redact_hook_payload_preview(
+        "echo api_key=short-secret authorization=Bearer tiny-token",
+        1_000,
+    );
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("short-secret"));
+    assert!(!redacted.contains("tiny-token"));
+}
+
+#[test]
 fn grep_and_glob_are_captured_as_search_events() {
     assert!(!should_skip_tool("Grep"));
     assert!(!should_skip_tool("Glob"));

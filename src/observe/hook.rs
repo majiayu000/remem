@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn skip_detail_redacts_command_before_truncating() -> anyhow::Result<()> {
-        let command = format!("echo {} token=github_pat_1234567890abcdef", "x".repeat(222));
+        let command = "echo api_key=short-secret".to_string();
         let event = ParsedHookEvent {
             session_id: "session".to_string(),
             cwd: Some("/tmp".to_string()),
@@ -389,10 +389,32 @@ mod tests {
             skip_detail(&event).ok_or_else(|| anyhow::anyhow!("bash command detail missing"))?;
 
         assert!(
-            !detail.contains("github"),
+            !detail.contains("short-secret"),
             "raw token fragment leaked: {detail}"
         );
-        assert!(!detail.contains("github_pat_1234567890abcdef"));
+        assert!(detail.contains("[REDACTED]"));
+        Ok(())
+    }
+
+    #[test]
+    fn skip_detail_does_not_leak_secret_at_truncation_boundary() -> anyhow::Result<()> {
+        let command = format!("echo {} api_key=short-secret", "x".repeat(222));
+        let event = ParsedHookEvent {
+            session_id: "session".to_string(),
+            cwd: Some("/tmp".to_string()),
+            project: "/tmp".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: Some(serde_json::json!({ "command": command })),
+            tool_response: Some(serde_json::json!({ "exitCode": 0 })),
+        };
+
+        let detail =
+            skip_detail(&event).ok_or_else(|| anyhow::anyhow!("bash command detail missing"))?;
+
+        assert!(
+            !detail.contains("short-secret"),
+            "raw token fragment leaked: {detail}"
+        );
         Ok(())
     }
 
