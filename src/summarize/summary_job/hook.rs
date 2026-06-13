@@ -11,6 +11,10 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
         return Ok(());
     };
 
+    summarize_input(&input, host, profile).await
+}
+
+async fn summarize_input(input: &str, host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let hook: SummarizeInput = match serde_json::from_str(&input) {
         Ok(value) => value,
         Err(err) => {
@@ -27,7 +31,7 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
-    let conn = db::open_db()?;
+    let conn = db::open_db_for_hook()?;
     let summary_payload = summary_payload_with_cwd(&input, &cwd, profile)?;
     let compress_payload = compress_payload(profile)?;
 
@@ -281,7 +285,7 @@ mod tests {
 
     use super::{
         compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
-        should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
+        should_spawn_worker_once, stable_worker_dir, summarize_input, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -437,6 +441,42 @@ mod tests {
 
         assert_eq!(host, "codex-cli");
         assert_eq!(parsed["remem_ai_profile"].as_str(), Some("custom"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_rejects_stale_schema_without_migrating() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("summary-hook-stale-schema");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = rusqlite::Connection::open(test_dir.db_path())?;
+        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(setup);
+        let input = serde_json::json!({
+            "session_id": "sess-summary-stale",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+
+        let err = summarize_input(&input, Some("codex-cli"), None)
+            .await
+            .expect_err("stale hook database should fail closed");
+
+        assert!(
+            err.to_string().contains("hook database open requires"),
+            "unexpected error: {err:#}"
+        );
+        let check = rusqlite::Connection::open(test_dir.db_path())?;
+        let (migrations_exists, jobs_exists): (i64, i64) = check.query_row(
+            "SELECT
+                SUM(CASE WHEN name = '_schema_migrations' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN name = 'jobs' THEN 1 ELSE 0 END)
+             FROM sqlite_master
+             WHERE type = 'table'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(migrations_exists, 0);
+        assert_eq!(jobs_exists, 0);
         Ok(())
     }
 

@@ -129,6 +129,12 @@ pub fn open_db_no_migrate() -> Result<Connection> {
     Ok(conn)
 }
 
+pub fn open_db_for_hook() -> Result<Connection> {
+    open_db_no_migrate().context(
+        "hook database open requires an existing current schema; run `remem install` or `remem migrate` outside the hook path",
+    )
+}
+
 pub fn open_db_read_only() -> Result<Connection> {
     let path = db_path();
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
@@ -258,6 +264,72 @@ mod tests {
     use super::*;
     use crate::db::crypto::ALLOW_PLAINTEXT_ENV;
     use crate::db::test_support::ScopedTestDataDir;
+
+    #[test]
+    fn open_db_for_hook_does_not_create_missing_database() {
+        let test_dir = ScopedTestDataDir::new("hook-open-missing");
+        test_dir.remove_db_files();
+
+        let err = open_db_for_hook().expect_err("missing database should fail");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("hook database open requires"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !test_dir.path.exists(),
+            "hook open must not create data dir"
+        );
+        assert!(
+            !test_dir.db_path().exists(),
+            "hook open must not create database file"
+        );
+    }
+
+    #[test]
+    fn open_db_for_hook_opens_current_schema_read_write() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("hook-open-current-rw");
+        let setup = crate::db::open_db()?;
+        drop(setup);
+
+        let conn = crate::db::open_db_for_hook()?;
+        conn.execute("CREATE TABLE hook_rw_probe(id INTEGER PRIMARY KEY)", [])?;
+        conn.execute("INSERT INTO hook_rw_probe(id) VALUES (1)", [])?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM hook_rw_probe", [], |row| row.get(0))?;
+
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_for_hook_rejects_older_schema_without_migrating() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("hook-open-older-schema");
+        let setup = crate::db::open_db()?;
+        let latest = crate::migrate::latest_schema_version();
+        setup.execute(
+            "DELETE FROM _schema_migrations WHERE version = ?1",
+            [latest],
+        )?;
+        drop(setup);
+
+        let err = crate::db::open_db_for_hook()
+            .expect_err("older schema should require foreground migration");
+
+        assert!(
+            err.to_string().contains("hook database open requires"),
+            "unexpected error: {err:#}"
+        );
+        let check = Connection::open(crate::db::db_path())?;
+        let latest_rows: i64 = check.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations WHERE version = ?1",
+            [latest],
+            |row| row.get(0),
+        )?;
+        assert_eq!(latest_rows, 0);
+        Ok(())
+    }
 
     #[test]
     fn open_db_read_only_does_not_create_missing_database() {

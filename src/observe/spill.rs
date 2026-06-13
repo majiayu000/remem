@@ -60,7 +60,7 @@ pub(super) fn record_capture_drop_lossy(
     reason: &str,
     detail: Option<&str>,
 ) {
-    let Ok(conn) = crate::db::open_db() else {
+    let Ok(conn) = crate::db::open_db_for_hook() else {
         crate::log::warn(
             "observe",
             &format!("capture drop could not be recorded: reason={reason}"),
