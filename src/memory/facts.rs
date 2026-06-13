@@ -125,6 +125,7 @@ pub(crate) fn insert_temporal_fact_in_current_tx(
                      WHEN valid_to_epoch IS NULL OR valid_to_epoch > ?1 THEN ?1
                      ELSE valid_to_epoch
                  END,
+                 invalidated_at_epoch = COALESCE(invalidated_at_epoch, ?2),
                  updated_at_epoch = ?2
              WHERE id = ?3",
             params![superseded_at, now, old_id],
