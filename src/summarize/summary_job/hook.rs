@@ -49,14 +49,19 @@ pub(super) async fn summarize_input(
             return Err(error);
         }
     };
-    replay_spilled_summary_hook_payloads(&conn, |conn, record| {
+    if let Err(error) = replay_spilled_summary_hook_payloads(&conn, |conn, record| {
         enqueue_summary_payload(
             conn,
             &record.input,
             record.host.as_deref(),
             record.profile.as_deref(),
         )
-    })?;
+    }) {
+        crate::log::error(
+            "summarize",
+            &format!("summary hook spill replay failed; continuing with current payload: {error}"),
+        );
+    }
     enqueue_summary_payload(&conn, input, Some(&host), profile)
 }
 

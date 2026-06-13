@@ -1,8 +1,12 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static SUMMARY_SPILL_CLAIM_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SummaryHookSpillRecord {
@@ -52,38 +56,62 @@ pub(super) fn replay_spilled_summary_hook_payloads(
     mut replay: impl FnMut(&Connection, &SummaryHookSpillRecord) -> Result<()>,
 ) -> Result<usize> {
     let path = summary_spill_path();
-    if !path.exists() {
-        return Ok(0);
+    let claimed_path = claimed_summary_spill_path();
+    match std::fs::rename(&path, &claimed_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("claim summary hook spill {}", path.display()));
+        }
     }
+    let failed_path = failed_summary_spill_path_for_claim(&claimed_path);
 
-    let contents =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let failed_path = failed_summary_spill_path();
-    if failed_path.exists() {
-        std::fs::remove_file(&failed_path)
-            .with_context(|| format!("remove stale {}", failed_path.display()))?;
+    let result =
+        replay_claimed_summary_hook_payloads(conn, &path, &claimed_path, &failed_path, &mut replay);
+    if result.is_err() {
+        restore_claimed_and_failed_spill(&claimed_path, &failed_path, &path);
     }
+    result
+}
+
+fn replay_claimed_summary_hook_payloads(
+    conn: &Connection,
+    path: &Path,
+    claimed_path: &Path,
+    failed_path: &Path,
+    replay: &mut impl FnMut(&Connection, &SummaryHookSpillRecord) -> Result<()>,
+) -> Result<usize> {
+    let contents = match std::fs::read_to_string(claimed_path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            restore_claimed_spill(claimed_path, path);
+            return Err(error).with_context(|| format!("read {}", claimed_path.display()));
+        }
+    };
 
     let mut replayed = 0;
     for line in contents.lines().filter(|line| !line.trim().is_empty()) {
         match serde_json::from_str::<SummaryHookSpillRecord>(line) {
             Ok(record) => match replay(conn, &record) {
                 Ok(()) => replayed += 1,
-                Err(error) => append_failed_record(&failed_path, &record, &error)?,
+                Err(error) => append_failed_record(failed_path, &record, &error)?,
             },
-            Err(error) => append_failed_line(&failed_path, line, &error.into())?,
+            Err(error) => append_failed_line(failed_path, line, &error.into())?,
         }
     }
 
-    std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
     if failed_path.exists() {
-        std::fs::rename(&failed_path, &path).with_context(|| {
-            format!(
-                "move unreplayed summary hook spill {} to {}",
-                failed_path.display(),
-                path.display()
-            )
-        })?;
+        append_file_to_spill(path, failed_path)?;
+        std::fs::remove_file(failed_path)
+            .with_context(|| format!("remove {}", failed_path.display()))?;
+    }
+    match std::fs::remove_file(claimed_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("remove {}", claimed_path.display()));
+        }
     }
 
     if replayed > 0 {
@@ -93,6 +121,80 @@ pub(super) fn replay_spilled_summary_hook_payloads(
         );
     }
     Ok(replayed)
+}
+
+fn restore_claimed_and_failed_spill(claimed_path: &Path, failed_path: &Path, path: &Path) {
+    if claimed_path.exists() {
+        restore_claimed_spill(claimed_path, path);
+        remove_redundant_failed_spill(failed_path);
+    } else if failed_path.exists() {
+        let result = append_file_to_spill(path, failed_path).and_then(|()| {
+            std::fs::remove_file(failed_path)
+                .with_context(|| format!("remove {}", failed_path.display()))
+        });
+        if let Err(error) = result {
+            crate::log::error(
+                "summarize",
+                &format!("failed to restore failed summary hook spill: {error}"),
+            );
+        }
+    }
+}
+
+fn remove_redundant_failed_spill(failed_path: &Path) {
+    match std::fs::remove_file(failed_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => crate::log::warn(
+            "summarize",
+            &format!(
+                "failed to remove redundant summary hook spill {}: {error}",
+                failed_path.display()
+            ),
+        ),
+    }
+}
+
+fn append_file_to_spill(path: &Path, records_path: &Path) -> Result<()> {
+    let contents = std::fs::read_to_string(records_path)
+        .with_context(|| format!("read {}", records_path.display()))?;
+    if contents.is_empty() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create summary hook spill dir {}", parent.display()))?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open summary hook spill {}", path.display()))?;
+    file.write_all(contents.as_bytes())?;
+    Ok(())
+}
+
+fn restore_claimed_spill(claimed_path: &Path, path: &Path) {
+    let result = if path.exists() {
+        append_file_to_spill(path, claimed_path).and_then(|()| {
+            std::fs::remove_file(claimed_path)
+                .with_context(|| format!("remove {}", claimed_path.display()))
+        })
+    } else {
+        std::fs::rename(claimed_path, path).with_context(|| {
+            format!(
+                "restore summary hook spill {} to {}",
+                claimed_path.display(),
+                path.display()
+            )
+        })
+    };
+    if let Err(error) = result {
+        crate::log::error(
+            "summarize",
+            &format!("failed to restore claimed summary hook spill: {error}"),
+        );
+    }
 }
 
 fn append_failed_line(path: &Path, line: &str, error: &anyhow::Error) -> Result<()> {
@@ -142,15 +244,29 @@ pub(super) fn summary_spill_path() -> PathBuf {
     crate::db::data_dir().join("summary-hook-spill.jsonl")
 }
 
-fn failed_summary_spill_path() -> PathBuf {
-    crate::db::data_dir().join("summary-hook-spill.failed.jsonl")
+fn claimed_summary_spill_path() -> PathBuf {
+    let sequence = SUMMARY_SPILL_CLAIM_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    crate::db::data_dir().join(format!(
+        "summary-hook-spill.replay-{}-{now_nanos}-{sequence}.jsonl",
+        std::process::id()
+    ))
+}
+
+fn failed_summary_spill_path_for_claim(claimed_path: &Path) -> PathBuf {
+    claimed_path.with_extension("failed.jsonl")
 }
 
 #[cfg(test)]
 mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
-    use super::summary_spill_path;
+    use super::{
+        replay_spilled_summary_hook_payloads, spill_summary_hook_payload, summary_spill_path,
+    };
 
     #[tokio::test]
     async fn stale_db_spill_replays_after_schema_is_initialized() -> anyhow::Result<()> {
@@ -204,6 +320,108 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(summary_jobs, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn replay_preserves_spills_appended_after_claim() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-spill-claim-race");
+        let conn = db::open_db()?;
+        let first_input = serde_json::json!({
+            "session_id": "sess-summary-first",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+        let later_input = serde_json::json!({
+            "session_id": "sess-summary-later",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+        spill_summary_hook_payload(
+            &first_input,
+            Some("codex-cli"),
+            None,
+            &anyhow::anyhow!("stale db"),
+        )?;
+
+        let mut wrote_later = false;
+        let replayed = replay_spilled_summary_hook_payloads(&conn, |_conn, record| {
+            assert_eq!(record.input, first_input);
+            if !wrote_later {
+                spill_summary_hook_payload(
+                    &later_input,
+                    Some("codex-cli"),
+                    None,
+                    &anyhow::anyhow!("still stale"),
+                )?;
+                wrote_later = true;
+            }
+            Ok(())
+        })?;
+
+        assert_eq!(replayed, 1);
+        let remaining = std::fs::read_to_string(summary_spill_path())?;
+        assert!(remaining.contains("sess-summary-later"));
+        assert!(!remaining.contains("sess-summary-first"));
+        Ok(())
+    }
+
+    #[test]
+    fn restore_claimed_spill_makes_records_visible_to_future_replay() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-spill-restore-claim");
+        std::fs::create_dir_all(db::data_dir())?;
+        let claimed_path = db::data_dir().join("summary-hook-spill.replay-test.jsonl");
+        let failed_path = super::failed_summary_spill_path_for_claim(&claimed_path);
+        std::fs::write(
+            &claimed_path,
+            r#"{"version":1,"input":"{\"session_id\":\"sess-restored\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#,
+        )?;
+        std::fs::write(
+            &failed_path,
+            r#"{"version":1,"input":"{\"session_id\":\"sess-duplicate\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#,
+        )?;
+
+        super::restore_claimed_and_failed_spill(&claimed_path, &failed_path, &summary_spill_path());
+
+        assert!(!claimed_path.exists());
+        assert!(!failed_path.exists());
+        let restored = std::fs::read_to_string(summary_spill_path())?;
+        assert!(restored.contains("sess-restored"));
+        assert!(!restored.contains("sess-duplicate"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replay_error_does_not_drop_current_summary_payload() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-replay-error-current");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        drop(conn);
+        std::fs::create_dir_all(summary_spill_path())?;
+
+        let current_input = serde_json::json!({
+            "session_id": "sess-summary-current-after-replay-error",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+        super::super::hook::summarize_input(&current_input, Some("codex-cli"), None).await?;
+
+        let conn = db::open_db()?;
+        let summary_jobs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs
+             WHERE job_type = 'summary'
+               AND session_id = 'sess-summary-current-after-replay-error'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(summary_jobs, 1);
         Ok(())
     }
 }
