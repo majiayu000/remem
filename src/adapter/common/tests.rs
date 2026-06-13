@@ -1,8 +1,8 @@
 use crate::db::test_support::ScopedTestDataDir;
 
 use super::{
-    event_summary, parse_tool_hook, redact_and_truncate, redact_token, should_skip_bash_command,
-    should_skip_tool,
+    event_summary, parse_tool_hook, redact_and_truncate, redact_hook_payload_preview, redact_token,
+    should_skip_bash_command, should_skip_tool,
 };
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
@@ -78,6 +78,54 @@ fn truncates_long_payload_in_error_log() {
     unsafe {
         std::env::remove_var("REMEM_STDERR_TO_LOG");
     }
+}
+
+#[test]
+fn parse_error_log_redacts_payload_before_truncating() {
+    let scoped = ScopedTestDataDir::new("adapter-parse-redact");
+    unsafe {
+        std::env::set_var("REMEM_STDERR_TO_LOG", "1");
+    }
+
+    let payload = format!(
+        r#"{{"session_id":"s","tool_input":{{"command":"curl -H 'Authorization: Bearer ghp_1234567890abcdef'"}},"padding":"{}""#,
+        "x".repeat(2_000)
+    );
+    let result = parse_tool_hook(&payload);
+    assert!(result.is_none());
+
+    let log = read_log_tail(&scoped);
+    assert!(log.contains("[ERROR]"));
+    assert!(
+        log.contains("[REDACTED]"),
+        "secret should be visibly redacted: {log}"
+    );
+    assert!(
+        !log.contains("ghp_1234567890abcdef"),
+        "raw token must not be logged: {log}"
+    );
+
+    unsafe {
+        std::env::remove_var("REMEM_STDERR_TO_LOG");
+    }
+}
+
+#[test]
+fn hook_payload_preview_redacts_valid_sensitive_json_fields() {
+    let payload = serde_json::json!({
+        "session_id": "s",
+        "tool_input": {
+            "api_key": "sk-proj-12345678",
+            "command": "curl -H 'Authorization: Bearer ghp_1234567890abcdef'"
+        }
+    })
+    .to_string();
+
+    let preview = redact_hook_payload_preview(&payload, 1_000);
+
+    assert!(preview.contains("[REDACTED]"));
+    assert!(!preview.contains("sk-proj-12345678"));
+    assert!(!preview.contains("ghp_1234567890abcdef"));
 }
 
 #[test]

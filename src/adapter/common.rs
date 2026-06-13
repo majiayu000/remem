@@ -92,7 +92,7 @@ pub(crate) fn parse_tool_hook(raw_json: &str) -> Option<ParsedHookEvent> {
                 "adapter",
                 &format!(
                     "failed to parse hook payload: {e}; raw (truncated): {}",
-                    raw_json.chars().take(512).collect::<String>()
+                    redact_hook_payload_preview(raw_json, 512)
                 ),
             );
             return None;
@@ -320,6 +320,13 @@ fn is_scoped_path(token: &str) -> bool {
 
 fn redact_and_truncate(text: &str, max_bytes: usize) -> String {
     let redacted = redact_sensitive_text(text);
+    db::truncate_str(&redacted, max_bytes).to_string()
+}
+
+pub(crate) fn redact_hook_payload_preview(raw_payload: &str, max_bytes: usize) -> String {
+    let redacted = serde_json::from_str::<serde_json::Value>(raw_payload)
+        .map(|value| redact_sensitive_value(&value).to_string())
+        .unwrap_or_else(|_| redact_sensitive_text(raw_payload));
     db::truncate_str(&redacted, max_bytes).to_string()
 }
 

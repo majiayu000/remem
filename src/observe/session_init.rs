@@ -21,7 +21,10 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     let timer = crate::log::Timer::start("session-init", "");
     crate::log::debug(
         "session-init",
-        &format!("raw input: {}", crate::db::truncate_str(input, 500)),
+        &format!(
+            "raw input: {}",
+            crate::adapter::common::redact_hook_payload_preview(input, 500)
+        ),
     );
 
     let Some(event) = session_init_event(input, host) else {
@@ -90,7 +93,10 @@ fn user_prompt_submit_output(additional_context: &str) -> Result<String> {
 mod tests {
     use crate::db::test_support::ScopedTestDataDir;
 
-    use super::{session_init_event, user_prompt_submit_output, user_prompt_submit_prompt};
+    use super::{
+        session_init_event, session_init_input, user_prompt_submit_output,
+        user_prompt_submit_prompt,
+    };
 
     #[test]
     fn session_init_skips_empty_hook_input() {
@@ -117,6 +123,40 @@ mod tests {
         assert_eq!(event.session_id, "sess-user-prompt");
         assert_eq!(event.project, "/tmp/remem");
         assert_eq!(user_prompt_submit_prompt(&input).as_deref(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn session_init_debug_log_redacts_raw_input_before_truncating() -> anyhow::Result<()> {
+        let scoped = ScopedTestDataDir::new("session-init-raw-redact");
+        unsafe {
+            std::env::set_var("REMEM_DEBUG", "1");
+            std::env::set_var("REMEM_STDERR_TO_LOG", "1");
+        }
+
+        let input = format!(
+            r#"{{"authorization":"Bearer ghp_1234567890abcdef","padding":"{}""#,
+            "x".repeat(2_000)
+        );
+        assert!(session_init_input(&input, Some("claude-code"))
+            .await?
+            .is_none());
+
+        let log = std::fs::read_to_string(scoped.path.join("remem.log"))?;
+        assert!(log.contains("[DEBUG]"));
+        assert!(
+            log.contains("[REDACTED]"),
+            "secret should be visibly redacted: {log}"
+        );
+        assert!(
+            !log.contains("ghp_1234567890abcdef"),
+            "raw token must not be logged: {log}"
+        );
+
+        unsafe {
+            std::env::remove_var("REMEM_DEBUG");
+            std::env::remove_var("REMEM_STDERR_TO_LOG");
+        }
+        Ok(())
     }
 
     #[test]
