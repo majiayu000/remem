@@ -5,6 +5,6 @@ mod timer;
 mod write;
 
 pub use timer::Timer;
-pub use write::{debug, error, info, open_log_append, warn};
+pub use write::{debug, debug_enabled, error, info, open_log_append, warn};
 
 pub(crate) use config::with_log_dir;

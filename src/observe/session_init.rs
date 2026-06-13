@@ -19,13 +19,15 @@ pub async fn session_init(host: Option<&str>) -> Result<()> {
 
 async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<String>> {
     let timer = crate::log::Timer::start("session-init", "");
-    crate::log::debug(
-        "session-init",
-        &format!(
-            "raw input: {}",
-            crate::adapter::common::redact_hook_payload_preview(input, 500)
-        ),
-    );
+    if crate::log::debug_enabled() {
+        crate::log::debug(
+            "session-init",
+            &format!(
+                "raw input: {}",
+                crate::adapter::common::redact_hook_payload_preview(input, 500)
+            ),
+        );
+    }
 
     let Some(event) = session_init_event(input, host) else {
         timer.done("skipped");

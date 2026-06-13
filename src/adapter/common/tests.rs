@@ -1,8 +1,9 @@
 use crate::db::test_support::ScopedTestDataDir;
 
 use super::{
-    event_summary, parse_tool_hook, redact_and_truncate, redact_hook_payload_preview, redact_token,
-    should_skip_bash_command, should_skip_tool,
+    event_summary, hook_payload_preview_redaction_input, parse_tool_hook, redact_and_truncate,
+    redact_hook_payload_preview, redact_token, should_skip_bash_command, should_skip_tool,
+    HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
 };
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
@@ -150,6 +151,19 @@ fn text_redaction_catches_command_key_assignments_with_short_values() {
     assert!(redacted.contains("[REDACTED]"));
     assert!(!redacted.contains("short-secret"));
     assert!(!redacted.contains("tiny-token"));
+}
+
+#[test]
+fn hook_payload_preview_bounds_redaction_work_for_large_malformed_payloads() {
+    let payload = format!("api_key=short-secret {}", "x".repeat(20_000));
+    let input = hook_payload_preview_redaction_input(&payload, 512);
+
+    assert!(input.len() <= 512 + HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES);
+    assert!(input.contains("api_key=short-secret"));
+
+    let redacted = redact_hook_payload_preview(&payload, 512);
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("short-secret"));
 }
 
 #[test]

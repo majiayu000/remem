@@ -2,6 +2,8 @@ use serde::Deserialize;
 
 use crate::adapter::{EventSummary, ParsedHookEvent};
 use crate::db;
+
+const HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES: usize = 4 * 1024;
 use crate::observe::short_path;
 
 #[cfg(test)]
@@ -324,10 +326,18 @@ fn redact_and_truncate(text: &str, max_bytes: usize) -> String {
 }
 
 pub(crate) fn redact_hook_payload_preview(raw_payload: &str, max_bytes: usize) -> String {
-    let redacted = serde_json::from_str::<serde_json::Value>(raw_payload)
+    let preview_input = hook_payload_preview_redaction_input(raw_payload, max_bytes);
+    let redacted = serde_json::from_str::<serde_json::Value>(preview_input)
         .map(|value| redact_sensitive_value(&value).to_string())
-        .unwrap_or_else(|_| redact_sensitive_text(raw_payload));
+        .unwrap_or_else(|_| redact_sensitive_text(preview_input));
     db::truncate_str(&redacted, max_bytes).to_string()
+}
+
+fn hook_payload_preview_redaction_input(raw_payload: &str, max_bytes: usize) -> &str {
+    db::truncate_str(
+        raw_payload,
+        max_bytes.saturating_add(HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES),
+    )
 }
 
 pub(crate) fn redact_sensitive_value(value: &serde_json::Value) -> serde_json::Value {
