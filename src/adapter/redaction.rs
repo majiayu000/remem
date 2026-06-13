@@ -102,13 +102,15 @@ fn redact_hook_payload_line(line: &str) -> String {
 
 fn redact_sensitive_tokens(line: &str) -> String {
     let mut previous_was_bearer = false;
+    let mut previous_was_sensitive_option = false;
     line.split_whitespace()
         .map(|token| {
-            let redacted = if previous_was_bearer {
+            let redacted = if previous_was_bearer || previous_was_sensitive_option {
                 "[REDACTED]"
             } else {
                 redact_token(token)
             };
+            previous_was_sensitive_option = token_expects_sensitive_argument(token);
             previous_was_bearer = token
                 .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
                 .eq_ignore_ascii_case("bearer");
@@ -128,14 +130,14 @@ fn redact_inline_sensitive_assignments(line: &str) -> String {
             continue;
         };
         let key = &line[key_start..separator];
-        if !is_sensitive_key(key) {
+        if !is_sensitive_key(key) && !is_sensitive_option_key(key) {
             scan_cursor = separator + ch.len_utf8();
             continue;
         }
 
         output.push_str(&line[output_cursor..separator + ch.len_utf8()]);
         let (prefix_end, value_end) =
-            sensitive_assignment_value_bounds(line, separator + ch.len_utf8(), key);
+            sensitive_assignment_value_bounds(line, separator + ch.len_utf8(), key, ch);
         output.push_str(&line[separator + ch.len_utf8()..prefix_end]);
         output.push_str("[REDACTED]");
         scan_cursor = value_end;
@@ -176,7 +178,12 @@ fn assignment_key_start(line: &str, separator: usize) -> Option<usize> {
     (start < key_end).then_some(start)
 }
 
-fn sensitive_assignment_value_bounds(line: &str, value_offset: usize, key: &str) -> (usize, usize) {
+fn sensitive_assignment_value_bounds(
+    line: &str,
+    value_offset: usize,
+    key: &str,
+    separator: char,
+) -> (usize, usize) {
     let prefix_end = skip_ascii_whitespace(line, value_offset);
     let Some((quote_offset, quote)) = line[prefix_end..]
         .char_indices()
@@ -184,7 +191,7 @@ fn sensitive_assignment_value_bounds(line: &str, value_offset: usize, key: &str)
         .filter(|(_, ch)| matches!(ch, '"' | '\''))
         .map(|(offset, ch)| (prefix_end + offset, ch))
     else {
-        let value_end = if key_owns_header_value(key) {
+        let value_end = if key_owns_header_value(key, separator) {
             header_sensitive_value_end(line, prefix_end)
         } else {
             unquoted_sensitive_value_end(line, prefix_end)
@@ -264,16 +271,28 @@ fn split_sensitive_assignment(line: &str) -> Option<(&str, &str)> {
 
 fn normalized_sensitive_key(key: &str) -> String {
     key.trim()
-        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
         .to_ascii_lowercase()
         .replace('-', "_")
 }
 
-fn key_owns_header_value(key: &str) -> bool {
+fn is_sensitive_option_key(key: &str) -> bool {
     matches!(
         normalized_sensitive_key(key).as_str(),
-        "auth" | "authorization" | "cookie" | "set_cookie"
+        "u" | "user" | "pass" | "oauth2_bearer" | "proxy_user" | "proxy_pass"
     )
+}
+
+fn token_expects_sensitive_argument(token: &str) -> bool {
+    let option =
+        token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
+    !option.contains('=') && is_sensitive_option_key(option)
+}
+
+fn key_owns_header_value(key: &str, separator: char) -> bool {
+    let normalized = normalized_sensitive_key(key);
+    matches!(normalized.as_str(), "cookie" | "set_cookie")
+        || (separator == ':' && matches!(normalized.as_str(), "auth" | "authorization"))
 }
 
 fn is_sensitive_key(key: &str) -> bool {
@@ -292,10 +311,15 @@ fn is_sensitive_key(key: &str) -> bool {
             | "secret"
             | "token"
             | "access_token"
+            | "accesstoken"
             | "refresh_token"
+            | "refreshtoken"
             | "id_token"
+            | "idtoken"
             | "client_secret"
+            | "clientsecret"
             | "private_key"
+            | "privatekey"
     ) || normalized.ends_with("_api_key")
         || normalized.ends_with("_token")
         || normalized.ends_with("_secret")

@@ -204,6 +204,53 @@ fn hook_payload_preview_redacts_basic_authorization_credentials() {
 }
 
 #[test]
+fn hook_payload_preview_redacts_camel_case_secret_keys() {
+    let payload = serde_json::json!({
+        "accessToken": "short-secret",
+        "clientSecret": "tiny-secret",
+        "safe": "visible"
+    })
+    .to_string();
+
+    let redacted = redact_hook_payload_preview(&payload, 1_000);
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(redacted.contains("visible"));
+    assert!(!redacted.contains("short-secret"));
+    assert!(!redacted.contains("tiny-secret"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_sensitive_option_assignments() {
+    let redacted = redact_hook_payload_preview(
+        "curl --auth=short-secret --private-key=private.pem https://example.test",
+        1_000,
+    );
+
+    assert!(redacted.contains("--auth=[REDACTED]"));
+    assert!(
+        redacted.contains("--private-key=[REDACTED]"),
+        "unexpected redaction: {redacted}"
+    );
+    assert!(!redacted.contains("short-secret"));
+    assert!(!redacted.contains("private.pem"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_sensitive_option_arguments() {
+    let redacted = redact_hook_payload_preview(
+        "curl -s -u alice:pw --oauth2-bearer tiny-token http://localhost",
+        1_000,
+    );
+
+    assert!(redacted.contains("-u [REDACTED]"));
+    assert!(redacted.contains("--oauth2-bearer [REDACTED]"));
+    assert!(!redacted.contains("alice:pw"));
+    assert!(!redacted.contains("tiny-token"));
+    assert!(redacted.contains("http://localhost"));
+}
+
+#[test]
 fn general_sensitive_text_redaction_does_not_use_hook_inline_heuristic() {
     let source = "let token = lexer.next_token();\nlet auth = AuthState::Anonymous;";
 
