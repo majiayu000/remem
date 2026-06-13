@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
+use sha2::{Digest, Sha256};
 
 thread_local! {
     static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -42,6 +43,16 @@ pub fn deterministic_hash(data: &[u8]) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
+}
+
+pub fn content_identity_hash(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("sha256:content-v1:{:x}", hasher.finalize())
+}
+
+pub fn legacy_content_identity_hash(data: &[u8]) -> String {
+    format!("{:016x}", deterministic_hash(data))
 }
 
 pub fn to_sql_refs(params: &[Box<dyn rusqlite::types::ToSql>]) -> Vec<&dyn rusqlite::types::ToSql> {
@@ -272,6 +283,19 @@ mod tests {
     use super::*;
     use crate::db::crypto::ALLOW_PLAINTEXT_ENV;
     use crate::db::test_support::ScopedTestDataDir;
+
+    #[test]
+    fn content_identity_hash_is_versioned_sha256() {
+        let hash = content_identity_hash(b"hello world");
+
+        assert_eq!(
+            hash,
+            "sha256:content-v1:b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
+        let legacy_hash = legacy_content_identity_hash(b"hello world");
+        assert_eq!(legacy_hash.len(), 16);
+        assert!(!legacy_hash.starts_with("sha256:"));
+    }
 
     #[test]
     fn open_db_for_hook_does_not_create_missing_database() {

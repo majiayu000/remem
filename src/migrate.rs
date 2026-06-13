@@ -1,3 +1,4 @@
+mod content_identity;
 mod dry_run;
 mod run;
 mod schema_drift;
@@ -6,6 +7,8 @@ mod state;
 mod tests;
 #[cfg(test)]
 mod tests_compression_provenance;
+#[cfg(test)]
+mod tests_content_identity;
 #[cfg(test)]
 mod tests_convergence;
 #[cfg(test)]

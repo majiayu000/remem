@@ -4,7 +4,7 @@
 //! Spec: SPEC-raw-archive-vs-curated-memory-2026-04-22.md
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 pub const ROLE_USER: &str = "user";
 pub const ROLE_ASSISTANT: &str = "assistant";
@@ -30,7 +30,11 @@ pub struct RawMessage {
 /// `memory::promote::slug::content_hash`, which normalizes whitespace/case for
 /// semantic dedup of curated memories.
 fn exact_content_hash(content: &str) -> String {
-    format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
+    crate::db::content_identity_hash(content.as_bytes())
+}
+
+fn legacy_exact_content_hash(content: &str) -> String {
+    crate::db::legacy_content_identity_hash(content.as_bytes())
 }
 
 /// Insert one raw message. UNIQUE(project, session_id, role, content_hash)
@@ -106,6 +110,12 @@ pub fn insert_raw_message(
         return Ok(None);
     }
     let hash = exact_content_hash(trimmed);
+    if let Some(id) = find_matching_legacy_raw_message(conn, session_id, project, role, trimmed)? {
+        return Ok(Some(RawInsertOutcome {
+            id,
+            inserted: false,
+        }));
+    }
     let now = chrono::Utc::now().timestamp();
 
     let inserted = conn.execute(
@@ -132,6 +142,33 @@ pub fn insert_raw_message(
             id: existing,
             inserted: false,
         }))
+    }
+}
+
+fn find_matching_legacy_raw_message(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    role: &str,
+    content: &str,
+) -> Result<Option<i64>> {
+    let legacy_hash = legacy_exact_content_hash(content);
+    let Some((id, stored_content)) = conn
+        .query_row(
+            "SELECT id, content FROM raw_messages
+             WHERE project = ?1 AND session_id = ?2 AND role = ?3 AND content_hash = ?4",
+            params![project, session_id, role, legacy_hash],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+
+    if stored_content == content {
+        Ok(Some(id))
+    } else {
+        Ok(None)
     }
 }
 
@@ -373,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_is_idempotent_per_session_role_content() {
+    fn insert_is_idempotent_per_session_role_content() -> Result<()> {
         let conn = setup_conn();
         let id1 = insert_raw_message(
             &conn,
@@ -384,9 +421,8 @@ mod tests {
             SOURCE_HOOK,
             None,
             None,
-        )
-        .unwrap()
-        .expect("first insert returns Some");
+        )?
+        .ok_or_else(|| anyhow::anyhow!("first insert returned None"))?;
         // Same session + same text => deduped onto the existing row.
         let id2 = insert_raw_message(
             &conn,
@@ -397,16 +433,92 @@ mod tests {
             SOURCE_HOOK,
             None,
             None,
-        )
-        .unwrap()
-        .expect("second insert returns Some");
+        )?
+        .ok_or_else(|| anyhow::anyhow!("second insert returned None"))?;
         assert_eq!(id1.id, id2.id);
         assert!(id1.inserted, "first call must mark inserted");
         assert!(!id2.inserted, "second call must mark not-inserted");
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
-            .unwrap();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
         assert_eq!(count, 1);
+        let stored_hash: String = conn.query_row(
+            "SELECT content_hash FROM raw_messages WHERE id = ?1",
+            params![id1.id],
+            |row| row.get(0),
+        )?;
+        assert!(stored_hash.starts_with("sha256:content-v1:"));
+        assert_eq!(stored_hash.len(), "sha256:content-v1:".len() + 64);
+        Ok(())
+    }
+
+    #[test]
+    fn insert_reuses_matching_legacy_content_hash() -> Result<()> {
+        let conn = setup_conn();
+        let content = "legacy exact raw message";
+        let legacy_hash = legacy_exact_content_hash(content);
+        conn.execute(
+            "INSERT INTO raw_messages
+             (session_id, project, role, content, content_hash, source, branch, cwd, created_at_epoch)
+             VALUES ('s1', '/proj', ?1, ?2, ?3, ?4, NULL, NULL, 100)",
+            params![ROLE_USER, content, legacy_hash, SOURCE_HOOK],
+        )?;
+        let legacy_id = conn.last_insert_rowid();
+
+        let outcome = insert_raw_message(
+            &conn,
+            "s1",
+            "/proj",
+            ROLE_USER,
+            content,
+            SOURCE_HOOK,
+            None,
+            None,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("non-empty content returned None"))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
+
+        assert_eq!(outcome.id, legacy_id);
+        assert!(!outcome.inserted);
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn insert_does_not_reuse_mismatched_legacy_content_hash() -> Result<()> {
+        let conn = setup_conn();
+        let content = "target raw content";
+        let legacy_hash = legacy_exact_content_hash(content);
+        conn.execute(
+            "INSERT INTO raw_messages
+             (session_id, project, role, content, content_hash, source, branch, cwd, created_at_epoch)
+             VALUES ('s1', '/proj', ?1, 'different raw content', ?2, ?3, NULL, NULL, 100)",
+            params![ROLE_USER, legacy_hash, SOURCE_HOOK],
+        )?;
+
+        let outcome = insert_raw_message(
+            &conn,
+            "s1",
+            "/proj",
+            ROLE_USER,
+            content,
+            SOURCE_HOOK,
+            None,
+            None,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("non-empty content returned None"))?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
+        let stored_hash: String = conn.query_row(
+            "SELECT content_hash FROM raw_messages WHERE id = ?1",
+            params![outcome.id],
+            |row| row.get(0),
+        )?;
+
+        assert!(outcome.inserted);
+        assert_eq!(count, 2);
+        assert!(stored_hash.starts_with("sha256:content-v1:"));
+        Ok(())
     }
 
     /// Regression for #237: the same text spoken in two different sessions must

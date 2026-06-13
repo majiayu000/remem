@@ -29,11 +29,9 @@ pub fn find_hash_duplicates(
             params![id],
             |row| row.get(0),
         )?;
-        let obs_hash = format!(
-            "{:x}",
-            crate::db::deterministic_hash(obs_narrative.as_bytes())
-        );
-        if obs_hash == content_hash {
+        let obs_hash = crate::db::content_identity_hash(obs_narrative.as_bytes());
+        let legacy_obs_hash = crate::db::legacy_content_identity_hash(obs_narrative.as_bytes());
+        if obs_hash == content_hash || legacy_obs_hash == content_hash {
             candidates.push(id);
         }
     }

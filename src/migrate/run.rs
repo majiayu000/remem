@@ -142,5 +142,10 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             format!("migration v{version:03}_{name} failed to install graph edge cleanup triggers")
         })?;
     }
+    if version == 41 {
+        super::content_identity::backfill_content_identity_hashes(conn).with_context(|| {
+            format!("migration v{version:03}_{name} failed to backfill content identity hashes")
+        })?;
+    }
     Ok(())
 }
