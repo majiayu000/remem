@@ -15,7 +15,7 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
 }
 
 async fn summarize_input(input: &str, host: Option<&str>, profile: Option<&str>) -> Result<()> {
-    let hook: SummarizeInput = match serde_json::from_str(&input) {
+    let hook: SummarizeInput = match serde_json::from_str(input) {
         Ok(value) => value,
         Err(err) => {
             crate::log::warn(
@@ -32,7 +32,7 @@ async fn summarize_input(input: &str, host: Option<&str>, profile: Option<&str>)
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
     let conn = db::open_db_for_hook()?;
-    let summary_payload = summary_payload_with_cwd(&input, &cwd, profile)?;
+    let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
     let compress_payload = compress_payload(profile)?;
 
     record_summary_capture_event(&conn, &host, session_id, &project, &cwd, &summary_payload);
