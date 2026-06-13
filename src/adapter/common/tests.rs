@@ -1,8 +1,9 @@
 use crate::db::test_support::ScopedTestDataDir;
 
 use super::{
-    event_summary, parse_tool_hook, redact_and_truncate, redact_token, should_skip_bash_command,
-    should_skip_tool,
+    event_summary, hook_payload_preview_redaction_input, parse_tool_hook, redact_and_truncate,
+    redact_hook_payload_preview, redact_sensitive_text, redact_token, should_skip_bash_command,
+    should_skip_tool, HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
 };
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
@@ -78,6 +79,214 @@ fn truncates_long_payload_in_error_log() {
     unsafe {
         std::env::remove_var("REMEM_STDERR_TO_LOG");
     }
+}
+
+#[test]
+fn parse_error_log_redacts_payload_before_truncating() {
+    let scoped = ScopedTestDataDir::new("adapter-parse-redact");
+    unsafe {
+        std::env::set_var("REMEM_STDERR_TO_LOG", "1");
+    }
+
+    let payload = format!(
+        r#"{{"session_id":"s","tool_input":{{"command":"curl -H 'Authorization: Bearer ghp_1234567890abcdef'"}},"padding":"{}""#,
+        "x".repeat(2_000)
+    );
+    let result = parse_tool_hook(&payload);
+    assert!(result.is_none());
+
+    let log = read_log_tail(&scoped);
+    assert!(log.contains("[ERROR]"));
+    assert!(
+        log.contains("[REDACTED]"),
+        "secret should be visibly redacted: {log}"
+    );
+    assert!(
+        !log.contains("ghp_1234567890abcdef"),
+        "raw token must not be logged: {log}"
+    );
+
+    unsafe {
+        std::env::remove_var("REMEM_STDERR_TO_LOG");
+    }
+}
+
+#[test]
+fn hook_payload_preview_redacts_valid_sensitive_json_fields() {
+    let payload = serde_json::json!({
+        "session_id": "s",
+        "tool_input": {
+            "api_key": "sk-proj-12345678",
+            "command": "curl -H 'Authorization: Bearer ghp_1234567890abcdef'"
+        }
+    })
+    .to_string();
+
+    let preview = redact_hook_payload_preview(&payload, 1_000);
+
+    assert!(preview.contains("[REDACTED]"));
+    assert!(!preview.contains("sk-proj-12345678"));
+    assert!(!preview.contains("ghp_1234567890abcdef"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_malformed_inline_sensitive_assignments() {
+    let payload = r#"{"session_id":"s","api_key":"short-secret","token=plain-short"#;
+
+    let preview = redact_hook_payload_preview(payload, 1_000);
+
+    assert!(preview.contains("[REDACTED]"));
+    assert!(preview.contains(r#""session_id":"s""#));
+    assert!(!preview.contains("short-secret"));
+    assert!(!preview.contains("plain-short"));
+}
+
+#[test]
+fn text_redaction_catches_command_key_assignments_with_short_values() {
+    let redacted = redact_hook_payload_preview(
+        "echo api_key=short-secret authorization=Bearer tiny-token",
+        1_000,
+    );
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("short-secret"));
+    assert!(!redacted.contains("tiny-token"));
+}
+
+#[test]
+fn hook_payload_preview_bounds_redaction_work_for_large_malformed_payloads() {
+    let payload = format!("api_key=short-secret {}", "x".repeat(20_000));
+    let input = hook_payload_preview_redaction_input(&payload, 512);
+
+    assert!(input.len() <= 512 + HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES);
+    assert!(input.contains("api_key=short-secret"));
+
+    let redacted = redact_hook_payload_preview(&payload, 512);
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("short-secret"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_escaped_quotes_in_malformed_sensitive_values() {
+    let payload = r#"{"session_id":"s","password":"abc\"rest-of-secret","padding":"x"#;
+
+    let redacted = redact_hook_payload_preview(payload, 1_000);
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("abc"));
+    assert!(!redacted.contains("rest-of-secret"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_multiline_malformed_sensitive_values() {
+    let payload =
+        "{\"session_id\":\"s\",\"password\":\"first-line\nsecond-line-secret\",\"safe\":\"visible\"";
+
+    let redacted = redact_hook_payload_preview(payload, 1_000);
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("first-line"));
+    assert!(!redacted.contains("second-line-secret"));
+    assert!(redacted.contains("visible"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_full_cookie_header_values() {
+    let redacted = redact_hook_payload_preview(
+        "curl -H 'Cookie: sid=abc; csrf=short' https://example.test",
+        1_000,
+    );
+
+    assert!(redacted.contains("Cookie: [REDACTED]"));
+    assert!(!redacted.contains("sid=abc"));
+    assert!(!redacted.contains("csrf=short"));
+    assert!(redacted.contains("https://example.test"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_basic_authorization_credentials() {
+    let redacted = redact_hook_payload_preview(
+        "curl -H 'Authorization: Basic dXNlcjpw' https://example.test",
+        1_000,
+    );
+
+    assert!(redacted.contains("Authorization: [REDACTED]"));
+    assert!(!redacted.contains("Basic dXNlcjpw"));
+    assert!(!redacted.contains("dXNlcjpw"));
+    assert!(redacted.contains("https://example.test"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_camel_case_secret_keys() {
+    let payload = serde_json::json!({
+        "accessToken": "short-secret",
+        "clientSecret": "tiny-secret",
+        "safe": "visible"
+    })
+    .to_string();
+
+    let redacted = redact_hook_payload_preview(&payload, 1_000);
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(redacted.contains("visible"));
+    assert!(!redacted.contains("short-secret"));
+    assert!(!redacted.contains("tiny-secret"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_sensitive_option_assignments() {
+    let redacted = redact_hook_payload_preview(
+        "curl --auth=short-secret --private-key=private.pem https://example.test",
+        1_000,
+    );
+
+    assert!(redacted.contains("--auth=[REDACTED]"));
+    assert!(
+        redacted.contains("--private-key=[REDACTED]"),
+        "unexpected redaction: {redacted}"
+    );
+    assert!(!redacted.contains("short-secret"));
+    assert!(!redacted.contains("private.pem"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_sensitive_option_arguments() {
+    let redacted = redact_hook_payload_preview(
+        "curl -s -u alice:pw --oauth2-bearer tiny-token http://localhost",
+        1_000,
+    );
+
+    assert!(redacted.contains("-u [REDACTED]"));
+    assert!(redacted.contains("--oauth2-bearer [REDACTED]"));
+    assert!(!redacted.contains("alice:pw"));
+    assert!(!redacted.contains("tiny-token"));
+    assert!(redacted.contains("http://localhost"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_url_userinfo_credentials() {
+    let redacted =
+        redact_hook_payload_preview("curl -s https://alice:pw@example.test/path?debug=1", 1_000);
+
+    assert!(
+        redacted.contains("https://[REDACTED]@example.test/path?debug=1"),
+        "unexpected redaction: {redacted}"
+    );
+    assert!(!redacted.contains("alice:pw"));
+}
+
+#[test]
+fn general_sensitive_text_redaction_does_not_use_hook_inline_heuristic() {
+    let source = "let token = lexer.next_token();\nlet auth = AuthState::Anonymous;";
+
+    assert_eq!(redact_sensitive_text(source), source);
+}
+
+#[test]
+fn general_sensitive_text_redaction_does_not_treat_bare_words_as_options() {
+    let source = "please pass the user value through without changing this phrase\nu value";
+
+    assert_eq!(redact_sensitive_text(source), source);
 }
 
 #[test]

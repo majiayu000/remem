@@ -94,8 +94,12 @@ pub fn open_log_append() -> Option<std::fs::File> {
     }
 }
 
+pub fn debug_enabled() -> bool {
+    std::env::var("REMEM_DEBUG").is_ok()
+}
+
 pub fn debug(component: &str, msg: &str) {
-    if std::env::var("REMEM_DEBUG").is_ok() {
+    if debug_enabled() {
         write_log("DEBUG", component, msg);
     }
 }

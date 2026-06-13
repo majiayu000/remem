@@ -27,12 +27,8 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
         .map(crate::runtime_config::normalize_host)
         .unwrap_or_else(|| adapter.name().to_string());
     if let Some(reason) = event_skip_reason(adapter, &event) {
-        record_capture_drop_lossy(
-            Some(&capture_host),
-            Some(&event),
-            reason,
-            skip_detail(&event),
-        );
+        let detail = skip_detail(&event);
+        record_capture_drop_lossy(Some(&capture_host), Some(&event), reason, detail.as_deref());
         return Ok(());
     }
 
@@ -288,12 +284,12 @@ fn event_skip_reason(
     None
 }
 
-fn skip_detail(event: &crate::adapter::ParsedHookEvent) -> Option<&str> {
+fn skip_detail(event: &crate::adapter::ParsedHookEvent) -> Option<String> {
     event
         .tool_input
         .as_ref()
         .and_then(|value| value["command"].as_str())
-        .map(|command| db::truncate_str(command, 240))
+        .map(|command| crate::adapter::common::redact_hook_payload_preview(command, 240))
 }
 
 fn codex_bash_observe_enabled() -> bool {
@@ -311,7 +307,7 @@ mod tests {
 
     use super::super::spill::spill_capture_event;
     use super::{
-        event_skip_reason, observe_input, record_capture_event,
+        event_skip_reason, observe_input, record_capture_event, skip_detail,
         SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
     };
 
@@ -375,6 +371,51 @@ mod tests {
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
         assert_eq!(skipped, None);
+    }
+
+    #[test]
+    fn skip_detail_redacts_command_before_truncating() -> anyhow::Result<()> {
+        let command = "echo api_key=short-secret".to_string();
+        let event = ParsedHookEvent {
+            session_id: "session".to_string(),
+            cwd: Some("/tmp".to_string()),
+            project: "/tmp".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: Some(serde_json::json!({ "command": command })),
+            tool_response: Some(serde_json::json!({ "exitCode": 0 })),
+        };
+
+        let detail =
+            skip_detail(&event).ok_or_else(|| anyhow::anyhow!("bash command detail missing"))?;
+
+        assert!(
+            !detail.contains("short-secret"),
+            "raw token fragment leaked: {detail}"
+        );
+        assert!(detail.contains("[REDACTED]"));
+        Ok(())
+    }
+
+    #[test]
+    fn skip_detail_does_not_leak_secret_at_truncation_boundary() -> anyhow::Result<()> {
+        let command = format!("echo {} api_key=short-secret", "x".repeat(222));
+        let event = ParsedHookEvent {
+            session_id: "session".to_string(),
+            cwd: Some("/tmp".to_string()),
+            project: "/tmp".to_string(),
+            tool_name: "Bash".to_string(),
+            tool_input: Some(serde_json::json!({ "command": command })),
+            tool_response: Some(serde_json::json!({ "exitCode": 0 })),
+        };
+
+        let detail =
+            skip_detail(&event).ok_or_else(|| anyhow::anyhow!("bash command detail missing"))?;
+
+        assert!(
+            !detail.contains("short-secret"),
+            "raw token fragment leaked: {detail}"
+        );
+        Ok(())
     }
 
     #[test]
