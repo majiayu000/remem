@@ -45,17 +45,15 @@ fn supersession_preserves_historical_fact_but_hides_it_from_current() -> Result<
     );
     assert_eq!(current[0].object, "production");
 
-    let old: TemporalFact = conn.query_row(
-        "SELECT id, project, subject, predicate, object, valid_from_epoch,
-                valid_to_epoch, learned_at_epoch, source_memory_id,
-                source_observation_id, source_event_ids, confidence,
-                supersedes_fact_id, status
+    let old: (String, Option<i64>, Option<i64>) = conn.query_row(
+        "SELECT status, valid_to_epoch, invalidated_at_epoch
          FROM memory_facts WHERE id = ?1",
         [old_id],
-        map_fact_row,
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
-    assert_eq!(old.status, "stale");
-    assert_eq!(old.valid_to_epoch, Some(200));
+    assert_eq!(old.0, "stale");
+    assert_eq!(old.1, Some(200));
+    assert!(old.2.is_some());
 
     let before = list_facts_as_of(
         &conn,
@@ -74,6 +72,32 @@ fn supersession_preserves_historical_fact_but_hides_it_from_current() -> Result<
         Some(FactPredicate::AffectsProject),
     )?;
     assert_eq!(after[0].object, "production");
+    Ok(())
+}
+
+#[test]
+fn supersession_records_transaction_time_invalidation() -> Result<()> {
+    let conn = setup_fact_conn()?;
+    let project = "test-temporal-invalidated";
+    let old_id = insert_temporal_fact_in_current_tx(&conn, &input(project, "staging", 100), 150)?;
+    let mut replacement = input(project, "production", 200);
+    replacement.supersedes_fact_id = Some(old_id);
+    let new_id = insert_temporal_fact_in_current_tx(&conn, &replacement, 250)?;
+
+    let old: (String, Option<i64>, Option<i64>, i64) = conn.query_row(
+        "SELECT status, valid_to_epoch, invalidated_at_epoch, updated_at_epoch
+         FROM memory_facts WHERE id = ?1",
+        [old_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(old, ("stale".to_string(), Some(200), Some(250), 250));
+
+    let replacement_invalidated_at: Option<i64> = conn.query_row(
+        "SELECT invalidated_at_epoch FROM memory_facts WHERE id = ?1",
+        [new_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(replacement_invalidated_at, None);
     Ok(())
 }
 

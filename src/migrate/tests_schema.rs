@@ -616,6 +616,95 @@ fn graph_edges_schema_installs_source_candidate_integrity_triggers() -> Result<(
 }
 
 #[test]
+fn memory_fact_invalidation_migration_upgrades_existing_fact_rows() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= 39)
+    {
+        conn.execute_batch(migration.sql)?;
+    }
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+        );",
+    )?;
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= 39)
+    {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, ?3)",
+            params![migration.version, migration.name, 1_700_000_000_i64],
+        )?;
+    }
+
+    conn.execute(
+        "INSERT INTO memory_facts
+         (id, project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_event_ids, confidence, status, created_at_epoch,
+          updated_at_epoch)
+         VALUES (1, 'proj', 'deploy-target', 'affects_project', 'staging',
+                 100, NULL, 110, '[]', 0.9, 'active', 120, 120)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (id, project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_event_ids, confidence, status, created_at_epoch,
+          updated_at_epoch)
+         VALUES (2, 'proj', 'deploy-target', 'affects_project', 'staging',
+                 50, 100, 60, '[]', 0.9, 'stale', 70, 220)",
+        [],
+    )?;
+
+    run_migrations(&conn)?;
+
+    let mut stmt = conn.prepare("PRAGMA table_info(memory_facts)")?;
+    let mut rows = stmt.query([])?;
+    let mut has_invalidated_at = false;
+    while let Some(row) = rows.next()? {
+        let column: String = row.get(1)?;
+        if column == "invalidated_at_epoch" {
+            has_invalidated_at = true;
+            break;
+        }
+    }
+    assert!(
+        has_invalidated_at,
+        "v040 must add memory_facts.invalidated_at_epoch"
+    );
+
+    let active_invalidated_at: Option<i64> = conn.query_row(
+        "SELECT invalidated_at_epoch FROM memory_facts WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_invalidated_at, None);
+
+    let stale_invalidated_at: Option<i64> = conn.query_row(
+        "SELECT invalidated_at_epoch FROM memory_facts WHERE id = 2",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stale_invalidated_at, Some(220));
+
+    let index_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'index' AND name = 'idx_memory_facts_invalidated'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(index_count, 1);
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_db_newer_than_binary() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     run_migrations(&conn)?;
