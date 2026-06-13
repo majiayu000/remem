@@ -34,10 +34,11 @@ pub(super) async fn summarize_input(
         return Ok(());
     }
     let host = resolve_hook_host(host)?;
+    let cwd = effective_cwd(&hook)?;
     let conn = match db::open_db_for_hook() {
         Ok(conn) => conn,
         Err(error) => {
-            let path = spill_summary_hook_payload(input, Some(&host), profile, &error)?;
+            let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
             crate::log::error(
                 "summarize",
                 &format!(
@@ -90,13 +91,27 @@ fn enqueue_summary_payload(
         &summary_payload,
         &compress_payload,
     )?;
-    if should_spawn_worker_once(conn)? {
-        spawn_worker_once()?;
-    } else {
-        crate::log::info(
-            "summarize",
-            "worker daemon heartbeat healthy; skip worker --once",
-        );
+    match should_spawn_worker_once(conn) {
+        Ok(true) => {
+            if let Err(error) = spawn_worker_once() {
+                crate::log::error(
+                    "summarize",
+                    &format!("summary jobs queued but worker --once spawn failed: {error}"),
+                );
+            }
+        }
+        Ok(false) => {
+            crate::log::info(
+                "summarize",
+                "worker daemon heartbeat healthy; skip worker --once",
+            );
+        }
+        Err(error) => {
+            crate::log::error(
+                "summarize",
+                &format!("summary jobs queued but worker spawn check failed: {error}"),
+            );
+        }
     }
     Ok(())
 }
