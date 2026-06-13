@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "remem-ai"
-version = "0.5.63"
+version = "0.5.64"
 dependencies = [
  "anyhow",
  "axum",
@@ -1231,6 +1231,7 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
  "reqwest",
+ "ring",
  "rmcp",
  "rusqlite",
  "serde",

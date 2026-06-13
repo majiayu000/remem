@@ -44,7 +44,7 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
 
     let content = capture_event_content(&event, &summary);
     let event_id = db::unique_capture_event_id("tool_result", &content);
-    let conn = match db::open_db() {
+    let conn = match db::open_db_for_hook() {
         Ok(conn) => conn,
         Err(error) => {
             let path = spill_capture_event(
@@ -308,7 +308,7 @@ mod tests {
     use super::super::spill::spill_capture_event;
     use super::{
         event_skip_reason, observe_input, record_capture_event, skip_detail,
-        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -340,6 +340,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock should acquire");
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
         let _test_dir = ScopedTestDataDir::new("observe-codex-bash-drop");
+        let setup = db::open_db()?;
+        drop(setup);
         let input = serde_json::json!({
             "session_id": "sess-bash-skip",
             "cwd": "/tmp/remem",
@@ -359,6 +361,76 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(reason, "codex_bash_disabled");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observe_spills_when_hook_db_open_would_need_migration() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("observe-hook-open-stale-schema");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = rusqlite::Connection::open(test_dir.db_path())?;
+        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(setup);
+        let input = serde_json::json!({
+            "session_id": "sess-stale-hook-db",
+            "cwd": "/tmp/remem",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/lib.rs"},
+            "tool_response": {"content": "edited"}
+        })
+        .to_string();
+
+        let err = observe_input(&input, Some("claude-code"))
+            .await
+            .expect_err("stale hook database should fail closed");
+
+        assert!(
+            err.to_string().contains("hook database open requires"),
+            "unexpected error: {err:#}"
+        );
+        assert!(crate::db::data_dir().join("capture-spill.jsonl").exists());
+        let check = rusqlite::Connection::open(test_dir.db_path())?;
+        let migrations_exists: i64 = check.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_schema_migrations'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(migrations_exists, 0);
+        let spill = std::fs::read_to_string(crate::db::data_dir().join("capture-spill.jsonl"))?;
+        assert!(spill.contains(SPILL_REASON_DB_OPEN_FAILED));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observe_skip_drop_does_not_migrate_stale_database() -> anyhow::Result<()> {
+        let _guard = ENV_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
+        let test_dir = ScopedTestDataDir::new("observe-skip-stale-schema");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = rusqlite::Connection::open(test_dir.db_path())?;
+        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(setup);
+        let input = serde_json::json!({
+            "session_id": "sess-skip-stale",
+            "cwd": "/tmp/remem",
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" },
+            "tool_result": { "exitCode": 0 }
+        })
+        .to_string();
+
+        observe_input(&input, Some("codex-cli")).await?;
+
+        let check = rusqlite::Connection::open(test_dir.db_path())?;
+        let migrations_exists: i64 = check.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_schema_migrations'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(migrations_exists, 0);
         Ok(())
     }
 
@@ -456,6 +528,8 @@ mod tests {
     #[tokio::test]
     async fn observe_writes_only_normalized_capture_pipeline() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("observe-normalized-only");
+        let setup = db::open_db()?;
+        drop(setup);
         let project_dir = std::env::temp_dir().join(format!(
             "remem-observe-project-{}-{}",
             std::process::id(),
@@ -509,6 +583,8 @@ mod tests {
     #[tokio::test]
     async fn observe_appends_legacy_events_for_identical_normal_events() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("observe-identical-normal-events");
+        let setup = db::open_db()?;
+        drop(setup);
         let project_dir = std::env::temp_dir().join(format!(
             "remem-observe-duplicates-{}-{}",
             std::process::id(),

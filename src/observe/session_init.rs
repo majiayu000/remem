@@ -35,7 +35,7 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     };
 
     let project = event.project.clone();
-    let conn = db::open_db()?;
+    let conn = db::open_db_for_hook()?;
     db::upsert_session(&conn, &event.session_id, &event.project, None)?;
     let output = if let Some(prompt) = user_prompt_submit_prompt(input) {
         let cwd = event.cwd.as_deref().unwrap_or(&event.project);
@@ -158,6 +158,38 @@ mod tests {
             std::env::remove_var("REMEM_DEBUG");
             std::env::remove_var("REMEM_STDERR_TO_LOG");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_init_rejects_stale_schema_without_migrating() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("session-init-stale-schema");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = rusqlite::Connection::open(test_dir.db_path())?;
+        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(setup);
+        let input = serde_json::json!({
+            "session_id": "sess-session-init-stale",
+            "cwd": "/tmp/remem",
+            "hook_event_name": "SessionStart"
+        })
+        .to_string();
+
+        let err = session_init_input(&input, Some("claude-code"))
+            .await
+            .expect_err("stale hook database should fail closed");
+
+        assert!(
+            err.to_string().contains("hook database open requires"),
+            "unexpected error: {err:#}"
+        );
+        let check = rusqlite::Connection::open(test_dir.db_path())?;
+        let migrations_exists: i64 = check.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_schema_migrations'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(migrations_exists, 0);
         Ok(())
     }
 

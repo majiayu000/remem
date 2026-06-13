@@ -60,7 +60,7 @@ pub(super) fn record_capture_drop_lossy(
     reason: &str,
     detail: Option<&str>,
 ) {
-    let Ok(conn) = crate::db::open_db() else {
+    let Ok(conn) = crate::db::open_db_for_hook() else {
         crate::log::warn(
             "observe",
             &format!("capture drop could not be recorded: reason={reason}"),
@@ -115,13 +115,7 @@ pub(super) fn spill_capture_event(
         .to_string(),
         created_at_epoch: chrono::Utc::now().timestamp(),
     };
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("open capture spill {}", path.display()))?;
-    serde_json::to_writer(&mut file, &record)?;
-    file.write_all(b"\n")?;
+    append_spill_record(&path, &record)?;
     Ok(path)
 }
 
@@ -213,14 +207,12 @@ fn replay_spill_record(
     Ok(true)
 }
 
-fn append_failed_spill_line(path: &PathBuf, line: &str, error: &anyhow::Error) -> Result<()> {
+fn append_failed_spill_line(path: &Path, line: &str, error: &anyhow::Error) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create failed capture spill dir {}", parent.display()))?;
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut file = spill_open_options()
         .open(path)
         .with_context(|| format!("open failed capture spill {}", path.display()))?;
     writeln!(file, "{line}")?;
@@ -229,7 +221,7 @@ fn append_failed_spill_line(path: &PathBuf, line: &str, error: &anyhow::Error) -
 }
 
 fn append_failed_spill_record(
-    path: &PathBuf,
+    path: &Path,
     record: &CaptureSpillRecord,
     error: &anyhow::Error,
 ) -> Result<()> {
@@ -237,15 +229,34 @@ fn append_failed_spill_record(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create failed capture spill dir {}", parent.display()))?;
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("open failed capture spill {}", path.display()))?;
-    serde_json::to_writer(&mut file, record)?;
-    file.write_all(b"\n")?;
+    append_spill_record(path, record)?;
     crate::log::warn("observe", &format!("capture spill replay failed: {error}"));
     Ok(())
+}
+
+fn append_spill_record(path: &Path, record: &CaptureSpillRecord) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create capture spill dir {}", parent.display()))?;
+    }
+    let line = crate::db::spill_crypto::encode_json_line(record)?;
+    let mut file = spill_open_options()
+        .open(path)
+        .with_context(|| format!("open capture spill {}", path.display()))?;
+    file.write_all(line.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+
+fn spill_open_options() -> std::fs::OpenOptions {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
 }
 
 fn sanitize_event(event: &ParsedHookEvent) -> ParsedHookEvent {
@@ -279,7 +290,7 @@ fn sanitize_summary(summary: &EventSummary) -> EventSummary {
 }
 
 fn parse_spill_record(line: &str, line_index: usize) -> Result<CaptureSpillRecord> {
-    let record: CaptureSpillRecordCompat = serde_json::from_str(line)?;
+    let record: CaptureSpillRecordCompat = crate::db::spill_crypto::decode_json_line(line)?;
     Ok(record.into_record(legacy_spill_event_id(line, line_index)))
 }
 
@@ -684,6 +695,50 @@ mod tests {
         assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
         assert!(!stored.contains("hunter2"));
         assert!(!stored.contains("github_pat_secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn encrypted_capture_spill_hides_payload_and_replays() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("capture-spill-encrypted");
+        std::env::set_var("REMEM_CIPHER_KEY", format!("v2:{}", "2".repeat(64)));
+        let err = anyhow::anyhow!("database is locked");
+        let event = ParsedHookEvent {
+            session_id: "session-encrypted-spill".to_string(),
+            cwd: Some("/tmp/remem".to_string()),
+            project: "/tmp/remem".to_string(),
+            tool_name: "Write".to_string(),
+            tool_input: Some(serde_json::json!({"content": "ordinary source content"})),
+            tool_response: Some(serde_json::json!({"ok": true})),
+        };
+        let summary = EventSummary {
+            event_type: "file_write".to_string(),
+            summary: "Wrote ordinary source content".to_string(),
+            detail: Some("ordinary source content".to_string()),
+            files_json: None,
+            exit_code: None,
+        };
+
+        spill_capture_event(
+            "codex-cli",
+            "tool_result-encrypted-spill",
+            &event,
+            &summary,
+            SPILL_REASON_DB_OPEN_FAILED,
+            &err,
+        )?;
+        let stored = std::fs::read_to_string(crate::db::data_dir().join("capture-spill.jsonl"))?;
+        assert!(stored.contains("remem-spill-v1"));
+        assert!(!stored.contains("ordinary source content"));
+
+        let conn = db::open_db()?;
+        assert_eq!(replay_spilled_capture_events(&conn)?, 1);
+        let replayed_summary: String = conn.query_row(
+            "SELECT summary FROM events WHERE session_id = 'session-encrypted-spill'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(replayed_summary.contains("ordinary source content"));
         Ok(())
     }
 }

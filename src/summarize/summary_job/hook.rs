@@ -5,13 +5,22 @@ use crate::hook_stdin::read_stdin_with_timeout;
 
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
+use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
 
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
     };
 
-    let hook: SummarizeInput = match serde_json::from_str(&input) {
+    summarize_input(&input, host, profile).await
+}
+
+pub(super) async fn summarize_input(
+    input: &str,
+    host: Option<&str>,
+    profile: Option<&str>,
+) -> Result<()> {
+    let hook: SummarizeInput = match serde_json::from_str(input) {
         Ok(value) => value,
         Err(err) => {
             crate::log::warn(
@@ -21,33 +30,90 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
             return Ok(());
         }
     };
+    if hook.session_id.is_none() {
+        return Ok(());
+    }
+    let host = resolve_hook_host(host)?;
+    let cwd = effective_cwd(&hook)?;
+    let conn = match db::open_db_for_hook() {
+        Ok(conn) => conn,
+        Err(error) => {
+            let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "database open failed; spilled summary hook payload to {}: {}",
+                    path.display(),
+                    error
+                ),
+            );
+            return Err(error);
+        }
+    };
+    enqueue_summary_payload(&conn, input, Some(&host), profile)?;
+    if let Err(error) = replay_spilled_summary_hook_payloads(&conn, |conn, record| {
+        enqueue_summary_payload(
+            conn,
+            &record.input,
+            record.host.as_deref(),
+            record.profile.as_deref(),
+        )
+    }) {
+        crate::log::error(
+            "summarize",
+            &format!("summary hook spill replay failed; continuing with current payload: {error}"),
+        );
+    }
+    match should_spawn_worker_once(&conn) {
+        Ok(true) => {
+            if let Err(error) = spawn_worker_once() {
+                crate::log::error(
+                    "summarize",
+                    &format!("summary jobs queued but worker --once spawn failed: {error}"),
+                );
+            }
+        }
+        Ok(false) => {
+            crate::log::info(
+                "summarize",
+                "worker daemon heartbeat healthy; skip worker --once",
+            );
+        }
+        Err(error) => {
+            crate::log::error(
+                "summarize",
+                &format!("summary jobs queued but worker spawn check failed: {error}"),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn enqueue_summary_payload(
+    conn: &rusqlite::Connection,
+    input: &str,
+    host: Option<&str>,
+    profile: Option<&str>,
+) -> Result<()> {
+    let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
         return Ok(());
     };
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
-    let conn = db::open_db()?;
-    let summary_payload = summary_payload_with_cwd(&input, &cwd, profile)?;
+    let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
     let compress_payload = compress_payload(profile)?;
 
-    record_summary_capture_event(&conn, &host, session_id, &project, &cwd, &summary_payload);
+    record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload);
     enqueue_summary_jobs(
-        &conn,
+        conn,
         &host,
         session_id,
         &project,
         &summary_payload,
         &compress_payload,
     )?;
-    if should_spawn_worker_once(&conn)? {
-        spawn_worker_once()?;
-    } else {
-        crate::log::info(
-            "summarize",
-            "worker daemon heartbeat healthy; skip worker --once",
-        );
-    }
     Ok(())
 }
 
@@ -281,7 +347,7 @@ mod tests {
 
     use super::{
         compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
-        should_spawn_worker_once, stable_worker_dir, summary_payload_with_cwd,
+        should_spawn_worker_once, stable_worker_dir, summarize_input, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -437,6 +503,43 @@ mod tests {
 
         assert_eq!(host, "codex-cli");
         assert_eq!(parsed["remem_ai_profile"].as_str(), Some("custom"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_rejects_stale_schema_without_migrating() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("summary-hook-stale-schema");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = rusqlite::Connection::open(test_dir.db_path())?;
+        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(setup);
+        let input = serde_json::json!({
+            "session_id": "sess-summary-stale",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+
+        let err = summarize_input(&input, Some("codex-cli"), None)
+            .await
+            .expect_err("stale hook database should fail closed");
+
+        assert!(
+            err.to_string().contains("hook database open requires"),
+            "unexpected error: {err:#}"
+        );
+        let check = rusqlite::Connection::open(test_dir.db_path())?;
+        let (migrations_exists, jobs_exists): (i64, i64) = check.query_row(
+            "SELECT
+                SUM(CASE WHEN name = '_schema_migrations' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN name = 'jobs' THEN 1 ELSE 0 END)
+             FROM sqlite_master
+             WHERE type = 'table'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(migrations_exists, 0);
+        assert_eq!(jobs_exists, 0);
+        assert!(super::super::spill::summary_spill_path().exists());
         Ok(())
     }
 
