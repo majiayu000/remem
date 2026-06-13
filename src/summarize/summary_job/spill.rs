@@ -94,12 +94,12 @@ fn replay_claimed_summary_hook_payloads(
 
     let mut replayed = 0;
     for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<SummaryHookSpillRecord>(line) {
+        match crate::db::spill_crypto::decode_json_line::<SummaryHookSpillRecord>(line) {
             Ok(record) => match replay(conn, &record) {
                 Ok(()) => replayed += 1,
                 Err(error) => append_failed_record(failed_path, &record, &error)?,
             },
-            Err(error) => append_failed_line(failed_path, line, &error.into())?,
+            Err(error) => append_failed_line(failed_path, line, &error)?,
         }
     }
 
@@ -150,12 +150,11 @@ fn summary_spill_input(
             serde_json::Value::String(profile.to_string()),
         );
     }
-    obj.remove("last_assistant_message");
     Ok(serde_json::to_string(&payload)?)
 }
 
 fn append_record_to_spill(path: &Path, record: &SummaryHookSpillRecord) -> Result<()> {
-    let mut line = serde_json::to_vec(record)?;
+    let mut line = crate::db::spill_crypto::encode_json_line(record)?.into_bytes();
     line.push(b'\n');
     append_bytes_to_spill(path, &line)
 }
@@ -566,8 +565,9 @@ mod tests {
     }
 
     #[test]
-    fn spill_payload_fills_cwd_and_omits_last_assistant_message() -> anyhow::Result<()> {
+    fn spill_payload_fills_cwd_and_protects_last_assistant_message() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("summary-hook-spill-sanitize");
+        std::env::set_var("REMEM_CIPHER_KEY", format!("v2:{}", "1".repeat(64)));
         let input = serde_json::json!({
             "session_id": "sess-summary-sensitive",
             "last_assistant_message": "private assistant answer"
@@ -584,11 +584,15 @@ mod tests {
 
         let stored = std::fs::read_to_string(summary_spill_path())?;
         assert!(!stored.contains("private assistant answer"));
-        let record: super::SummaryHookSpillRecord = serde_json::from_str(stored.trim())?;
+        let record: super::SummaryHookSpillRecord =
+            crate::db::spill_crypto::decode_json_line(stored.trim())?;
         let payload: serde_json::Value = serde_json::from_str(&record.input)?;
         assert_eq!(payload["cwd"].as_str(), Some("/tmp/original-project"));
         assert_eq!(payload["remem_ai_profile"].as_str(), Some("quality"));
-        assert!(payload.get("last_assistant_message").is_none());
+        assert_eq!(
+            payload["last_assistant_message"].as_str(),
+            Some("private assistant answer")
+        );
         Ok(())
     }
 

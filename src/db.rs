@@ -9,6 +9,7 @@ pub mod models;
 pub mod observation;
 pub mod pending;
 pub mod query;
+pub(crate) mod spill_crypto;
 pub mod summarize;
 #[cfg(test)]
 pub mod test_support;
