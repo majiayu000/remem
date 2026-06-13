@@ -82,11 +82,13 @@ fn redact_sensitive_line(line: &str) -> String {
     if let Some((prefix, _)) = split_sensitive_assignment(line) {
         return format!("{prefix}[REDACTED]");
     }
-    redact_sensitive_tokens(line)
+    redact_tokens(line, false)
 }
 
 fn redact_hook_payload_text(text: &str) -> String {
-    text.lines()
+    let redacted = redact_inline_sensitive_assignments(text);
+    redacted
+        .lines()
         .map(redact_hook_payload_line)
         .collect::<Vec<_>>()
         .join("\n")
@@ -96,21 +98,21 @@ fn redact_hook_payload_line(line: &str) -> String {
     if let Some((prefix, _)) = split_sensitive_assignment(line) {
         return format!("{prefix}[REDACTED]");
     }
-    let line = redact_inline_sensitive_assignments(line);
-    redact_sensitive_tokens(&line)
+    redact_tokens(line, true)
 }
 
-fn redact_sensitive_tokens(line: &str) -> String {
+fn redact_tokens(line: &str, redact_sensitive_options: bool) -> String {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
     line.split_whitespace()
         .map(|token| {
             let redacted = if previous_was_bearer || previous_was_sensitive_option {
-                "[REDACTED]"
+                "[REDACTED]".to_string()
             } else {
                 redact_token(token)
             };
-            previous_was_sensitive_option = token_expects_sensitive_argument(token);
+            previous_was_sensitive_option =
+                redact_sensitive_options && token_expects_sensitive_argument(token);
             previous_was_bearer = token
                 .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
                 .eq_ignore_ascii_case("bearer");
@@ -286,6 +288,15 @@ fn is_sensitive_option_key(key: &str) -> bool {
 fn token_expects_sensitive_argument(token: &str) -> bool {
     let option =
         token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
+    let Some(option) = option
+        .strip_prefix("--")
+        .or_else(|| option.strip_prefix('-'))
+    else {
+        return false;
+    };
+    if option.is_empty() {
+        return false;
+    }
     !option.contains('=') && is_sensitive_option_key(option)
 }
 
@@ -326,18 +337,40 @@ fn is_sensitive_key(key: &str) -> bool {
         || normalized.ends_with("_password")
 }
 
-pub(crate) fn redact_token(token: &str) -> &str {
+pub(crate) fn redact_token(token: &str) -> String {
     let trimmed =
         token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
-    if contains_prefixed_secret(trimmed)
+    if let Some(redacted) = redact_url_userinfo(token) {
+        redacted
+    } else if contains_prefixed_secret(trimmed)
         || (trimmed.len() >= 32
             && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
             && trimmed.chars().any(|ch| ch.is_ascii_digit()))
     {
-        "[REDACTED]"
+        "[REDACTED]".to_string()
     } else {
-        token
+        token.to_string()
     }
+}
+
+fn redact_url_userinfo(token: &str) -> Option<String> {
+    let scheme_end = token.find("://")?;
+    let authority_start = scheme_end + 3;
+    let authority = &token[authority_start..];
+    let at = authority.find('@')?;
+    let authority_end = authority
+        .char_indices()
+        .find_map(|(idx, ch)| matches!(ch, '/' | '?' | '#').then_some(idx))
+        .unwrap_or(authority.len());
+    if at == 0 || at >= authority_end {
+        return None;
+    }
+
+    Some(format!(
+        "{}[REDACTED]{}",
+        &token[..authority_start],
+        &authority[at..]
+    ))
 }
 
 fn contains_prefixed_secret(token: &str) -> bool {

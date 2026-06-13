@@ -178,6 +178,19 @@ fn hook_payload_preview_redacts_escaped_quotes_in_malformed_sensitive_values() {
 }
 
 #[test]
+fn hook_payload_preview_redacts_multiline_malformed_sensitive_values() {
+    let payload =
+        "{\"session_id\":\"s\",\"password\":\"first-line\nsecond-line-secret\",\"safe\":\"visible\"";
+
+    let redacted = redact_hook_payload_preview(payload, 1_000);
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("first-line"));
+    assert!(!redacted.contains("second-line-secret"));
+    assert!(redacted.contains("visible"));
+}
+
+#[test]
 fn hook_payload_preview_redacts_full_cookie_header_values() {
     let redacted = redact_hook_payload_preview(
         "curl -H 'Cookie: sid=abc; csrf=short' https://example.test",
@@ -251,8 +264,27 @@ fn hook_payload_preview_redacts_sensitive_option_arguments() {
 }
 
 #[test]
+fn hook_payload_preview_redacts_url_userinfo_credentials() {
+    let redacted =
+        redact_hook_payload_preview("curl -s https://alice:pw@example.test/path?debug=1", 1_000);
+
+    assert!(
+        redacted.contains("https://[REDACTED]@example.test/path?debug=1"),
+        "unexpected redaction: {redacted}"
+    );
+    assert!(!redacted.contains("alice:pw"));
+}
+
+#[test]
 fn general_sensitive_text_redaction_does_not_use_hook_inline_heuristic() {
     let source = "let token = lexer.next_token();\nlet auth = AuthState::Anonymous;";
+
+    assert_eq!(redact_sensitive_text(source), source);
+}
+
+#[test]
+fn general_sensitive_text_redaction_does_not_treat_bare_words_as_options() {
+    let source = "please pass the user value through without changing this phrase\nu value";
 
     assert_eq!(redact_sensitive_text(source), source);
 }
