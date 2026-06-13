@@ -2,8 +2,8 @@ use crate::db::test_support::ScopedTestDataDir;
 
 use super::{
     event_summary, hook_payload_preview_redaction_input, parse_tool_hook, redact_and_truncate,
-    redact_hook_payload_preview, redact_token, should_skip_bash_command, should_skip_tool,
-    HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
+    redact_hook_payload_preview, redact_sensitive_text, redact_token, should_skip_bash_command,
+    should_skip_tool, HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
 };
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
@@ -164,6 +164,50 @@ fn hook_payload_preview_bounds_redaction_work_for_large_malformed_payloads() {
     let redacted = redact_hook_payload_preview(&payload, 512);
     assert!(redacted.contains("[REDACTED]"));
     assert!(!redacted.contains("short-secret"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_escaped_quotes_in_malformed_sensitive_values() {
+    let payload = r#"{"session_id":"s","password":"abc\"rest-of-secret","padding":"x"#;
+
+    let redacted = redact_hook_payload_preview(payload, 1_000);
+
+    assert!(redacted.contains("[REDACTED]"));
+    assert!(!redacted.contains("abc"));
+    assert!(!redacted.contains("rest-of-secret"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_full_cookie_header_values() {
+    let redacted = redact_hook_payload_preview(
+        "curl -H 'Cookie: sid=abc; csrf=short' https://example.test",
+        1_000,
+    );
+
+    assert!(redacted.contains("Cookie: [REDACTED]"));
+    assert!(!redacted.contains("sid=abc"));
+    assert!(!redacted.contains("csrf=short"));
+    assert!(redacted.contains("https://example.test"));
+}
+
+#[test]
+fn hook_payload_preview_redacts_basic_authorization_credentials() {
+    let redacted = redact_hook_payload_preview(
+        "curl -H 'Authorization: Basic dXNlcjpw' https://example.test",
+        1_000,
+    );
+
+    assert!(redacted.contains("Authorization: [REDACTED]"));
+    assert!(!redacted.contains("Basic dXNlcjpw"));
+    assert!(!redacted.contains("dXNlcjpw"));
+    assert!(redacted.contains("https://example.test"));
+}
+
+#[test]
+fn general_sensitive_text_redaction_does_not_use_hook_inline_heuristic() {
+    let source = "let token = lexer.next_token();\nlet auth = AuthState::Anonymous;";
+
+    assert_eq!(redact_sensitive_text(source), source);
 }
 
 #[test]

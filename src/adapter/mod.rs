@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 pub mod claude;
 pub mod codex;
 pub(crate) mod common;
+pub(crate) mod redaction;
 
 /// Normalized event parsed from a hook's raw JSON input.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
