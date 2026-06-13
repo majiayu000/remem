@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static SUMMARY_SPILL_CLAIM_COUNTER: AtomicU64 = AtomicU64::new(0);
+const ORPHANED_SUMMARY_SPILL_CLAIM_MIN_AGE_SECS: u64 = 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SummaryHookSpillRecord {
@@ -48,6 +49,9 @@ pub(super) fn replay_spilled_summary_hook_payloads(
     mut replay: impl FnMut(&Connection, &SummaryHookSpillRecord) -> Result<()>,
 ) -> Result<usize> {
     let path = summary_spill_path();
+    restore_orphaned_summary_spill_claims(Duration::from_secs(
+        ORPHANED_SUMMARY_SPILL_CLAIM_MIN_AGE_SECS,
+    ))?;
     let claimed_path = claimed_summary_spill_path();
     match with_summary_spill_lock(|| {
         std::fs::rename(&path, &claimed_path)
@@ -213,6 +217,104 @@ fn append_open_options() -> std::fs::OpenOptions {
     options
 }
 
+fn restore_orphaned_summary_spill_claims(min_age: Duration) -> Result<usize> {
+    let dir = crate::db::data_dir();
+    let path = summary_spill_path();
+    with_summary_spill_lock(|| {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error).with_context(|| format!("read {}", dir.display())),
+        };
+        let mut restored = 0;
+        for entry in entries {
+            let entry = entry?;
+            let claimed_path = entry.path();
+            if !is_summary_spill_claim_path(&claimed_path)
+                || !is_stale_summary_spill_claim(&claimed_path, min_age)?
+            {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&claimed_path)
+                .with_context(|| format!("read {}", claimed_path.display()))?;
+            append_bytes_to_spill_unlocked(&path, contents.as_bytes())?;
+            std::fs::remove_file(&claimed_path)
+                .with_context(|| format!("remove {}", claimed_path.display()))?;
+            remove_file_if_exists(&failed_summary_spill_path_for_claim(&claimed_path))?;
+            restored += 1;
+        }
+        Ok(restored)
+    })
+}
+
+fn is_summary_spill_claim_path(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name.starts_with("summary-hook-spill.replay-")
+        && file_name.ends_with(".jsonl")
+        && !file_name.ends_with(".failed.jsonl")
+}
+
+fn is_stale_summary_spill_claim(path: &Path, min_age: Duration) -> Result<bool> {
+    if min_age.is_zero() {
+        return Ok(true);
+    }
+    let Some(claim) = summary_spill_claim_fields(path) else {
+        return Ok(false);
+    };
+    if process_alive(claim.pid) {
+        return Ok(false);
+    }
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    Ok(now_nanos.saturating_sub(claim.epoch_nanos) >= min_age.as_nanos())
+}
+
+struct SummarySpillClaimFields {
+    pid: i64,
+    epoch_nanos: u128,
+}
+
+fn summary_spill_claim_fields(path: &Path) -> Option<SummarySpillClaimFields> {
+    let file_name = path.file_name()?.to_str()?;
+    let rest = file_name.strip_prefix("summary-hook-spill.replay-")?;
+    let rest = rest.strip_suffix(".jsonl")?;
+    let (before_sequence, _sequence) = rest.rsplit_once('-')?;
+    let (pid, nanos) = before_sequence.rsplit_once('-')?;
+    Some(SummarySpillClaimFields {
+        pid: pid.parse().ok()?,
+        epoch_nanos: nanos.parse().ok()?,
+    })
+}
+
+fn process_alive(pid: i64) -> bool {
+    if pid <= 0 || pid > i64::from(i32::MAX) {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
 fn restore_claimed_and_failed_spill(claimed_path: &Path, failed_path: &Path, path: &Path) {
     if claimed_path.exists() {
         restore_claimed_spill(claimed_path, path);
@@ -373,6 +475,51 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn current_stop_payload_wins_over_same_session_spill_replay() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-current-wins");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        let old_input = serde_json::json!({
+            "session_id": "sess-summary-current-wins",
+            "cwd": "/tmp/remem",
+            "transcript_path": "/tmp/old-transcript.jsonl"
+        })
+        .to_string();
+        spill_summary_hook_payload(
+            &old_input,
+            Some("codex-cli"),
+            None,
+            Some("/tmp/remem"),
+            &anyhow::anyhow!("stale db"),
+        )?;
+
+        let current_input = serde_json::json!({
+            "session_id": "sess-summary-current-wins",
+            "cwd": "/tmp/remem",
+            "transcript_path": "/tmp/current-transcript.jsonl"
+        })
+        .to_string();
+        super::super::hook::summarize_input(&current_input, Some("codex-cli"), None).await?;
+
+        let payload: String = conn.query_row(
+            "SELECT payload_json FROM jobs
+             WHERE job_type = 'summary' AND session_id = 'sess-summary-current-wins'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(payload.contains("/tmp/current-transcript.jsonl"));
+        assert!(!payload.contains("/tmp/old-transcript.jsonl"));
+        Ok(())
+    }
+
     #[test]
     fn replay_preserves_spills_appended_after_claim() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("summary-hook-spill-claim-race");
@@ -481,6 +628,112 @@ mod tests {
         assert!(restored.contains("sess-active"));
         assert!(restored.contains("sess-restored"));
         assert!(!restored.contains("sess-duplicate"));
+        Ok(())
+    }
+
+    #[test]
+    fn orphaned_claimed_spill_is_restored_to_active_queue() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-spill-orphan-claim");
+        std::fs::create_dir_all(db::data_dir())?;
+        let claimed_path = db::data_dir().join("summary-hook-spill.replay-orphan.jsonl");
+        let failed_path = super::failed_summary_spill_path_for_claim(&claimed_path);
+        std::fs::write(
+            &claimed_path,
+            format!(
+                "{}\n",
+                r#"{"version":1,"input":"{\"session_id\":\"sess-orphan\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#
+            ),
+        )?;
+        std::fs::write(
+            &failed_path,
+            format!(
+                "{}\n",
+                r#"{"version":1,"input":"{\"session_id\":\"sess-orphan-failed\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#
+            ),
+        )?;
+
+        let restored = super::restore_orphaned_summary_spill_claims(std::time::Duration::ZERO)?;
+
+        assert_eq!(restored, 1);
+        assert!(!claimed_path.exists());
+        assert!(!failed_path.exists());
+        let active = std::fs::read_to_string(summary_spill_path())?;
+        assert!(active.contains("sess-orphan"));
+        assert!(!active.contains("sess-orphan-failed"));
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_claimed_spill_is_not_restored_as_orphan() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-spill-fresh-claim");
+        std::fs::create_dir_all(db::data_dir())?;
+        let claimed_path = super::claimed_summary_spill_path();
+        std::fs::write(
+            &claimed_path,
+            format!(
+                "{}\n",
+                r#"{"version":1,"input":"{\"session_id\":\"sess-fresh-claim\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#
+            ),
+        )?;
+
+        let restored =
+            super::restore_orphaned_summary_spill_claims(std::time::Duration::from_secs(60))?;
+
+        assert_eq!(restored, 0);
+        assert!(claimed_path.exists());
+        assert!(!summary_spill_path().exists());
+        Ok(())
+    }
+
+    #[test]
+    fn live_claimed_spill_is_not_restored_as_orphan() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-spill-live-claim");
+        std::fs::create_dir_all(db::data_dir())?;
+        let claimed_path = db::data_dir().join(format!(
+            "summary-hook-spill.replay-{}-1-0.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(
+            &claimed_path,
+            format!(
+                "{}\n",
+                r#"{"version":1,"input":"{\"session_id\":\"sess-live-claim\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#
+            ),
+        )?;
+
+        let restored =
+            super::restore_orphaned_summary_spill_claims(std::time::Duration::from_secs(60))?;
+
+        assert_eq!(restored, 0);
+        assert!(claimed_path.exists());
+        assert!(!summary_spill_path().exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_dead_claimed_spill_is_restored_as_orphan() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-spill-dead-claim");
+        std::fs::create_dir_all(db::data_dir())?;
+        let claimed_path = db::data_dir().join(format!(
+            "summary-hook-spill.replay-{}-1-0.jsonl",
+            i64::from(i32::MAX)
+        ));
+        std::fs::write(
+            &claimed_path,
+            format!(
+                "{}\n",
+                r#"{"version":1,"input":"{\"session_id\":\"sess-dead-claim\"}","host":"codex-cli","profile":null,"db_error":"stale","created_at_epoch":1}"#
+            ),
+        )?;
+
+        let restored =
+            super::restore_orphaned_summary_spill_claims(std::time::Duration::from_secs(60))?;
+
+        assert_eq!(restored, 1);
+        assert!(!claimed_path.exists());
+        let active = std::fs::read_to_string(summary_spill_path())?;
+        assert!(active.contains("sess-dead-claim"));
         Ok(())
     }
 

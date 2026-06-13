@@ -50,6 +50,7 @@ pub(super) async fn summarize_input(
             return Err(error);
         }
     };
+    enqueue_summary_payload(&conn, input, Some(&host), profile)?;
     if let Err(error) = replay_spilled_summary_hook_payloads(&conn, |conn, record| {
         enqueue_summary_payload(
             conn,
@@ -63,7 +64,29 @@ pub(super) async fn summarize_input(
             &format!("summary hook spill replay failed; continuing with current payload: {error}"),
         );
     }
-    enqueue_summary_payload(&conn, input, Some(&host), profile)
+    match should_spawn_worker_once(&conn) {
+        Ok(true) => {
+            if let Err(error) = spawn_worker_once() {
+                crate::log::error(
+                    "summarize",
+                    &format!("summary jobs queued but worker --once spawn failed: {error}"),
+                );
+            }
+        }
+        Ok(false) => {
+            crate::log::info(
+                "summarize",
+                "worker daemon heartbeat healthy; skip worker --once",
+            );
+        }
+        Err(error) => {
+            crate::log::error(
+                "summarize",
+                &format!("summary jobs queued but worker spawn check failed: {error}"),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn enqueue_summary_payload(
@@ -91,28 +114,6 @@ fn enqueue_summary_payload(
         &summary_payload,
         &compress_payload,
     )?;
-    match should_spawn_worker_once(conn) {
-        Ok(true) => {
-            if let Err(error) = spawn_worker_once() {
-                crate::log::error(
-                    "summarize",
-                    &format!("summary jobs queued but worker --once spawn failed: {error}"),
-                );
-            }
-        }
-        Ok(false) => {
-            crate::log::info(
-                "summarize",
-                "worker daemon heartbeat healthy; skip worker --once",
-            );
-        }
-        Err(error) => {
-            crate::log::error(
-                "summarize",
-                &format!("summary jobs queued but worker spawn check failed: {error}"),
-            );
-        }
-    }
     Ok(())
 }
 

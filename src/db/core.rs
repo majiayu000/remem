@@ -130,9 +130,17 @@ pub fn open_db_no_migrate() -> Result<Connection> {
 }
 
 pub fn open_db_for_hook() -> Result<Connection> {
-    open_db_no_migrate().context(
+    let conn = open_db_no_migrate().context(
         "hook database open requires an existing current schema; run `remem install` or `remem migrate` outside the hook path",
-    )
+    )?;
+    let invariant_errors = crate::migrate::validate_schema_invariants(&conn)?;
+    if !invariant_errors.is_empty() {
+        anyhow::bail!(
+            "hook database schema drift requires foreground migration: {}",
+            invariant_errors.join("; ")
+        );
+    }
+    Ok(conn)
 }
 
 pub fn open_db_read_only() -> Result<Connection> {
@@ -259,7 +267,7 @@ pub fn detect_git_commit(cwd: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     use super::*;
     use crate::db::crypto::ALLOW_PLAINTEXT_ENV;
@@ -328,6 +336,31 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(latest_rows, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_for_hook_rejects_schema_drift_without_repairing() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("hook-open-schema-drift");
+        create_current_schema_with_v022_missing_objects(&test_dir.db_path())?;
+
+        let err = crate::db::open_db_for_hook().expect_err("schema drift should fail closed");
+
+        assert!(
+            err.to_string().contains("hook database schema drift"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            format!("{err:#}").contains("schema drift"),
+            "unexpected error: {err:#}"
+        );
+        let check = Connection::open(test_dir.db_path())?;
+        let state_keys_exists: i64 = check.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memory_state_keys'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(state_keys_exists, 0);
         Ok(())
     }
 
@@ -610,6 +643,39 @@ mod tests {
             .execute("INSERT INTO readonly_probe(id) VALUES (2)", [])
             .expect_err("read-only connection must reject writes");
         assert_eq!(err.sqlite_error_code(), Some(rusqlite::ErrorCode::ReadOnly));
+        Ok(())
+    }
+
+    fn create_current_schema_with_v022_missing_objects(path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
+        for migration in crate::migrate::MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version != 22)
+        {
+            conn.execute_batch(migration.sql)?;
+        }
+        conn.execute_batch(
+            "CREATE TABLE _schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at_epoch INTEGER NOT NULL
+            );",
+        )?;
+        for migration in crate::migrate::MIGRATIONS {
+            conn.execute(
+                "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+                 VALUES (?1, ?2, 1700000000)",
+                params![migration.version, migration.name],
+            )?;
+        }
+        conn.execute_batch(&format!(
+            "PRAGMA user_version = {}; PRAGMA foreign_keys=ON;",
+            crate::migrate::latest_schema_version()
+        ))?;
         Ok(())
     }
 }
