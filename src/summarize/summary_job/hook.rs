@@ -5,6 +5,7 @@ use crate::hook_stdin::read_stdin_with_timeout;
 
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
+use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
 
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
@@ -14,7 +15,11 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
     summarize_input(&input, host, profile).await
 }
 
-async fn summarize_input(input: &str, host: Option<&str>, profile: Option<&str>) -> Result<()> {
+pub(super) async fn summarize_input(
+    input: &str,
+    host: Option<&str>,
+    profile: Option<&str>,
+) -> Result<()> {
     let hook: SummarizeInput = match serde_json::from_str(input) {
         Ok(value) => value,
         Err(err) => {
@@ -25,26 +30,62 @@ async fn summarize_input(input: &str, host: Option<&str>, profile: Option<&str>)
             return Ok(());
         }
     };
+    if hook.session_id.is_none() {
+        return Ok(());
+    }
+    let host = resolve_hook_host(host)?;
+    let conn = match db::open_db_for_hook() {
+        Ok(conn) => conn,
+        Err(error) => {
+            let path = spill_summary_hook_payload(input, Some(&host), profile, &error)?;
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "database open failed; spilled summary hook payload to {}: {}",
+                    path.display(),
+                    error
+                ),
+            );
+            return Err(error);
+        }
+    };
+    replay_spilled_summary_hook_payloads(&conn, |conn, record| {
+        enqueue_summary_payload(
+            conn,
+            &record.input,
+            record.host.as_deref(),
+            record.profile.as_deref(),
+        )
+    })?;
+    enqueue_summary_payload(&conn, input, Some(&host), profile)
+}
+
+fn enqueue_summary_payload(
+    conn: &rusqlite::Connection,
+    input: &str,
+    host: Option<&str>,
+    profile: Option<&str>,
+) -> Result<()> {
+    let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
         return Ok(());
     };
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
-    let conn = db::open_db_for_hook()?;
     let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
     let compress_payload = compress_payload(profile)?;
 
-    record_summary_capture_event(&conn, &host, session_id, &project, &cwd, &summary_payload);
+    record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload);
     enqueue_summary_jobs(
-        &conn,
+        conn,
         &host,
         session_id,
         &project,
         &summary_payload,
         &compress_payload,
     )?;
-    if should_spawn_worker_once(&conn)? {
+    if should_spawn_worker_once(conn)? {
         spawn_worker_once()?;
     } else {
         crate::log::info(
@@ -477,6 +518,7 @@ mod tests {
         )?;
         assert_eq!(migrations_exists, 0);
         assert_eq!(jobs_exists, 0);
+        assert!(super::super::spill::summary_spill_path().exists());
         Ok(())
     }
 
