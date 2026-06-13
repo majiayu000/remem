@@ -34,6 +34,7 @@ if [ -z "${REMEM_VERSION}" ]; then
 fi
 
 URL="https://github.com/${REPO}/releases/download/${REMEM_VERSION}/${BINARY_NAME}.tar.gz"
+CHECKSUM_URL="https://github.com/${REPO}/releases/download/${REMEM_VERSION}/SHA256SUMS"
 
 echo "Installing remem ${REMEM_VERSION} (${OS_NAME}/${ARCH_NAME})..."
 
@@ -45,6 +46,51 @@ TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
 curl -fsSL "${URL}" -o "${TMPDIR}/remem.tar.gz"
+if ! curl -fsSL "${CHECKSUM_URL}" -o "${TMPDIR}/SHA256SUMS"; then
+  echo "Failed to download SHA256SUMS from ${CHECKSUM_URL}"
+  exit 1
+fi
+
+CHECKSUM_ENTRY="${BINARY_NAME}.tar.gz"
+if ! EXPECTED_CHECKSUM="$(awk -v file="${CHECKSUM_ENTRY}" '
+  {
+    path = $2
+    sub(/^\*/, "", path)
+    n = split(path, parts, "/")
+    basename = parts[n]
+  }
+  basename == file {
+    print $1
+    found = 1
+    exit
+  }
+  END {
+    if (!found) {
+      exit 1
+    }
+  }
+' "${TMPDIR}/SHA256SUMS")"; then
+  echo "Missing checksum entry for ${CHECKSUM_ENTRY} in SHA256SUMS"
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_CHECKSUM="$(sha256sum "${TMPDIR}/remem.tar.gz" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL_CHECKSUM="$(shasum -a 256 "${TMPDIR}/remem.tar.gz" | awk '{print $1}')"
+else
+  echo "Cannot verify checksum: neither sha256sum nor shasum is available."
+  exit 1
+fi
+
+if [ "${ACTUAL_CHECKSUM}" != "${EXPECTED_CHECKSUM}" ]; then
+  echo "Checksum verification failed for ${CHECKSUM_ENTRY}"
+  echo "Expected: ${EXPECTED_CHECKSUM}"
+  echo "Actual:   ${ACTUAL_CHECKSUM}"
+  exit 1
+fi
+
+echo "Verified checksum for ${CHECKSUM_ENTRY}"
 tar xzf "${TMPDIR}/remem.tar.gz" -C "${TMPDIR}"
 mv "${TMPDIR}/remem" "${INSTALL_DIR}/remem"
 chmod +x "${INSTALL_DIR}/remem"
