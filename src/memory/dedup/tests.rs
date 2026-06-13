@@ -69,8 +69,23 @@ fn test_hash_dedup_finds_exact_match() -> Result<()> {
     let narrative = "Fixed authentication bug in login flow";
     insert_observation(&conn, "test-project", narrative)?;
 
-    let content_hash = format!("{:x}", crate::db::deterministic_hash(narrative.as_bytes()));
+    let content_hash = crate::db::content_identity_hash(narrative.as_bytes());
     let dups = find_hash_duplicates(&conn, "test-project", &content_hash, 900)?;
+
+    assert_eq!(dups.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn test_hash_dedup_accepts_legacy_fnv_hash() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_dedup_schema(&conn)?;
+
+    let narrative = "Fixed authentication bug in login flow";
+    insert_observation(&conn, "test-project", narrative)?;
+
+    let legacy_hash = crate::db::legacy_content_identity_hash(narrative.as_bytes());
+    let dups = find_hash_duplicates(&conn, "test-project", &legacy_hash, 900)?;
 
     assert_eq!(dups.len(), 1);
     Ok(())

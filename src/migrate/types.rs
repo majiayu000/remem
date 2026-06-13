@@ -205,6 +205,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_fact_invalidations",
         sql: include_str!("../migrations/v040_memory_fact_invalidations.sql"),
     },
+    Migration {
+        version: 41,
+        name: "content_identity_sha256",
+        sql: include_str!("../migrations/v041_content_identity_sha256.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

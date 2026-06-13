@@ -11,7 +11,7 @@ pub fn check_duplicate(
     narrative: &str,
     _embedding: Option<&[f32]>,
 ) -> Result<Option<i64>> {
-    let content_hash = format!("{:x}", crate::db::deterministic_hash(narrative.as_bytes()));
+    let content_hash = crate::db::content_identity_hash(narrative.as_bytes());
     let hash_window_secs = 15 * 60;
 
     let hash_dups = find_hash_duplicates(conn, project, &content_hash, hash_window_secs)?;

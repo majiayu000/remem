@@ -298,6 +298,14 @@ fn store_content(
     }
 
     let bytes = content.as_bytes();
+    if let Some(blob_id) = matching_legacy_blob_id(conn, content)? {
+        return Ok((
+            compact_preview(content, DIRECT_CONTENT_BYTES),
+            Some(blob_id),
+            "raw_compact",
+        ));
+    }
+
     conn.execute(
         "INSERT INTO event_blobs(content_hash, content_encoding, content_bytes, original_bytes, stored_bytes, created_at_epoch)
          VALUES (?1, 'plain', ?2, ?3, ?3, ?4)
@@ -317,6 +325,32 @@ fn store_content(
         Some(blob_id),
         "raw_compact",
     ))
+}
+
+fn matching_legacy_blob_id(conn: &Connection, content: &str) -> Result<Option<i64>> {
+    let legacy_hash = legacy_exact_hash(content);
+    let Some((id, encoding, bytes)) = conn
+        .query_row(
+            "SELECT id, content_encoding, content_bytes FROM event_blobs WHERE content_hash = ?1",
+            params![legacy_hash],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+
+    if encoding == "plain" && bytes == content.as_bytes() {
+        Ok(Some(id))
+    } else {
+        Ok(None)
+    }
 }
 
 fn coalesce_extraction_task(
@@ -378,7 +412,11 @@ fn coalesce_extraction_task(
 }
 
 fn exact_hash(content: &str) -> String {
-    format!("{:016x}", crate::db::deterministic_hash(content.as_bytes()))
+    crate::db::content_identity_hash(content.as_bytes())
+}
+
+fn legacy_exact_hash(content: &str) -> String {
+    crate::db::legacy_content_identity_hash(content.as_bytes())
 }
 
 pub fn unique_capture_event_id(event_type: &str, content: &str) -> String {
@@ -501,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn large_capture_uses_blob_and_compact_preview() {
+    fn large_capture_uses_blob_and_compact_preview() -> Result<()> {
         let conn = setup_conn();
         let content = "x".repeat(DIRECT_CONTENT_BYTES + 2048);
         let outcome = record_captured_event(
@@ -517,22 +555,116 @@ mod tests {
                 content: &content,
                 task_kind: Some(ExtractionTaskKind::ObservationExtract),
             },
-        )
-        .expect("large capture should insert");
+        )?;
 
-        let (retention, blob_id): (String, Option<i64>) = conn
+        let (retention, blob_id, event_hash): (String, Option<i64>, String) = conn
             .query_row(
-                "SELECT retention_class, content_blob_id FROM captured_events WHERE id = ?1",
+                "SELECT retention_class, content_blob_id, content_hash FROM captured_events WHERE id = ?1",
                 params![outcome.event_row_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let blob_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))
-            .unwrap();
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        let blob_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))?;
+        let blob_hash: String =
+            conn.query_row("SELECT content_hash FROM event_blobs", [], |row| row.get(0))?;
         assert_eq!(retention, "raw_compact");
         assert!(blob_id.is_some());
         assert_eq!(blob_count, 1);
+        assert!(event_hash.starts_with("sha256:content-v1:"));
+        assert!(blob_hash.starts_with("sha256:content-v1:"));
+        Ok(())
+    }
+
+    #[test]
+    fn large_capture_reuses_matching_legacy_blob() -> Result<()> {
+        let conn = setup_conn();
+        let content = "legacy blob content ".repeat(1200);
+        let sanitized_content = redact_capture_content(&content);
+        let legacy_hash = legacy_exact_hash(&sanitized_content);
+        conn.execute(
+            "INSERT INTO event_blobs
+             (content_hash, content_encoding, content_bytes, original_bytes, stored_bytes, created_at_epoch)
+             VALUES (?1, 'plain', ?2, ?3, ?3, 100)",
+            params![
+                legacy_hash,
+                sanitized_content.as_bytes(),
+                sanitized_content.len() as i64
+            ],
+        )?;
+        let legacy_blob_id = conn.last_insert_rowid();
+
+        let outcome = record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "claude-code",
+                session_id: "sess-legacy-blob",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Task"),
+                content: &content,
+                task_kind: None,
+            },
+        )?;
+
+        let (event_hash, blob_id): (String, Option<i64>) = conn.query_row(
+            "SELECT content_hash, content_blob_id FROM captured_events WHERE id = ?1",
+            params![outcome.event_row_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let blob_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))?;
+        assert!(event_hash.starts_with("sha256:content-v1:"));
+        assert_eq!(blob_id, Some(legacy_blob_id));
+        assert_eq!(blob_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn large_capture_does_not_reuse_mismatched_legacy_blob() -> Result<()> {
+        let conn = setup_conn();
+        let content = "target blob content ".repeat(1200);
+        let sanitized_content = redact_capture_content(&content);
+        let legacy_hash = legacy_exact_hash(&sanitized_content);
+        let wrong_content = "different blob content".repeat(1200);
+        conn.execute(
+            "INSERT INTO event_blobs
+             (content_hash, content_encoding, content_bytes, original_bytes, stored_bytes, created_at_epoch)
+             VALUES (?1, 'plain', ?2, ?3, ?3, 100)",
+            params![
+                legacy_hash,
+                wrong_content.as_bytes(),
+                wrong_content.len() as i64
+            ],
+        )?;
+        let wrong_blob_id = conn.last_insert_rowid();
+
+        let outcome = record_captured_event(
+            &conn,
+            &CaptureEventInput {
+                host: "claude-code",
+                session_id: "sess-mismatched-legacy-blob",
+                project: "/tmp/remem",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Task"),
+                content: &content,
+                task_kind: None,
+            },
+        )?;
+
+        let blob_id: i64 = conn.query_row(
+            "SELECT content_blob_id FROM captured_events WHERE id = ?1",
+            params![outcome.event_row_id],
+            |row| row.get(0),
+        )?;
+        let blob_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))?;
+        assert_ne!(blob_id, wrong_blob_id);
+        assert_eq!(blob_count, 2);
+        Ok(())
     }
 
     #[test]
