@@ -477,7 +477,7 @@ mod tests {
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(conflict_edge_count, 1);
+        assert_eq!(conflict_edge_count, 2);
         let merged_edge_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'merged_into'",
             [],
@@ -495,6 +495,100 @@ mod tests {
         assert_eq!(decision, "defer");
         assert_eq!(reason, "embedding provider is unresolved");
         assert!(operation_id.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_clusters_defer_records_only_conflicting_subset() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-dream-conflict-subset";
+        let first_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-a"),
+            "Use provider A",
+            "Use provider A for embeddings.",
+            "decision",
+            None,
+        )?;
+        let second_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-b"),
+            "Keep provider B as backup",
+            "Keep provider B as a backup option.",
+            "decision",
+            None,
+        )?;
+        let third_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-c"),
+            "Use provider C",
+            "Use provider C for embeddings.",
+            "decision",
+            None,
+        )?;
+        let clusters = vec![Cluster {
+            members: vec![
+                candidates::MemoryCandidate {
+                    id: first_id,
+                    topic_key: Some("conflict-a".to_string()),
+                    title: "Use provider A".to_string(),
+                    content: "Use provider A for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 1,
+                },
+                candidates::MemoryCandidate {
+                    id: second_id,
+                    topic_key: Some("conflict-b".to_string()),
+                    title: "Keep provider B as backup".to_string(),
+                    content: "Keep provider B as a backup option.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 2,
+                },
+                candidates::MemoryCandidate {
+                    id: third_id,
+                    topic_key: Some("conflict-c".to_string()),
+                    title: "Use provider C".to_string(),
+                    content: "Use provider C for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 3,
+                },
+            ],
+        }];
+
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![third_id, first_id],
+                    reason: Some("provider choice is unresolved".to_string()),
+                })
+            })
+        })
+        .await?;
+
+        let (member_ids_json, cluster_size): (String, i64) = conn.query_row(
+            "SELECT member_ids_json, cluster_size
+             FROM dream_cluster_decisions
+             WHERE project = ?1",
+            params![project],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let member_ids: Vec<i64> = serde_json::from_str(&member_ids_json)?;
+        assert_eq!(member_ids, vec![first_id, third_id]);
+        assert_eq!(cluster_size, 2);
+
+        let conflict_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'conflicts'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(conflict_edge_count, 2);
         Ok(())
     }
 

@@ -24,6 +24,13 @@ pub(super) struct MergeResult {
     pub superseded_ids: Vec<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecisionTag {
+    Conflict,
+    NoMerge,
+    Memory,
+}
+
 pub(super) async fn merge_cluster(
     cluster: &Cluster,
     project: &str,
@@ -125,17 +132,19 @@ fn build_user_message(members: &[MemoryCandidate]) -> String {
 }
 
 fn parse_response(response: &str) -> Result<MergeDecision> {
-    if response.contains("<conflict") {
-        return Ok(MergeDecision::Conflict {
-            conflicting_ids: extract_conflict_ids(response)?,
-            reason: extract_conflict_reason(response),
-        });
-    }
-
-    if response.contains("<no_merge") {
-        return Ok(MergeDecision::NoMerge {
-            reason: extract_no_merge_reason(response),
-        });
+    match first_decision_tag(response) {
+        Some(DecisionTag::Conflict) => {
+            return Ok(MergeDecision::Conflict {
+                conflicting_ids: extract_conflict_ids(response)?,
+                reason: extract_conflict_reason(response),
+            });
+        }
+        Some(DecisionTag::NoMerge) => {
+            return Ok(MergeDecision::NoMerge {
+                reason: extract_no_merge_reason(response),
+            });
+        }
+        Some(DecisionTag::Memory) | None => {}
     }
 
     let topic_key = require_tag(response, "topic_key")?;
@@ -164,6 +173,18 @@ fn parse_response(response: &str) -> Result<MergeDecision> {
         content,
         superseded_ids,
     }))
+}
+
+fn first_decision_tag(response: &str) -> Option<DecisionTag> {
+    [
+        ("<conflict", DecisionTag::Conflict),
+        ("<no_merge", DecisionTag::NoMerge),
+        ("<memory", DecisionTag::Memory),
+    ]
+    .into_iter()
+    .filter_map(|(marker, tag)| response.find(marker).map(|index| (index, tag)))
+    .min_by_key(|(index, _)| *index)
+    .map(|(_, tag)| tag)
 }
 
 fn require_tag(response: &str, tag: &str) -> Result<String> {
@@ -334,6 +355,27 @@ mod tests {
             MergeDecision::NoMerge { .. } => panic!("expected Merge"),
             MergeDecision::Conflict { .. } => panic!("expected Merge"),
         }
+    }
+
+    #[test]
+    fn test_parse_merge_content_with_literal_conflict_tag() -> Result<()> {
+        let response = r#"<memory>
+<topic_key>dream-contract</topic_key>
+<type>decision</type>
+<title>Dream conflict contract</title>
+<content>The prompt may return <conflict ids="10 20" reason="values differ"/> when facts disagree.</content>
+<supersedes>10 20</supersedes>
+</memory>"#;
+        match parse_response(response)? {
+            MergeDecision::Merge(r) => {
+                assert_eq!(r.topic_key, "dream-contract");
+                assert_eq!(r.superseded_ids, vec![10, 20]);
+                assert!(r.content.contains("<conflict ids="));
+            }
+            MergeDecision::NoMerge { .. } => panic!("expected Merge"),
+            MergeDecision::Conflict { .. } => panic!("expected Merge"),
+        }
+        Ok(())
     }
 
     #[test]

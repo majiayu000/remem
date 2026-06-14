@@ -56,12 +56,28 @@ pub(super) fn record_conflict(
             reason: Some(defer_reason),
         },
     )?;
-    decisions::record_defer(&tx, project, cluster, reason, operation_id)?;
+    let decision_cluster = cluster_for_conflicting_ids(cluster, &metadata.ids);
+    decisions::record_defer(&tx, project, &decision_cluster, reason, operation_id)?;
     tx.commit()?;
     Ok(ConflictOutcome {
         operation_id,
         edge_count,
     })
+}
+
+fn cluster_for_conflicting_ids(cluster: &Cluster, ids: &[i64]) -> Cluster {
+    let ids = ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    let mut members = cluster
+        .members
+        .iter()
+        .filter(|member| ids.contains(&member.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    members.sort_by_key(|member| member.id);
+    Cluster { members }
 }
 
 #[derive(Debug)]
