@@ -19,6 +19,7 @@ const FTS_WEIGHT: f64 = 2.5;
 const VECTOR_WEIGHT: f64 = 3.0;
 const ENTITY_WEIGHT: f64 = 1.25;
 const TEMPORAL_WEIGHT: f64 = 1.0;
+const FACT_WEIGHT: f64 = 1.4;
 const LIKE_FALLBACK_WEIGHT: f64 = 0.25;
 const MIN_EVIDENCE_CONFIDENCE: f64 = 0.62;
 
@@ -332,6 +333,20 @@ fn build_query_search_plan(
         channels.push(NamedChannel::enabled("entity", weights.entity, entity_ids));
     }
 
+    let fact_ids = crate::retrieval::temporal::search_fact_memory_ids(
+        conn,
+        &core_refs,
+        project,
+        memory_type,
+        branch,
+        fetch,
+        include_stale,
+        crate::retrieval::temporal::FactTimeMode::from_query(query_text),
+    )?;
+    if !fact_ids.is_empty() {
+        channels.push(NamedChannel::enabled("fact", FACT_WEIGHT, fact_ids));
+    }
+
     if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {
         temporal_range = Some((
             temporal_constraint.start_epoch,
@@ -568,20 +583,23 @@ fn apply_confidence_gate(
 }
 
 fn candidate_confidence(memory: &Memory, plan: &QuerySearchPlan) -> f64 {
-    if plan.claim_terms.is_empty() || has_only_vector_evidence(memory.id, plan) {
+    if plan.claim_terms.is_empty() || has_trusted_non_text_evidence(memory.id, plan) {
         return 1.0;
     }
     claim_term_coverage(memory, &plan.claim_terms)
 }
 
-fn has_only_vector_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool {
+fn has_trusted_non_text_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool {
     let contributing: Vec<&str> = plan
         .channels
         .iter()
         .filter(|channel| channel.hits.iter().any(|hit| hit.id == memory_id))
         .map(|channel| channel.name)
         .collect();
-    !contributing.is_empty() && contributing.iter().all(|channel| *channel == "vector")
+    !contributing.is_empty()
+        && contributing
+            .iter()
+            .all(|channel| matches!(*channel, "vector" | "fact"))
 }
 
 fn vector_similarity_score(distance: f32, weights: SearchWeights) -> f64 {

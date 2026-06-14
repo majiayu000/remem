@@ -74,6 +74,11 @@ pub(super) fn load_context_data_with_policy(
     errors.append(&mut memory_selection.errors);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
+    if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts(conn, &mut memories) {
+        let message = format!("failed to load temporal fact labels for {project}: {e}");
+        crate::log::error("context", &message);
+        errors.push(ContextLoadError::new("memories", message));
+    }
     let lessons = memory::lesson::list_lessons_for_context(
         conn,
         project,

@@ -20,6 +20,14 @@ pub(super) fn format_epoch_short(epoch: i64) -> String {
         .unwrap_or_default()
 }
 
+pub(super) fn format_epoch_date(epoch: i64) -> String {
+    Local
+        .timestamp_opt(epoch, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| epoch.to_string())
+}
+
 pub(super) fn format_epoch_time(epoch: i64) -> String {
     Local
         .timestamp_opt(epoch, 0)

@@ -382,6 +382,88 @@ fn evidence_gate_preserves_family_relation_aliases() -> Result<()> {
 }
 
 #[test]
+fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "Signer fact source",
+            content: "Signer details live in the temporal fact layer.",
+            scope: "project",
+            updated_at_epoch: now - 100,
+        },
+    )?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 2,
+            project: "/repo",
+            title: "Stale signer fact source",
+            content: "Old signer details live outside the searchable text.",
+            scope: "project",
+            updated_at_epoch: now - 90,
+        },
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/repo', 'HarborMint', 'verified_by', 'Toma Reed', ?1, ?2, ?3, 1,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![now - 1_000, now + 1_000, now - 900],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/repo', 'HarborMint', 'verified_by', 'Toma Reed', ?1, ?2, ?3, 2,
+                 NULL, '[]', 0.95, NULL, 'stale', ?4, ?3, ?3)",
+        params![now - 1_000, now + 1_000, now - 800, now - 10],
+    )?;
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("Who signs HarborMint with Toma Reed?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    let fact = explain
+        .channels
+        .iter()
+        .find(|channel| channel.name == "fact")
+        .context("fact channel should be reported")?;
+    assert!(fact.enabled, "{fact:#?}");
+    assert_eq!(fact.hits.first().map(|hit| hit.memory_id), Some(1));
+    assert!(!fact.hits.iter().any(|hit| hit.memory_id == 2));
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == 1)
+        .context("expected fact-recalled result")?;
+    assert!(result
+        .contributions
+        .iter()
+        .any(|contribution| contribution.channel == "fact" && contribution.score > 0.0));
+    assert_eq!(explain.filtered_result_count, 0);
+    Ok(())
+}
+
+#[test]
 fn search_explain_reports_disabled_vector_channel_when_table_is_missing() -> Result<()> {
     let conn = setup_explain_conn()?;
     conn.execute("DROP TABLE memory_embeddings", [])?;

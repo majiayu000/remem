@@ -4,6 +4,7 @@ pub mod claude_memory;
 mod commit_signals;
 mod debug;
 mod diagnostics;
+mod fact_labels;
 mod filters;
 mod format;
 mod host;

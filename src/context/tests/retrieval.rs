@@ -1,8 +1,10 @@
+use anyhow::Context;
 use rusqlite::{params, Connection};
 
 use super::super::hybrid_context::query_hybrid_context_memories;
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::load_context_data_with_policy;
+use super::super::sections::render_core_memory_with_limits;
 use super::{insert_global_memory, insert_memory, setup_context_schema};
 
 #[test]
@@ -148,6 +150,85 @@ fn hybrid_context_temporal_retrieval_uses_reference_time() -> anyhow::Result<()>
 
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].title, "Historical reference time");
+    Ok(())
+}
+
+#[test]
+fn hybrid_context_fact_retrieval_labels_validity_in_core_output() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    let valid_from = chrono::NaiveDate::from_ymd_opt(2026, 1, 2)
+        .and_then(|date| date.and_hms_opt(12, 0, 0))
+        .context("valid fact label date")?
+        .and_utc()
+        .timestamp();
+    let limits = ContextLimits {
+        candidate_fetch_limit: 2,
+        memory_index_limit: 4,
+        core_item_limit: 4,
+        core_char_limit: 1_200,
+        ..ContextLimits::default()
+    };
+    let policy = ContextPolicy::from_limits(limits);
+
+    for idx in 0..8 {
+        insert_memory(
+            &conn,
+            idx + 1,
+            project,
+            Some(&format!("recent-noise-{idx}")),
+            "session_activity",
+            &format!("Recent unrelated note {idx}"),
+            "Recent context entry without the fact terms.",
+            now - idx,
+        );
+    }
+    insert_memory(
+        &conn,
+        100,
+        project,
+        Some("harbormint-signer-source"),
+        "decision",
+        "HarborMint signer source",
+        "Signer details live in the temporal fact layer.",
+        now - 10_000,
+    );
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'HarborMint', 'verified_by', 'Toma Reed', ?2, NULL, ?3, 100,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![project, valid_from, now - 9_000],
+    )?;
+    conn.execute(
+        "INSERT INTO workstreams
+         (id, project, title, status, next_action, created_at_epoch, updated_at_epoch)
+         VALUES (1, ?1, 'HarborMint signer', 'active',
+                 'Who signs HarborMint with Toma Reed?', ?2, ?2)",
+        params![project, now],
+    )?;
+
+    let loaded = load_context_data_with_policy(&conn, project, None, &policy, true);
+    let memory = loaded
+        .memories
+        .iter()
+        .find(|memory| memory.id == 100)
+        .context("fact channel should retrieve source memory")?;
+
+    assert!(memory.text.contains("Temporal facts:"));
+    assert!(memory.text.contains("valid_from=2026-01-02"));
+    assert!(memory.text.contains("valid_to=open"));
+
+    let mut output = String::new();
+    render_core_memory_with_limits(&mut output, &loaded.memories, &limits);
+    assert!(output.contains("HarborMint signer source"), "{output}");
+    assert!(output.contains("Temporal facts:"), "{output}");
+    assert!(output.contains("valid_from=2026-01-02"), "{output}");
     Ok(())
 }
 
