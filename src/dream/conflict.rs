@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::candidates::Cluster;
 use super::decisions;
@@ -23,6 +23,15 @@ pub(super) fn record_conflict(
 ) -> Result<ConflictOutcome> {
     let tx = conn.transaction()?;
     let metadata = validate_conflicting_ids(&tx, project, cluster, conflicting_ids)?;
+    let decision_cluster = cluster_for_conflicting_ids(cluster, &metadata.ids);
+    if let Some(operation_id) = existing_conflict_operation_id(&tx, &metadata.ids)? {
+        decisions::record_defer(&tx, project, &decision_cluster, reason, operation_id)?;
+        tx.commit()?;
+        return Ok(ConflictOutcome {
+            operation_id,
+            edge_count: 0,
+        });
+    }
     let operation_input = MemoryOperationInput {
         source: "dream".to_string(),
         actor: "dream".to_string(),
@@ -56,7 +65,6 @@ pub(super) fn record_conflict(
             reason: Some(defer_reason),
         },
     )?;
-    let decision_cluster = cluster_for_conflicting_ids(cluster, &metadata.ids);
     decisions::record_defer(&tx, project, &decision_cluster, reason, operation_id)?;
     tx.commit()?;
     Ok(ConflictOutcome {
@@ -133,6 +141,37 @@ fn validate_conflicting_ids(
         state_key: common_optional_string(rows.iter().map(|row| row.state_key.as_deref())),
         state_key_id: common_optional_i64(rows.iter().map(|row| row.state_key_id)),
     })
+}
+
+fn existing_conflict_operation_id(conn: &Connection, ids: &[i64]) -> Result<Option<i64>> {
+    let mut operation_id = None;
+    for (idx, from_memory_id) in ids.iter().copied().enumerate() {
+        for to_memory_id in ids.iter().copied().skip(idx + 1) {
+            let pair_operation_id = conn
+                .query_row(
+                    "SELECT source_operation_id
+                     FROM memory_edges
+                     WHERE edge_type = 'conflicts'
+                       AND (
+                            (from_memory_id = ?1 AND to_memory_id = ?2)
+                            OR (from_memory_id = ?2 AND to_memory_id = ?1)
+                       )
+                       AND source_operation_id IS NOT NULL
+                     ORDER BY created_at_epoch DESC, id DESC
+                     LIMIT 1",
+                    params![from_memory_id, to_memory_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            let Some(pair_operation_id) = pair_operation_id else {
+                return Ok(None);
+            };
+            operation_id = Some(operation_id.map_or(pair_operation_id, |current: i64| {
+                current.max(pair_operation_id)
+            }));
+        }
+    }
+    Ok(operation_id)
 }
 
 #[derive(Debug)]

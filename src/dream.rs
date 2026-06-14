@@ -589,6 +589,46 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(conflict_edge_count, 2);
+
+        let operation_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_operation_log WHERE operation = 'conflict'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(operation_count, 1);
+
+        let plan = decisions::load_cluster_plan(
+            &conn,
+            project,
+            vec![Cluster {
+                members: clusters[0].members.clone(),
+            }],
+        )?;
+        assert_eq!(plan.eligible.len(), 1);
+        assert_eq!(plan.suppressed, 0);
+
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![third_id, first_id],
+                    reason: Some("provider choice is unresolved".to_string()),
+                })
+            })
+        })
+        .await?;
+
+        let conflict_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'conflicts'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(conflict_edge_count, 2);
+        let operation_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_operation_log WHERE operation = 'conflict'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(operation_count, 1);
         Ok(())
     }
 

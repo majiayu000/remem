@@ -172,11 +172,12 @@ fn persist_graph_candidates(
     let tx = conn.transaction()?;
     let mut summary = GraphCandidatePersistSummary::default();
     for candidate in candidates {
-        ensure_candidate_evidence(candidate, &allowed_evidence)?;
-        ensure_graph_conflict_prompt_refs(candidate, Some(&prompt_memory_ref_ids))?;
+        let candidate = canonicalize_graph_candidate(candidate)?;
+        ensure_candidate_evidence(&candidate, &allowed_evidence)?;
+        ensure_graph_conflict_prompt_refs(&candidate, Some(&prompt_memory_ref_ids))?;
         let evidence_json = serde_json::to_string(&candidate.evidence_event_ids)?;
         if let Some(existing_id) =
-            find_graph_candidate(&tx, task.project_id, candidate, &evidence_json)?
+            find_graph_candidate(&tx, task.project_id, &candidate, &evidence_json)?
         {
             update_graph_candidate_prompt_memory_refs(
                 &tx,
@@ -212,16 +213,16 @@ fn persist_graph_candidates(
         let candidate_id = tx.last_insert_rowid();
         summary.candidates += 1;
 
-        let source_supported = graph_candidate_has_source_support(candidate, batch);
+        let source_supported = graph_candidate_has_source_support(&candidate, batch);
         let trusted_refs_valid =
-            graph_candidate_has_trusted_refs(&tx, &task.project, task.project_id, candidate)?;
-        if graph_should_auto_promote(candidate) && source_supported && trusted_refs_valid {
+            graph_candidate_has_trusted_refs(&tx, &task.project, task.project_id, &candidate)?;
+        if graph_should_auto_promote(&candidate) && source_supported && trusted_refs_valid {
             let outcome = insert_trusted_graph_edge(
                 &tx,
                 &task.project,
                 task.project_id,
                 candidate_id,
-                candidate,
+                &candidate,
                 Some(&prompt_memory_ref_ids),
                 "graph_candidate",
             )?;
@@ -237,7 +238,7 @@ fn persist_graph_candidates(
                     candidate.edge_type,
                     candidate.risk_class,
                     candidate.confidence,
-                    graph_auto_promote_block_reason(candidate, source_supported, trusted_refs_valid)
+                    graph_auto_promote_block_reason(&candidate, source_supported, trusted_refs_valid)
                 ),
             );
             summary.pending_review += 1;
@@ -245,6 +246,27 @@ fn persist_graph_candidates(
     }
     tx.commit()?;
     Ok(summary)
+}
+
+fn canonicalize_graph_candidate(candidate: &ParsedGraphCandidate) -> Result<ParsedGraphCandidate> {
+    let mut candidate = candidate.clone();
+    if candidate.edge_type != "conflicts" {
+        return Ok(candidate);
+    }
+    let Some(from_id) = parse_memory_ref_id(&candidate.from_ref)? else {
+        return Ok(candidate);
+    };
+    let Some(to_id) = parse_memory_ref_id(&candidate.to_ref)? else {
+        return Ok(candidate);
+    };
+    let (from_id, to_id) = if from_id <= to_id {
+        (from_id, to_id)
+    } else {
+        (to_id, from_id)
+    };
+    candidate.from_ref = format!("memory:{from_id}");
+    candidate.to_ref = format!("memory:{to_id}");
+    Ok(candidate)
 }
 
 fn ensure_candidate_evidence(

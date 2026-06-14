@@ -173,11 +173,20 @@ fn insert_graph_source_observation_with_files(
 }
 
 fn graph_candidate_xml(edge_type: &str, to_ref: &str, evidence_id: i64) -> String {
+    graph_candidate_xml_from(edge_type, "memory:1", to_ref, evidence_id)
+}
+
+fn graph_candidate_xml_from(
+    edge_type: &str,
+    from_ref: &str,
+    to_ref: &str,
+    evidence_id: i64,
+) -> String {
     format!(
         "<graph_candidate>\
             <type>edge</type>\
             <edge_type>{edge_type}</edge_type>\
-            <from_ref>memory:1</from_ref>\
+            <from_ref>{from_ref}</from_ref>\
             <to_ref>{to_ref}</to_ref>\
             <evidence_event_ids>{evidence_id}</evidence_event_ids>\
             <risk_class>low</risk_class>\
@@ -399,6 +408,48 @@ async fn graph_candidate_prompt_includes_evidence_backed_memory_refs_for_conflic
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     assert_eq!(edge_type, "conflicts");
+    assert_eq!(from_ref, "memory:1");
+    assert_eq!(to_ref, "memory:2");
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_canonicalizes_symmetric_conflict_refs_for_dedupe() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-conflict-canonical")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    let event_id = insert_graph_source_observation(
+        &conn,
+        &task,
+        "Memory 1 and memory 2 conflict regardless of output order.",
+    )?;
+    set_graph_memory_evidence(&conn, &[1, 2], &[event_id])?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(format!(
+            "{}{}{}",
+            graph_candidate_xml_from("conflicts", "memory:2", "memory:1", event_id),
+            graph_candidate_xml_from("conflicts", "memory:1", "memory:2", event_id),
+            graph_candidate_xml_from("conflicts", "memory:02", "memory:1", event_id)
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    let (candidate_count, from_ref, to_ref): (i64, String, String) = conn.query_row(
+        "SELECT COUNT(*), from_ref, to_ref FROM graph_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(candidate_count, 1);
     assert_eq!(from_ref, "memory:1");
     assert_eq!(to_ref, "memory:2");
     Ok(())
