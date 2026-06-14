@@ -589,12 +589,12 @@ pub(super) fn build_graph_candidate_prompt(
                 xml_escape_attr(&evidence)
             ));
             prompt.push_str("<title>");
-            prompt.push_str(&xml_escape_text(&crate::db::truncate_str(
+            prompt.push_str(&xml_escape_text(crate::db::truncate_str(
                 &memory.title,
                 200,
             )));
             prompt.push_str("</title>\n<content>");
-            prompt.push_str(&xml_escape_text(&crate::db::truncate_str(
+            prompt.push_str(&xml_escape_text(crate::db::truncate_str(
                 &memory.content,
                 500,
             )));
