@@ -167,12 +167,22 @@ fn persist_graph_candidates(
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
+    let prompt_memory_ref_ids = batch.prompt_memory_ref_ids();
+    let prompt_memory_ref_ids_json = serde_json::to_string(&prompt_memory_ref_ids)?;
     let tx = conn.transaction()?;
     let mut summary = GraphCandidatePersistSummary::default();
     for candidate in candidates {
         ensure_candidate_evidence(candidate, &allowed_evidence)?;
+        ensure_graph_conflict_prompt_refs(candidate, Some(&prompt_memory_ref_ids))?;
         let evidence_json = serde_json::to_string(&candidate.evidence_event_ids)?;
-        if graph_candidate_exists(&tx, task.project_id, candidate, &evidence_json)? {
+        if let Some(existing_id) =
+            find_graph_candidate(&tx, task.project_id, candidate, &evidence_json)?
+        {
+            update_graph_candidate_prompt_memory_refs(
+                &tx,
+                existing_id,
+                &prompt_memory_ref_ids_json,
+            )?;
             continue;
         }
 
@@ -180,10 +190,10 @@ fn persist_graph_candidates(
         tx.execute(
             "INSERT INTO graph_candidates
              (project_id, source_project, candidate_type, edge_type, from_ref, to_ref,
-              evidence_event_ids, confidence, risk_class, reason, review_status,
+              evidence_event_ids, prompt_memory_ref_ids, confidence, risk_class, reason, review_status,
               created_at_epoch, updated_at_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                     'pending_review', ?11, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                     'pending_review', ?12, ?12)",
             params![
                 task.project_id,
                 task.project,
@@ -192,6 +202,7 @@ fn persist_graph_candidates(
                 candidate.from_ref,
                 candidate.to_ref,
                 evidence_json,
+                prompt_memory_ref_ids_json,
                 candidate.confidence,
                 candidate.risk_class,
                 candidate.reason,
@@ -211,6 +222,7 @@ fn persist_graph_candidates(
                 task.project_id,
                 candidate_id,
                 candidate,
+                Some(&prompt_memory_ref_ids),
                 "graph_candidate",
             )?;
             mark_candidate_promoted(&tx, candidate_id, "auto_promoted", &outcome)?;
@@ -250,15 +262,14 @@ fn ensure_candidate_evidence(
     Ok(())
 }
 
-fn graph_candidate_exists(
+fn find_graph_candidate(
     conn: &Connection,
     project_id: i64,
     candidate: &ParsedGraphCandidate,
     evidence_json: &str,
-) -> Result<bool> {
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM graph_candidates
+) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM graph_candidates
              WHERE project_id = ?1
                AND candidate_type = ?2
                AND edge_type = ?3
@@ -266,18 +277,35 @@ fn graph_candidate_exists(
                AND to_ref = ?5
                AND evidence_event_ids = ?6
              LIMIT 1",
-            params![
-                project_id,
-                candidate.candidate_type,
-                candidate.edge_type,
-                candidate.from_ref,
-                candidate.to_ref,
-                evidence_json
-            ],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(existing.is_some())
+        params![
+            project_id,
+            candidate.candidate_type,
+            candidate.edge_type,
+            candidate.from_ref,
+            candidate.to_ref,
+            evidence_json
+        ],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn update_graph_candidate_prompt_memory_refs(
+    conn: &Connection,
+    candidate_id: i64,
+    prompt_memory_ref_ids_json: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE graph_candidates
+         SET prompt_memory_ref_ids = ?1,
+             updated_at_epoch = ?2
+         WHERE id = ?3
+           AND prompt_memory_ref_ids IS NULL",
+        params![prompt_memory_ref_ids_json, now, candidate_id],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn insert_trusted_graph_edge(
@@ -286,12 +314,18 @@ pub(crate) fn insert_trusted_graph_edge(
     project_id: i64,
     candidate_id: i64,
     candidate: &ParsedGraphCandidate,
+    prompt_memory_ref_ids: Option<&[i64]>,
     actor: &str,
 ) -> Result<TrustedGraphEdgeOutcome> {
     ensure_review_threshold(candidate)?;
+    ensure_graph_conflict_prompt_refs(candidate, prompt_memory_ref_ids)?;
     ensure_trusted_graph_refs(conn, source_project, project_id, candidate)?;
-    let conflict_bridge =
-        conflict_bridge::build_memory_conflict_bridge(conn, source_project, candidate)?;
+    let conflict_bridge = conflict_bridge::build_memory_conflict_bridge(
+        conn,
+        source_project,
+        candidate,
+        prompt_memory_ref_ids,
+    )?;
     let operation_input = conflict_bridge.as_ref().map_or_else(
         || MemoryOperationInput {
             source: "graph_candidate".to_string(),
@@ -389,6 +423,28 @@ fn ensure_review_threshold(candidate: &ParsedGraphCandidate) -> Result<()> {
             candidate.confidence,
             REVIEW_APPROVAL_MIN_CONFIDENCE
         );
+    }
+    Ok(())
+}
+
+fn ensure_graph_conflict_prompt_refs(
+    candidate: &ParsedGraphCandidate,
+    prompt_memory_ref_ids: Option<&[i64]>,
+) -> Result<()> {
+    if candidate.edge_type != "conflicts" {
+        return Ok(());
+    }
+    let Some(from_id) = parse_memory_ref_id(&candidate.from_ref)? else {
+        bail!("graph conflict candidates must use memory:* endpoints");
+    };
+    let Some(to_id) = parse_memory_ref_id(&candidate.to_ref)? else {
+        bail!("graph conflict candidates must use memory:* endpoints");
+    };
+    let Some(prompt_memory_ref_ids) = prompt_memory_ref_ids else {
+        bail!("graph conflict candidates require persisted prompt memory_refs");
+    };
+    if !prompt_memory_ref_ids.contains(&from_id) || !prompt_memory_ref_ids.contains(&to_id) {
+        bail!("graph conflict candidate references memory outside provided memory_refs");
     }
     Ok(())
 }

@@ -64,6 +64,7 @@ pub(super) fn build_memory_conflict_bridge(
     conn: &Connection,
     source_project: &str,
     candidate: &ParsedGraphCandidate,
+    prompt_memory_ref_ids: Option<&[i64]>,
 ) -> Result<Option<MemoryConflictBridge>> {
     if candidate.edge_type != "conflicts" {
         return Ok(None);
@@ -80,6 +81,15 @@ pub(super) fn build_memory_conflict_bridge(
     let mut ids = vec![from_id, to_id];
     ids.sort_unstable();
     ids.dedup();
+    let Some(prompt_memory_ref_ids) = prompt_memory_ref_ids else {
+        bail!("graph conflict candidates require persisted prompt memory_refs");
+    };
+    if !ids
+        .iter()
+        .all(|memory_id| prompt_memory_ref_ids.contains(memory_id))
+    {
+        bail!("graph conflict candidate references memory outside provided memory_refs");
+    }
     let rows = load_memory_ref_rows(conn, source_project, &ids)?;
     if rows.len() != ids.len() {
         bail!("graph conflict candidate references memory outside the active repo scope");

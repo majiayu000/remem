@@ -25,8 +25,8 @@ struct GraphSourceEvent {
 }
 
 #[derive(Debug, Clone)]
-struct GraphSourceMemory {
-    id: i64,
+pub(super) struct GraphSourceMemory {
+    pub(super) id: i64,
     memory_type: String,
     topic_key: Option<String>,
     title: String,
@@ -41,6 +41,15 @@ pub(super) struct GraphObservationBatch {
     source_events: Vec<GraphSourceEvent>,
     observations: Vec<GraphSourceObservation>,
     source_memories: Vec<GraphSourceMemory>,
+}
+
+impl GraphObservationBatch {
+    pub(super) fn prompt_memory_ref_ids(&self) -> Vec<i64> {
+        self.source_memories
+            .iter()
+            .map(|memory| memory.id)
+            .collect()
+    }
 }
 
 pub(super) fn load_graph_observation_batch(

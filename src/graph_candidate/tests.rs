@@ -72,6 +72,21 @@ fn insert_graph_memory(conn: &Connection, project: &str, id: i64) -> Result<()> 
     Ok(())
 }
 
+fn set_graph_memory_evidence(
+    conn: &Connection,
+    memory_ids: &[i64],
+    event_ids: &[i64],
+) -> Result<()> {
+    let evidence_json = serde_json::to_string(event_ids)?;
+    for memory_id in memory_ids {
+        conn.execute(
+            "UPDATE memories SET evidence_event_ids = ?1 WHERE id = ?2",
+            params![evidence_json, memory_id],
+        )?;
+    }
+    Ok(())
+}
+
 fn insert_graph_entity(conn: &Connection, name: &str) -> Result<i64> {
     conn.execute(
         "INSERT INTO entities(canonical_name, entity_type, mention_count, created_at_epoch)
@@ -351,11 +366,7 @@ async fn graph_candidate_prompt_includes_evidence_backed_memory_refs_for_conflic
         &task,
         "Provider A and provider B are contradictory active memories.",
     )?;
-    let evidence_json = serde_json::to_string(&vec![event_id])?;
-    conn.execute(
-        "UPDATE memories SET evidence_event_ids = ?1 WHERE id IN (1, 2)",
-        params![evidence_json],
-    )?;
+    set_graph_memory_evidence(&conn, &[1, 2], &[event_id])?;
 
     let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
         assert!(
@@ -390,6 +401,45 @@ async fn graph_candidate_prompt_includes_evidence_backed_memory_refs_for_conflic
     assert_eq!(edge_type, "conflicts");
     assert_eq!(from_ref, "memory:1");
     assert_eq!(to_ref, "memory:2");
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_rejects_conflict_ref_outside_prompt_memory_refs() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-conflict-outside-memory-refs")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    let event_id = insert_graph_source_observation(
+        &conn,
+        &task,
+        "Memory 1 conflicts with a stale provider claim.",
+    )?;
+    set_graph_memory_evidence(&conn, &[1], &[event_id])?;
+
+    let err = process_with_graph_generator(&mut conn, &task, |prompt| async move {
+        assert!(prompt.contains("ref=\"memory:1\""), "prompt: {prompt}");
+        assert!(
+            !prompt.contains("ref=\"memory:2\""),
+            "memory:2 must not be available to conflict output: {prompt}"
+        );
+        Ok(graph_candidate_xml("conflicts", "memory:2", event_id))
+    })
+    .await
+    .expect_err("conflict refs outside prompt memory_refs must fail closed");
+
+    assert!(
+        err.to_string().contains("provided memory_refs"),
+        "unexpected error: {err}"
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    assert_eq!(candidate_count, 0);
+    assert_eq!(edge_count, 0);
     Ok(())
 }
 
@@ -711,6 +761,7 @@ fn graph_review_promotion_guard_rolls_back_stale_approval() -> Result<()> {
         task.project_id,
         1,
         &candidate,
+        None,
         "graph_review",
     )?;
     let err = mark_candidate_promoted(&tx, 1, "approved", &outcome)
@@ -814,6 +865,51 @@ fn graph_review_approval_rejects_non_memory_conflict_refs() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn graph_review_approval_rejects_conflict_without_prompt_memory_refs() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-conflict-no-prompt-refs",
+        &["Memory 1 conflicts with memory 2."],
+    )?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    conn.execute(
+        "INSERT INTO graph_candidates
+         (project_id, source_project, candidate_type, edge_type, from_ref, to_ref,
+          evidence_event_ids, confidence, risk_class, reason, review_status,
+          created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, 'edge', 'conflicts', 'memory:1', 'memory:2',
+                 ?3, 0.91, 'low', 'legacy conflict without prompt refs',
+                 'pending_review', 1, 1)",
+        params![
+            task.project_id,
+            task.project,
+            serde_json::to_string(&vec![event_ids[0]])?
+        ],
+    )?;
+
+    let err = review::approve_candidate(&mut conn, 1)
+        .expect_err("conflict approval without persisted prompt refs must fail closed");
+    assert!(
+        err.to_string().contains("persisted prompt memory_refs"),
+        "unexpected error: {err}"
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let graph_edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    let memory_edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| row.get(0))?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(graph_edge_count, 0);
+    assert_eq!(memory_edge_count, 0);
+    Ok(())
+}
+
 #[tokio::test]
 async fn graph_review_approve_reject_and_defer() -> Result<()> {
     let mut conn = graph_test_conn();
@@ -827,6 +923,7 @@ async fn graph_review_approve_reject_and_defer() -> Result<()> {
         &task,
         "Memory 1 conflicts with memory 2, memory 3, and memory 4.",
     )?;
+    set_graph_memory_evidence(&conn, &[1, 2, 3, 4], &[event_id])?;
     process_with_graph_generator(&mut conn, &task, |_prompt| async move {
         Ok(format!(
             "{}{}{}",
