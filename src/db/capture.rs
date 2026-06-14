@@ -89,7 +89,25 @@ pub fn record_captured_event_with_id(
     event_id_override: Option<&str>,
 ) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
-    record_captured_event_inner(conn, input, event_id_override, now, now)
+    record_captured_event_inner(conn, input, event_id_override, now, now, None)
+}
+
+pub fn record_captured_event_with_id_and_reference_time(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+    reference_time_epoch: Option<i64>,
+) -> Result<CaptureEventOutcome> {
+    let now = chrono::Utc::now().timestamp();
+    let created_at_epoch = reference_time_epoch.unwrap_or(now);
+    record_captured_event_inner(
+        conn,
+        input,
+        event_id_override,
+        created_at_epoch,
+        now,
+        reference_time_epoch,
+    )
 }
 
 pub fn record_captured_event_with_id_and_created_at(
@@ -99,7 +117,14 @@ pub fn record_captured_event_with_id_and_created_at(
     created_at_epoch: i64,
 ) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
-    record_captured_event_inner(conn, input, event_id_override, created_at_epoch, now)
+    record_captured_event_inner(
+        conn,
+        input,
+        event_id_override,
+        created_at_epoch,
+        now,
+        Some(created_at_epoch),
+    )
 }
 
 fn record_captured_event_inner(
@@ -108,8 +133,10 @@ fn record_captured_event_inner(
     event_id_override: Option<&str>,
     created_at_epoch: i64,
     now: i64,
+    reference_time_epoch: Option<i64>,
 ) -> Result<CaptureEventOutcome> {
     let inserted_at = now;
+    let reference_time_epoch = reference_time_epoch.unwrap_or(created_at_epoch);
     let sanitized_content = redact_capture_content(input.content);
     let content_hash = exact_hash(&sanitized_content);
     let event_id = event_id_override
@@ -124,10 +151,12 @@ fn record_captured_event_inner(
         "INSERT INTO captured_events
          (host_id, workspace_id, project_id, session_row_id, session_id, turn_id,
           event_id, event_type, role, tool_name, content_text, content_blob_id,
-          content_hash, token_estimate, retention_class, created_at_epoch, inserted_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+          content_hash, token_estimate, retention_class, created_at_epoch, inserted_at_epoch,
+          reference_time_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(host_id, session_id, event_id) DO UPDATE SET
-             inserted_at_epoch = excluded.inserted_at_epoch",
+             inserted_at_epoch = excluded.inserted_at_epoch,
+             reference_time_epoch = COALESCE(excluded.reference_time_epoch, captured_events.reference_time_epoch)",
         params![
             identity.host_id,
             identity.workspace_id,
@@ -144,7 +173,8 @@ fn record_captured_event_inner(
             token_estimate,
             retention_class,
             created_at_epoch,
-            inserted_at
+            inserted_at,
+            reference_time_epoch
         ],
     )?;
 

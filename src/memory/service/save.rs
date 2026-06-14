@@ -9,7 +9,7 @@ use super::local_copy::{
 };
 use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveMemoryResult};
 use crate::memory::claims::{claims_enabled, insert_memory_claim, ClaimWriteRequest};
-use crate::memory::lesson::{save_lesson, SaveLessonRequest};
+use crate::memory::lesson::{save_lesson_with_reference_time, SaveLessonRequest};
 use crate::memory::lifecycle::MemoryLifecycleOp;
 
 #[derive(Debug)]
@@ -34,6 +34,38 @@ impl std::fmt::Display for LocalCopyError {
 impl std::error::Error for LocalCopyError {}
 
 pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMemoryResult> {
+    save_memory_with_reference_time(conn, req, req.created_at_epoch)
+}
+
+pub fn save_memory_with_reference_time(
+    conn: &Connection,
+    req: &SaveMemoryRequest,
+    reference_time_epoch: Option<i64>,
+) -> Result<SaveMemoryResult> {
+    let reference_time_epoch =
+        normalize_reference_time_epoch(req.created_at_epoch, reference_time_epoch)?;
+    save_memory_inner(conn, req, reference_time_epoch)
+}
+
+fn normalize_reference_time_epoch(
+    created_at_epoch: Option<i64>,
+    reference_time_epoch: Option<i64>,
+) -> Result<Option<i64>> {
+    if let (Some(created_at), Some(reference_time)) = (created_at_epoch, reference_time_epoch) {
+        if created_at != reference_time {
+            anyhow::bail!(
+                "reference_time_epoch conflicts with legacy created_at_epoch; pass one event-time value"
+            );
+        }
+    }
+    Ok(reference_time_epoch.or(created_at_epoch))
+}
+
+fn save_memory_inner(
+    conn: &Connection,
+    req: &SaveMemoryRequest,
+    reference_time_epoch: Option<i64>,
+) -> Result<SaveMemoryResult> {
     let project = req.project.as_deref().unwrap_or("manual");
     let title = req.title.as_deref().unwrap_or("Memory");
     let memory_type = req.memory_type.as_deref().unwrap_or("discovery");
@@ -65,7 +97,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
                 None,
                 None,
             )?;
-            let id = save_lesson(
+            let id = save_lesson_with_reference_time(
                 conn,
                 &SaveLessonRequest {
                     session_id: req.session_id.as_deref(),
@@ -81,6 +113,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
                     created_at_epoch: req.created_at_epoch,
                     stale_after_epoch: None,
                 },
+                reference_time_epoch,
             )?;
             let mut logged_plan = operation_plan.clone();
             logged_plan.target_memory_id = Some(id);
@@ -139,6 +172,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
                 req.branch.as_deref(),
                 scope,
                 req.created_at_epoch,
+                reference_time_epoch,
                 &operation_input,
                 &operation_plan,
             )
@@ -172,6 +206,7 @@ pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMem
         branch: durable.branch,
         operation: operation.as_str().to_string(),
         created_at_epoch: durable.created_at_epoch,
+        reference_time_epoch: durable.reference_time_epoch,
         updated_at_epoch: durable.updated_at_epoch,
         upserted: req.topic_key.is_some(),
         local_status: local_copy_result.status.clone(),
@@ -310,13 +345,14 @@ struct DurableWriteDetails {
     branch: Option<String>,
     memory_type: String,
     created_at_epoch: i64,
+    reference_time_epoch: i64,
     updated_at_epoch: i64,
 }
 
 fn load_durable_write_details(conn: &Connection, id: i64) -> Result<DurableWriteDetails> {
     conn.query_row(
         "SELECT project, COALESCE(scope, 'project'), topic_key, branch, memory_type,
-                created_at_epoch, updated_at_epoch
+                created_at_epoch, COALESCE(reference_time_epoch, created_at_epoch), updated_at_epoch
          FROM memories
          WHERE id = ?1",
         [id],
@@ -328,7 +364,8 @@ fn load_durable_write_details(conn: &Connection, id: i64) -> Result<DurableWrite
                 branch: row.get(3)?,
                 memory_type: row.get(4)?,
                 created_at_epoch: row.get(5)?,
-                updated_at_epoch: row.get(6)?,
+                reference_time_epoch: row.get(6)?,
+                updated_at_epoch: row.get(7)?,
             })
         },
     )

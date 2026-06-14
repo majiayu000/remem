@@ -39,6 +39,14 @@ pub struct SaveLessonRequest<'a> {
 }
 
 pub fn save_lesson(conn: &Connection, req: &SaveLessonRequest<'_>) -> Result<i64> {
+    save_lesson_with_reference_time(conn, req, req.created_at_epoch)
+}
+
+pub fn save_lesson_with_reference_time(
+    conn: &Connection,
+    req: &SaveLessonRequest<'_>,
+    reference_time_epoch: Option<i64>,
+) -> Result<i64> {
     let topic_key = req
         .topic_key
         .map(str::to_string)
@@ -49,7 +57,7 @@ pub fn save_lesson(conn: &Connection, req: &SaveLessonRequest<'_>) -> Result<i64
         req.scope
     };
     let existing_id = existing_lesson_id(conn, req.project, &topic_key, scope)?;
-    let id = crate::memory::insert_memory_full(
+    let id = crate::memory::insert_memory_full_with_reference_time(
         conn,
         req.session_id,
         req.project,
@@ -61,6 +69,7 @@ pub fn save_lesson(conn: &Connection, req: &SaveLessonRequest<'_>) -> Result<i64
         req.branch,
         scope,
         req.created_at_epoch,
+        reference_time_epoch,
     )?;
     let metadata_exists = get_lesson_metadata(conn, id)?.is_some();
     upsert_lesson_metadata(conn, id, req, existing_id.is_some() || metadata_exists)?;

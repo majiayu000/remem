@@ -107,6 +107,8 @@ pub(super) struct SaveMemoryRequest {
     #[serde(default)]
     pub scope: Option<String>,
     #[serde(default)]
+    pub reference_time_epoch: Option<i64>,
+    #[serde(default)]
     pub created_at_epoch: Option<i64>,
     #[serde(default)]
     pub branch: Option<String>,
@@ -131,6 +133,7 @@ pub(super) struct SaveMemoryResponse {
     pub branch: Option<String>,
     pub operation: String,
     pub created_at_epoch: i64,
+    pub reference_time_epoch: i64,
     pub updated_at_epoch: i64,
     pub upserted: bool,
     pub local_copy: LocalCopyResponse,

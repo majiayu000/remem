@@ -26,10 +26,16 @@ pub fn search_by_time_filtered(
     let has_memory_facts = table_exists(conn, "memory_facts")?;
     let has_memory_fact_invalidations =
         has_memory_facts && crate::memory::facts::invalidated_at_epoch_available(conn)?;
+    let event_time_expr = if column_exists(conn, "memories", "reference_time_epoch")? {
+        "COALESCE(reference_time_epoch, created_at_epoch)"
+    } else {
+        "created_at_epoch"
+    };
     let (temporal_condition, order_epoch) = temporal_sql(
         constraint.field,
         has_memory_facts,
         has_memory_fact_invalidations,
+        event_time_expr,
     );
     let mut conditions = vec![temporal_condition];
     let mut params_vec: Vec<Box<dyn ToSql>> = vec![
@@ -83,6 +89,7 @@ fn temporal_sql(
     field: TemporalField,
     has_memory_facts: bool,
     has_memory_fact_invalidations: bool,
+    event_time_expr: &str,
 ) -> (String, String) {
     match field {
         TemporalField::UpdatedAt => (
@@ -115,7 +122,7 @@ fn temporal_sql(
                              SELECT 1 FROM memory_facts f
                              WHERE {any_fact_event}
                          )
-                         AND created_at_epoch BETWEEN ?1 AND ?2
+                         AND {event_time_expr} BETWEEN ?1 AND ?2
                      ))"
                 ),
                 format!(
@@ -123,13 +130,13 @@ fn temporal_sql(
                          SELECT MAX(f.valid_from_epoch)
                          FROM memory_facts f
                          WHERE {fact_event_overlap}
-                     ), created_at_epoch)"
+                     ), {event_time_expr})"
                 ),
             )
         }
         TemporalField::EventTime => (
-            "created_at_epoch BETWEEN ?1 AND ?2".to_string(),
-            "created_at_epoch".to_string(),
+            format!("{event_time_expr} BETWEEN ?1 AND ?2"),
+            event_time_expr.to_string(),
         ),
     }
 }
@@ -143,4 +150,21 @@ fn table_exists(conn: &Connection, table_name: &str) -> Result<bool> {
         |row| row.get(0),
     )?;
     Ok(count > 0)
+}
+
+fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
+    let sql = format!("PRAGMA table_info({})", quote_identifier(table_name));
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
 }

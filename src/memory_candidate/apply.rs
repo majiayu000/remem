@@ -459,7 +459,9 @@ fn evidence_valid_from_epoch(conn: &Connection, evidence_event_ids: &[i64]) -> R
     for event_id in evidence_event_ids {
         let epoch: i64 = conn
             .query_row(
-                "SELECT created_at_epoch FROM captured_events WHERE id = ?1",
+                "SELECT COALESCE(reference_time_epoch, created_at_epoch)
+                 FROM captured_events
+                 WHERE id = ?1",
                 [event_id],
                 |row| row.get(0),
             )

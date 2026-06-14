@@ -80,6 +80,7 @@ pub struct SaveMemoryResult {
     pub branch: Option<String>,
     pub operation: String,
     pub created_at_epoch: i64,
+    pub reference_time_epoch: i64,
     pub updated_at_epoch: i64,
     /// Compatibility alias: true when the request supplied `topic_key`.
     /// It does not mean the durable row was updated; use `operation` for that.

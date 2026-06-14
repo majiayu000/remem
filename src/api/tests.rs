@@ -241,6 +241,7 @@ async fn save_memory_response_reports_durable_feedback_shape() {
                         "memory_type":"decision",
                         "scope":"project",
                         "branch":"main",
+                        "reference_time_epoch":1700000456,
                         "local_copy_enabled":false
                     }"#,
                 ))
@@ -274,6 +275,7 @@ async fn save_memory_response_reports_durable_feedback_shape() {
     assert!(payload["created_at_epoch"]
         .as_i64()
         .is_some_and(|ts| ts > 0));
+    assert_eq!(payload["reference_time_epoch"], 1_700_000_456);
     assert!(payload["updated_at_epoch"]
         .as_i64()
         .is_some_and(|ts| ts > 0));

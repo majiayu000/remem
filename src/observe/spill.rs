@@ -35,11 +35,13 @@ struct CaptureSpillRecordCompat {
 
 impl CaptureSpillRecordCompat {
     fn into_record(self, fallback_event_id: String) -> CaptureSpillRecord {
+        let mut event = sanitize_event(&self.event);
+        event.reference_time_epoch = event.reference_time_epoch.or(Some(self.created_at_epoch));
         CaptureSpillRecord {
             version: self.version,
             event_id: self.event_id.unwrap_or(fallback_event_id),
             host: self.host,
-            event: sanitize_event(&self.event),
+            event,
             summary: sanitize_summary(&self.summary),
             failure_reason: self
                 .failure_reason
@@ -101,6 +103,9 @@ pub(super) fn spill_capture_event(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create capture spill dir {}", parent.display()))?;
     }
+    let created_at_epoch = event
+        .reference_time_epoch
+        .unwrap_or_else(|| chrono::Utc::now().timestamp());
     let record = CaptureSpillRecord {
         version: 1,
         event_id: event_id.to_string(),
@@ -113,7 +118,7 @@ pub(super) fn spill_capture_event(
             1000,
         )
         .to_string(),
-        created_at_epoch: chrono::Utc::now().timestamp(),
+        created_at_epoch,
     };
     append_spill_record(&path, &record)?;
     Ok(path)
@@ -264,6 +269,7 @@ fn sanitize_event(event: &ParsedHookEvent) -> ParsedHookEvent {
         session_id: event.session_id.clone(),
         cwd: event.cwd.clone(),
         project: event.project.clone(),
+        reference_time_epoch: event.reference_time_epoch,
         tool_name: event.tool_name.clone(),
         tool_input: event
             .tool_input
@@ -351,6 +357,7 @@ mod tests {
             session_id: "session-spill".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: None,
             tool_name: "Edit".to_string(),
             tool_input: Some(serde_json::json!({"file_path": "/tmp/remem/src/lib.rs"})),
             tool_response: Some(serde_json::json!({"ok": true})),
@@ -406,6 +413,7 @@ mod tests {
             session_id: "session-identical-spill".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: None,
             tool_name: "Edit".to_string(),
             tool_input: Some(serde_json::json!({"file_path": "/tmp/remem/src/lib.rs"})),
             tool_response: Some(serde_json::json!({"ok": true})),
@@ -455,6 +463,7 @@ mod tests {
             session_id: "session-identical-partial".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: None,
             tool_name: "Edit".to_string(),
             tool_input: Some(serde_json::json!({"file_path": "/tmp/remem/src/lib.rs"})),
             tool_response: Some(serde_json::json!({"ok": true})),
@@ -667,6 +676,7 @@ mod tests {
             session_id: "session-spill-redact".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: None,
             tool_name: "Bash".to_string(),
             tool_input: Some(serde_json::json!({
                 "command": "curl -H 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'"
@@ -707,6 +717,7 @@ mod tests {
             session_id: "session-encrypted-spill".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: None,
             tool_name: "Write".to_string(),
             tool_input: Some(serde_json::json!({"content": "ordinary source content"})),
             tool_response: Some(serde_json::json!({"ok": true})),

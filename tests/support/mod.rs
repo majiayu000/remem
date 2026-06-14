@@ -77,6 +77,7 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
             search_context TEXT,
             created_at_epoch INTEGER NOT NULL,
             updated_at_epoch INTEGER NOT NULL,
+            reference_time_epoch INTEGER,
             status TEXT NOT NULL DEFAULT 'active',
             branch TEXT,
             scope TEXT DEFAULT 'project',

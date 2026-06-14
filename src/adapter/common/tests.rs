@@ -57,6 +57,21 @@ fn valid_json_with_missing_session_id_returns_none_silently() {
 }
 
 #[test]
+fn parses_reference_time_from_hook_timestamp() {
+    let event = parse_tool_hook(
+        r#"{
+            "session_id":"s1",
+            "cwd":"/tmp/remem",
+            "timestamp":"2026-06-12T00:00:01.000Z",
+            "tool_name":"Edit"
+        }"#,
+    )
+    .expect("timestamped hook should parse");
+
+    assert_eq!(event.reference_time_epoch, Some(1_781_222_401));
+}
+
+#[test]
 fn truncates_long_payload_in_error_log() {
     let scoped = ScopedTestDataDir::new("adapter-parse-truncate");
     unsafe {

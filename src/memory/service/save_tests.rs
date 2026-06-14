@@ -1,4 +1,4 @@
-use super::{save_memory, SaveMemoryRequest};
+use super::{save_memory, save_memory_with_reference_time, SaveMemoryRequest};
 use crate::db::{self, test_support::ScopedTestDataDir};
 
 #[test]
@@ -31,6 +31,28 @@ fn repeated_lesson_save_reinforces_metadata_and_logs_update() -> anyhow::Result<
         .collect::<std::result::Result<Vec<_>, _>>()?;
     assert_eq!(reinforcement_count, 2);
     assert_eq!(operations, vec!["add".to_string(), "update".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn save_memory_rejects_conflicting_reference_time_aliases() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-memory-reference-conflict");
+    let conn = db::open_db()?;
+    let req = SaveMemoryRequest {
+        text: "Yesterday means the source episode date.".to_string(),
+        title: Some("Reference conflict".to_string()),
+        project: Some("proj".to_string()),
+        memory_type: Some("decision".to_string()),
+        created_at_epoch: Some(1_700_000_000),
+        local_copy_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    let err = save_memory_with_reference_time(&conn, &req, Some(1_600_000_000))
+        .expect_err("conflicting aliases must fail closed");
+    assert!(err.to_string().contains("reference_time_epoch conflicts"));
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+    assert_eq!(count, 0);
     Ok(())
 }
 
