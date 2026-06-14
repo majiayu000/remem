@@ -35,12 +35,12 @@ fn repeated_lesson_save_reinforces_metadata_and_logs_update() -> anyhow::Result<
 }
 
 #[test]
-fn save_memory_rejects_conflicting_reference_time_aliases() -> anyhow::Result<()> {
-    let _dir = ScopedTestDataDir::new("save-memory-reference-conflict");
+fn save_memory_preserves_distinct_created_and_reference_times() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-memory-distinct-reference-time");
     let conn = db::open_db()?;
     let req = SaveMemoryRequest {
         text: "Yesterday means the source episode date.".to_string(),
-        title: Some("Reference conflict".to_string()),
+        title: Some("Distinct reference time".to_string()),
         project: Some("proj".to_string()),
         memory_type: Some("decision".to_string()),
         created_at_epoch: Some(1_700_000_000),
@@ -48,11 +48,15 @@ fn save_memory_rejects_conflicting_reference_time_aliases() -> anyhow::Result<()
         ..SaveMemoryRequest::default()
     };
 
-    let err = save_memory_with_reference_time(&conn, &req, Some(1_600_000_000))
-        .expect_err("conflicting aliases must fail closed");
-    assert!(err.to_string().contains("reference_time_epoch conflicts"));
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
-    assert_eq!(count, 0);
+    let saved = save_memory_with_reference_time(&conn, &req, Some(1_600_000_000))?;
+    assert_eq!(saved.created_at_epoch, 1_700_000_000);
+    assert_eq!(saved.reference_time_epoch, 1_600_000_000);
+    let stored: (i64, i64) = conn.query_row(
+        "SELECT created_at_epoch, reference_time_epoch FROM memories WHERE id = ?1",
+        [saved.id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(stored, (1_700_000_000, 1_600_000_000));
     Ok(())
 }
 

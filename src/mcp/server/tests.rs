@@ -294,7 +294,7 @@ fn save_memory_response_reports_durable_feedback_shape() {
             local_path: None,
             scope: None,
             branch: Some("main".to_string()),
-            reference_time_epoch: Some(1_700_000_123),
+            reference_time_epoch: Some(1_600_000_123),
             created_at_epoch: Some(1_700_000_123),
             local_copy_enabled: Some(false),
             claim_enabled: None,
@@ -319,8 +319,8 @@ fn save_memory_response_reports_durable_feedback_shape() {
     assert_eq!(json["next_step"]["tool"], "get_observations");
     assert_eq!(json["next_step"]["source"], "memory");
     assert_eq!(json["next_step"]["ids"][0], json["id"]);
-    assert!(json["created_at_epoch"].as_i64().is_some_and(|ts| ts > 0));
-    assert_eq!(json["reference_time_epoch"], 1_700_000_123);
+    assert_eq!(json["created_at_epoch"], 1_700_000_123);
+    assert_eq!(json["reference_time_epoch"], 1_600_000_123);
     assert!(json["updated_at_epoch"].as_i64().is_some_and(|ts| ts > 0));
 }
 

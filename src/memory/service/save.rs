@@ -43,22 +43,15 @@ pub fn save_memory_with_reference_time(
     reference_time_epoch: Option<i64>,
 ) -> Result<SaveMemoryResult> {
     let reference_time_epoch =
-        normalize_reference_time_epoch(req.created_at_epoch, reference_time_epoch)?;
+        normalize_reference_time_epoch(req.created_at_epoch, reference_time_epoch);
     save_memory_inner(conn, req, reference_time_epoch)
 }
 
 fn normalize_reference_time_epoch(
     created_at_epoch: Option<i64>,
     reference_time_epoch: Option<i64>,
-) -> Result<Option<i64>> {
-    if let (Some(created_at), Some(reference_time)) = (created_at_epoch, reference_time_epoch) {
-        if created_at != reference_time {
-            anyhow::bail!(
-                "reference_time_epoch conflicts with legacy created_at_epoch; pass one event-time value"
-            );
-        }
-    }
-    Ok(reference_time_epoch.or(created_at_epoch))
+) -> Option<i64> {
+    reference_time_epoch.or(created_at_epoch)
 }
 
 fn save_memory_inner(

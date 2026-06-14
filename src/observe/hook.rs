@@ -194,18 +194,6 @@ pub(super) fn detect_adapter_for_host(
         .or_else(|| crate::adapter::detect_adapter(input))
 }
 
-#[cfg(test)]
-fn record_capture_event(
-    conn: &rusqlite::Connection,
-    host: &str,
-    event: &crate::adapter::ParsedHookEvent,
-    summary: &crate::adapter::EventSummary,
-) -> Result<i64> {
-    let content = capture_event_content(event, summary);
-    let event_id = db::unique_capture_event_id("tool_result", &content);
-    record_capture_event_with_id(conn, host, &event_id, event, summary)
-}
-
 fn record_capture_event_with_id(
     conn: &rusqlite::Connection,
     host: &str,
@@ -308,8 +296,8 @@ mod tests {
 
     use super::super::spill::spill_capture_event;
     use super::{
-        event_skip_reason, observe_input, record_capture_event, skip_detail,
-        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+        capture_event_content, event_skip_reason, observe_input, record_capture_event_with_id,
+        skip_detail, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -515,7 +503,12 @@ mod tests {
             exit_code: None,
         };
 
-        record_capture_event(&conn, "claude-code", &event, &summary)?;
+        let event_id =
+            db::unique_capture_event_id("tool_result", &capture_event_content(&event, &summary));
+        record_capture_event_with_id(&conn, "claude-code", &event_id, &event, &summary)?;
+        let mut retry_event = event.clone();
+        retry_event.reference_time_epoch = None;
+        record_capture_event_with_id(&conn, "claude-code", &event_id, &retry_event, &summary)?;
 
         let captured_count: i64 =
             conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;

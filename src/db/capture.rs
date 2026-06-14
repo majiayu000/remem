@@ -136,7 +136,6 @@ fn record_captured_event_inner(
     reference_time_epoch: Option<i64>,
 ) -> Result<CaptureEventOutcome> {
     let inserted_at = now;
-    let reference_time_epoch = reference_time_epoch.unwrap_or(created_at_epoch);
     let sanitized_content = redact_capture_content(input.content);
     let content_hash = exact_hash(&sanitized_content);
     let event_id = event_id_override

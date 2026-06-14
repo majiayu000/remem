@@ -72,9 +72,7 @@ pub(in crate::api) async fn handle_save_memory(
             .into_response(),
         Err(err) => {
             let msg = err.to_string();
-            let status = if msg.contains("outside the allowed directory")
-                || msg.contains("reference_time_epoch conflicts")
-            {
+            let status = if msg.contains("outside the allowed directory") {
                 StatusCode::BAD_REQUEST
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR

@@ -241,7 +241,8 @@ async fn save_memory_response_reports_durable_feedback_shape() {
                         "memory_type":"decision",
                         "scope":"project",
                         "branch":"main",
-                        "reference_time_epoch":1700000456,
+                        "created_at_epoch":1700000789,
+                        "reference_time_epoch":1600000456,
                         "local_copy_enabled":false
                     }"#,
                 ))
@@ -272,10 +273,8 @@ async fn save_memory_response_reports_durable_feedback_shape() {
     assert_eq!(payload["next_step"]["tool"], "get_observations");
     assert_eq!(payload["next_step"]["source"], "memory");
     assert_eq!(payload["next_step"]["ids"][0], payload["id"]);
-    assert!(payload["created_at_epoch"]
-        .as_i64()
-        .is_some_and(|ts| ts > 0));
-    assert_eq!(payload["reference_time_epoch"], 1_700_000_456);
+    assert_eq!(payload["created_at_epoch"], 1_700_000_789);
+    assert_eq!(payload["reference_time_epoch"], 1_600_000_456);
     assert!(payload["updated_at_epoch"]
         .as_i64()
         .is_some_and(|ts| ts > 0));

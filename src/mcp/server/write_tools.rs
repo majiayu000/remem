@@ -14,9 +14,7 @@ fn detect_branch_from_cwd() -> Option<String> {
 }
 
 fn map_save_memory_error(tool: &'static str, err: anyhow::Error) -> McpToolError {
-    if err.is::<service::LocalCopyError>()
-        || err.to_string().contains("reference_time_epoch conflicts")
-    {
+    if err.is::<service::LocalCopyError>() {
         McpToolError::invalid_request(tool, err.to_string())
     } else {
         McpToolError::db_query(tool, err)
