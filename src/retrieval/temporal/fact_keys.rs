@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::NaiveDate;
 use rusqlite::{types::ToSql, Connection, OptionalExtension};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FactTimeMode {
@@ -26,6 +27,7 @@ pub fn search_fact_memory_ids(
     include_inactive: bool,
     mode: FactTimeMode,
 ) -> Result<Vec<i64>> {
+    let terms = normalized_fact_terms(terms);
     if terms.is_empty() || limit <= 0 || !sqlite_table_exists(conn, "memory_facts")? {
         return Ok(vec![]);
     }
@@ -76,20 +78,23 @@ pub fn search_fact_memory_ids(
             idx += 1;
         }
     }
-    let mut term_clauses = Vec::new();
+    let mut match_terms = Vec::new();
     for term in terms.iter().take(8) {
-        term_clauses.push(format!(
-            "(f.subject LIKE ?{idx} COLLATE NOCASE \
-              OR f.predicate LIKE ?{idx} COLLATE NOCASE \
-              OR f.object LIKE ?{idx} COLLATE NOCASE)"
+        match_terms.push(format!(
+            "CASE WHEN f.subject LIKE ?{idx} COLLATE NOCASE \
+                    OR f.predicate LIKE ?{idx} COLLATE NOCASE \
+                    OR f.object LIKE ?{idx} COLLATE NOCASE \
+                  THEN 1 ELSE 0 END"
         ));
         params.push(Box::new(format!("%{term}%")));
         idx += 1;
     }
-    if term_clauses.is_empty() {
+    if match_terms.is_empty() {
         return Ok(vec![]);
     }
-    conditions.push(format!("({})", term_clauses.join(" OR ")));
+    let required_matches = match_terms.len().min(2);
+    let match_score_sql = match_terms.join(" + ");
+    conditions.push(format!("({match_score_sql}) >= {required_matches}"));
     if let Some(project) = project {
         conditions.push(crate::retrieval::memory_search::project_or_global_clause(
             "m.project",
@@ -111,12 +116,13 @@ pub fn search_fact_memory_ids(
     params.push(Box::new(limit));
     let sql = format!(
         "SELECT m.id, MAX(COALESCE(f.valid_from_epoch, f.learned_at_epoch)) AS fact_epoch,
-                MAX(f.confidence) AS confidence
+                MAX(f.confidence) AS confidence,
+                MAX({match_score_sql}) AS match_count
          FROM memory_facts f
          JOIN memories m ON m.id = f.source_memory_id
          WHERE {}
          GROUP BY m.id
-         ORDER BY fact_epoch DESC, confidence DESC, m.updated_at_epoch DESC, m.id DESC
+         ORDER BY match_count DESC, fact_epoch DESC, confidence DESC, m.updated_at_epoch DESC, m.id DESC
          LIMIT ?{idx}",
         conditions.join(" AND ")
     );
@@ -135,6 +141,65 @@ pub(crate) fn sqlite_table_exists(conn: &Connection, table: &str) -> Result<bool
         )
         .optional()?
         .is_some())
+}
+
+fn normalized_fact_terms(terms: &[&str]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    for term in terms {
+        let term = term
+            .trim_matches(|c: char| !(c.is_alphanumeric() || is_cjk(c)))
+            .to_lowercase();
+        let min_len = if term.chars().any(is_cjk) { 2 } else { 3 };
+        if term.chars().count() < min_len
+            || term.chars().all(|c| c.is_ascii_digit() || c == '-')
+            || is_fact_stop_term(&term)
+            || !seen.insert(term.clone())
+        {
+            continue;
+        }
+        normalized.push(term);
+        if normalized.len() >= 8 {
+            break;
+        }
+    }
+    normalized
+}
+
+fn is_fact_stop_term(term: &str) -> bool {
+    matches!(
+        term,
+        "after"
+            | "before"
+            | "current"
+            | "during"
+            | "from"
+            | "latest"
+            | "owner"
+            | "owned"
+            | "owns"
+            | "sign"
+            | "signer"
+            | "signers"
+            | "signs"
+            | "that"
+            | "this"
+            | "verified"
+            | "verifies"
+            | "what"
+            | "when"
+            | "where"
+            | "which"
+            | "who"
+            | "with"
+    )
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c,
+        '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}'
+    )
 }
 
 fn extract_as_of_epoch(query: &str) -> Option<i64> {

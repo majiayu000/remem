@@ -408,6 +408,17 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
             updated_at_epoch: now - 90,
         },
     )?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 3,
+            project: "/repo",
+            title: "Partial fact source",
+            content: "Another active fact source for a different topic.",
+            scope: "project",
+            updated_at_epoch: now - 80,
+        },
+    )?;
     conn.execute(
         "INSERT INTO memory_facts
          (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
@@ -427,6 +438,16 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
          VALUES ('/repo', 'HarborMint', 'verified_by', 'Toma Reed', ?1, ?2, ?3, 2,
                  NULL, '[]', 0.95, NULL, 'stale', ?4, ?3, ?3)",
         params![now - 1_000, now + 1_000, now - 800, now - 10],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/repo', 'HarborMint', 'verified_by', 'Mira Lane', ?1, ?2, ?3, 3,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![now - 1_000, now + 1_000, now - 700],
     )?;
 
     let (memories, explain) = search_with_branch_explain(
@@ -450,6 +471,7 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
     assert!(fact.enabled, "{fact:#?}");
     assert_eq!(fact.hits.first().map(|hit| hit.memory_id), Some(1));
     assert!(!fact.hits.iter().any(|hit| hit.memory_id == 2));
+    assert!(!fact.hits.iter().any(|hit| hit.memory_id == 3));
     let result = explain
         .results
         .iter()

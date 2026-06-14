@@ -24,8 +24,11 @@ pub(super) fn annotate_memories_with_temporal_facts(
         if memory_labels.is_empty() {
             continue;
         }
-        memory.text.push_str("\nTemporal facts: ");
-        memory.text.push_str(&memory_labels.join("; "));
+        memory.text = format!(
+            "Temporal facts: {}\n{}",
+            memory_labels.join("; "),
+            memory.text
+        );
     }
     Ok(())
 }

@@ -192,7 +192,7 @@ fn hybrid_context_fact_retrieval_labels_validity_in_core_output() -> anyhow::Res
         Some("harbormint-signer-source"),
         "decision",
         "HarborMint signer source",
-        "Signer details live in the temporal fact layer.",
+        "Signer details live in the temporal fact layer. This memory body is intentionally long enough to exceed the core preview limit before the validity window would appear if the fact label were appended after the body. The rendered context must show temporal facts first so current fact validity is visible.",
         now - 10_000,
     );
     conn.execute(
