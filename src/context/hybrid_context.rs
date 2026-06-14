@@ -359,10 +359,16 @@ fn query_local_temporal_channel(
     let has_memory_facts = sqlite_table_available(conn, "memory_facts")?;
     let has_memory_fact_invalidations =
         has_memory_facts && crate::memory::facts::invalidated_at_epoch_available(conn)?;
+    let event_time_expr = if sqlite_column_available(conn, "memories", "reference_time_epoch")? {
+        "COALESCE(m.reference_time_epoch, m.created_at_epoch)"
+    } else {
+        "m.created_at_epoch"
+    };
     let (temporal_condition, order_epoch) = local_temporal_sql(
         constraint.field,
         has_memory_facts,
         has_memory_fact_invalidations,
+        event_time_expr,
     );
     let mut conditions = vec![temporal_condition];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
@@ -566,6 +572,7 @@ fn local_temporal_sql(
     field: crate::retrieval::temporal::TemporalField,
     has_memory_facts: bool,
     has_memory_fact_invalidations: bool,
+    event_time_expr: &str,
 ) -> (String, String) {
     match field {
         crate::retrieval::temporal::TemporalField::UpdatedAt => (
@@ -598,7 +605,7 @@ fn local_temporal_sql(
                              SELECT 1 FROM memory_facts f
                              WHERE {any_fact_event}
                          )
-                         AND m.created_at_epoch BETWEEN ?1 AND ?2
+                         AND {event_time_expr} BETWEEN ?1 AND ?2
                      ))"
                 ),
                 format!(
@@ -606,13 +613,13 @@ fn local_temporal_sql(
                          SELECT MAX(f.valid_from_epoch)
                          FROM memory_facts f
                          WHERE {fact_event_overlap}
-                     ), m.created_at_epoch)"
+                     ), {event_time_expr})"
                 ),
             )
         }
         crate::retrieval::temporal::TemporalField::EventTime => (
-            "m.created_at_epoch BETWEEN ?1 AND ?2".to_string(),
-            "m.created_at_epoch".to_string(),
+            format!("{event_time_expr} BETWEEN ?1 AND ?2"),
+            event_time_expr.to_string(),
         ),
     }
 }
@@ -626,6 +633,23 @@ fn sqlite_table_available(conn: &Connection, table: &str) -> Result<bool> {
         )
         .optional()?
         .is_some())
+}
+
+fn sqlite_column_available(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let sql = format!("PRAGMA table_info({})", quote_identifier(table));
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 fn fts_ranked_hits(hits: &[(i64, f64)]) -> Vec<WeightedRankedHit> {

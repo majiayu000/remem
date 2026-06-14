@@ -509,12 +509,22 @@ mod tests {
                          'decision', NULL, 0, 200, 'active', NULL, 'project')",
             [project],
         )?;
+        source.execute(
+            "INSERT INTO memories
+                 (id, session_id, project, topic_key, title, content, memory_type, files,
+                  created_at_epoch, updated_at_epoch, status, branch, scope)
+                 VALUES (2, 's1', ?1, 'relative-cn-topic',
+                         '上个月 decision',
+                         '上个月我们调整了 ingestion boundary.',
+                         'decision', NULL, 0, 200, 'active', NULL, 'project')",
+            [project],
+        )?;
         drop(source);
 
         let runtime_conn = crate::db::open_db()?;
         let stats = import_memories_into_runtime(&source_path, &runtime_conn)?;
         assert_eq!(stats.memories_imported, 0);
-        assert_eq!(stats.memories_skipped, 1);
+        assert_eq!(stats.memories_skipped, 2);
 
         cleanup_temp_db_files(&source_path);
         Ok(())

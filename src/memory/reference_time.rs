@@ -1,27 +1,71 @@
 pub(crate) fn contains_relative_time_reference(text: &str) -> bool {
     let lower = text.to_lowercase();
     let phrases = [
+        "this week",
+        "this month",
+        "this year",
         "last week",
         "next week",
         "last month",
         "next month",
         "last year",
         "next year",
+        "recently",
+        "weeks ago",
+        "week ago",
         "days ago",
         "day ago",
         "hours ago",
         "hour ago",
         "minutes ago",
         "minute ago",
+        "months ago",
+        "month ago",
+        "years ago",
+        "year ago",
     ];
     if phrases.iter().any(|phrase| lower.contains(phrase)) {
+        return true;
+    }
+    let weekdays = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ];
+    if ["last ", "next ", "this "].iter().any(|prefix| {
+        weekdays
+            .iter()
+            .any(|day| lower.contains(&format!("{prefix}{day}")))
+    }) {
         return true;
     }
     ["today", "tomorrow", "yesterday"]
         .iter()
         .any(|word| contains_ascii_word(&lower, word))
         || [
-            "今天", "明天", "昨天", "前天", "后天", "上周", "下周", "刚才", "刚刚",
+            "今天",
+            "明天",
+            "昨天",
+            "前天",
+            "后天",
+            "上周",
+            "下周",
+            "这周",
+            "本周",
+            "上个月",
+            "上月",
+            "下个月",
+            "下月",
+            "去年",
+            "今年",
+            "明年",
+            "最近",
+            "刚才",
+            "刚刚",
         ]
         .iter()
         .any(|word| text.contains(word))
@@ -79,6 +123,14 @@ mod tests {
     fn detects_relative_dates_narrowly() {
         assert!(contains_relative_time_reference("yesterday we changed it"));
         assert!(contains_relative_time_reference("昨天修好了"));
+        assert!(contains_relative_time_reference("上个月修好了"));
+        assert!(contains_relative_time_reference("this week we changed it"));
+        assert!(contains_relative_time_reference(
+            "3 weeks ago we changed it"
+        ));
+        assert!(contains_relative_time_reference(
+            "last Friday we changed it"
+        ));
         assert!(contains_relative_time_reference("3 days ago"));
         assert!(!contains_relative_time_reference(
             "absolute date 2026-06-12"

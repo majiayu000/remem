@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 
+use super::super::hybrid_context::query_hybrid_context_memories;
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::load_context_data_with_policy;
 use super::{insert_global_memory, insert_memory, setup_context_schema};
@@ -116,6 +117,38 @@ fn hybrid_context_retrieval_still_excludes_global_non_preferences() {
         .memories
         .iter()
         .any(|memory| memory.title == "Global SQLCipher note"));
+}
+
+#[test]
+fn hybrid_context_temporal_retrieval_uses_reference_time() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_context_schema(&conn);
+    let project = "/tmp/remem";
+    let wall_clock_epoch = chrono::Utc::now().timestamp();
+    let event_epoch = 1_600_000_000_i64;
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("historical-reference-time"),
+        "decision",
+        "Historical reference time",
+        "Episode provenance was captured with a historical event time.",
+        wall_clock_epoch,
+    );
+    conn.execute(
+        "UPDATE memories
+         SET reference_time_epoch = ?1
+         WHERE id = 1",
+        params![event_epoch],
+    )?;
+
+    let memories =
+        query_hybrid_context_memories(&conn, project, "what happened on 2020-09-13", None, &[], 5)?;
+
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].title, "Historical reference time");
+    Ok(())
 }
 
 #[test]

@@ -305,6 +305,12 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
             .ok_or_else(|| anyhow::anyhow!("task watermark"))?],
         |row| row.get(0),
     )?;
+    let memory_reference_time: i64 = conn.query_row(
+        "SELECT reference_time_epoch FROM memories WHERE id = ?1",
+        params![memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(memory_reference_time, event_epoch);
     let (
         fact_project,
         fact_subject,
