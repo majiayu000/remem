@@ -712,6 +712,55 @@ fn graph_review_approval_rejects_foreign_memory_ref() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn graph_review_approval_rejects_non_memory_conflict_refs() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-non-memory-conflict",
+        &["Worker conflicts with Other."],
+    )?;
+    insert_graph_entity(&conn, "Worker")?;
+    insert_graph_entity(&conn, "Other")?;
+    conn.execute(
+        "INSERT INTO graph_candidates
+         (project_id, source_project, candidate_type, edge_type, from_ref, to_ref,
+          evidence_event_ids, confidence, risk_class, reason, review_status,
+          created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, 'edge', 'conflicts', 'entity:Worker', 'entity:Other',
+                 ?3, 0.91, 'low', 'non-memory conflict ref', 'pending_review', 1, 1)",
+        params![
+            task.project_id,
+            task.project,
+            serde_json::to_string(&vec![event_ids[0]])?
+        ],
+    )?;
+
+    let err = review::approve_candidate(&mut conn, 1)
+        .expect_err("non-memory conflict refs must not approve");
+    assert!(
+        err.to_string().contains("memory:* endpoints"),
+        "unexpected error: {err}"
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let graph_edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    let memory_edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| row.get(0))?;
+    let operation_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_operation_log", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(graph_edge_count, 0);
+    assert_eq!(memory_edge_count, 0);
+    assert_eq!(operation_count, 0);
+    Ok(())
+}
+
 #[tokio::test]
 async fn graph_review_approve_reject_and_defer() -> Result<()> {
     let mut conn = graph_test_conn();

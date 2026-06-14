@@ -499,6 +499,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn process_clusters_records_failed_for_invalid_conflict_ids() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-dream-invalid-conflict";
+        let clusters = vec![make_cluster([101, 102], ["topic-a", "topic-b"])];
+
+        let Err(error) = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![101],
+                    reason: Some("invalid conflict ids".to_string()),
+                })
+            })
+        })
+        .await
+        else {
+            panic!("invalid conflict should fail the only cluster attempt");
+        };
+        assert!(
+            error.to_string().contains("all 1 cluster attempts failed"),
+            "unexpected error: {error}"
+        );
+        let (decision, reason): (String, String) = conn.query_row(
+            "SELECT decision, reason
+             FROM dream_cluster_decisions
+             WHERE project = ?1",
+            params![project],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(decision, "failed");
+        assert!(
+            reason.contains("dream conflict requires at least two memory ids"),
+            "unexpected failed reason: {reason}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn process_clusters_continues_after_apply_failure() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         setup_memory_schema(&conn);

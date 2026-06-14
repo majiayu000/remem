@@ -69,10 +69,10 @@ pub(super) fn build_memory_conflict_bridge(
         return Ok(None);
     }
     let Some(from_id) = parse_memory_ref_id(&candidate.from_ref)? else {
-        return Ok(None);
+        bail!("graph conflict candidates must use memory:* endpoints");
     };
     let Some(to_id) = parse_memory_ref_id(&candidate.to_ref)? else {
-        return Ok(None);
+        bail!("graph conflict candidates must use memory:* endpoints");
     };
     if from_id == to_id {
         bail!("graph conflict candidate cannot point to the same memory twice");

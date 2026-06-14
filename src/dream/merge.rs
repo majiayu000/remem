@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
 use super::candidates::{Cluster, MemoryCandidate};
 use super::constants::DREAM_PROMPT;
@@ -44,10 +44,10 @@ pub(super) async fn merge_cluster(
     )
     .await?;
 
-    Ok(filter_superseded_ids(parse_response(&response)?, cluster))
+    filter_superseded_ids(parse_response(&response)?, cluster)
 }
 
-fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDecision {
+fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> Result<MergeDecision> {
     let member_ids: std::collections::HashSet<i64> = cluster.members.iter().map(|m| m.id).collect();
     match decision {
         MergeDecision::Merge(mut result) => {
@@ -68,11 +68,11 @@ fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDec
                     "dream",
                     "rejecting merge with no valid superseded_id(s) after filtering",
                 );
-                return MergeDecision::NoMerge {
+                return Ok(MergeDecision::NoMerge {
                     reason: Some("no valid superseded ids after filtering".to_string()),
-                };
+                });
             }
-            MergeDecision::Merge(result)
+            Ok(MergeDecision::Merge(result))
         }
         MergeDecision::Conflict {
             mut conflicting_ids,
@@ -80,8 +80,6 @@ fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDec
         } => {
             let before = conflicting_ids.len();
             conflicting_ids.retain(|id| member_ids.contains(id));
-            conflicting_ids.sort_unstable();
-            conflicting_ids.dedup();
             let dropped = before - conflicting_ids.len();
             if dropped > 0 {
                 crate::log::warn(
@@ -91,22 +89,23 @@ fn filter_superseded_ids(decision: MergeDecision, cluster: &Cluster) -> MergeDec
                         dropped
                     ),
                 );
+                bail!("dream conflict referenced memory id outside cluster");
             }
+            conflicting_ids.sort_unstable();
+            conflicting_ids.dedup();
             if conflicting_ids.len() < 2 {
                 crate::log::warn(
                     "dream",
                     "rejecting conflict with fewer than two valid conflicting id(s) after filtering",
                 );
-                return MergeDecision::NoMerge {
-                    reason: Some("no valid conflict pair after filtering".to_string()),
-                };
+                bail!("dream conflict requires at least two valid cluster ids");
             }
-            MergeDecision::Conflict {
+            Ok(MergeDecision::Conflict {
                 conflicting_ids,
                 reason,
-            }
+            })
         }
-        MergeDecision::NoMerge { .. } => decision,
+        MergeDecision::NoMerge { .. } => Ok(decision),
     }
 }
 
@@ -128,7 +127,7 @@ fn build_user_message(members: &[MemoryCandidate]) -> String {
 fn parse_response(response: &str) -> Result<MergeDecision> {
     if response.contains("<conflict") {
         return Ok(MergeDecision::Conflict {
-            conflicting_ids: extract_conflict_ids(response),
+            conflicting_ids: extract_conflict_ids(response)?,
             reason: extract_conflict_reason(response),
         });
     }
@@ -200,19 +199,29 @@ fn extract_no_merge_reason(text: &str) -> Option<String> {
         .filter(|reason| !reason.is_empty())
 }
 
-fn extract_conflict_ids(text: &str) -> Vec<i64> {
+fn extract_conflict_ids(text: &str) -> Result<Vec<i64>> {
     let Some(start) = text.find("<conflict") else {
-        return Vec::new();
+        bail!("conflict response missing <conflict> tag");
     };
     let tag = &text[start..];
     let Some(end) = tag.find('>') else {
-        return Vec::new();
+        bail!("conflict response missing closing tag bracket");
     };
-    extract_attr(&tag[..=end], "ids")
-        .unwrap_or_default()
-        .split_whitespace()
-        .filter_map(|id| id.parse::<i64>().ok())
-        .collect()
+    let ids_raw = extract_attr(&tag[..=end], "ids")
+        .map(|ids| ids.trim().to_string())
+        .filter(|ids| !ids.is_empty())
+        .ok_or_else(|| anyhow!("conflict response missing ids attribute"))?;
+    let mut ids = Vec::new();
+    for token in ids_raw.split_whitespace() {
+        let id = token
+            .parse::<i64>()
+            .map_err(|_| anyhow!("conflict response contains invalid memory id '{token}'"))?;
+        ids.push(id);
+    }
+    if ids.len() < 2 {
+        bail!("conflict response requires at least two memory ids");
+    }
+    Ok(ids)
 }
 
 fn extract_conflict_reason(text: &str) -> Option<String> {
@@ -368,6 +377,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_conflict_invalid_id_errors() {
+        let response = r#"<conflict ids="20 not-a-number" reason="bad id"/>"#;
+        let Err(err) = parse_response(response) else {
+            panic!("invalid conflict id must fail");
+        };
+        assert!(
+            err.to_string().contains("invalid memory id"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn test_parse_missing_required_tag_errors() {
         let response = "<memory><topic_key>k</topic_key></memory>";
         let err = parse_response(response).expect_err("expected Err");
@@ -429,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_superseded_ids_drops_hallucinated() {
+    fn test_filter_superseded_ids_drops_hallucinated() -> Result<()> {
         let cluster = Cluster {
             members: vec![
                 MemoryCandidate {
@@ -458,15 +479,16 @@ mod tests {
             // 99999 is hallucinated; 10 and 20 are valid cluster members
             superseded_ids: vec![10, 99999, 20],
         });
-        match filter_superseded_ids(decision, &cluster) {
+        match filter_superseded_ids(decision, &cluster)? {
             MergeDecision::Merge(r) => assert_eq!(r.superseded_ids, vec![10, 20]),
             MergeDecision::NoMerge { .. } => panic!("expected Merge"),
             MergeDecision::Conflict { .. } => panic!("expected Merge"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_filter_conflict_ids_drops_hallucinated_and_sorts() {
+    fn test_filter_conflict_ids_dedupes_and_sorts() -> Result<()> {
         let cluster = Cluster {
             members: vec![
                 MemoryCandidate {
@@ -488,10 +510,10 @@ mod tests {
             ],
         };
         let decision = MergeDecision::Conflict {
-            conflicting_ids: vec![20, 99999, 10, 20],
+            conflicting_ids: vec![20, 10, 20],
             reason: Some("same state differs".into()),
         };
-        match filter_superseded_ids(decision, &cluster) {
+        match filter_superseded_ids(decision, &cluster)? {
             MergeDecision::Conflict {
                 conflicting_ids,
                 reason,
@@ -501,10 +523,46 @@ mod tests {
             }
             MergeDecision::Merge(_) | MergeDecision::NoMerge { .. } => panic!("expected conflict"),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_filter_superseded_ids_rejects_empty_after_filter() {
+    fn test_filter_conflict_ids_rejects_hallucinated() {
+        let cluster = Cluster {
+            members: vec![
+                MemoryCandidate {
+                    id: 10,
+                    topic_key: Some("k".into()),
+                    title: "t".into(),
+                    content: "c".into(),
+                    memory_type: "decision".into(),
+                    updated_at_epoch: 0,
+                },
+                MemoryCandidate {
+                    id: 20,
+                    topic_key: Some("k".into()),
+                    title: "t".into(),
+                    content: "c".into(),
+                    memory_type: "decision".into(),
+                    updated_at_epoch: 0,
+                },
+            ],
+        };
+        let decision = MergeDecision::Conflict {
+            conflicting_ids: vec![20, 99999, 10],
+            reason: Some("same state differs".into()),
+        };
+        let Err(err) = filter_superseded_ids(decision, &cluster) else {
+            panic!("hallucinated conflict id must fail");
+        };
+        assert!(
+            err.to_string().contains("outside cluster"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_filter_superseded_ids_rejects_empty_after_filter() -> Result<()> {
         let cluster = Cluster {
             members: vec![MemoryCandidate {
                 id: 10,
@@ -523,18 +581,20 @@ mod tests {
             superseded_ids: vec![99999],
         });
         assert!(matches!(
-            filter_superseded_ids(decision, &cluster),
+            filter_superseded_ids(decision, &cluster)?,
             MergeDecision::NoMerge { .. }
         ));
+        Ok(())
     }
 
     #[test]
-    fn test_filter_superseded_ids_no_merge_passthrough() {
+    fn test_filter_superseded_ids_no_merge_passthrough() -> Result<()> {
         let cluster = Cluster { members: vec![] };
         assert!(matches!(
-            filter_superseded_ids(MergeDecision::NoMerge { reason: None }, &cluster),
+            filter_superseded_ids(MergeDecision::NoMerge { reason: None }, &cluster)?,
             MergeDecision::NoMerge { .. }
         ));
+        Ok(())
     }
 
     #[test]
