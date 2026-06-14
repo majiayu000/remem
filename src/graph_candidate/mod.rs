@@ -30,6 +30,7 @@ Each block must include <type>edge</type>, <edge_type>, <from_ref>, <to_ref>,
 <evidence_event_ids>, <risk_class>, <confidence>, and <reason>.
 Use only edge candidates with edge_type mentions, touches_file, or conflicts.
 Use only provided observations and evidence ids.
+For conflicts, use only memory:<id> endpoints from provided memory_refs.
 If there is no durable graph candidate, return exactly <no_graph_candidates reason=\"...\"/>.
 If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/>.
 Do not invent files, entities, memories, evidence ids, or relationships.";

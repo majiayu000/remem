@@ -198,6 +198,7 @@ async fn graph_candidate_rejects_unpromotable_candidate_type() -> Result<()> {
 #[test]
 fn graph_candidate_system_prompt_only_requests_promotable_edge_candidates() {
     assert!(GRAPH_CANDIDATE_SYSTEM.contains("Use only edge candidates"));
+    assert!(GRAPH_CANDIDATE_SYSTEM.contains("For conflicts, use only memory:<id> endpoints"));
     assert!(!GRAPH_CANDIDATE_SYSTEM.contains("entity_alias"));
     assert!(!GRAPH_CANDIDATE_SYSTEM.contains("state_relation"));
     assert!(!GRAPH_CANDIDATE_SYSTEM.contains("type=claim"));

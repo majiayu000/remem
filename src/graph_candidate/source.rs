@@ -24,12 +24,23 @@ struct GraphSourceEvent {
     text: String,
 }
 
+#[derive(Debug, Clone)]
+struct GraphSourceMemory {
+    id: i64,
+    memory_type: String,
+    topic_key: Option<String>,
+    title: String,
+    content: String,
+    evidence_event_ids: Vec<i64>,
+}
+
 pub(super) struct GraphObservationBatch {
     pub(super) from_event_id: i64,
     pub(super) to_event_id: i64,
     pub(super) evidence_event_ids: Vec<i64>,
     source_events: Vec<GraphSourceEvent>,
     observations: Vec<GraphSourceObservation>,
+    source_memories: Vec<GraphSourceMemory>,
 }
 
 pub(super) fn load_graph_observation_batch(
@@ -116,12 +127,14 @@ pub(super) fn load_graph_observation_batch(
     let to_event_id = *evidence_set.iter().next_back().unwrap_or(&0);
     let evidence_event_ids = evidence_set.into_iter().collect::<Vec<_>>();
     let source_events = load_graph_source_events(conn, &evidence_event_ids)?;
+    let source_memories = load_graph_source_memories(conn, &task.project, &evidence_event_ids)?;
     Ok(Some(GraphObservationBatch {
         from_event_id,
         to_event_id,
         evidence_event_ids,
         source_events,
         observations,
+        source_memories,
     }))
 }
 
@@ -155,6 +168,70 @@ fn load_graph_source_events(
         }
     }
     Ok(events)
+}
+
+fn load_graph_source_memories(
+    conn: &Connection,
+    source_project: &str,
+    evidence_event_ids: &[i64],
+) -> Result<Vec<GraphSourceMemory>> {
+    let evidence_event_ids = evidence_event_ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut stmt = conn.prepare(
+        "SELECT m.id,
+                m.memory_type,
+                m.topic_key,
+                m.title,
+                m.content,
+                COALESCE(m.evidence_event_ids, c.evidence_event_ids) AS evidence_event_ids
+         FROM memories m
+         LEFT JOIN memory_candidates c ON c.id = m.source_candidate_id
+         WHERE m.status = 'active'
+           AND COALESCE(m.evidence_event_ids, c.evidence_event_ids) IS NOT NULL
+           AND (
+                (m.owner_scope = 'repo' AND m.owner_key = ?1)
+                OR m.target_project = ?1
+                OR (
+                    m.owner_scope IS NULL
+                    AND m.project = ?1
+                    AND COALESCE(m.scope, 'project') != 'global'
+                )
+           )
+         ORDER BY m.updated_at_epoch DESC, m.id DESC
+         LIMIT 200",
+    )?;
+    let rows = stmt
+        .query_map(params![source_project], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut memories = Vec::new();
+    for (id, memory_type, topic_key, title, content, evidence_json) in rows {
+        let memory_event_ids = serde_json::from_str::<Vec<i64>>(&evidence_json)
+            .with_context(|| format!("memory {id} has malformed evidence_event_ids"))?;
+        if memory_event_ids
+            .iter()
+            .any(|event_id| evidence_event_ids.contains(event_id))
+        {
+            memories.push(GraphSourceMemory {
+                id,
+                memory_type,
+                topic_key,
+                title,
+                content,
+                evidence_event_ids: memory_event_ids,
+            });
+        }
+    }
+    memories.sort_by_key(|memory| memory.id);
+    Ok(memories)
 }
 
 fn parse_observation_file_list(
@@ -495,6 +572,36 @@ pub(super) fn build_graph_candidate_prompt(
         batch.from_event_id,
         batch.to_event_id
     );
+    if !batch.source_memories.is_empty() {
+        prompt.push_str("<memory_refs>\n");
+        for memory in &batch.source_memories {
+            let evidence = memory
+                .evidence_event_ids
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            prompt.push_str(&format!(
+                "<memory_ref ref=\"memory:{}\" type=\"{}\" topic_key=\"{}\" evidence_event_ids=\"{}\">\n",
+                memory.id,
+                xml_escape_attr(&memory.memory_type),
+                xml_escape_attr(memory.topic_key.as_deref().unwrap_or("")),
+                xml_escape_attr(&evidence)
+            ));
+            prompt.push_str("<title>");
+            prompt.push_str(&xml_escape_text(&crate::db::truncate_str(
+                &memory.title,
+                200,
+            )));
+            prompt.push_str("</title>\n<content>");
+            prompt.push_str(&xml_escape_text(&crate::db::truncate_str(
+                &memory.content,
+                500,
+            )));
+            prompt.push_str("</content>\n</memory_ref>\n");
+        }
+        prompt.push_str("</memory_refs>\n\n");
+    }
     for observation in &batch.observations {
         let evidence = observation
             .evidence_event_ids

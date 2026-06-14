@@ -341,6 +341,59 @@ async fn graph_candidate_uses_structured_files_for_touch_support() -> Result<()>
 }
 
 #[tokio::test]
+async fn graph_candidate_prompt_includes_evidence_backed_memory_refs_for_conflicts() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-conflict-memory-refs")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    let event_id = insert_graph_source_observation(
+        &conn,
+        &task,
+        "Provider A and provider B are contradictory active memories.",
+    )?;
+    let evidence_json = serde_json::to_string(&vec![event_id])?;
+    conn.execute(
+        "UPDATE memories SET evidence_event_ids = ?1 WHERE id IN (1, 2)",
+        params![evidence_json],
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
+        assert!(
+            prompt.contains("<memory_refs>"),
+            "prompt should include memory refs: {prompt}"
+        );
+        assert!(
+            prompt.contains("ref=\"memory:1\""),
+            "prompt should expose memory:1: {prompt}"
+        );
+        assert!(
+            prompt.contains("ref=\"memory:2\""),
+            "prompt should expose memory:2: {prompt}"
+        );
+        Ok(graph_candidate_xml("conflicts", "memory:2", event_id))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    let (edge_type, from_ref, to_ref): (String, String, String) = conn.query_row(
+        "SELECT edge_type, from_ref, to_ref FROM graph_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(edge_type, "conflicts");
+    assert_eq!(from_ref, "memory:1");
+    assert_eq!(to_ref, "memory:2");
+    Ok(())
+}
+
+#[tokio::test]
 async fn graph_candidate_routes_unsupported_auto_edge_to_review() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-unsupported-file")?;
