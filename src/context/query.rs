@@ -3,8 +3,6 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::memory::{self, Memory};
-
 use super::abstention::filter_recent_rows_by_task_embedding;
 use super::commit_signals::query_recent_commit_messages;
 use super::filters::{
@@ -17,6 +15,7 @@ use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
 use super::types::{ContextLoadError, HiddenDuplicateGroup, LoadedContext, SessionSummaryBrief};
+use crate::memory::{self, Memory};
 
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
@@ -74,6 +73,16 @@ pub(super) fn load_context_data_with_policy(
     errors.append(&mut memory_selection.errors);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
+    if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts_for_query(
+        conn,
+        &mut memories,
+        memory_selection.fact_label_query.as_deref(),
+        Some(project),
+    ) {
+        let message = format!("failed to load temporal fact labels for {project}: {e}");
+        crate::log::error("context", &message);
+        errors.push(ContextLoadError::new("memories", message));
+    }
     let lessons = memory::lesson::list_lessons_for_context(
         conn,
         project,
@@ -107,6 +116,7 @@ struct ContextMemorySelection {
     owner_traces: Vec<OwnerTrace>,
     owner_counts: OwnerCounts,
     diagnostics: super::types::ContextDiagnostics,
+    fact_label_query: Option<String>,
 }
 
 pub(super) struct ContextMemoryRow {
@@ -130,6 +140,7 @@ fn load_project_memories(
     let mut seen_ids = HashSet::new();
     let mut abstained = false;
     let mut task_abstention_query = None;
+    let mut fact_label_query = None;
 
     let excluded_types = policy
         .section(SectionKind::MemoryIndex)
@@ -144,6 +155,7 @@ fn load_project_memories(
         summaries,
         workstreams,
     ) {
+        fact_label_query = Some(implicit_query.clone());
         match query_hybrid_context_memories(
             conn,
             project,
@@ -275,6 +287,7 @@ fn load_project_memories(
         errors,
         owner_traces: traces,
         owner_counts,
+        fact_label_query,
         diagnostics: if collect_diagnostics {
             super::diagnostics::collect_context_diagnostics(
                 conn,

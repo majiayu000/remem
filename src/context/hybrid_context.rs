@@ -15,6 +15,7 @@ const FTS_WEIGHT: f64 = 2.5;
 const VECTOR_WEIGHT: f64 = 3.0;
 const ENTITY_WEIGHT: f64 = 1.25;
 const TEMPORAL_WEIGHT: f64 = 1.0;
+const FACT_WEIGHT: f64 = 1.4;
 const LIKE_FALLBACK_WEIGHT: f64 = 0.25;
 const MIN_HYBRID_FETCH_LIMIT: i64 = 20;
 
@@ -65,6 +66,18 @@ pub(super) fn query_hybrid_context_memories(
         &mut channels,
         TEMPORAL_WEIGHT,
         query_local_temporal_channel(
+            conn,
+            project,
+            query,
+            current_branch,
+            excluded_types,
+            fetch_limit,
+        )?,
+    );
+    push_channel(
+        &mut channels,
+        FACT_WEIGHT,
+        query_local_fact_channel(
             conn,
             project,
             query,
@@ -399,6 +412,31 @@ fn query_local_temporal_channel(
     let refs = crate::db::to_sql_refs(&params);
     let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, i64>(0))?;
     Ok(rank_ordered_hits(crate::db::query::collect_rows(rows)?))
+}
+
+fn query_local_fact_channel(
+    conn: &Connection,
+    project: &str,
+    query: &str,
+    current_branch: Option<&str>,
+    excluded_types: &[&str],
+    limit: i64,
+) -> Result<Vec<WeightedRankedHit>> {
+    let tokens = crate::retrieval::query_expand::core_tokens(query);
+    let token_refs = tokens.iter().map(String::as_str).collect::<Vec<_>>();
+    let ids = crate::retrieval::temporal::search_fact_memory_ids(
+        conn,
+        &token_refs,
+        Some(project),
+        None,
+        excluded_types,
+        Some(project),
+        current_branch,
+        limit,
+        false,
+        crate::retrieval::temporal::FactTimeMode::from_query(query),
+    )?;
+    Ok(rank_ordered_hits(ids))
 }
 
 fn query_local_vector_channel(

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
+use serde::Serialize;
 
 use super::super::types::{GetObservationsParams, TimelineParams};
 use super::errors::{self, McpToolError, McpToolResult};
@@ -225,8 +226,15 @@ fn memory_details_with_topic_traces(
     let Some(items) = value.as_array_mut() else {
         return Ok(value);
     };
+    let memory_ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+    let temporal_facts = current_temporal_facts_by_memory_id(conn, &memory_ids, requested_project)?;
     let mut trace_cache = HashMap::new();
     for (item, memory) in items.iter_mut().zip(memories) {
+        if let Some(facts) = temporal_facts.get(&memory.id) {
+            if !facts.is_empty() {
+                item["temporal_facts"] = serde_json::to_value(facts)?;
+            }
+        }
         let Some(topic_key) = memory.topic_key.as_deref() else {
             continue;
         };
@@ -248,6 +256,95 @@ fn memory_details_with_topic_traces(
         }
     }
     Ok(value)
+}
+
+#[derive(Serialize)]
+struct MemoryTemporalFactDetail {
+    project: String,
+    subject: String,
+    predicate: String,
+    object: String,
+    valid_from_epoch: Option<i64>,
+    valid_to_epoch: Option<i64>,
+    learned_at_epoch: i64,
+    confidence: f64,
+    status: String,
+}
+
+fn current_temporal_facts_by_memory_id(
+    conn: &rusqlite::Connection,
+    memory_ids: &[i64],
+    requested_project: Option<&str>,
+) -> anyhow::Result<HashMap<i64, Vec<MemoryTemporalFactDetail>>> {
+    if memory_ids.is_empty()
+        || !crate::retrieval::temporal::sqlite_table_exists(conn, "memory_facts")?
+    {
+        return Ok(HashMap::new());
+    }
+    let placeholders = (1..=memory_ids.len())
+        .map(|idx| format!("?{idx}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let has_invalidated_at_epoch = crate::memory::facts::invalidated_at_epoch_available(conn)?;
+    let mut conditions = vec![
+        format!("source_memory_id IN ({placeholders})"),
+        crate::memory::facts::current_fact_filter_sql("", has_invalidated_at_epoch),
+    ];
+    let mut params = memory_ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect::<Vec<_>>();
+    let now_idx = memory_ids.len() + 1;
+    conditions.push(format!(
+        "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{now_idx})"
+    ));
+    conditions.push(format!(
+        "(valid_to_epoch IS NULL OR valid_to_epoch > ?{now_idx})"
+    ));
+    params.push(Box::new(chrono::Utc::now().timestamp()));
+    let mut idx = now_idx + 1;
+    if let Some(project) = requested_project {
+        conditions.push(format!("project = ?{idx}"));
+        params.push(Box::new(project.to_string()));
+        idx += 1;
+    }
+    let sql = format!(
+        "SELECT source_memory_id, project, subject, predicate, object, valid_from_epoch,
+                valid_to_epoch, learned_at_epoch, confidence, status
+         FROM memory_facts
+         WHERE {}
+         ORDER BY source_memory_id, COALESCE(valid_from_epoch, learned_at_epoch) DESC,
+                  confidence DESC, id DESC
+         LIMIT ?{idx}",
+        conditions.join(" AND ")
+    );
+    params.push(Box::new(
+        (memory_ids.len() as i64).saturating_mul(12).max(12),
+    ));
+    let refs = crate::db::to_sql_refs(&params);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            MemoryTemporalFactDetail {
+                project: row.get(1)?,
+                subject: row.get(2)?,
+                predicate: row.get(3)?,
+                object: row.get(4)?,
+                valid_from_epoch: row.get(5)?,
+                valid_to_epoch: row.get(6)?,
+                learned_at_epoch: row.get(7)?,
+                confidence: row.get(8)?,
+                status: row.get(9)?,
+            },
+        ))
+    })?;
+    let mut facts = HashMap::new();
+    for row in rows {
+        let (memory_id, fact) = row?;
+        facts.entry(memory_id).or_insert_with(Vec::new).push(fact);
+    }
+    Ok(facts)
 }
 
 fn ensure_requested_ids_found(
@@ -281,7 +378,7 @@ fn ensure_requested_ids_found(
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     use super::*;
 
@@ -329,6 +426,19 @@ mod tests {
         Ok(conn)
     }
 
+    fn insert_memory_for_fact(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "INSERT INTO memories
+             (id, session_id, project, topic_key, title, content, memory_type, files,
+              created_at_epoch, updated_at_epoch, status, branch, scope)
+             VALUES (1, NULL, '/repo', 'global-contract', 'Global contract',
+                     'Global memory body', 'decision', NULL, 10, 10, 'active',
+                     NULL, 'project')",
+            [],
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn topic_trace_is_omitted_for_requested_project_mismatch() -> Result<()> {
         let conn = conn_with_trace()?;
@@ -349,6 +459,30 @@ mod tests {
         let value = memory_details_with_topic_traces(&conn, &memories, Some("/repo"))?;
 
         assert_eq!(value[0]["topic_trace"][0]["title"], "Repo-only trace");
+        Ok(())
+    }
+
+    #[test]
+    fn memory_details_attach_current_temporal_facts() -> Result<()> {
+        let conn = conn_with_trace()?;
+        insert_memory_for_fact(&conn)?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO memory_facts
+             (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+              learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+              confidence, supersedes_fact_id, status, invalidated_at_epoch,
+              created_at_epoch, updated_at_epoch)
+             VALUES ('/repo', 'HarborMint', 'verified_by', 'Toma Reed', ?1, NULL, ?2, 1,
+                     NULL, '[]', 0.95, NULL, 'active', NULL, ?2, ?2)",
+            params![now - 1_000, now - 900],
+        )?;
+        let memories = vec![memory_row("/repo", "project")];
+
+        let value = memory_details_with_topic_traces(&conn, &memories, Some("/repo"))?;
+
+        assert_eq!(value[0]["temporal_facts"][0]["subject"], "HarborMint");
+        assert_eq!(value[0]["temporal_facts"][0]["object"], "Toma Reed");
         Ok(())
     }
 }

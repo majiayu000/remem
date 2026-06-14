@@ -204,6 +204,8 @@ pub(super) struct SearchResult {
     pub topic_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub temporal_facts: Vec<String>,
     pub source: String,
     pub source_type: String,
     pub updated_at: String,

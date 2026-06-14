@@ -4,9 +4,9 @@ use rusqlite::Connection;
 use crate::memory::Memory;
 
 use super::listing::search_without_query;
-pub(crate) use super::text::SearchWeights;
 use super::text::{search_with_query, search_with_query_explain, search_with_query_weights};
 use super::SearchExplain;
+use super::SearchWeights;
 
 pub fn search(
     conn: &Connection,

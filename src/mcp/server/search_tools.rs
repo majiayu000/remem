@@ -120,6 +120,7 @@ impl MemoryServer {
                     let updated = chrono::DateTime::from_timestamp(memory.updated_at_epoch, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                         .unwrap_or_default();
+                    let temporal_facts = temporal_fact_preview_labels(&memory.text);
                     let preview = memory.text.chars().take(300).collect::<String>();
                     SearchResult {
                         id: memory.id,
@@ -127,6 +128,7 @@ impl MemoryServer {
                         title: memory.title,
                         topic_key: memory.topic_key,
                         preview: Some(preview),
+                        temporal_facts,
                         source: "memory".to_string(),
                         source_type: "memory".to_string(),
                         updated_at: updated,
@@ -216,6 +218,20 @@ impl MemoryServer {
             errors::to_json_pretty(TOOL, &response)
         })
     }
+}
+
+fn temporal_fact_preview_labels(text: &str) -> Vec<String> {
+    text.lines()
+        .next()
+        .and_then(|line| line.strip_prefix("Temporal facts: "))
+        .map(|line| {
+            line.split("; ")
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -407,5 +423,20 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn temporal_fact_preview_labels_extracts_compact_labels() {
+        let labels = temporal_fact_preview_labels(
+            "Temporal facts: HarborMint verified_by Toma Reed; HarborMint blocked_by North\nBody",
+        );
+
+        assert_eq!(
+            labels,
+            vec![
+                "HarborMint verified_by Toma Reed".to_string(),
+                "HarborMint blocked_by North".to_string()
+            ]
+        );
     }
 }
