@@ -144,6 +144,32 @@ fn backdated_supersession_preserves_prior_belief_until_invalidation_time() -> Re
 }
 
 #[test]
+fn as_of_known_replacement_does_not_return_superseded_fact() -> Result<()> {
+    let conn = setup_fact_conn()?;
+    let project = "test-temporal-known-replacement";
+    let old_id = insert_temporal_fact_in_current_tx(&conn, &input(project, "staging", 100), 150)?;
+    let mut replacement = input(project, "production", 200);
+    replacement.supersedes_fact_id = Some(old_id);
+    let new_id = insert_temporal_fact_in_current_tx(&conn, &replacement, 250)?;
+
+    let as_of = list_facts_as_of(
+        &conn,
+        project,
+        225,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert_eq!(
+        as_of
+            .iter()
+            .map(|fact| (fact.id, fact.object.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(new_id, "production")]
+    );
+    Ok(())
+}
+
+#[test]
 fn current_queries_exclude_invalidated_active_rows() -> Result<()> {
     let mut conn = setup_fact_conn()?;
     let project = "test-temporal-current-invalidated";
