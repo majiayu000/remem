@@ -12,6 +12,7 @@ use crate::memory::graph_contract::{
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
+mod conflict_bridge;
 mod parser;
 pub(crate) mod review;
 mod source;
@@ -288,23 +289,36 @@ pub(crate) fn insert_trusted_graph_edge(
 ) -> Result<TrustedGraphEdgeOutcome> {
     ensure_review_threshold(candidate)?;
     ensure_trusted_graph_refs(conn, source_project, project_id, candidate)?;
-    let operation_input = MemoryOperationInput {
-        source: "graph_candidate".to_string(),
-        actor: actor.to_string(),
-        source_project: source_project.to_string(),
-        owner_scope: "repo".to_string(),
-        owner_key: source_project.to_string(),
-        memory_type: "graph_edge".to_string(),
-        topic_key: Some(candidate.edge_type.clone()),
-        state_key: None,
-        source_candidate_id: Some(candidate_id),
-        confidence: Some(candidate.confidence),
-    };
-    let operation_plan = MemoryOperationPlan::new(
-        MemoryLifecycleOp::Add,
-        None,
-        "graph candidate promoted to trusted graph edge",
+    let conflict_bridge =
+        conflict_bridge::build_memory_conflict_bridge(conn, source_project, candidate)?;
+    let operation_input = conflict_bridge.as_ref().map_or_else(
+        || MemoryOperationInput {
+            source: "graph_candidate".to_string(),
+            actor: actor.to_string(),
+            source_project: source_project.to_string(),
+            owner_scope: "repo".to_string(),
+            owner_key: source_project.to_string(),
+            memory_type: "graph_edge".to_string(),
+            topic_key: Some(candidate.edge_type.clone()),
+            state_key: None,
+            source_candidate_id: Some(candidate_id),
+            confidence: Some(candidate.confidence),
+        },
+        |bridge| bridge.operation_input(source_project, candidate_id, candidate, actor),
     );
+    let operation_plan = match &conflict_bridge {
+        Some(bridge) => MemoryOperationPlan::new(
+            MemoryLifecycleOp::Conflict,
+            bridge.state_key.clone(),
+            "graph conflict candidate promoted to trusted memory conflict edge",
+        )
+        .with_conflicting_ids(bridge.ids.clone()),
+        None => MemoryOperationPlan::new(
+            MemoryLifecycleOp::Add,
+            None,
+            "graph candidate promoted to trusted graph edge",
+        ),
+    };
     let operation_id = insert_operation_log(conn, &operation_input, &operation_plan, None)?;
     let edge_input = trusted_graph_edge_input(
         conn,
@@ -315,6 +329,9 @@ pub(crate) fn insert_trusted_graph_edge(
         candidate,
     )?;
     let edge_id = insert_graph_edge(conn, &edge_input)?;
+    if let Some(bridge) = conflict_bridge {
+        bridge.insert_memory_edges(conn, operation_id, candidate)?;
+    }
     Ok(TrustedGraphEdgeOutcome {
         edge_id,
         operation_id,

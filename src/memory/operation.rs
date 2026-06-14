@@ -61,6 +61,11 @@ impl MemoryOperationPlan {
         self
     }
 
+    pub fn with_conflicting_ids(mut self, conflicting_ids: Vec<i64>) -> Self {
+        self.conflicting_ids = conflicting_ids;
+        self
+    }
+
     pub fn with_noop_reason(mut self, reason: impl Into<String>) -> Self {
         self.noop_reason = Some(reason.into());
         self

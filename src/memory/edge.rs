@@ -146,6 +146,56 @@ pub fn insert_merged_into_edges(
     )
 }
 
+pub fn insert_conflicts_edges(
+    conn: &Connection,
+    from_memory_ids: &[i64],
+    to_memory_id: i64,
+    context: MemoryEdgeWriteContext<'_>,
+) -> Result<usize> {
+    insert_replacement_edges(
+        conn,
+        MemoryEdgeType::Conflicts,
+        from_memory_ids,
+        to_memory_id,
+        context,
+    )
+}
+
+pub fn insert_pairwise_conflict_edges(
+    conn: &Connection,
+    memory_ids: &[i64],
+    context: MemoryEdgeWriteContext<'_>,
+) -> Result<usize> {
+    let mut ids = memory_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+
+    let mut inserted = 0usize;
+    for (idx, from_memory_id) in ids.iter().copied().enumerate() {
+        for to_memory_id in ids.iter().copied().skip(idx + 1) {
+            insert_memory_edge(
+                conn,
+                &MemoryEdgeInput {
+                    edge_type: MemoryEdgeType::Conflicts,
+                    from_memory_id: Some(from_memory_id),
+                    to_memory_id: Some(to_memory_id),
+                    state_key_id: context
+                        .state_key_id
+                        .or(memory_state_key_id(conn, to_memory_id)?)
+                        .or(memory_state_key_id(conn, from_memory_id)?),
+                    source_candidate_id: context.source_candidate_id,
+                    evidence_event_ids: context.evidence_event_ids,
+                    source_operation_id: context.source_operation_id,
+                    confidence: context.confidence,
+                    reason: context.reason,
+                },
+            )?;
+            inserted += 1;
+        }
+    }
+    Ok(inserted)
+}
+
 fn memory_state_key_id(conn: &Connection, memory_id: i64) -> Result<Option<i64>> {
     Ok(conn
         .query_row(

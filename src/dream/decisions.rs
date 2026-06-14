@@ -47,6 +47,7 @@ pub(super) fn record_no_merge(
         reason.unwrap_or("no merge returned by dream"),
         Some(now + DREAM_NO_MERGE_REVIEW_SECS),
         None,
+        None,
     )
 }
 
@@ -56,7 +57,7 @@ pub(super) fn record_failed(
     cluster: &Cluster,
     reason: &str,
 ) -> Result<()> {
-    upsert_decision(conn, project, cluster, "failed", reason, None, None)
+    upsert_decision(conn, project, cluster, "failed", reason, None, None, None)
 }
 
 pub(super) fn record_merged(
@@ -72,7 +73,27 @@ pub(super) fn record_merged(
         "merged",
         "dream consolidation merged cluster",
         None,
-        Some(outcome),
+        Some(outcome.merged_id),
+        Some(outcome.operation_id),
+    )
+}
+
+pub(super) fn record_defer(
+    conn: &Connection,
+    project: &str,
+    cluster: &Cluster,
+    reason: Option<&str>,
+    source_operation_id: i64,
+) -> Result<()> {
+    upsert_decision(
+        conn,
+        project,
+        cluster,
+        "defer",
+        reason.unwrap_or("dream consolidation deferred unresolved conflict"),
+        None,
+        None,
+        Some(source_operation_id),
     )
 }
 
@@ -106,7 +127,8 @@ fn upsert_decision(
     decision: &str,
     reason: &str,
     next_review_epoch: Option<i64>,
-    outcome: Option<ApplyOutcome>,
+    source_memory_id: Option<i64>,
+    source_operation_id: Option<i64>,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let Some(memory_type) = cluster_memory_type(cluster) else {
@@ -140,8 +162,8 @@ fn upsert_decision(
             member_ids_json,
             cluster.members.len() as i64,
             next_review_epoch,
-            outcome.map(|value| value.merged_id),
-            outcome.map(|value| value.operation_id),
+            source_memory_id,
+            source_operation_id,
             now
         ],
     )?;

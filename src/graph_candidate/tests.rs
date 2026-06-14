@@ -741,6 +741,26 @@ async fn graph_review_approve_reject_and_defer() -> Result<()> {
     let edge_id =
         review::approve_candidate(&mut conn, pending[0].id)?.expect("candidate should approve");
     assert!(edge_id > 0);
+    let (memory_edge_count, source_candidate_id, operation, conflicting_json): (
+        i64,
+        Option<i64>,
+        String,
+        String,
+    ) = conn.query_row(
+        "SELECT COUNT(*), me.source_candidate_id, mol.operation, mol.conflicting_ids
+         FROM memory_edges me
+         JOIN memory_operation_log mol ON mol.id = me.source_operation_id
+        WHERE me.edge_type = 'conflicts'
+           AND me.from_memory_id = 1
+           AND me.to_memory_id = 2",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(memory_edge_count, 1);
+    assert_eq!(source_candidate_id, None);
+    assert_eq!(operation, "conflict");
+    let conflicting_ids: Vec<i64> = serde_json::from_str(&conflicting_json)?;
+    assert_eq!(conflicting_ids, vec![1, 2]);
     assert!(review::reject_candidate(
         &conn,
         pending[1].id,

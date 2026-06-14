@@ -13,6 +13,7 @@ pub enum MemoryLifecycleOp {
     Invalidate,
     Noop,
     Defer,
+    Conflict,
 }
 
 impl MemoryLifecycleOp {
@@ -23,6 +24,7 @@ impl MemoryLifecycleOp {
             Self::Invalidate => "invalidate",
             Self::Noop => "noop",
             Self::Defer => "defer",
+            Self::Conflict => "conflict",
         }
     }
 }

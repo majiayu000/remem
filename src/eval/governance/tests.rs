@@ -23,7 +23,8 @@ fn governance_eval_sandbox_reports_all_required_metrics() -> Result<()> {
             update: 1,
             invalidate: 1,
             noop: 1,
-            defer: 1
+            defer: 1,
+            conflict: 0
         }
     );
     assert_eq!(report.summary_candidates.total, 7);
