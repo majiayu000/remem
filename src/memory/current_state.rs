@@ -564,9 +564,16 @@ fn load_facts_for_memory(
     conditions.push(format!(
         "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{idx})"
     ));
-    conditions.push(format!(
-        "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
-    ));
+    if has_invalidated_at_epoch {
+        conditions.push(format!(
+            "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx} \
+              OR (invalidated_at_epoch IS NOT NULL AND invalidated_at_epoch > ?{idx}))"
+        ));
+    } else {
+        conditions.push(format!(
+            "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
+        ));
+    }
     params_vec.push(Box::new(effective_epoch));
     idx += 1;
     if let Some(as_of_epoch) = as_of_epoch {

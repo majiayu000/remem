@@ -230,9 +230,16 @@ fn query_facts(
         conditions.push(format!(
             "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{idx})"
         ));
-        conditions.push(format!(
-            "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
-        ));
+        if has_invalidated_at_epoch {
+            conditions.push(format!(
+                "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx} \
+                  OR (invalidated_at_epoch IS NOT NULL AND invalidated_at_epoch > ?{idx}))"
+            ));
+        } else {
+            conditions.push(format!(
+                "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
+            ));
+        }
         conditions.push(format!("learned_at_epoch <= ?{idx}"));
         if has_invalidated_at_epoch {
             conditions.push(format!(

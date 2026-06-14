@@ -102,6 +102,48 @@ fn supersession_records_transaction_time_invalidation() -> Result<()> {
 }
 
 #[test]
+fn backdated_supersession_preserves_prior_belief_until_invalidation_time() -> Result<()> {
+    let conn = setup_fact_conn()?;
+    let project = "test-temporal-backdated";
+    let old_id = insert_temporal_fact_in_current_tx(&conn, &input(project, "staging", 100), 150)?;
+    let mut replacement = input(project, "production", 200);
+    replacement.learned_at_epoch = Some(250);
+    replacement.supersedes_fact_id = Some(old_id);
+    let new_id = insert_temporal_fact_in_current_tx(&conn, &replacement, 250)?;
+
+    let before_invalidation = list_facts_as_of(
+        &conn,
+        project,
+        225,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert_eq!(
+        before_invalidation
+            .iter()
+            .map(|fact| (fact.id, fact.object.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(old_id, "staging")]
+    );
+
+    let after_invalidation = list_facts_as_of(
+        &conn,
+        project,
+        260,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert_eq!(
+        after_invalidation
+            .iter()
+            .map(|fact| (fact.id, fact.object.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(new_id, "production")]
+    );
+    Ok(())
+}
+
+#[test]
 fn current_queries_exclude_invalidated_active_rows() -> Result<()> {
     let mut conn = setup_fact_conn()?;
     let project = "test-temporal-current-invalidated";
