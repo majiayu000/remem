@@ -821,3 +821,68 @@ fn current_facts_exclude_invalidated_rows_even_when_status_is_active() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn as_of_facts_keep_backdated_superseded_fact_until_invalidation_time() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        100,
+        Some(100),
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (id, project, subject, predicate, object, valid_from_epoch,
+          valid_to_epoch, learned_at_epoch, source_memory_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES
+          (1, '/repo', 'deploy-target', 'affects_project', 'staging', 100,
+           200, 110, 2, '[]', 0.9, NULL, 'stale', 250, 110, 250),
+          (2, '/repo', 'deploy-target', 'affects_project', 'production', 200,
+           NULL, 250, 2, '[]', 0.9, 1, 'active', NULL, 250, 250)",
+        [],
+    )?;
+
+    let before_invalidation = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(225),
+            ..request()
+        },
+    )?;
+    assert_eq!(
+        before_invalidation
+            .facts
+            .iter()
+            .map(|fact| fact.object.as_str())
+            .collect::<Vec<_>>(),
+        vec!["staging"]
+    );
+
+    let after_invalidation = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(260),
+            ..request()
+        },
+    )?;
+    assert_eq!(
+        after_invalidation
+            .facts
+            .iter()
+            .map(|fact| fact.object.as_str())
+            .collect::<Vec<_>>(),
+        vec!["production"]
+    );
+    Ok(())
+}
