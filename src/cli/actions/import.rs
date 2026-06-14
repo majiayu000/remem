@@ -204,7 +204,7 @@ fn validate_import_reference_time(
 ) -> Result<()> {
     let has_relative_time = crate::memory::reference_time::contains_relative_time_reference(title)
         || crate::memory::reference_time::contains_relative_time_reference(content);
-    if has_relative_time && !reference_time_epoch.is_some_and(|epoch| epoch > 0) {
+    if has_relative_time && reference_time_epoch.is_none_or(|epoch| epoch <= 0) {
         anyhow::bail!(
             "skipped source memory id={source_id}: relative dates require a positive reference_time_epoch"
         );
