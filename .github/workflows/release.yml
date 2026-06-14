@@ -7,7 +7,25 @@ permissions:
   contents: write
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release secrets
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          missing=0
+          for name in CRATES_IO_TOKEN NPM_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required release secret: ${name}"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
   build:
+    needs: preflight
     strategy:
       matrix:
         include:
