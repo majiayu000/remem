@@ -559,6 +559,7 @@ fn load_facts_for_memory(
     let mut conditions = vec!["source_memory_id = ?1".to_string()];
     let mut params_vec: Vec<Box<dyn ToSql>> = vec![Box::new(memory_id)];
     let mut idx = 2;
+    let has_invalidated_at_epoch = crate::memory::facts::invalidated_at_epoch_available(conn)?;
     let effective_epoch = as_of_epoch.unwrap_or_else(|| chrono::Utc::now().timestamp());
     conditions.push(format!(
         "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{idx})"
@@ -570,11 +571,19 @@ fn load_facts_for_memory(
     idx += 1;
     if let Some(as_of_epoch) = as_of_epoch {
         conditions.push(format!("learned_at_epoch <= ?{idx}"));
+        if has_invalidated_at_epoch {
+            conditions.push(format!(
+                "(invalidated_at_epoch IS NULL OR invalidated_at_epoch > ?{idx})"
+            ));
+        }
         params_vec.push(Box::new(as_of_epoch));
         idx += 1;
     }
     if as_of_epoch.is_none() {
-        conditions.push("status = 'active'".to_string());
+        conditions.push(crate::memory::facts::current_fact_filter_sql(
+            "",
+            has_invalidated_at_epoch,
+        ));
     }
 
     let sql = format!(

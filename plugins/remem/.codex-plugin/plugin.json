@@ -1,6 +1,6 @@
 {
   "name": "remem",
-  "version": "0.5.66",
+  "version": "0.5.67",
   "description": "Persistent project memory for Codex through remem MCP and explicit hook activation.",
   "author": {
     "name": "majiayu000",

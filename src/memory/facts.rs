@@ -73,6 +73,32 @@ pub struct TemporalFact {
     pub status: String,
 }
 
+pub(crate) fn invalidated_at_epoch_available(conn: &Connection) -> Result<bool> {
+    let exists: i64 = conn.query_row(
+        "SELECT EXISTS (
+             SELECT 1 FROM pragma_table_info('memory_facts')
+             WHERE name = 'invalidated_at_epoch'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(exists != 0)
+}
+
+pub(crate) fn current_fact_filter_sql(alias: &str, has_invalidated_at_epoch: bool) -> String {
+    let alias = alias.trim();
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+    if has_invalidated_at_epoch {
+        format!("{prefix}status = 'active' AND {prefix}invalidated_at_epoch IS NULL")
+    } else {
+        format!("{prefix}status = 'active'")
+    }
+}
+
 pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>) -> Result<i64> {
     validate_input(input)?;
     let now = chrono::Utc::now().timestamp();
@@ -186,6 +212,7 @@ fn query_facts(
     as_of_epoch: Option<i64>,
     active_only: bool,
 ) -> Result<Vec<TemporalFact>> {
+    let has_invalidated_at_epoch = invalidated_at_epoch_available(conn)?;
     let mut conditions = vec!["project = ?1".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(project.to_string())];
     let mut idx = 2;
@@ -206,10 +233,16 @@ fn query_facts(
         conditions.push(format!(
             "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
         ));
+        conditions.push(format!("learned_at_epoch <= ?{idx}"));
+        if has_invalidated_at_epoch {
+            conditions.push(format!(
+                "(invalidated_at_epoch IS NULL OR invalidated_at_epoch > ?{idx})"
+            ));
+        }
         params.push(Box::new(as_of_epoch));
     }
     if active_only {
-        conditions.push("status = 'active'".to_string());
+        conditions.push(current_fact_filter_sql("", has_invalidated_at_epoch));
     }
 
     let sql = format!(

@@ -284,20 +284,23 @@ pub fn query_memory_facts_stats(conn: &Connection) -> Result<MemoryFactsStats> {
         0
     };
     let retrieval_eligible = if memory_facts_exists && memories_exists {
-        conn.query_row(
+        let fact_current_filter = crate::memory::facts::current_fact_filter_sql(
+            "f",
+            crate::memory::facts::invalidated_at_epoch_available(conn)?,
+        );
+        let sql = format!(
             "SELECT COUNT(*)
              FROM memory_facts f
              JOIN memories m ON m.id = f.source_memory_id
-             WHERE f.status = 'active'
+             WHERE {fact_current_filter}
                AND f.valid_from_epoch IS NOT NULL
                AND m.status = 'active'
                AND (
                  m.expires_at_epoch IS NULL
                  OR m.expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
-               )",
-            [],
-            |row| row.get(0),
-        )?
+               )"
+        );
+        conn.query_row(&sql, [], |row| row.get(0))?
     } else {
         0
     };
