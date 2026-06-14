@@ -374,6 +374,95 @@ fn source_anchor_normalizes_absolute_memory_files_against_project() -> Result<()
     Ok(())
 }
 
+#[test]
+fn source_anchor_checks_each_file_against_its_own_source_commit() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let memory = tracked_staleness_memory(Some(r#"["src/a.rs","src/b.rs"]"#));
+    link_staleness_commit(&conn, 1, "source-a", 100, &["src/a.rs"], "mem-session-1")?;
+    insert_staleness_commit(&conn, 2, "later-a", 200, &["src/a.rs"])?;
+    link_staleness_commit(&conn, 3, "source-b", 300, &["src/b.rs"], "mem-session-1")?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_ignores_later_changes_to_unanchored_files() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let memory = tracked_staleness_memory(Some(r#"["src/anchored.rs","src/unanchored.rs"]"#));
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-anchored",
+        100,
+        &["src/anchored.rs"],
+        "mem-session-1",
+    )?;
+    insert_staleness_commit(&conn, 2, "later-unanchored", 200, &["src/unanchored.rs"])?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "tracked");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_bounds_auto_capture_to_cited_evidence_time() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    seed_project_session(&conn, "auto-session")?;
+    insert_captured_event(&conn, 10, "auto-session")?;
+    seed_candidate_memory_without_legacy_event(&conn, 42, 20, 10)?;
+    conn.execute(
+        "UPDATE captured_events
+         SET created_at_epoch = 300, reference_time_epoch = 100
+         WHERE id = 10",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET created_at_epoch = 300, updated_at_epoch = 300
+         WHERE id = 42",
+        [],
+    )?;
+    let evidence_json = serde_json::to_string(&vec![10])?;
+    let files_json = serde_json::to_string(&vec!["src/async.rs"])?;
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, title, files_modified, created_at_epoch,
+          session_row_id, evidence_event_ids, reference_time_epoch)
+         VALUES ('capture-observation-9001', 'proj', 'discovery', 'Async observed files',
+                 ?1, 300, 9001, ?2, 100)",
+        params![files_json, evidence_json],
+    )?;
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-evidence",
+        100,
+        &["src/async.rs"],
+        "auto-session",
+    )?;
+    link_staleness_commit(
+        &conn,
+        2,
+        "post-evidence-change",
+        200,
+        &["src/async.rs"],
+        "auto-session",
+    )?;
+
+    let mut memory = staleness_memory(300, "active");
+    memory.id = 42;
+    memory.project = "proj".to_string();
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
 fn migrated_staleness_db() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;

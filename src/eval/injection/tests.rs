@@ -4,8 +4,8 @@ use anyhow::Result;
 
 use super::types::CORPUS_NAME;
 use super::{
-    run_sandbox_eval, InjectionEvalMetadata, InjectionEvalOptions, InjectionEvalReport,
-    InjectionMetricSummary, InjectionRateMetric,
+    run::rendered_line_contains_title_and_label, run_sandbox_eval, InjectionEvalMetadata,
+    InjectionEvalOptions, InjectionEvalReport, InjectionMetricSummary, InjectionRateMetric,
 };
 
 #[test]
@@ -101,4 +101,24 @@ fn injection_eval_display_includes_metrics() {
     assert!(rendered.contains("user_prompt_submit_memory_recall: 1/1"));
     assert!(rendered.contains("user_prompt_submit_abstention_false_positive_bound: 1/1"));
     assert!(rendered.contains("all_checks_passed: true"));
+}
+
+#[test]
+fn stale_anchor_eval_requires_label_on_target_memory_line() {
+    let output = "\
+**#8 Stale source anchor decision** (src=memory:#8;status=active;staleness=fresh;source_anchor=tracked) | **#9 Other memory** (src=memory:#9;status=active;staleness=fresh;source_anchor=verify-before-trust)
+";
+
+    assert!(!rendered_line_contains_title_and_label(
+        output,
+        8,
+        "Stale source anchor decision",
+        "source_anchor=verify-before-trust"
+    ));
+    assert!(rendered_line_contains_title_and_label(
+        "**#8 Stale source anchor decision** (src=memory:#8;source_anchor=verify-before-trust)",
+        8,
+        "Stale source anchor decision",
+        "source_anchor=verify-before-trust"
+    ));
 }

@@ -201,10 +201,12 @@ fn run_sandbox_eval_inner(
         .contains(ABSTENTION_FORBIDDEN_TITLE);
     let abstention_false_positive_bound =
         InjectionRateMetric::new(usize::from(abstention_passed), 1);
-    let stale_anchor_labeling_passed = snapshot.rendered_output.contains(STALE_ANCHOR_TITLE)
-        && snapshot
-            .rendered_output
-            .contains("source_anchor=verify-before-trust");
+    let stale_anchor_labeling_passed = rendered_line_contains_title_and_label(
+        &snapshot.rendered_output,
+        8,
+        STALE_ANCHOR_TITLE,
+        "source_anchor=verify-before-trust",
+    );
     let stale_anchor_labeling =
         InjectionRateMetric::new(usize::from(stale_anchor_labeling_passed), 1);
     let user_prompt_submit_passed = user_prompt_context
@@ -302,6 +304,25 @@ fn evaluate_cases(output: &str, expectation: InjectionExpectation) -> Vec<Inject
             }
         })
         .collect()
+}
+
+pub(super) fn rendered_line_contains_title_and_label(
+    output: &str,
+    memory_id: i64,
+    title: &str,
+    label: &str,
+) -> bool {
+    let id_marker = format!("#{memory_id} ");
+    let provenance_marker = format!("src=memory:#{memory_id}");
+    output
+        .lines()
+        .flat_map(|line| line.split(" | "))
+        .any(|segment| {
+            segment.contains(&id_marker)
+                && segment.contains(title)
+                && segment.contains(&provenance_marker)
+                && segment.contains(label)
+        })
 }
 
 impl InjectionExpectation {

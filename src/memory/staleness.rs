@@ -5,6 +5,9 @@ use rusqlite::{params, types::ToSql, Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::Memory;
+use path::{file_path_overlaps, parse_file_list, parse_json_file_array};
+
+mod path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MemoryStalenessLabel {
@@ -27,13 +30,14 @@ struct EvidenceAnchor {
     session_ids: Vec<String>,
     session_row_ids: Vec<i64>,
     event_ids: Vec<i64>,
-    touched_files: HashSet<String>,
+    file_epochs: HashMap<String, i64>,
 }
 
 #[derive(Debug, Default)]
 struct CapturedEventRefs {
     session_ids: Vec<String>,
     session_row_ids: Vec<i64>,
+    event_epochs: HashMap<i64, i64>,
 }
 
 pub fn memory_staleness_label(memory: &Memory, now_epoch: i64) -> MemoryStalenessLabel {
@@ -115,42 +119,48 @@ fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'stat
     if let Some(session_id) = non_empty_trimmed(memory.session_id.as_deref()) {
         push_unique(&mut session_ids, session_id.to_string());
     }
-    let mut touched_files = parse_file_list(memory.files.as_deref(), &project)?;
-    if session_ids.is_empty() || touched_files.is_empty() {
+    let mut file_epochs = file_epoch_map(
+        parse_file_list(memory.files.as_deref(), &project)?,
+        memory.created_at_epoch,
+    );
+    if session_ids.is_empty() || file_epochs.is_empty() {
         let evidence = evidence_anchor_for_memory(conn, memory, &project)?;
         project = evidence.project;
         for session_id in evidence.session_ids {
             push_unique(&mut session_ids, session_id);
         }
-        touched_files.extend(evidence.touched_files);
+        for (file, epoch) in evidence.file_epochs {
+            file_epochs.insert(file, epoch);
+        }
     }
-    if session_ids.is_empty() || touched_files.is_empty() {
+    if session_ids.is_empty() || file_epochs.is_empty() {
         return Ok("untracked");
     }
 
     let memory_branch = non_empty_trimmed(memory.branch.as_deref()).map(str::to_string);
-    let Some(anchor) = source_commit_anchor_for_sessions(
-        conn,
-        &project,
-        &session_ids,
-        memory_branch.as_deref(),
-        memory.created_at_epoch,
-        &touched_files,
-    )?
-    else {
-        return Ok("untracked");
-    };
-    let branch_filter = memory_branch.or_else(|| anchor.branch.clone());
-    if later_commit_touches_any_file(
-        conn,
-        &project,
-        &anchor,
-        branch_filter.as_deref(),
-        &touched_files,
-    )? {
-        Ok("verify-before-trust")
-    } else {
+    let mut anchored_any = false;
+    for (file, max_epoch) in &file_epochs {
+        let Some(anchor) = source_commit_anchor_for_file_sessions(
+            conn,
+            &project,
+            &session_ids,
+            memory_branch.as_deref(),
+            *max_epoch,
+            file,
+        )?
+        else {
+            continue;
+        };
+        anchored_any = true;
+        let branch_filter = memory_branch.as_deref().or(anchor.branch.as_deref());
+        if later_commit_touches_file(conn, &project, &anchor, branch_filter, file)? {
+            return Ok("verify-before-trust");
+        }
+    }
+    if anchored_any {
         Ok("tracked")
+    } else {
+        Ok("untracked")
     }
 }
 
@@ -166,13 +176,13 @@ fn git_trace_tables_exist(conn: &Connection) -> Result<bool> {
     Ok(count == 2)
 }
 
-fn source_commit_anchor_for_sessions(
+fn source_commit_anchor_for_file_sessions(
     conn: &Connection,
     project: &str,
     session_ids: &[String],
     branch_filter: Option<&str>,
     max_epoch: i64,
-    touched_files: &HashSet<String>,
+    touched_file: &str,
 ) -> Result<Option<SourceAnchor>> {
     let mut latest = None;
     for session_id in session_ids {
@@ -182,7 +192,7 @@ fn source_commit_anchor_for_sessions(
             session_id,
             branch_filter,
             max_epoch,
-            touched_files,
+            touched_file,
         )?
         else {
             continue;
@@ -202,7 +212,7 @@ fn source_commit_anchor_for_session(
     session_id: &str,
     branch_filter: Option<&str>,
     max_epoch: i64,
-    touched_files: &HashSet<String>,
+    touched_file: &str,
 ) -> Result<Option<SourceAnchor>> {
     let mut stmt = conn.prepare(
         "SELECT c.id,
@@ -238,7 +248,7 @@ fn source_commit_anchor_for_session(
             .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
         if changed_files
             .iter()
-            .any(|changed_file| paths_overlap(changed_file, touched_files, project))
+            .any(|changed_file| file_path_overlaps(changed_file, touched_file, project))
         {
             return Ok(Some(anchor));
         }
@@ -246,12 +256,12 @@ fn source_commit_anchor_for_session(
     Ok(None)
 }
 
-fn later_commit_touches_any_file(
+fn later_commit_touches_file(
     conn: &Connection,
     project: &str,
     anchor: &SourceAnchor,
     branch_filter: Option<&str>,
-    touched_files: &HashSet<String>,
+    touched_file: &str,
 ) -> Result<bool> {
     let mut stmt = conn.prepare(
         "SELECT changed_files
@@ -273,7 +283,7 @@ fn later_commit_touches_any_file(
             .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
         if changed_files
             .iter()
-            .any(|changed_file| paths_overlap(changed_file, touched_files, project))
+            .any(|changed_file| file_path_overlaps(changed_file, touched_file, project))
         {
             return Ok(true);
         }
@@ -319,7 +329,7 @@ fn evidence_anchor_for_memory(
         conn,
         &anchor.project,
         &anchor.event_ids,
-        &mut anchor.touched_files,
+        &mut anchor.file_epochs,
     )?;
     add_observation_files(
         conn,
@@ -327,7 +337,8 @@ fn evidence_anchor_for_memory(
         &anchor.event_ids,
         &anchor.session_row_ids,
         &anchor.session_ids,
-        &mut anchor.touched_files,
+        &captured_refs.event_epochs,
+        &mut anchor.file_epochs,
     )?;
     Ok(anchor)
 }
@@ -469,8 +480,13 @@ fn captured_event_refs(
         return Ok(CapturedEventRefs::default());
     }
     let placeholders = placeholders(2, event_ids.len());
+    let event_time_expr = if column_exists(conn, "captured_events", "reference_time_epoch")? {
+        "COALESCE(e.reference_time_epoch, e.created_at_epoch)"
+    } else {
+        "e.created_at_epoch"
+    };
     let sql = format!(
-        "SELECT e.session_id, e.session_row_id
+        "SELECT e.id, e.session_id, e.session_row_id, {event_time_expr}
          FROM captured_events e
          JOIN projects p ON p.id = e.project_id
          WHERE p.project_path = ?1
@@ -484,13 +500,19 @@ fn captured_event_refs(
     let refs = crate::db::to_sql_refs(&values);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
     })?;
     let mut refs = CapturedEventRefs::default();
     for row in rows {
-        let (session_id, session_row_id) = row?;
+        let (event_id, session_id, session_row_id, created_at_epoch) = row?;
         push_unique(&mut refs.session_ids, session_id);
         push_unique_i64(&mut refs.session_row_ids, session_row_id);
+        refs.event_epochs.insert(event_id, created_at_epoch);
     }
     Ok(refs)
 }
@@ -499,14 +521,14 @@ fn add_legacy_event_files(
     conn: &Connection,
     project: &str,
     event_ids: &[i64],
-    touched_files: &mut HashSet<String>,
+    file_epochs: &mut HashMap<String, i64>,
 ) -> Result<()> {
     if event_ids.is_empty() || !table_exists(conn, "events")? {
         return Ok(());
     }
     let placeholders = placeholders(2, event_ids.len());
     let sql = format!(
-        "SELECT files
+        "SELECT files, created_at_epoch
          FROM events
          WHERE project = ?1
            AND id IN ({placeholders})
@@ -518,9 +540,12 @@ fn add_legacy_event_files(
     }
     let refs = crate::db::to_sql_refs(&values);
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
     for row in rows {
-        touched_files.extend(parse_file_list(Some(&row?), project)?);
+        let (files, created_at_epoch) = row?;
+        add_file_epochs(Some(&files), project, created_at_epoch, file_epochs)?;
     }
     Ok(())
 }
@@ -531,7 +556,8 @@ fn add_observation_files(
     event_ids: &[i64],
     session_row_ids: &[i64],
     session_ids: &[String],
-    touched_files: &mut HashSet<String>,
+    event_epochs: &HashMap<i64, i64>,
+    file_epochs: &mut HashMap<String, i64>,
 ) -> Result<()> {
     if event_ids.is_empty() || !table_exists(conn, "observations")? {
         return Ok(());
@@ -544,10 +570,11 @@ fn add_observation_files(
             project,
             event_ids,
             session_row_ids,
-            touched_files,
+            event_epochs,
+            file_epochs,
         );
     }
-    add_legacy_observation_files(conn, project, session_ids, touched_files)
+    add_legacy_observation_files(conn, project, session_ids, file_epochs)
 }
 
 fn add_observation_files_by_evidence_events(
@@ -555,7 +582,8 @@ fn add_observation_files_by_evidence_events(
     project: &str,
     event_ids: &[i64],
     session_row_ids: &[i64],
-    touched_files: &mut HashSet<String>,
+    event_epochs: &HashMap<i64, i64>,
+    file_epochs: &mut HashMap<String, i64>,
 ) -> Result<()> {
     if session_row_ids.is_empty() {
         return Ok(());
@@ -563,7 +591,7 @@ fn add_observation_files_by_evidence_events(
     let wanted = event_ids.iter().copied().collect::<HashSet<_>>();
     let placeholders = placeholders(2, session_row_ids.len());
     let sql = format!(
-        "SELECT files_read, files_modified, evidence_event_ids
+        "SELECT files_read, files_modified, evidence_event_ids, created_at_epoch
          FROM observations
          WHERE project = ?1
            AND session_row_id IN ({placeholders})
@@ -584,18 +612,31 @@ fn add_observation_files_by_evidence_events(
             row.get::<_, Option<String>>(0)?,
             row.get::<_, Option<String>>(1)?,
             row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
         ))
     })?;
     for row in rows {
-        let (files_read, files_modified, evidence_json) = row?;
+        let (files_read, files_modified, evidence_json, created_at_epoch) = row?;
         let observation_event_ids =
             parse_evidence_event_ids(evidence_json.as_deref(), "observation evidence_event_ids")?;
         if observation_event_ids
             .iter()
             .any(|event_id| wanted.contains(event_id))
         {
-            touched_files.extend(parse_file_list(files_read.as_deref(), project)?);
-            touched_files.extend(parse_file_list(files_modified.as_deref(), project)?);
+            let source_epoch = observation_event_ids
+                .iter()
+                .filter(|event_id| wanted.contains(event_id))
+                .filter_map(|event_id| event_epochs.get(event_id))
+                .max()
+                .copied()
+                .unwrap_or(created_at_epoch);
+            add_file_epochs(files_read.as_deref(), project, source_epoch, file_epochs)?;
+            add_file_epochs(
+                files_modified.as_deref(),
+                project,
+                source_epoch,
+                file_epochs,
+            )?;
         }
     }
     Ok(())
@@ -605,14 +646,14 @@ fn add_legacy_observation_files(
     conn: &Connection,
     project: &str,
     session_ids: &[String],
-    touched_files: &mut HashSet<String>,
+    file_epochs: &mut HashMap<String, i64>,
 ) -> Result<()> {
     if session_ids.is_empty() {
         return Ok(());
     }
     let placeholders = placeholders(2, session_ids.len());
     let sql = format!(
-        "SELECT files_read, files_modified
+        "SELECT files_read, files_modified, created_at_epoch
          FROM observations
          WHERE project = ?1
            AND memory_session_id IN ({placeholders})
@@ -631,14 +672,51 @@ fn add_legacy_observation_files(
         Ok((
             row.get::<_, Option<String>>(0)?,
             row.get::<_, Option<String>>(1)?,
+            row.get::<_, i64>(2)?,
         ))
     })?;
     for row in rows {
-        let (files_read, files_modified) = row?;
-        touched_files.extend(parse_file_list(files_read.as_deref(), project)?);
-        touched_files.extend(parse_file_list(files_modified.as_deref(), project)?);
+        let (files_read, files_modified, created_at_epoch) = row?;
+        add_file_epochs(
+            files_read.as_deref(),
+            project,
+            created_at_epoch,
+            file_epochs,
+        )?;
+        add_file_epochs(
+            files_modified.as_deref(),
+            project,
+            created_at_epoch,
+            file_epochs,
+        )?;
     }
     Ok(())
+}
+
+fn file_epoch_map(files: HashSet<String>, epoch: i64) -> HashMap<String, i64> {
+    files.into_iter().map(|file| (file, epoch)).collect()
+}
+
+fn add_file_epochs(
+    raw_files: Option<&str>,
+    project: &str,
+    epoch: i64,
+    file_epochs: &mut HashMap<String, i64>,
+) -> Result<()> {
+    merge_file_epochs_max(
+        file_epochs,
+        file_epoch_map(parse_file_list(raw_files, project)?, epoch),
+    );
+    Ok(())
+}
+
+fn merge_file_epochs_max(target: &mut HashMap<String, i64>, source: HashMap<String, i64>) {
+    for (file, epoch) in source {
+        target
+            .entry(file)
+            .and_modify(|existing| *existing = (*existing).max(epoch))
+            .or_insert(epoch);
+    }
 }
 
 fn parse_evidence_event_ids(raw: Option<&str>, context: &str) -> Result<Vec<i64>> {
@@ -698,67 +776,6 @@ fn push_unique_i64(values: &mut Vec<i64>, value: i64) {
     if !values.contains(&value) {
         values.push(value);
     }
-}
-
-fn parse_file_list(raw: Option<&str>, project: &str) -> Result<HashSet<String>> {
-    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(HashSet::new());
-    };
-    let files = if raw.starts_with('[') {
-        parse_json_file_array(raw)
-            .with_context(|| "parse memory files for source-anchor staleness")?
-    } else {
-        raw.split([',', '\n'])
-            .map(str::trim)
-            .map(|value| value.trim_matches('"'))
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
-    Ok(files
-        .into_iter()
-        .filter_map(|file| normalize_file_path_for_project(&file, project))
-        .collect())
-}
-
-fn parse_json_file_array(raw: &str) -> Result<Vec<String>> {
-    let files = serde_json::from_str::<Vec<String>>(raw)?;
-    Ok(files)
-}
-
-fn paths_overlap(changed_file: &str, touched_files: &HashSet<String>, project: &str) -> bool {
-    let Some(changed_file) = normalize_file_path_for_project(changed_file, project) else {
-        return false;
-    };
-    touched_files.iter().any(|memory_file| {
-        changed_file == *memory_file
-            || changed_file
-                .strip_prefix(memory_file)
-                .is_some_and(|tail| tail.starts_with('/'))
-            || memory_file
-                .strip_prefix(&changed_file)
-                .is_some_and(|tail| tail.starts_with('/'))
-    })
-}
-
-fn normalize_file_path(path: &str) -> Option<String> {
-    let trimmed = path.trim().trim_start_matches("./").trim_matches('/');
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-fn normalize_file_path_for_project(path: &str, project: &str) -> Option<String> {
-    let normalized = normalize_file_path(path)?;
-    let Some(project) = normalize_file_path(project) else {
-        return Some(normalized);
-    };
-    if normalized == project {
-        return None;
-    }
-    normalized
-        .strip_prefix(&format!("{project}/"))
-        .map(str::to_string)
-        .filter(|value| !value.is_empty())
-        .or(Some(normalized))
 }
 
 #[cfg(test)]
