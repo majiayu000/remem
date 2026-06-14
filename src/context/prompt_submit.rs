@@ -103,11 +103,7 @@ pub(crate) fn prompt_submit_additional_context(
     audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
         ContextAuditItem::injected_memory(memory, "prompt_submit", index as i64 + 1)
     }));
-    let staleness_labels = crate::memory::memory_staleness_labels_for_memories(
-        conn,
-        &rendered,
-        chrono::Utc::now().timestamp(),
-    )?;
+    let staleness_labels = prompt_submit_staleness_labels(conn, &rendered);
     let output = render_prompt_submit_context(&rendered, &staleness_labels);
     let decision = prompt_submit_decision(output);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
@@ -183,6 +179,30 @@ fn render_prompt_submit_context(
         }
     }
     output
+}
+
+fn prompt_submit_staleness_labels(
+    conn: &rusqlite::Connection,
+    memories: &[Memory],
+) -> HashMap<i64, crate::memory::MemoryStalenessLabel> {
+    let now_epoch = chrono::Utc::now().timestamp();
+    memories
+        .iter()
+        .map(|memory| {
+            let label = crate::memory::memory_staleness_label_with_conn(conn, memory, now_epoch)
+                .unwrap_or_else(|error| {
+                    crate::log::warn(
+                        "context",
+                        &format!(
+                            "prompt-submit source-anchor label fallback for memory {}: {error}",
+                            memory.id
+                        ),
+                    );
+                    crate::memory::memory_staleness_label(memory, now_epoch)
+                });
+            (memory.id, label)
+        })
+        .collect()
 }
 
 fn empty_prompt_submit_decision() -> ContextGateDecision {
@@ -359,6 +379,36 @@ mod tests {
             output.contains("HarborMint verified_by Toma Reed"),
             "{output}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_falls_back_when_source_anchor_label_fails() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-staleness-fallback";
+        let memory_id = insert_prompt_submit_memory(
+            &conn,
+            project,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+        )?;
+        conn.execute(
+            "UPDATE memories SET files = '[not-json' WHERE id = ?1",
+            [memory_id],
+        )?;
+
+        let output = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-staleness-fallback",
+            "How should SQLCipher protect private persisted data?",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("prompt should still inject context"))?;
+
+        assert!(output.contains("SQLCipher storage decision"), "{output}");
+        assert!(output.contains("source_anchor=untracked"), "{output}");
         Ok(())
     }
 
