@@ -357,7 +357,13 @@ fn query_local_temporal_channel(
         return Ok(vec![]);
     };
     let has_memory_facts = sqlite_table_available(conn, "memory_facts")?;
-    let (temporal_condition, order_epoch) = local_temporal_sql(constraint.field, has_memory_facts);
+    let has_memory_fact_invalidations =
+        has_memory_facts && crate::memory::facts::invalidated_at_epoch_available(conn)?;
+    let (temporal_condition, order_epoch) = local_temporal_sql(
+        constraint.field,
+        has_memory_facts,
+        has_memory_fact_invalidations,
+    );
     let mut conditions = vec![temporal_condition];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(constraint.start_epoch),
@@ -559,6 +565,7 @@ fn table_ref(alias: &str) -> &str {
 fn local_temporal_sql(
     field: crate::retrieval::temporal::TemporalField,
     has_memory_facts: bool,
+    has_memory_fact_invalidations: bool,
 ) -> (String, String) {
     match field {
         crate::retrieval::temporal::TemporalField::UpdatedAt => (
@@ -566,14 +573,20 @@ fn local_temporal_sql(
             "m.updated_at_epoch".to_string(),
         ),
         crate::retrieval::temporal::TemporalField::EventTime if has_memory_facts => {
-            let fact_event_overlap = "f.source_memory_id = m.id \
-                 AND f.status = 'active' \
+            let current_fact_filter =
+                crate::memory::facts::current_fact_filter_sql("f", has_memory_fact_invalidations);
+            let fact_event_overlap = format!(
+                "f.source_memory_id = m.id \
+                 AND {current_fact_filter} \
                  AND f.valid_from_epoch IS NOT NULL \
                  AND f.valid_from_epoch <= ?2 \
-                 AND (f.valid_to_epoch IS NULL OR f.valid_to_epoch > ?1)";
-            let any_fact_event = "f.source_memory_id = m.id \
-                 AND f.status = 'active' \
-                 AND f.valid_from_epoch IS NOT NULL";
+                 AND (f.valid_to_epoch IS NULL OR f.valid_to_epoch > ?1)"
+            );
+            let any_fact_event = format!(
+                "f.source_memory_id = m.id \
+                 AND {current_fact_filter} \
+                 AND f.valid_from_epoch IS NOT NULL"
+            );
             (
                 format!(
                     "(EXISTS (

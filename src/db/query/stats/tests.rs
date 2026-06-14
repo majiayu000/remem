@@ -405,6 +405,29 @@ fn query_memory_facts_stats_excludes_expired_source_memories() -> anyhow::Result
 }
 
 #[test]
+fn query_memory_facts_stats_excludes_invalidated_active_facts() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_stats_schema(&conn);
+    conn.execute_batch("ALTER TABLE memory_facts ADD COLUMN invalidated_at_epoch INTEGER;")?;
+
+    conn.execute_batch(
+        "INSERT INTO memories (id, project, status, created_at_epoch, expires_at_epoch)
+         VALUES (1, 'alpha', 'active', 100, NULL);
+         INSERT INTO memory_facts
+            (status, valid_from_epoch, source_memory_id, invalidated_at_epoch)
+         VALUES
+            ('active', 100, 1, NULL),
+            ('active', 100, 1, 150);",
+    )?;
+
+    let stats = query_memory_facts_stats(&conn)?;
+
+    assert_eq!(stats.total, 2);
+    assert_eq!(stats.retrieval_eligible, 1);
+    Ok(())
+}
+
+#[test]
 fn query_system_stats_reports_daemon_heartbeat_not_once() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_stats_schema(&conn);

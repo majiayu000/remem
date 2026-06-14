@@ -102,6 +102,125 @@ fn supersession_records_transaction_time_invalidation() -> Result<()> {
 }
 
 #[test]
+fn current_queries_exclude_invalidated_active_rows() -> Result<()> {
+    let mut conn = setup_fact_conn()?;
+    let project = "test-temporal-current-invalidated";
+    let old_id = insert_temporal_fact(&mut conn, &input(project, "staging", 100))?;
+    conn.execute(
+        "UPDATE memory_facts
+         SET invalidated_at_epoch = 150
+         WHERE id = ?1",
+        [old_id],
+    )?;
+    let current_id = insert_temporal_fact(&mut conn, &input(project, "production", 200))?;
+
+    let current = list_current_facts(
+        &conn,
+        project,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert_eq!(
+        current.iter().map(|fact| fact.id).collect::<Vec<_>>(),
+        vec![current_id]
+    );
+
+    let before_invalidation = list_facts_as_of(
+        &conn,
+        project,
+        140,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert_eq!(
+        before_invalidation
+            .iter()
+            .map(|fact| fact.id)
+            .collect::<Vec<_>>(),
+        vec![old_id]
+    );
+
+    let after_invalidation_before_replacement = list_facts_as_of(
+        &conn,
+        project,
+        160,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert!(after_invalidation_before_replacement.is_empty());
+    Ok(())
+}
+
+#[test]
+fn supersession_sequence_preserves_all_fact_history_without_hard_deletes() -> Result<()> {
+    let conn = setup_fact_conn()?;
+    let project = "test-temporal-sequence";
+    let mut current_id =
+        insert_temporal_fact_in_current_tx(&conn, &input(project, "target-0", 100), 110)?;
+    let mut expected_total = 1_i64;
+    let mut seed = 0x5eed_u64;
+    let mut valid_from = 100_i64;
+
+    for step in 1..=12_i64 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        valid_from += 10 + (seed % 17) as i64;
+        let invalidated_at = valid_from + 1_000 + step;
+        let old_id = current_id;
+        let object = format!("target-{step}");
+        let mut replacement = input(project, &object, valid_from);
+        replacement.learned_at_epoch = Some(invalidated_at);
+        replacement.supersedes_fact_id = Some(old_id);
+
+        current_id = insert_temporal_fact_in_current_tx(&conn, &replacement, invalidated_at)?;
+        expected_total += 1;
+
+        let old: (String, Option<i64>, Option<i64>) = conn.query_row(
+            "SELECT status, valid_to_epoch, invalidated_at_epoch
+             FROM memory_facts WHERE id = ?1",
+            [old_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            old,
+            ("stale".to_string(), Some(valid_from), Some(invalidated_at))
+        );
+
+        let row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_facts WHERE project = ?1",
+            [project],
+            |row| row.get(0),
+        )?;
+        assert_eq!(row_count, expected_total);
+    }
+
+    let (active_count, stale_count, invalidated_count): (i64, i64, i64) = conn.query_row(
+        "SELECT
+             SUM(CASE WHEN status = 'active' AND invalidated_at_epoch IS NULL THEN 1 ELSE 0 END),
+             SUM(CASE WHEN status = 'stale' THEN 1 ELSE 0 END),
+             SUM(CASE WHEN invalidated_at_epoch IS NOT NULL THEN 1 ELSE 0 END)
+         FROM memory_facts
+         WHERE project = ?1",
+        [project],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(active_count, 1);
+    assert_eq!(stale_count, expected_total - 1);
+    assert_eq!(invalidated_count, expected_total - 1);
+
+    let current = list_current_facts(
+        &conn,
+        project,
+        Some("deploy-target"),
+        Some(FactPredicate::AffectsProject),
+    )?;
+    assert_eq!(
+        current.iter().map(|fact| fact.id).collect::<Vec<_>>(),
+        vec![current_id]
+    );
+    Ok(())
+}
+
+#[test]
 fn provenance_links_to_source_memory_and_events() -> Result<()> {
     let mut conn = setup_fact_conn()?;
     let memory_id = crate::memory::insert_memory(

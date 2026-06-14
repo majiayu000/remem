@@ -392,3 +392,62 @@ fn search_by_time_ignores_stale_temporal_facts() -> Result<()> {
     assert_eq!(created_at_ids, vec![1]);
     Ok(())
 }
+
+#[test]
+fn search_by_time_ignores_invalidated_active_temporal_facts() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    let invalidated_fact_time = now - 45 * 86_400;
+
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, created_at_epoch,
+          updated_at_epoch, status, branch, scope)
+         VALUES
+         (1, NULL, 'alpha', NULL, 'current event', 'invalidated fact should not override created_at', 'decision', NULL, ?1, ?1, 'active', 'main', 'project')",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch, created_at_epoch,
+          updated_at_epoch)
+         VALUES
+         ('alpha', 'old invalidated fact', 'affects_project', 'alpha', ?1, NULL,
+          ?2, 1, NULL, '[]', 0.9, NULL, 'active', ?2, ?2, ?2)",
+        rusqlite::params![invalidated_fact_time, now - 10],
+    )?;
+
+    let invalidated_fact_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: invalidated_fact_time - 10,
+            end_epoch: invalidated_fact_time + 10,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+    assert!(invalidated_fact_ids.is_empty());
+
+    let created_at_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: now - 10,
+            end_epoch: now + 10,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+    assert_eq!(created_at_ids, vec![1]);
+    Ok(())
+}

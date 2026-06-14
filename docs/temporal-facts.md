@@ -16,6 +16,7 @@ Migration `v013_memory_temporal_facts` creates `memory_facts`:
 | `object` | Relation target, stored as text so it can point to commands, files, issues, PRs, or memory ids. |
 | `valid_from_epoch` / `valid_to_epoch` | Validity interval for the fact. `valid_to_epoch` is exclusive. |
 | `learned_at_epoch` | When remem learned the fact; separate from validity time. |
+| `invalidated_at_epoch` | Transaction time when remem learned the fact stopped being current. `NULL` means still current. |
 | `source_memory_id` | Optional link to the durable memory that produced the fact. |
 | `source_observation_id` | Optional link to the observation that produced the fact. |
 | `source_event_ids` | JSON array of raw `captured_events` ids. |
@@ -26,9 +27,10 @@ Migration `v013_memory_temporal_facts` creates `memory_facts`:
 ## Query Path
 
 Current-fact queries filter by project, optional subject, optional predicate,
-`status='active'`, and the current validity interval. Historical queries use
-`list_facts_as_of(project, as_of_epoch, ...)` and include stale rows when their
-validity interval covered the requested time.
+`status='active'`, `invalidated_at_epoch IS NULL`, and the current validity
+interval. Historical queries use `list_facts_as_of(project, as_of_epoch, ...)`
+and include rows only when remem had learned them and had not invalidated them
+at the requested transaction time.
 
 This split is intentional:
 
@@ -44,7 +46,8 @@ Inserting a fact with `supersedes_fact_id` performs one transaction:
 2. mark the old fact `stale`
 3. set the old `valid_to_epoch` to the replacement's `valid_from_epoch`, or to
    `learned_at_epoch` when validity is unknown
-4. insert the replacement as `active`
+4. set the old `invalidated_at_epoch` to the transaction time
+5. insert the replacement as `active`
 
 The old fact is preserved rather than deleted. This mirrors the memory lifecycle
 rule that invalidation is a soft state transition unless a future privacy or
