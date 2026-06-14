@@ -121,7 +121,7 @@ fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'stat
     }
     let mut file_epochs = file_epoch_map(
         parse_file_list(memory.files.as_deref(), &project)?,
-        memory.created_at_epoch,
+        memory.updated_at_epoch,
     );
     if session_ids.is_empty() || file_epochs.is_empty() {
         let evidence = evidence_anchor_for_memory(conn, memory, &project)?;
@@ -325,12 +325,20 @@ fn evidence_anchor_for_memory(
     let captured_refs = captured_event_refs(conn, &anchor.project, &anchor.event_ids)?;
     anchor.session_ids = captured_refs.session_ids;
     anchor.session_row_ids = captured_refs.session_row_ids;
-    add_legacy_event_files(
-        conn,
-        &anchor.project,
-        &anchor.event_ids,
-        &mut anchor.file_epochs,
-    )?;
+    let legacy_event_ids: Vec<i64> = anchor
+        .event_ids
+        .iter()
+        .copied()
+        .filter(|event_id| !captured_refs.event_epochs.contains_key(event_id))
+        .collect();
+    if !legacy_event_ids.is_empty() {
+        add_legacy_event_files(
+            conn,
+            &anchor.project,
+            &legacy_event_ids,
+            &mut anchor.file_epochs,
+        )?;
+    }
     add_observation_files(
         conn,
         &anchor.project,

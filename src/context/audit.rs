@@ -30,6 +30,18 @@ impl ContextAuditItem {
         Self::memory_item(memory, channel, Some(render_order), "injected", None)
     }
 
+    pub fn injected_memory_with_labels(
+        memory: &Memory,
+        channel: &'static str,
+        render_order: i64,
+        staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+    ) -> Self {
+        let mut item = Self::injected_memory(memory, channel, render_order);
+        item.staleness =
+            memory_staleness_with_labels(memory, chrono::Utc::now().timestamp(), staleness_labels);
+        item
+    }
+
     pub fn dropped_memory(memory: &Memory, channel: &'static str, reason: &'static str) -> Self {
         Self::memory_item(memory, channel, None, "dropped", Some(reason))
     }
@@ -234,20 +246,22 @@ pub(in crate::context) fn build_context_audit_items(
     let index = index_ids.iter().copied().collect::<HashSet<_>>();
     for id in core_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory(
+            items.push(ContextAuditItem::injected_memory_with_labels(
                 memory,
                 "core",
                 render_order,
+                &loaded.staleness_labels,
             ));
             render_order += 1;
         }
     }
     for id in index_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory(
+            items.push(ContextAuditItem::injected_memory_with_labels(
                 memory,
                 "index",
                 render_order,
+                &loaded.staleness_labels,
             ));
             render_order += 1;
         }
@@ -264,10 +278,11 @@ pub(in crate::context) fn build_context_audit_items(
     let lesson = lesson_ids.iter().copied().collect::<HashSet<_>>();
     for id in lesson_ids {
         if let Some(lesson_memory) = loaded.lessons.iter().find(|lesson| lesson.memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory(
+            items.push(ContextAuditItem::injected_memory_with_labels(
                 &lesson_memory.memory,
                 "lessons",
                 render_order,
+                &loaded.staleness_labels,
             ));
             render_order += 1;
         }

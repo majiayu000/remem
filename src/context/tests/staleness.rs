@@ -1,7 +1,9 @@
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
 use rusqlite::{params, Connection};
 
+use super::super::audit::build_context_audit_items;
 use super::super::query::load_context_data;
+use super::super::types::ContextDiagnostics;
 use super::{insert_memory, setup_context_schema};
 
 #[test]
@@ -143,6 +145,65 @@ fn load_context_data_includes_lesson_memories_in_staleness_labels() {
             .map(|label| label.source_anchor.as_str()),
         Some("verify-before-trust")
     );
+}
+
+#[test]
+fn context_audit_uses_rendered_source_anchor_labels() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_context_schema(&conn);
+    setup_context_git_trace_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+
+    insert_memory(
+        &conn,
+        201,
+        project,
+        Some("audit-source-anchor"),
+        "decision",
+        "Audit source anchor",
+        "Audit items should store the rendered source-anchor label.",
+        now,
+    );
+    conn.execute(
+        "UPDATE memories
+         SET session_id = 'audit-session', files = ?1, branch = 'main'
+         WHERE id = 201",
+        [r#"["src/audit.rs"]"#],
+    )
+    .unwrap();
+    link_context_commit(
+        &conn,
+        1,
+        project,
+        "source-audit",
+        100,
+        &["src/audit.rs"],
+        "audit-session",
+    );
+    insert_context_commit(
+        &conn,
+        2,
+        project,
+        "later-audit",
+        200,
+        &["src/audit.rs"],
+        Some("main"),
+    );
+
+    let mut loaded = load_context_data(&conn, project, Some("main"));
+    loaded.memories.retain(|memory| memory.id == 201);
+    loaded.lessons.clear();
+    loaded.workstreams.clear();
+    loaded.summaries.clear();
+    loaded.diagnostics = ContextDiagnostics::default();
+    let audit_items = build_context_audit_items(&loaded, &[201], &[], &[], &[]);
+
+    assert_eq!(audit_items.len(), 1);
+    assert_eq!(audit_items[0].status, "injected");
+    assert!(audit_items[0]
+        .staleness
+        .contains("source_anchor=verify-before-trust"));
 }
 
 fn setup_context_git_trace_schema(conn: &Connection) {

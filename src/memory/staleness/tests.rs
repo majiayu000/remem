@@ -126,7 +126,18 @@ fn source_anchor_matches_directory_overlap() -> Result<()> {
 fn source_anchor_uses_candidate_evidence_without_memory_session_or_files() -> Result<()> {
     let conn = migrated_staleness_db()?;
     seed_project_session(&conn, "auto-session")?;
-    seed_candidate_evidence_memory(&conn, 42, 20, 10, "auto-session", "src/auto.rs")?;
+    insert_captured_event(&conn, 10, "auto-session")?;
+    seed_candidate_memory_without_legacy_event(&conn, 42, 20, 10)?;
+    let evidence_json = serde_json::to_string(&vec![10])?;
+    let files_json = serde_json::to_string(&vec!["src/auto.rs"])?;
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, title, files_modified, created_at_epoch,
+          session_row_id, evidence_event_ids)
+         VALUES ('capture-observation-9001', 'proj', 'discovery', 'Auto files',
+                 ?1, 100, 9001, ?2)",
+        params![files_json, evidence_json],
+    )?;
     link_staleness_commit(
         &conn,
         1,
@@ -151,8 +162,14 @@ fn source_anchor_uses_candidate_evidence_without_memory_session_or_files() -> Re
 fn source_anchor_limits_legacy_files_to_cited_evidence_events() -> Result<()> {
     let conn = migrated_staleness_db()?;
     seed_project_session(&conn, "auto-session")?;
-    seed_candidate_evidence_memory(&conn, 42, 20, 10, "auto-session", "src/cited.rs")?;
-    insert_captured_event(&conn, 11, "auto-session")?;
+    seed_candidate_memory_without_legacy_event(&conn, 42, 20, 10)?;
+    let cited_files = serde_json::to_string(&vec!["src/cited.rs"])?;
+    conn.execute(
+        "INSERT INTO events
+         (id, session_id, project, event_type, summary, files, created_at_epoch)
+         VALUES (10, 'auto-session', 'proj', 'file_edit', 'cited edit', ?1, 100)",
+        [cited_files],
+    )?;
     let unrelated_files = serde_json::to_string(&vec!["src/unrelated.rs"])?;
     conn.execute(
         "INSERT INTO events
@@ -169,6 +186,58 @@ fn source_anchor_limits_legacy_files_to_cited_evidence_events() -> Result<()> {
         "auto-session",
     )?;
     insert_staleness_commit(&conn, 2, "later-unrelated", 200, &["src/unrelated.rs"])?;
+
+    let mut memory = staleness_memory(1_700_000_000, "active");
+    memory.id = 42;
+    memory.project = "proj".to_string();
+    memory.session_id = Some("auto-session".to_string());
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "tracked");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_ignores_colliding_legacy_event_for_captured_evidence() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    seed_project_session(&conn, "auto-session")?;
+    insert_captured_event(&conn, 10, "auto-session")?;
+    seed_candidate_memory_without_legacy_event(&conn, 42, 20, 10)?;
+    let evidence_json = serde_json::to_string(&vec![10])?;
+    let captured_files = serde_json::to_string(&vec!["src/captured.rs"])?;
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, title, files_modified, created_at_epoch,
+          session_row_id, evidence_event_ids)
+         VALUES ('capture-observation-9001', 'proj', 'discovery', 'Captured files',
+                 ?1, 100, 9001, ?2)",
+        params![captured_files, evidence_json],
+    )?;
+    let legacy_files = serde_json::to_string(&vec!["src/colliding-legacy.rs"])?;
+    conn.execute(
+        "INSERT INTO events
+         (id, session_id, project, event_type, summary, files, created_at_epoch)
+         VALUES (10, 'auto-session', 'proj', 'file_edit', 'legacy collision', ?1, 100)",
+        [legacy_files],
+    )?;
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-captured",
+        100,
+        &["src/captured.rs"],
+        "auto-session",
+    )?;
+    link_staleness_commit(
+        &conn,
+        2,
+        "source-colliding-legacy",
+        100,
+        &["src/colliding-legacy.rs"],
+        "auto-session",
+    )?;
+    insert_staleness_commit(&conn, 3, "later-legacy", 200, &["src/colliding-legacy.rs"])?;
 
     let mut memory = staleness_memory(1_700_000_000, "active");
     memory.id = 42;
@@ -463,6 +532,28 @@ fn source_anchor_bounds_auto_capture_to_cited_evidence_time() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn source_anchor_uses_updated_time_for_direct_file_anchors() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let mut memory = tracked_staleness_memory(Some(r#"["src/upsert.rs"]"#));
+    memory.created_at_epoch = 100;
+    memory.updated_at_epoch = 300;
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-upsert",
+        250,
+        &["src/upsert.rs"],
+        "mem-session-1",
+    )?;
+    insert_staleness_commit(&conn, 2, "later-upsert", 350, &["src/upsert.rs"])?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
 fn migrated_staleness_db() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
@@ -499,26 +590,6 @@ fn seed_project_session(conn: &Connection, session_id: &str) -> Result<()> {
          VALUES (9001, 9001, 9001, 9001, ?1, 0, 'active')",
         [session_id],
     )?;
-    Ok(())
-}
-
-fn seed_candidate_evidence_memory(
-    conn: &Connection,
-    memory_id: i64,
-    candidate_id: i64,
-    event_id: i64,
-    session_id: &str,
-    file: &str,
-) -> Result<()> {
-    let files_json = serde_json::to_string(&vec![file])?;
-    insert_captured_event(conn, event_id, session_id)?;
-    conn.execute(
-        "INSERT INTO events
-         (id, session_id, project, event_type, summary, files, created_at_epoch)
-         VALUES (?1, ?2, 'proj', 'file_edit', 'edited source', ?3, 100)",
-        params![event_id, session_id, files_json],
-    )?;
-    seed_candidate_memory_without_legacy_event(conn, memory_id, candidate_id, event_id)?;
     Ok(())
 }
 

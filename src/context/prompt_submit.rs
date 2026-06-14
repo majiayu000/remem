@@ -100,10 +100,15 @@ pub(crate) fn prompt_submit_additional_context(
         return Ok(None);
     }
 
-    audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
-        ContextAuditItem::injected_memory(memory, "prompt_submit", index as i64 + 1)
-    }));
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered);
+    audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
+        ContextAuditItem::injected_memory_with_labels(
+            memory,
+            "prompt_submit",
+            index as i64 + 1,
+            &staleness_labels,
+        )
+    }));
     let output = render_prompt_submit_context(&rendered, &staleness_labels);
     let decision = prompt_submit_decision(output);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
