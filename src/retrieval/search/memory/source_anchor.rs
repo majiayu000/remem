@@ -16,7 +16,10 @@ pub(super) fn apply_score_demotions(
         return Ok((ordered, fused.to_vec()));
     }
     let now_epoch = chrono::Utc::now().timestamp();
-    let labels = memory::memory_staleness_labels_for_memories(conn, &ordered, now_epoch)?;
+    let labels = ordered
+        .iter()
+        .map(|memory| (memory.id, label_for_memory(conn, memory, now_epoch)))
+        .collect::<HashMap<_, _>>();
     let original_rank = fused
         .iter()
         .enumerate()
@@ -65,8 +68,16 @@ pub(super) fn label_for_memory(
     memory: &Memory,
     now_epoch: i64,
 ) -> memory::MemoryStalenessLabel {
-    memory::memory_staleness_label_with_conn(conn, memory, now_epoch)
-        .unwrap_or_else(|_| memory::memory_staleness_label(memory, now_epoch))
+    memory::memory_staleness_label_with_conn(conn, memory, now_epoch).unwrap_or_else(|error| {
+        crate::log::warn(
+            "retrieval",
+            &format!(
+                "source-anchor label fallback for memory {}: {error}",
+                memory.id
+            ),
+        );
+        memory::memory_staleness_label(memory, now_epoch)
+    })
 }
 
 #[cfg(test)]
@@ -109,6 +120,62 @@ mod tests {
         );
         assert_eq!(demoted[0].0, 2);
         assert!(demoted[1].1 < demoted[0].1);
+        Ok(())
+    }
+
+    #[test]
+    fn apply_score_demotions_keeps_search_results_when_anchor_labels_fail() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        seed_memory(&conn, 1, "malformed-session", "[not-json")?;
+        seed_memory(&conn, 2, "fresh-session", r#"["src/fresh.rs"]"#)?;
+
+        let ordered = memory::get_memories_by_ids(&conn, &[1, 2], None)?;
+        let fused = vec![(1, 1.0), (2, 0.9)];
+
+        let (ordered, demoted) = apply_score_demotions(&conn, &fused, ordered)?;
+
+        assert_eq!(
+            ordered.iter().map(|memory| memory.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(demoted, fused);
+        Ok(())
+    }
+
+    #[test]
+    fn apply_score_demotions_keeps_search_results_when_commit_files_fail() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        seed_memory(&conn, 1, "malformed-session", r#"["src/stale.rs"]"#)?;
+        seed_memory(&conn, 2, "fresh-session", r#"["src/fresh.rs"]"#)?;
+        link_commit(
+            &conn,
+            1,
+            "source-malformed",
+            100,
+            &["src/stale.rs"],
+            "malformed-session",
+        )?;
+        conn.execute(
+            "INSERT INTO git_commits
+             (id, project, repo_path, sha, short_sha, branch, message,
+              authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch)
+             VALUES (2, 'proj', '/repo', 'later-malformed', 'later-malformed', 'main',
+                     NULL, 200, '[not-json', 200, 200)",
+            [],
+        )?;
+
+        let ordered = memory::get_memories_by_ids(&conn, &[1, 2], None)?;
+        let fused = vec![(1, 1.0), (2, 0.9)];
+
+        let (ordered, demoted) = apply_score_demotions(&conn, &fused, ordered)?;
+
+        assert_eq!(
+            ordered.iter().map(|memory| memory.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(demoted, fused);
         Ok(())
     }
 
