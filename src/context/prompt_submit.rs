@@ -60,7 +60,12 @@ pub(crate) fn prompt_submit_additional_context(
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
     )?;
-    annotate_memories_with_temporal_facts_for_query(conn, &mut retrieved, Some(prompt))?;
+    annotate_memories_with_temporal_facts_for_query(
+        conn,
+        &mut retrieved,
+        Some(prompt),
+        Some(project),
+    )?;
     let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
     let mut rendered = Vec::new();
     let mut audit_items = Vec::new();

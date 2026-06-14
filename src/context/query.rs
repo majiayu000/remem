@@ -3,8 +3,6 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::memory::{self, Memory};
-
 use super::abstention::filter_recent_rows_by_task_embedding;
 use super::commit_signals::query_recent_commit_messages;
 use super::filters::{
@@ -17,6 +15,7 @@ use super::memory_traits::{is_memory_self_diagnostic, is_self_diagnostic_text};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
 use super::types::{ContextLoadError, HiddenDuplicateGroup, LoadedContext, SessionSummaryBrief};
+use crate::memory::{self, Memory};
 
 const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
@@ -78,6 +77,7 @@ pub(super) fn load_context_data_with_policy(
         conn,
         &mut memories,
         memory_selection.fact_label_query.as_deref(),
+        Some(project),
     ) {
         let message = format!("failed to load temporal fact labels for {project}: {e}");
         crate::log::error("context", &message);

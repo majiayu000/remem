@@ -463,6 +463,13 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
     let explain = explain.context("query explain should be present")?;
 
     assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    assert!(
+        memories[0].text.contains("Temporal facts:"),
+        "{memories:#?}"
+    );
+    assert!(memories[0]
+        .text
+        .contains("HarborMint verified_by Toma Reed"));
     let fact = explain
         .channels
         .iter()
@@ -481,6 +488,60 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
         .contributions
         .iter()
         .any(|contribution| contribution.channel == "fact" && contribution.score > 0.0));
+    assert_eq!(explain.filtered_result_count, 0);
+    Ok(())
+}
+
+#[test]
+fn fact_evidence_survives_when_text_channels_also_match() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "HarborMint signer source",
+            content: "Structured fact source without the verifier name.",
+            scope: "project",
+            updated_at_epoch: now - 100,
+        },
+    )?;
+    crate::retrieval::entity::link_entities(&conn, 1, &["HarborMint".to_string()])?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/repo', 'HarborMint', 'verified_by', 'Toma Reed', ?1, ?2, ?3, 1,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![now - 1_000, now + 1_000, now - 900],
+    )?;
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("Who verified HarborMint with Toma Reed?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == 1)
+        .context("fact and text channel result should survive gate")?;
+    assert!(result
+        .contributions
+        .iter()
+        .any(|contribution| contribution.channel == "fact"));
     assert_eq!(explain.filtered_result_count, 0);
     Ok(())
 }
@@ -546,6 +607,65 @@ fn zero_fact_weight_disables_fact_only_results() -> Result<()> {
 
     assert!(disabled.is_empty());
     assert_eq!(enabled.first().map(|memory| memory.id), Some(1));
+    Ok(())
+}
+
+#[test]
+fn zero_fact_weight_does_not_block_like_fallback() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "Opaque ticket fact",
+            content: "Structured ticket detail only.",
+            scope: "project",
+            updated_at_epoch: now - 100,
+        },
+    )?;
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 2,
+            project: "/repo",
+            title: "PR 12 text note",
+            content: "PR 12 is documented in searchable text.",
+            scope: "project",
+            updated_at_epoch: now - 200,
+        },
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/repo', 'PR', 'affects_project', '12', ?1, NULL, ?2, 1,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?2, ?2)",
+        params![now - 1_000, now - 900],
+    )?;
+
+    let memories = search_with_branch_weights(
+        &conn,
+        Some("PR 12"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+        SearchWeights {
+            fact: 0.0,
+            max_vector_distance: 0.0,
+            min_evidence_confidence: 0.0,
+            ..SearchWeights::default()
+        },
+    )?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(2));
     Ok(())
 }
 

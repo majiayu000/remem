@@ -395,8 +395,8 @@
           "abstention_queries": 10,
           "metrics": null,
           "query_tokens_per_query": 12.0,
-          "retrieval_latency_p50_ms": 8.877042,
-          "retrieval_latency_p95_ms": 9.707833,
+          "retrieval_latency_p50_ms": 9.090417,
+          "retrieval_latency_p95_ms": 9.733291999999999,
           "scored_queries": 0,
           "total_queries": 10
         },
@@ -413,8 +413,8 @@
             "recall_at_k": 1.0
           },
           "query_tokens_per_query": 12.8,
-          "retrieval_latency_p50_ms": 9.482416,
-          "retrieval_latency_p95_ms": 9.680166999999999,
+          "retrieval_latency_p50_ms": 10.076208,
+          "retrieval_latency_p95_ms": 12.284875000000001,
           "scored_queries": 10,
           "total_queries": 10
         },
@@ -431,8 +431,8 @@
             "recall_at_k": 1.0
           },
           "query_tokens_per_query": 19.6,
-          "retrieval_latency_p50_ms": 10.079584,
-          "retrieval_latency_p95_ms": 10.1465,
+          "retrieval_latency_p50_ms": 10.32825,
+          "retrieval_latency_p95_ms": 10.948042,
           "scored_queries": 10,
           "total_queries": 10
         },
@@ -449,8 +449,8 @@
             "recall_at_k": 0.0
           },
           "query_tokens_per_query": 7.4,
-          "retrieval_latency_p50_ms": 9.107791,
-          "retrieval_latency_p95_ms": 10.200625,
+          "retrieval_latency_p50_ms": 9.239458,
+          "retrieval_latency_p95_ms": 10.191333,
           "scored_queries": 10,
           "total_queries": 10
         },
@@ -467,8 +467,8 @@
             "recall_at_k": 1.0
           },
           "query_tokens_per_query": 12.6,
-          "retrieval_latency_p50_ms": 9.303875,
-          "retrieval_latency_p95_ms": 9.644875,
+          "retrieval_latency_p50_ms": 9.584292,
+          "retrieval_latency_p95_ms": 9.658375,
           "scored_queries": 10,
           "total_queries": 10
         }
@@ -479,8 +479,8 @@
           "abstention_queries": 10,
           "metrics": null,
           "query_tokens_per_query": 12.0,
-          "retrieval_latency_p50_ms": 8.877042,
-          "retrieval_latency_p95_ms": 9.707833,
+          "retrieval_latency_p50_ms": 9.090417,
+          "retrieval_latency_p95_ms": 9.733291999999999,
           "scored_queries": 0,
           "total_queries": 10
         },
@@ -497,8 +497,8 @@
             "recall_at_k": 1.0
           },
           "query_tokens_per_query": 12.8,
-          "retrieval_latency_p50_ms": 9.482416,
-          "retrieval_latency_p95_ms": 9.680166999999999,
+          "retrieval_latency_p50_ms": 10.076208,
+          "retrieval_latency_p95_ms": 12.284875000000001,
           "scored_queries": 10,
           "total_queries": 10
         },
@@ -515,8 +515,8 @@
             "recall_at_k": 1.0
           },
           "query_tokens_per_query": 19.6,
-          "retrieval_latency_p50_ms": 10.079584,
-          "retrieval_latency_p95_ms": 10.1465,
+          "retrieval_latency_p50_ms": 10.32825,
+          "retrieval_latency_p95_ms": 10.948042,
           "scored_queries": 10,
           "total_queries": 10
         },
@@ -533,8 +533,8 @@
             "recall_at_k": 0.0
           },
           "query_tokens_per_query": 7.4,
-          "retrieval_latency_p50_ms": 9.107791,
-          "retrieval_latency_p95_ms": 10.200625,
+          "retrieval_latency_p50_ms": 9.239458,
+          "retrieval_latency_p95_ms": 10.191333,
           "scored_queries": 10,
           "total_queries": 10
         },
@@ -551,8 +551,8 @@
             "recall_at_k": 1.0
           },
           "query_tokens_per_query": 12.6,
-          "retrieval_latency_p50_ms": 9.303875,
-          "retrieval_latency_p95_ms": 9.644875,
+          "retrieval_latency_p50_ms": 9.584292,
+          "retrieval_latency_p95_ms": 9.658375,
           "scored_queries": 10,
           "total_queries": 10
         }
@@ -613,7 +613,7 @@
           "query": "owner mauve locomotive ration",
           "query_tokens": 8,
           "result_count": 0,
-          "retrieval_latency_ms": 10.200625,
+          "retrieval_latency_ms": 10.191333,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -648,7 +648,7 @@
           "query": "keeper amber harbor curfew",
           "query_tokens": 7,
           "result_count": 0,
-          "retrieval_latency_ms": 9.0575,
+          "retrieval_latency_ms": 9.2075,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -683,7 +683,7 @@
           "query": "executor silver orchard cleanse",
           "query_tokens": 8,
           "result_count": 0,
-          "retrieval_latency_ms": 9.091999999999999,
+          "retrieval_latency_ms": 9.239458,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -718,7 +718,7 @@
           "query": "where azure furnace audit",
           "query_tokens": 7,
           "result_count": 0,
-          "retrieval_latency_ms": 9.117125,
+          "retrieval_latency_ms": 9.110292000000001,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -753,7 +753,7 @@
           "query": "holder crimson library quota",
           "query_tokens": 7,
           "result_count": 0,
-          "retrieval_latency_ms": 9.148375,
+          "retrieval_latency_ms": 9.193167,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -788,7 +788,7 @@
           "query": "custodian emerald bridge rollback",
           "query_tokens": 9,
           "result_count": 0,
-          "retrieval_latency_ms": 9.314625,
+          "retrieval_latency_ms": 9.320708,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -823,7 +823,7 @@
           "query": "lead ivory canyon relay",
           "query_tokens": 6,
           "result_count": 0,
-          "retrieval_latency_ms": 9.07775,
+          "retrieval_latency_ms": 9.081292,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -858,7 +858,7 @@
           "query": "owner bronze bakery alarm",
           "query_tokens": 7,
           "result_count": 0,
-          "retrieval_latency_ms": 8.946708,
+          "retrieval_latency_ms": 9.069417,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -893,7 +893,7 @@
           "query": "keeper teal clinic roster",
           "query_tokens": 7,
           "result_count": 0,
-          "retrieval_latency_ms": 8.969166000000001,
+          "retrieval_latency_ms": 9.457500000000001,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -928,7 +928,7 @@
           "query": "handler plum telescope permit",
           "query_tokens": 8,
           "result_count": 0,
-          "retrieval_latency_ms": 9.107791,
+          "retrieval_latency_ms": 9.610333,
           "retrieved_ids": [],
           "slice": "paraphrase",
           "status": "MISS"
@@ -952,7 +952,7 @@
           "query": "Current NebulaLatch quorum for Project kestrelnook?",
           "query_tokens": 13,
           "result_count": 2,
-          "retrieval_latency_ms": 9.473542,
+          "retrieval_latency_ms": 10.30925,
           "retrieved_ids": [
             11,
             21
@@ -979,7 +979,7 @@
           "query": "Current HarborMint signer for Project lumenquay?",
           "query_tokens": 12,
           "result_count": 1,
-          "retrieval_latency_ms": 9.352334,
+          "retrieval_latency_ms": 9.787291999999999,
           "retrieved_ids": [
             12
           ],
@@ -1005,7 +1005,7 @@
           "query": "Current GroveCache shard for Project cinderbloom?",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.482416,
+          "retrieval_latency_ms": 12.284875000000001,
           "retrieved_ids": [
             13
           ],
@@ -1031,7 +1031,7 @@
           "query": "Current KilnGuard threshold for Project brindleforge?",
           "query_tokens": 14,
           "result_count": 1,
-          "retrieval_latency_ms": 9.653542,
+          "retrieval_latency_ms": 10.544375,
           "retrieved_ids": [
             14
           ],
@@ -1057,7 +1057,7 @@
           "query": "Current ArchiveFox retention for Project vellumspire?",
           "query_tokens": 14,
           "result_count": 1,
-          "retrieval_latency_ms": 9.680166999999999,
+          "retrieval_latency_ms": 9.974958,
           "retrieved_ids": [
             15
           ],
@@ -1083,7 +1083,7 @@
           "query": "Current SpanDrift owner for Project hollowspan?",
           "query_tokens": 12,
           "result_count": 2,
-          "retrieval_latency_ms": 9.442667,
+          "retrieval_latency_ms": 10.076208,
           "retrieved_ids": [
             16,
             41
@@ -1110,7 +1110,7 @@
           "query": "Current RavineRelay region for Project paleravine?",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.56575,
+          "retrieval_latency_ms": 10.380166999999998,
           "retrieved_ids": [
             17
           ],
@@ -1136,7 +1136,7 @@
           "query": "Current OvenBell route for Project copperoven?",
           "query_tokens": 12,
           "result_count": 2,
-          "retrieval_latency_ms": 9.426542,
+          "retrieval_latency_ms": 9.797749999999999,
           "retrieved_ids": [
             18,
             28
@@ -1163,7 +1163,7 @@
           "query": "Current WardRoster source for Project cyanward?",
           "query_tokens": 12,
           "result_count": 2,
-          "retrieval_latency_ms": 9.470625,
+          "retrieval_latency_ms": 9.602583,
           "retrieved_ids": [
             19,
             29
@@ -1190,7 +1190,7 @@
           "query": "Current DomePermit approver for Project violetdome?",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.587,
+          "retrieval_latency_ms": 9.773625,
           "retrieved_ids": [
             20
           ],
@@ -1216,7 +1216,7 @@
           "query": "latest NightJar deployment for Project kestrelnook",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.644875,
+          "retrieval_latency_ms": 9.658375,
           "retrieved_ids": [
             21
           ],
@@ -1242,7 +1242,7 @@
           "query": "before HarborMint freeze for Project lumenquay",
           "query_tokens": 12,
           "result_count": 1,
-          "retrieval_latency_ms": 9.146458999999998,
+          "retrieval_latency_ms": 9.457958000000001,
           "retrieved_ids": [
             22
           ],
@@ -1268,7 +1268,7 @@
           "query": "after GroveCache rotation for Project cinderbloom",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.234417,
+          "retrieval_latency_ms": 9.641250000000001,
           "retrieved_ids": [
             23
           ],
@@ -1294,7 +1294,7 @@
           "query": "during KilnGuard audit week for Project brindleforge",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.331000000000001,
+          "retrieval_latency_ms": 9.617334,
           "retrieved_ids": [
             24
           ],
@@ -1320,7 +1320,7 @@
           "query": "latest ArchiveFox cleanup for Project vellumspire",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.277083000000001,
+          "retrieval_latency_ms": 9.525083,
           "retrieved_ids": [
             25
           ],
@@ -1346,7 +1346,7 @@
           "query": "before SpanDrift cutover for Project hollowspan",
           "query_tokens": 12,
           "result_count": 1,
-          "retrieval_latency_ms": 9.181541,
+          "retrieval_latency_ms": 9.445791,
           "retrieved_ids": [
             26
           ],
@@ -1372,7 +1372,7 @@
           "query": "after RavineRelay incident for Project paleravine",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.260582999999999,
+          "retrieval_latency_ms": 9.584292,
           "retrieved_ids": [
             27
           ],
@@ -1398,7 +1398,7 @@
           "query": "during OvenBell maintenance for Project copperoven",
           "query_tokens": 13,
           "result_count": 1,
-          "retrieval_latency_ms": 9.410875,
+          "retrieval_latency_ms": 9.594999999999999,
           "retrieved_ids": [
             28
           ],
@@ -1424,7 +1424,7 @@
           "query": "latest WardRoster import for Project cyanward",
           "query_tokens": 12,
           "result_count": 1,
-          "retrieval_latency_ms": 9.306792,
+          "retrieval_latency_ms": 9.49625,
           "retrieved_ids": [
             29
           ],
@@ -1450,7 +1450,7 @@
           "query": "after DomePermit review for Project violetdome",
           "query_tokens": 12,
           "result_count": 1,
-          "retrieval_latency_ms": 9.303875,
+          "retrieval_latency_ms": 9.426874999999999,
           "retrieved_ids": [
             30
           ],
@@ -1469,7 +1469,7 @@
           "query": "Has Project KestrelNook migrated NebulaLatch to Oracle Cloud?",
           "query_tokens": 16,
           "result_count": 0,
-          "retrieval_latency_ms": 9.707833,
+          "retrieval_latency_ms": 9.733291999999999,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1486,7 +1486,7 @@
           "query": "What is the HarborMint password rotation secret?",
           "query_tokens": 12,
           "result_count": 0,
-          "retrieval_latency_ms": 9.070417,
+          "retrieval_latency_ms": 8.944584,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1503,7 +1503,7 @@
           "query": "Which production customer paid for GroveCache premium?",
           "query_tokens": 14,
           "result_count": 0,
-          "retrieval_latency_ms": 8.985875,
+          "retrieval_latency_ms": 9.186417,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1520,7 +1520,7 @@
           "query": "Show the KilnGuard private signing key.",
           "query_tokens": 10,
           "result_count": 0,
-          "retrieval_latency_ms": 8.762291,
+          "retrieval_latency_ms": 9.000875,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1537,7 +1537,7 @@
           "query": "Did ArchiveFox replace remem with Cassandra?",
           "query_tokens": 11,
           "result_count": 0,
-          "retrieval_latency_ms": 8.877042,
+          "retrieval_latency_ms": 9.090417,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1554,7 +1554,7 @@
           "query": "What is the SpanDrift payroll token?",
           "query_tokens": 9,
           "result_count": 0,
-          "retrieval_latency_ms": 8.534583,
+          "retrieval_latency_ms": 8.672917,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1571,7 +1571,7 @@
           "query": "Which RavineRelay medical record was exported?",
           "query_tokens": 12,
           "result_count": 0,
-          "retrieval_latency_ms": 8.847333,
+          "retrieval_latency_ms": 9.108875000000001,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1588,7 +1588,7 @@
           "query": "Has OvenBell switched to MongoDB-only storage?",
           "query_tokens": 12,
           "result_count": 0,
-          "retrieval_latency_ms": 8.778958999999999,
+          "retrieval_latency_ms": 9.002792000000001,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1605,7 +1605,7 @@
           "query": "What is the WardRoster user credit card number?",
           "query_tokens": 12,
           "result_count": 0,
-          "retrieval_latency_ms": 8.822292000000001,
+          "retrieval_latency_ms": 8.9535,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1622,7 +1622,7 @@
           "query": "Did DomePermit delete all audit logs yesterday?",
           "query_tokens": 12,
           "result_count": 0,
-          "retrieval_latency_ms": 9.178583,
+          "retrieval_latency_ms": 9.7165,
           "retrieved_ids": [],
           "slice": "abstention",
           "status": "PASS"
@@ -1646,7 +1646,7 @@
           "query": "Which pager handles NebulaLatch through its owning team in Project kestrelnook?",
           "query_tokens": 20,
           "result_count": 3,
-          "retrieval_latency_ms": 10.079584,
+          "retrieval_latency_ms": 10.948042,
           "retrieved_ids": [
             31,
             21,
@@ -1674,7 +1674,7 @@
           "query": "Which pager handles HarborMint through its owning team in Project lumenquay?",
           "query_tokens": 19,
           "result_count": 2,
-          "retrieval_latency_ms": 9.889708,
+          "retrieval_latency_ms": 10.589125,
           "retrieved_ids": [
             33,
             34
@@ -1701,7 +1701,7 @@
           "query": "Which pager handles GroveCache through its owning team in Project cinderbloom?",
           "query_tokens": 20,
           "result_count": 2,
-          "retrieval_latency_ms": 10.137666999999999,
+          "retrieval_latency_ms": 10.182458,
           "retrieved_ids": [
             35,
             36
@@ -1728,7 +1728,7 @@
           "query": "Which pager handles KilnGuard through its owning team in Project brindleforge?",
           "query_tokens": 20,
           "result_count": 2,
-          "retrieval_latency_ms": 10.130541,
+          "retrieval_latency_ms": 10.322125,
           "retrieved_ids": [
             37,
             38
@@ -1755,7 +1755,7 @@
           "query": "Which pager handles ArchiveFox through its owning team in Project vellumspire?",
           "query_tokens": 20,
           "result_count": 2,
-          "retrieval_latency_ms": 10.1465,
+          "retrieval_latency_ms": 10.394874999999999,
           "retrieved_ids": [
             39,
             40
@@ -1782,7 +1782,7 @@
           "query": "Which pager handles SpanDrift through its owning team in Project hollowspan?",
           "query_tokens": 19,
           "result_count": 2,
-          "retrieval_latency_ms": 10.042,
+          "retrieval_latency_ms": 10.364541999999998,
           "retrieved_ids": [
             41,
             42
@@ -1809,7 +1809,7 @@
           "query": "Which pager handles RavineRelay through its owning team in Project paleravine?",
           "query_tokens": 20,
           "result_count": 2,
-          "retrieval_latency_ms": 10.124083,
+          "retrieval_latency_ms": 10.32825,
           "retrieved_ids": [
             43,
             44
@@ -1836,7 +1836,7 @@
           "query": "Which pager handles OvenBell through its owning team in Project copperoven?",
           "query_tokens": 19,
           "result_count": 2,
-          "retrieval_latency_ms": 9.859625000000001,
+          "retrieval_latency_ms": 10.27075,
           "retrieved_ids": [
             45,
             46
@@ -1863,7 +1863,7 @@
           "query": "Which pager handles WardRoster through its owning team in Project cyanward?",
           "query_tokens": 19,
           "result_count": 2,
-          "retrieval_latency_ms": 9.857375,
+          "retrieval_latency_ms": 10.193333,
           "retrieved_ids": [
             47,
             48
@@ -1890,7 +1890,7 @@
           "query": "Which pager handles DomePermit through its owning team in Project violetdome?",
           "query_tokens": 20,
           "result_count": 2,
-          "retrieval_latency_ms": 9.90925,
+          "retrieval_latency_ms": 10.302917,
           "retrieved_ids": [
             49,
             50
@@ -1949,7 +1949,7 @@
         "branch": "main",
         "core_count": 3,
         "corpus": "builtin-context-injection-v2",
-        "data_dir": "/var/folders/h2/29bv07g91nqd40ybjj_vb6nm0000gn/T/remem-injection-eval-35739-1781469521143735000",
+        "data_dir": "/var/folders/h2/29bv07g91nqd40ybjj_vb6nm0000gn/T/remem-injection-eval-43195-1781471602506527000",
         "data_dir_kept": false,
         "host": "codex-cli",
         "index_count": 0,

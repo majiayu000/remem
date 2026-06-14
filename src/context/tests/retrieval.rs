@@ -294,6 +294,73 @@ fn hybrid_context_fact_retrieval_filters_excluded_types_before_ranking() -> anyh
 }
 
 #[test]
+fn hybrid_context_fact_retrieval_applies_owner_filter_before_ranking() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    for id in 1..=20 {
+        insert_memory(
+            &conn,
+            id,
+            project,
+            Some(&format!("foreign-owner-fact-{id}")),
+            "decision",
+            &format!("Foreign owner fact {id}"),
+            "Opaque source body without signer terms.",
+            now - id,
+        );
+        conn.execute(
+            "UPDATE memories SET owner_scope = 'repo', owner_key = '/tmp/other' WHERE id = ?1",
+            params![id],
+        )?;
+        conn.execute(
+            "INSERT INTO memory_facts
+             (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+              learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+              confidence, supersedes_fact_id, status, invalidated_at_epoch,
+              created_at_epoch, updated_at_epoch)
+             VALUES (?1, 'HarborMint', 'verified_by', 'Toma Reed', ?2, NULL, ?3, ?4,
+                     NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+            params![project, now - 1_000, now - id, id],
+        )?;
+    }
+    insert_memory(
+        &conn,
+        100,
+        project,
+        Some("repo-owner-fact"),
+        "decision",
+        "Repo owner fact",
+        "Opaque source body without signer terms.",
+        now - 10_000,
+    );
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'HarborMint', 'verified_by', 'Toma Reed', ?2, NULL, ?3, 100,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![project, now - 1_000, now - 10_000],
+    )?;
+
+    let memories = query_hybrid_context_memories(
+        &conn,
+        project,
+        "Who signs HarborMint with Toma Reed?",
+        None,
+        &[],
+        1,
+    )?;
+
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].title, "Repo owner fact");
+    Ok(())
+}
+
+#[test]
 fn hybrid_context_vector_recall_is_not_crowded_out_by_global_hits() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_context_schema(&conn);

@@ -430,6 +430,7 @@ fn query_local_fact_channel(
         Some(project),
         None,
         excluded_types,
+        Some(project),
         current_branch,
         limit,
         false,
