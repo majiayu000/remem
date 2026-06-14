@@ -25,7 +25,15 @@ struct SourceAnchor {
 struct EvidenceAnchor {
     project: String,
     session_ids: Vec<String>,
+    session_row_ids: Vec<i64>,
+    event_ids: Vec<i64>,
     touched_files: HashSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct CapturedEventRefs {
+    session_ids: Vec<String>,
+    session_row_ids: Vec<i64>,
 }
 
 pub fn memory_staleness_label(memory: &Memory, now_epoch: i64) -> MemoryStalenessLabel {
@@ -121,8 +129,14 @@ fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'stat
     }
 
     let memory_branch = non_empty_trimmed(memory.branch.as_deref()).map(str::to_string);
-    let Some(anchor) =
-        source_commit_anchor_for_sessions(conn, &project, &session_ids, memory_branch.as_deref())?
+    let Some(anchor) = source_commit_anchor_for_sessions(
+        conn,
+        &project,
+        &session_ids,
+        memory_branch.as_deref(),
+        memory.created_at_epoch,
+        &touched_files,
+    )?
     else {
         return Ok("untracked");
     };
@@ -157,11 +171,19 @@ fn source_commit_anchor_for_sessions(
     project: &str,
     session_ids: &[String],
     branch_filter: Option<&str>,
+    max_epoch: i64,
+    touched_files: &HashSet<String>,
 ) -> Result<Option<SourceAnchor>> {
     let mut latest = None;
     for session_id in session_ids {
-        let Some(anchor) =
-            source_commit_anchor_for_session(conn, project, session_id, branch_filter)?
+        let Some(anchor) = source_commit_anchor_for_session(
+            conn,
+            project,
+            session_id,
+            branch_filter,
+            max_epoch,
+            touched_files,
+        )?
         else {
             continue;
         };
@@ -179,28 +201,49 @@ fn source_commit_anchor_for_session(
     project: &str,
     session_id: &str,
     branch_filter: Option<&str>,
+    max_epoch: i64,
+    touched_files: &HashSet<String>,
 ) -> Result<Option<SourceAnchor>> {
-    conn.query_row(
-        "SELECT c.id, COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch), c.branch
+    let mut stmt = conn.prepare(
+        "SELECT c.id,
+                COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch),
+                c.branch,
+                c.changed_files
          FROM git_commits c
          JOIN git_commit_sessions l ON l.commit_id = c.id
          WHERE c.project = ?1
            AND (l.memory_session_id = ?2 OR l.session_id = ?2)
            AND (?3 IS NULL OR c.branch = ?3)
+           AND COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch) <= ?4
          ORDER BY COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch) DESC,
                   c.id DESC
-         LIMIT 1",
-        params![project, session_id, branch_filter],
+         ",
+    )?;
+    let rows = stmt.query_map(
+        params![project, session_id, branch_filter, max_epoch],
         |row| {
-            Ok(SourceAnchor {
-                id: row.get(0)?,
-                epoch: row.get(1)?,
-                branch: row.get(2)?,
-            })
+            Ok((
+                SourceAnchor {
+                    id: row.get(0)?,
+                    epoch: row.get(1)?,
+                    branch: row.get(2)?,
+                },
+                row.get::<_, String>(3)?,
+            ))
         },
-    )
-    .optional()
-    .map_err(Into::into)
+    )?;
+    for row in rows {
+        let (anchor, raw_changed_files) = row?;
+        let changed_files = parse_json_file_array(&raw_changed_files)
+            .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
+        if changed_files
+            .iter()
+            .any(|changed_file| paths_overlap(changed_file, touched_files))
+        {
+            return Ok(Some(anchor));
+        }
+    }
+    Ok(None)
 }
 
 fn later_commit_touches_any_file(
@@ -268,16 +311,21 @@ fn evidence_anchor_for_memory(
         project,
         ..Default::default()
     };
-    anchor.session_ids = captured_event_sessions(conn, &anchor.project, &event_ids)?;
+    anchor.event_ids = event_ids;
+    let captured_refs = captured_event_refs(conn, &anchor.project, &anchor.event_ids)?;
+    anchor.session_ids = captured_refs.session_ids;
+    anchor.session_row_ids = captured_refs.session_row_ids;
     add_legacy_event_files(
         conn,
         &anchor.project,
-        &anchor.session_ids,
+        &anchor.event_ids,
         &mut anchor.touched_files,
     )?;
     add_observation_files(
         conn,
         &anchor.project,
+        &anchor.event_ids,
+        &anchor.session_row_ids,
         &anchor.session_ids,
         &mut anchor.touched_files,
     )?;
@@ -409,20 +457,20 @@ fn candidate_evidence_reference(
     Ok((project, event_ids))
 }
 
-fn captured_event_sessions(
+fn captured_event_refs(
     conn: &Connection,
     project: &str,
     event_ids: &[i64],
-) -> Result<Vec<String>> {
+) -> Result<CapturedEventRefs> {
     if event_ids.is_empty()
         || !table_exists(conn, "captured_events")?
         || !table_exists(conn, "projects")?
     {
-        return Ok(Vec::new());
+        return Ok(CapturedEventRefs::default());
     }
     let placeholders = placeholders(2, event_ids.len());
     let sql = format!(
-        "SELECT DISTINCT e.session_id
+        "SELECT e.session_id, e.session_row_id
          FROM captured_events e
          JOIN projects p ON p.id = e.project_id
          WHERE p.project_path = ?1
@@ -435,34 +483,38 @@ fn captured_event_sessions(
     }
     let refs = crate::db::to_sql_refs(&values);
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, String>(0))?;
-    let mut session_ids = Vec::new();
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut refs = CapturedEventRefs::default();
     for row in rows {
-        push_unique(&mut session_ids, row?);
+        let (session_id, session_row_id) = row?;
+        push_unique(&mut refs.session_ids, session_id);
+        push_unique_i64(&mut refs.session_row_ids, session_row_id);
     }
-    Ok(session_ids)
+    Ok(refs)
 }
 
 fn add_legacy_event_files(
     conn: &Connection,
     project: &str,
-    session_ids: &[String],
+    event_ids: &[i64],
     touched_files: &mut HashSet<String>,
 ) -> Result<()> {
-    if session_ids.is_empty() || !table_exists(conn, "events")? {
+    if event_ids.is_empty() || !table_exists(conn, "events")? {
         return Ok(());
     }
-    let placeholders = placeholders(2, session_ids.len());
+    let placeholders = placeholders(2, event_ids.len());
     let sql = format!(
         "SELECT files
          FROM events
          WHERE project = ?1
-           AND session_id IN ({placeholders})
+           AND id IN ({placeholders})
            AND files IS NOT NULL"
     );
     let mut values: Vec<Box<dyn ToSql>> = vec![Box::new(project.to_string())];
-    for session_id in session_ids {
-        values.push(Box::new(session_id.clone()));
+    for event_id in event_ids {
+        values.push(Box::new(*event_id));
     }
     let refs = crate::db::to_sql_refs(&values);
     let mut stmt = conn.prepare(&sql)?;
@@ -476,10 +528,86 @@ fn add_legacy_event_files(
 fn add_observation_files(
     conn: &Connection,
     project: &str,
+    event_ids: &[i64],
+    session_row_ids: &[i64],
     session_ids: &[String],
     touched_files: &mut HashSet<String>,
 ) -> Result<()> {
-    if session_ids.is_empty() || !table_exists(conn, "observations")? {
+    if event_ids.is_empty() || !table_exists(conn, "observations")? {
+        return Ok(());
+    }
+    if column_exists(conn, "observations", "session_row_id")?
+        && column_exists(conn, "observations", "evidence_event_ids")?
+    {
+        return add_observation_files_by_evidence_events(
+            conn,
+            project,
+            event_ids,
+            session_row_ids,
+            touched_files,
+        );
+    }
+    add_legacy_observation_files(conn, project, session_ids, touched_files)
+}
+
+fn add_observation_files_by_evidence_events(
+    conn: &Connection,
+    project: &str,
+    event_ids: &[i64],
+    session_row_ids: &[i64],
+    touched_files: &mut HashSet<String>,
+) -> Result<()> {
+    if session_row_ids.is_empty() {
+        return Ok(());
+    }
+    let wanted = event_ids.iter().copied().collect::<HashSet<_>>();
+    let placeholders = placeholders(2, session_row_ids.len());
+    let sql = format!(
+        "SELECT files_read, files_modified, evidence_event_ids
+         FROM observations
+         WHERE project = ?1
+           AND session_row_id IN ({placeholders})
+           AND evidence_event_ids IS NOT NULL
+           AND (
+             files_read IS NOT NULL
+             OR files_modified IS NOT NULL
+           )"
+    );
+    let mut values: Vec<Box<dyn ToSql>> = vec![Box::new(project.to_string())];
+    for session_row_id in session_row_ids {
+        values.push(Box::new(*session_row_id));
+    }
+    let refs = crate::db::to_sql_refs(&values);
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (files_read, files_modified, evidence_json) = row?;
+        let observation_event_ids =
+            parse_evidence_event_ids(evidence_json.as_deref(), "observation evidence_event_ids")?;
+        if observation_event_ids
+            .iter()
+            .any(|event_id| wanted.contains(event_id))
+        {
+            touched_files.extend(parse_file_list(files_read.as_deref())?);
+            touched_files.extend(parse_file_list(files_modified.as_deref())?);
+        }
+    }
+    Ok(())
+}
+
+fn add_legacy_observation_files(
+    conn: &Connection,
+    project: &str,
+    session_ids: &[String],
+    touched_files: &mut HashSet<String>,
+) -> Result<()> {
+    if session_ids.is_empty() {
         return Ok(());
     }
     let placeholders = placeholders(2, session_ids.len());
@@ -562,6 +690,12 @@ fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
 
 fn push_unique(values: &mut Vec<String>, value: String) {
     if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn push_unique_i64(values: &mut Vec<i64>, value: i64) {
+    if !values.contains(&value) {
         values.push(value);
     }
 }

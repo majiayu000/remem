@@ -7,7 +7,7 @@ use crate::memory::{self, Memory};
 
 const STALE_SCORE_FACTOR: f64 = 0.25;
 
-pub(super) fn apply_score_demotions(
+pub(crate) fn apply_score_demotions(
     conn: &Connection,
     fused: &[(i64, f64)],
     ordered: Vec<Memory>,

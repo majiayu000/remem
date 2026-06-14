@@ -148,6 +148,126 @@ fn source_anchor_uses_candidate_evidence_without_memory_session_or_files() -> Re
 }
 
 #[test]
+fn source_anchor_limits_legacy_files_to_cited_evidence_events() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    seed_project_session(&conn, "auto-session")?;
+    seed_candidate_evidence_memory(&conn, 42, 20, 10, "auto-session", "src/cited.rs")?;
+    insert_captured_event(&conn, 11, "auto-session")?;
+    let unrelated_files = serde_json::to_string(&vec!["src/unrelated.rs"])?;
+    conn.execute(
+        "INSERT INTO events
+         (id, session_id, project, event_type, summary, files, created_at_epoch)
+         VALUES (11, 'auto-session', 'proj', 'file_edit', 'unrelated edit', ?1, 110)",
+        [unrelated_files],
+    )?;
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-cited",
+        100,
+        &["src/cited.rs"],
+        "auto-session",
+    )?;
+    insert_staleness_commit(&conn, 2, "later-unrelated", 200, &["src/unrelated.rs"])?;
+
+    let mut memory = staleness_memory(1_700_000_000, "active");
+    memory.id = 42;
+    memory.project = "proj".to_string();
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "tracked");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_uses_observation_evidence_files_by_capture_session_row() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    seed_project_session(&conn, "auto-session")?;
+    insert_captured_event(&conn, 10, "auto-session")?;
+    seed_candidate_memory_without_legacy_event(&conn, 42, 20, 10)?;
+    let evidence_json = serde_json::to_string(&vec![10])?;
+    let files_json = serde_json::to_string(&vec!["src/observed.rs"])?;
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, title, files_modified, created_at_epoch,
+          session_row_id, evidence_event_ids)
+         VALUES ('capture-observation-9001', 'proj', 'discovery', 'Observed files',
+                 ?1, 100, 9001, ?2)",
+        params![files_json, evidence_json],
+    )?;
+    link_staleness_commit_with_sessions(
+        &conn,
+        1,
+        "source-observed",
+        100,
+        &["src/observed.rs"],
+        "auto-session",
+        "capture-observation-9001",
+    )?;
+    insert_staleness_commit(&conn, 2, "later-observed", 200, &["src/observed.rs"])?;
+
+    let mut memory = staleness_memory(1_700_000_000, "active");
+    memory.id = 42;
+    memory.project = "proj".to_string();
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_ignores_session_commits_created_after_memory() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let mut memory = tracked_staleness_memory(Some(r#"["src/lib.rs"]"#));
+    memory.created_at_epoch = 150;
+    memory.updated_at_epoch = 150;
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-before-memory",
+        100,
+        &["src/lib.rs"],
+        "mem-session-1",
+    )?;
+    link_staleness_commit(
+        &conn,
+        2,
+        "future-same-session",
+        200,
+        &["src/lib.rs"],
+        "mem-session-1",
+    )?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_requires_source_commit_file_overlap() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let mut memory = tracked_staleness_memory(Some(r#"["src/lib.rs"]"#));
+    memory.created_at_epoch = 150;
+    memory.updated_at_epoch = 150;
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-unrelated",
+        100,
+        &["README.md"],
+        "mem-session-1",
+    )?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "untracked");
+    Ok(())
+}
+
+#[test]
 fn source_anchor_ignores_later_commit_on_unrelated_branch() -> Result<()> {
     let conn = migrated_staleness_db()?;
     let mut memory = tracked_staleness_memory(Some(r#"["src/lib.rs"]"#));
@@ -238,22 +358,42 @@ fn seed_candidate_evidence_memory(
     session_id: &str,
     file: &str,
 ) -> Result<()> {
-    let evidence_json = serde_json::to_string(&vec![event_id])?;
     let files_json = serde_json::to_string(&vec![file])?;
+    insert_captured_event(conn, event_id, session_id)?;
+    conn.execute(
+        "INSERT INTO events
+         (id, session_id, project, event_type, summary, files, created_at_epoch)
+         VALUES (?1, ?2, 'proj', 'file_edit', 'edited source', ?3, 100)",
+        params![event_id, session_id, files_json],
+    )?;
+    seed_candidate_memory_without_legacy_event(conn, memory_id, candidate_id, event_id)?;
+    Ok(())
+}
+
+fn insert_captured_event(conn: &Connection, event_id: i64, session_id: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO captured_events
          (id, host_id, workspace_id, project_id, session_row_id, session_id, event_id,
           event_type, content_hash, retention_class, created_at_epoch, inserted_at_epoch)
-         VALUES (?1, 9001, 9001, 9001, 9001, ?2, 'event-auto', 'tool', 'hash-auto',
+         VALUES (?1, 9001, 9001, 9001, 9001, ?2, ?3, 'tool', ?4,
                  'normal', 100, 100)",
-        params![event_id, session_id],
+        params![
+            event_id,
+            session_id,
+            format!("event-{event_id}"),
+            format!("hash-{event_id}")
+        ],
     )?;
-    conn.execute(
-        "INSERT INTO events
-         (session_id, project, event_type, summary, files, created_at_epoch)
-         VALUES (?1, 'proj', 'file_edit', 'edited source', ?2, 100)",
-        params![session_id, files_json],
-    )?;
+    Ok(())
+}
+
+fn seed_candidate_memory_without_legacy_event(
+    conn: &Connection,
+    memory_id: i64,
+    candidate_id: i64,
+    event_id: i64,
+) -> Result<()> {
+    let evidence_json = serde_json::to_string(&vec![event_id])?;
     conn.execute(
         "INSERT INTO memory_candidates
          (id, project_id, scope, memory_type, topic_key, text, evidence_event_ids,
@@ -309,6 +449,25 @@ fn link_staleness_commit_on_branch(
          (commit_id, session_id, memory_session_id, source, linked_at_epoch)
          VALUES (?1, ?2, ?3, 'test', ?4)",
         params![id, format!("content-{id}"), memory_session_id, epoch],
+    )?;
+    Ok(())
+}
+
+fn link_staleness_commit_with_sessions(
+    conn: &Connection,
+    id: i64,
+    sha: &str,
+    epoch: i64,
+    changed_files: &[&str],
+    session_id: &str,
+    memory_session_id: &str,
+) -> Result<()> {
+    insert_staleness_commit_on_branch(conn, id, sha, epoch, changed_files, "main")?;
+    conn.execute(
+        "INSERT INTO git_commit_sessions
+         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
+         VALUES (?1, ?2, ?3, 'test', ?4)",
+        params![id, session_id, memory_session_id, epoch],
     )?;
     Ok(())
 }

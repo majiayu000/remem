@@ -7,7 +7,7 @@ use crate::memory::{self, Memory};
 
 use super::discover::discover_entities;
 use super::expand::collect_second_hop_ids;
-use super::merge::rank_merged_ids;
+use super::merge::rank_merged_scores;
 use super::types::MultiHopResult;
 
 fn paginate_memories(memories: Vec<Memory>, limit: i64, offset: i64) -> Vec<Memory> {
@@ -91,8 +91,15 @@ pub fn search_multi_hop(
         });
     }
 
-    let top_ids = rank_merged_ids(&first_hop_ids, &second_hop_ids, page_target);
-    let memories = paginate_memories(load_ranked_memories(conn, &top_ids)?, limit, offset);
+    let merged = rank_merged_scores(&first_hop_ids, &second_hop_ids, fetch);
+    let merged_ids = merged.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    let ranked = load_ranked_memories(conn, &merged_ids)?;
+    let (ranked, _) = crate::retrieval::search::apply_score_demotions(conn, &merged, ranked)?;
+    let memories = paginate_memories(
+        ranked.into_iter().take(page_target as usize).collect(),
+        limit,
+        offset,
+    );
     Ok(MultiHopResult {
         memories,
         hops: 2,
