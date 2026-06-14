@@ -1,5 +1,6 @@
 mod apply;
 mod candidates;
+mod conflict;
 mod constants;
 mod decisions;
 mod merge;
@@ -175,6 +176,47 @@ async fn process_clusters(
                 record_no_merge(conn, project, cluster, reason.as_deref())?;
                 skipped += 1;
             }
+            MergeDecision::Conflict {
+                conflicting_ids,
+                reason,
+            } => match conflict::record_conflict(
+                conn,
+                project,
+                cluster,
+                &conflicting_ids,
+                reason.as_deref(),
+            ) {
+                Ok(outcome) => {
+                    skipped += 1;
+                    crate::log::info(
+                        "dream",
+                        &format!(
+                            "deferred conflict ids={:?} operation_id={} edge_count={}",
+                            conflicting_ids, outcome.operation_id, outcome.edge_count
+                        ),
+                    );
+                }
+                Err(error) => {
+                    record_failed(
+                        conn,
+                        project,
+                        cluster,
+                        &format!(
+                            "conflict record failed: {}",
+                            crate::db::truncate_str(&error.to_string(), 500)
+                        ),
+                    )?;
+                    apply_failures += 1;
+                    crate::log::warn(
+                        "dream",
+                        &format!(
+                            "project={} cluster_size={} cluster_first_id={:?} conflict record failed: {}",
+                            project, cluster_size, cluster_first_id, error
+                        ),
+                    );
+                    continue;
+                }
+            },
         }
     }
 
@@ -341,6 +383,291 @@ mod tests {
         assert_eq!(row.0, "no_merge");
         assert_eq!(row.1, "entries cover different decisions");
         assert_eq!(row.2, "[101,102]");
+    }
+
+    #[tokio::test]
+    async fn process_clusters_persists_conflict_defer_without_merging() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-dream-conflict";
+        let first_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-a"),
+            "Use provider A",
+            "Use provider A for embeddings.",
+            "decision",
+            None,
+        )?;
+        let second_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-b"),
+            "Use provider B",
+            "Use provider B for embeddings.",
+            "decision",
+            None,
+        )?;
+        let clusters = vec![Cluster {
+            members: vec![
+                candidates::MemoryCandidate {
+                    id: first_id,
+                    topic_key: Some("conflict-a".to_string()),
+                    title: "Use provider A".to_string(),
+                    content: "Use provider A for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 1,
+                },
+                candidates::MemoryCandidate {
+                    id: second_id,
+                    topic_key: Some("conflict-b".to_string()),
+                    title: "Use provider B".to_string(),
+                    content: "Use provider B for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 2,
+                },
+            ],
+        }];
+
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![second_id, first_id],
+                    reason: Some("embedding provider is unresolved".to_string()),
+                })
+            })
+        })
+        .await?;
+
+        let active_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories
+             WHERE id IN (?1, ?2) AND status = 'active'",
+            params![first_id, second_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(active_count, 2);
+        let memory_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE project = ?1",
+            params![project],
+            |row| row.get(0),
+        )?;
+        assert_eq!(memory_count, 2);
+
+        let (operation, conflicting_json, defer_reason): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT operation, conflicting_ids, defer_reason
+                 FROM memory_operation_log
+                 ORDER BY id DESC
+                 LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        assert_eq!(operation, "conflict");
+        let conflicting_ids: Vec<i64> = serde_json::from_str(&conflicting_json)?;
+        assert_eq!(conflicting_ids, vec![first_id, second_id]);
+        assert_eq!(
+            defer_reason.as_deref(),
+            Some("embedding provider is unresolved")
+        );
+
+        let conflict_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'conflicts'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(conflict_edge_count, 2);
+        let merged_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'merged_into'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(merged_edge_count, 0);
+
+        let (decision, reason, operation_id): (String, String, Option<i64>) = conn.query_row(
+            "SELECT decision, reason, source_operation_id
+             FROM dream_cluster_decisions
+             WHERE project = ?1",
+            params![project],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(decision, "defer");
+        assert_eq!(reason, "embedding provider is unresolved");
+        assert!(operation_id.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_clusters_defer_records_only_conflicting_subset() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-dream-conflict-subset";
+        let first_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-a"),
+            "Use provider A",
+            "Use provider A for embeddings.",
+            "decision",
+            None,
+        )?;
+        let second_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-b"),
+            "Keep provider B as backup",
+            "Keep provider B as a backup option.",
+            "decision",
+            None,
+        )?;
+        let third_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-c"),
+            "Use provider C",
+            "Use provider C for embeddings.",
+            "decision",
+            None,
+        )?;
+        let clusters = vec![Cluster {
+            members: vec![
+                candidates::MemoryCandidate {
+                    id: first_id,
+                    topic_key: Some("conflict-a".to_string()),
+                    title: "Use provider A".to_string(),
+                    content: "Use provider A for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 1,
+                },
+                candidates::MemoryCandidate {
+                    id: second_id,
+                    topic_key: Some("conflict-b".to_string()),
+                    title: "Keep provider B as backup".to_string(),
+                    content: "Keep provider B as a backup option.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 2,
+                },
+                candidates::MemoryCandidate {
+                    id: third_id,
+                    topic_key: Some("conflict-c".to_string()),
+                    title: "Use provider C".to_string(),
+                    content: "Use provider C for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 3,
+                },
+            ],
+        }];
+
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![third_id, first_id],
+                    reason: Some("provider choice is unresolved".to_string()),
+                })
+            })
+        })
+        .await?;
+
+        let (member_ids_json, cluster_size): (String, i64) = conn.query_row(
+            "SELECT member_ids_json, cluster_size
+             FROM dream_cluster_decisions
+             WHERE project = ?1",
+            params![project],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let member_ids: Vec<i64> = serde_json::from_str(&member_ids_json)?;
+        assert_eq!(member_ids, vec![first_id, third_id]);
+        assert_eq!(cluster_size, 2);
+
+        let conflict_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'conflicts'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(conflict_edge_count, 2);
+
+        let operation_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_operation_log WHERE operation = 'conflict'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(operation_count, 1);
+
+        let plan = decisions::load_cluster_plan(
+            &conn,
+            project,
+            vec![Cluster {
+                members: clusters[0].members.clone(),
+            }],
+        )?;
+        assert_eq!(plan.eligible.len(), 1);
+        assert_eq!(plan.suppressed, 0);
+
+        process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![third_id, first_id],
+                    reason: Some("provider choice is unresolved".to_string()),
+                })
+            })
+        })
+        .await?;
+
+        let conflict_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'conflicts'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(conflict_edge_count, 2);
+        let operation_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_operation_log WHERE operation = 'conflict'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(operation_count, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_clusters_records_failed_for_invalid_conflict_ids() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-dream-invalid-conflict";
+        let clusters = vec![make_cluster([101, 102], ["topic-a", "topic-b"])];
+
+        let Err(error) = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
+            Box::pin(async move {
+                Ok(MergeDecision::Conflict {
+                    conflicting_ids: vec![101],
+                    reason: Some("invalid conflict ids".to_string()),
+                })
+            })
+        })
+        .await
+        else {
+            panic!("invalid conflict should fail the only cluster attempt");
+        };
+        assert!(
+            error.to_string().contains("all 1 cluster attempts failed"),
+            "unexpected error: {error}"
+        );
+        let (decision, reason): (String, String) = conn.query_row(
+            "SELECT decision, reason
+             FROM dream_cluster_decisions
+             WHERE project = ?1",
+            params![project],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(decision, "failed");
+        assert!(
+            reason.contains("dream conflict requires at least two memory ids"),
+            "unexpected failed reason: {reason}"
+        );
+        Ok(())
     }
 
     #[tokio::test]

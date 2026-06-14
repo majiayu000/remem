@@ -82,6 +82,7 @@ fn run_sandbox_eval_inner(
         invalidate: 1,
         noop: 1,
         defer: 1,
+        conflict: 0,
     };
     if lifecycle_counts != expected_lifecycle_counts {
         failing_examples.push(format!(
@@ -501,12 +502,13 @@ impl Display for GovernanceEvalReport {
         )?;
         writeln!(
             f,
-            "lifecycle: add={} update={} invalidate={} noop={} defer={}",
+            "lifecycle: add={} update={} invalidate={} noop={} defer={} conflict={}",
             self.lifecycle_counts.add,
             self.lifecycle_counts.update,
             self.lifecycle_counts.invalidate,
             self.lifecycle_counts.noop,
-            self.lifecycle_counts.defer
+            self.lifecycle_counts.defer,
+            self.lifecycle_counts.conflict
         )?;
         writeln!(
             f,

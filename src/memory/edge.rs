@@ -146,6 +146,84 @@ pub fn insert_merged_into_edges(
     )
 }
 
+pub fn insert_conflicts_edges(
+    conn: &Connection,
+    from_memory_ids: &[i64],
+    to_memory_id: i64,
+    context: MemoryEdgeWriteContext<'_>,
+) -> Result<usize> {
+    insert_replacement_edges(
+        conn,
+        MemoryEdgeType::Conflicts,
+        from_memory_ids,
+        to_memory_id,
+        context,
+    )
+}
+
+pub fn insert_pairwise_conflict_edges(
+    conn: &Connection,
+    memory_ids: &[i64],
+    context: MemoryEdgeWriteContext<'_>,
+) -> Result<usize> {
+    let mut ids = memory_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+
+    let mut inserted = 0usize;
+    for (idx, from_memory_id) in ids.iter().copied().enumerate() {
+        for to_memory_id in ids.iter().copied().skip(idx + 1) {
+            for state_key_id in
+                conflict_edge_state_keys(conn, from_memory_id, to_memory_id, context.state_key_id)?
+            {
+                insert_memory_edge(
+                    conn,
+                    &MemoryEdgeInput {
+                        edge_type: MemoryEdgeType::Conflicts,
+                        from_memory_id: Some(from_memory_id),
+                        to_memory_id: Some(to_memory_id),
+                        state_key_id,
+                        source_candidate_id: context.source_candidate_id,
+                        evidence_event_ids: context.evidence_event_ids,
+                        source_operation_id: context.source_operation_id,
+                        confidence: context.confidence,
+                        reason: context.reason,
+                    },
+                )?;
+                inserted += 1;
+            }
+        }
+    }
+    Ok(inserted)
+}
+
+fn conflict_edge_state_keys(
+    conn: &Connection,
+    from_memory_id: i64,
+    to_memory_id: i64,
+    explicit_state_key_id: Option<i64>,
+) -> Result<Vec<Option<i64>>> {
+    if explicit_state_key_id.is_some() {
+        return Ok(vec![explicit_state_key_id]);
+    }
+    let from_state_key_id = memory_state_key_id(conn, from_memory_id)?;
+    let to_state_key_id = memory_state_key_id(conn, to_memory_id)?;
+    if from_state_key_id == to_state_key_id {
+        return Ok(vec![from_state_key_id]);
+    }
+    let mut state_key_ids = Vec::new();
+    if from_state_key_id.is_some() {
+        state_key_ids.push(from_state_key_id);
+    }
+    if to_state_key_id.is_some() {
+        state_key_ids.push(to_state_key_id);
+    }
+    if state_key_ids.is_empty() {
+        state_key_ids.push(None);
+    }
+    Ok(state_key_ids)
+}
+
 fn memory_state_key_id(conn: &Connection, memory_id: i64) -> Result<Option<i64>> {
     Ok(conn
         .query_row(

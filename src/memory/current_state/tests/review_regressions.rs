@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::params;
 
+use crate::memory::edge::{insert_pairwise_conflict_edges, MemoryEdgeWriteContext};
+
 use super::super::{current_state, CurrentStateRequest};
 use super::support::{
     current_state_test_conn, insert_current_state_memory_at, insert_state_key, set_current_memory,
@@ -488,5 +490,120 @@ fn current_conflict_refs_include_edge_evidence() -> Result<()> {
     assert_eq!(result.conflicts[0].evidence_event_ids, vec![21, 22]);
     assert_eq!(result.conflicts[0].source_candidate_id, Some(30));
     assert_eq!(result.conflicts[0].source_operation_id, Some(40));
+    Ok(())
+}
+
+#[test]
+fn cross_state_conflicts_have_per_side_why_scope() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, state_label,
+          state_status, current_memory_id, created_at_epoch, updated_at_epoch)
+         VALUES
+             (10, 'repo', '/repo', 'decision', 'deploy-target',
+              'deploy target', 'active', NULL, 1, 10),
+             (11, 'repo', '/repo', 'decision', 'runtime-target',
+              'runtime target', 'active', NULL, 1, 10)",
+        [],
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        1,
+        "/repo",
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        100,
+        Some(100),
+        None,
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Runtime target",
+        "Use staging.",
+        "active",
+        11,
+        110,
+        Some(110),
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memory_state_keys
+         SET current_memory_id = CASE id WHEN 10 THEN 1 WHEN 11 THEN 2 END
+         WHERE id IN (10, 11)",
+        [],
+    )?;
+
+    let inserted = insert_pairwise_conflict_edges(
+        &conn,
+        &[1, 2],
+        MemoryEdgeWriteContext {
+            evidence_event_ids: &[7, 8],
+            reason: Some("cross-state conflict"),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(inserted, 2);
+
+    let deploy_edge_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_edges
+         WHERE edge_type = 'conflicts' AND state_key_id = 10",
+        [],
+        |row| row.get(0),
+    )?;
+    let runtime_edge_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_edges
+         WHERE edge_type = 'conflicts' AND state_key_id = 11",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(deploy_edge_count, 1);
+    assert_eq!(runtime_edge_count, 1);
+
+    let deploy = current_state(
+        &conn,
+        &CurrentStateRequest {
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(deploy.status, "current");
+    assert!(deploy.conflicts.is_empty());
+    assert_eq!(
+        deploy
+            .why
+            .iter()
+            .filter(|why| why.edge_type == "conflicts")
+            .count(),
+        1
+    );
+
+    let runtime = current_state(
+        &conn,
+        &CurrentStateRequest {
+            state_key: "runtime-target".to_string(),
+            project: Some("/repo".to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(runtime.status, "current");
+    assert!(runtime.conflicts.is_empty());
+    assert_eq!(
+        runtime
+            .why
+            .iter()
+            .filter(|why| why.edge_type == "conflicts")
+            .count(),
+        1
+    );
     Ok(())
 }

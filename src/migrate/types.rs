@@ -215,6 +215,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "reference_time_epoch",
         sql: include_str!("../migrations/v042_reference_time_epoch.sql"),
     },
+    Migration {
+        version: 43,
+        name: "graph_candidate_prompt_memory_refs",
+        sql: include_str!("../migrations/v043_graph_candidate_prompt_memory_refs.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

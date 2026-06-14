@@ -35,6 +35,7 @@ struct GraphCandidateRow {
     from_ref: String,
     to_ref: String,
     evidence_event_ids: String,
+    prompt_memory_ref_ids: Option<String>,
     confidence: f64,
     risk_class: String,
     reason: String,
@@ -67,6 +68,7 @@ pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option
     };
     ensure_reviewable(&row)?;
     let candidate = row.as_candidate()?;
+    let prompt_memory_ref_ids = row.prompt_memory_ref_ids()?;
     let project_id = row
         .project_id
         .with_context(|| format!("graph candidate {} is missing project_id", row.id))?;
@@ -76,6 +78,7 @@ pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option
         project_id,
         row.id,
         &candidate,
+        prompt_memory_ref_ids.as_deref(),
         "graph_review",
     )?;
     mark_candidate_promoted(&tx, row.id, "approved", &outcome)?;
@@ -94,7 +97,8 @@ pub(crate) fn defer_candidate(conn: &Connection, id: i64, reason: &str) -> Resul
 fn load_row(conn: &Connection, id: i64) -> Result<Option<GraphCandidateRow>> {
     conn.query_row(
         "SELECT c.id, c.project_id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
-                c.from_ref, c.to_ref, c.evidence_event_ids, c.confidence, c.risk_class,
+                c.from_ref, c.to_ref, c.evidence_event_ids, c.prompt_memory_ref_ids,
+                c.confidence, c.risk_class,
                 c.reason, c.review_status, c.promoted_edge_id, c.created_at_epoch
          FROM graph_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
@@ -144,7 +148,8 @@ fn load_reviewable_rows(
     let limit = limit.clamp(1, 200);
     let mut sql = String::from(
         "SELECT c.id, c.project_id, p.project_path, c.source_project, c.candidate_type, c.edge_type,
-                c.from_ref, c.to_ref, c.evidence_event_ids, c.confidence, c.risk_class,
+                c.from_ref, c.to_ref, c.evidence_event_ids, c.prompt_memory_ref_ids,
+                c.confidence, c.risk_class,
                 c.reason, c.review_status, c.promoted_edge_id, c.created_at_epoch
          FROM graph_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
@@ -180,12 +185,13 @@ impl GraphCandidateRow {
             from_ref: row.get(6)?,
             to_ref: row.get(7)?,
             evidence_event_ids: row.get(8)?,
-            confidence: row.get(9)?,
-            risk_class: row.get(10)?,
-            reason: row.get(11)?,
-            review_status: row.get(12)?,
-            promoted_edge_id: row.get(13)?,
-            created_at_epoch: row.get(14)?,
+            prompt_memory_ref_ids: row.get(9)?,
+            confidence: row.get(10)?,
+            risk_class: row.get(11)?,
+            reason: row.get(12)?,
+            review_status: row.get(13)?,
+            promoted_edge_id: row.get(14)?,
+            created_at_epoch: row.get(15)?,
         })
     }
 
@@ -201,6 +207,20 @@ impl GraphCandidateRow {
             risk_class: self.risk_class.clone(),
             reason: self.reason.clone(),
         })
+    }
+
+    fn prompt_memory_ref_ids(&self) -> Result<Option<Vec<i64>>> {
+        self.prompt_memory_ref_ids
+            .as_deref()
+            .map(|raw| {
+                serde_json::from_str(raw).with_context(|| {
+                    format!(
+                        "graph candidate {} has malformed prompt_memory_ref_ids",
+                        self.id
+                    )
+                })
+            })
+            .transpose()
     }
 
     fn into_review(self, conn: &Connection) -> Result<ReviewGraphCandidate> {

@@ -76,6 +76,7 @@ pub struct LifecycleCounts {
     pub invalidate: usize,
     pub noop: usize,
     pub defer: usize,
+    pub conflict: usize,
 }
 
 #[derive(Debug, Serialize)]

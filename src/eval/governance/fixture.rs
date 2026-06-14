@@ -534,6 +534,7 @@ fn count_lifecycle(counts: &mut LifecycleCounts, op: memory::lifecycle::MemoryLi
         memory::lifecycle::MemoryLifecycleOp::Invalidate => counts.invalidate += 1,
         memory::lifecycle::MemoryLifecycleOp::Noop => counts.noop += 1,
         memory::lifecycle::MemoryLifecycleOp::Defer => counts.defer += 1,
+        memory::lifecycle::MemoryLifecycleOp::Conflict => counts.conflict += 1,
     }
 }
 
