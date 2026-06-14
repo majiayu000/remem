@@ -699,11 +699,14 @@ fn active_repo_memory_exists(
     source_project: &str,
     memory_id: i64,
 ) -> Result<bool> {
+    let current_filter =
+        crate::memory::memory_current_filter_sql("status", "expires_at_epoch", false);
     conn.query_row(
-        "SELECT 1
+        &format!(
+            "SELECT 1
          FROM memories
          WHERE id = ?1
-           AND status = 'active'
+           AND {current_filter}
            AND (
                 (owner_scope = 'repo' AND owner_key = ?2)
                 OR target_project = ?2
@@ -713,7 +716,8 @@ fn active_repo_memory_exists(
                     AND COALESCE(scope, 'project') != 'global'
                 )
            )
-         LIMIT 1",
+         LIMIT 1"
+        ),
         params![memory_id, source_project],
         |_| Ok(()),
     )

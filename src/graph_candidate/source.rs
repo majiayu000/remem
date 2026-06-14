@@ -34,6 +34,14 @@ pub(super) struct GraphSourceMemory {
     evidence_event_ids: Vec<i64>,
 }
 
+#[derive(Debug, Clone)]
+struct GraphSourceMemoryRow {
+    memory: GraphSourceMemory,
+    state_key_id: Option<i64>,
+    updated_at_epoch: i64,
+    evidence_overlap: bool,
+}
+
 pub(super) struct GraphObservationBatch {
     pub(super) from_event_id: i64,
     pub(super) to_event_id: i64,
@@ -185,16 +193,20 @@ fn load_graph_source_memories(
     evidence_event_ids: &[i64],
 ) -> Result<Vec<GraphSourceMemory>> {
     let evidence_event_ids = evidence_event_ids.iter().copied().collect::<BTreeSet<_>>();
-    let mut stmt = conn.prepare(
+    let current_filter =
+        crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
+    let mut stmt = conn.prepare(&format!(
         "SELECT m.id,
                 m.memory_type,
                 m.topic_key,
                 m.title,
                 m.content,
-                COALESCE(m.evidence_event_ids, c.evidence_event_ids) AS evidence_event_ids
+                COALESCE(m.evidence_event_ids, c.evidence_event_ids) AS evidence_event_ids,
+                m.state_key_id,
+                m.updated_at_epoch
          FROM memories m
          LEFT JOIN memory_candidates c ON c.id = m.source_candidate_id
-         WHERE m.status = 'active'
+         WHERE {current_filter}
            AND COALESCE(m.evidence_event_ids, c.evidence_event_ids) IS NOT NULL
            AND (
                 (m.owner_scope = 'repo' AND m.owner_key = ?1)
@@ -205,9 +217,8 @@ fn load_graph_source_memories(
                     AND COALESCE(m.scope, 'project') != 'global'
                 )
            )
-         ORDER BY m.updated_at_epoch DESC, m.id DESC
-         LIMIT 200",
-    )?;
+         ORDER BY m.updated_at_epoch DESC, m.id DESC"
+    ))?;
     let rows = stmt
         .query_map(params![source_project], |row| {
             Ok((
@@ -217,30 +228,90 @@ fn load_graph_source_memories(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut memories = Vec::new();
-    for (id, memory_type, topic_key, title, content, evidence_json) in rows {
+    let mut memory_rows = Vec::new();
+    let mut overlapping_state_key_ids = BTreeSet::new();
+    let mut overlapping_topic_keys = BTreeSet::new();
+    for (
+        id,
+        memory_type,
+        topic_key,
+        title,
+        content,
+        evidence_json,
+        state_key_id,
+        updated_at_epoch,
+    ) in rows
+    {
         let memory_event_ids = serde_json::from_str::<Vec<i64>>(&evidence_json)
             .with_context(|| format!("memory {id} has malformed evidence_event_ids"))?;
-        if memory_event_ids
+        let evidence_overlap = memory_event_ids
             .iter()
-            .any(|event_id| evidence_event_ids.contains(event_id))
-        {
-            memories.push(GraphSourceMemory {
+            .any(|event_id| evidence_event_ids.contains(event_id));
+        if evidence_overlap {
+            if let Some(state_key_id) = state_key_id {
+                overlapping_state_key_ids.insert(state_key_id);
+            }
+            if let Some(topic_key) = topic_key.as_deref().and_then(non_empty) {
+                overlapping_topic_keys.insert((memory_type.clone(), topic_key.to_string()));
+            }
+        }
+        memory_rows.push(GraphSourceMemoryRow {
+            memory: GraphSourceMemory {
                 id,
                 memory_type,
                 topic_key,
                 title,
                 content,
                 evidence_event_ids: memory_event_ids,
-            });
-        }
+            },
+            state_key_id,
+            updated_at_epoch,
+            evidence_overlap,
+        });
     }
+    let mut memories = memory_rows
+        .into_iter()
+        .filter(|row| {
+            row.evidence_overlap
+                || row
+                    .state_key_id
+                    .is_some_and(|state_key_id| overlapping_state_key_ids.contains(&state_key_id))
+                || row
+                    .memory
+                    .topic_key
+                    .as_deref()
+                    .and_then(non_empty)
+                    .is_some_and(|topic_key| {
+                        overlapping_topic_keys
+                            .contains(&(row.memory.memory_type.clone(), topic_key.to_string()))
+                    })
+        })
+        .collect::<Vec<_>>();
+    memories.sort_by(|left, right| {
+        right
+            .evidence_overlap
+            .cmp(&left.evidence_overlap)
+            .then_with(|| right.updated_at_epoch.cmp(&left.updated_at_epoch))
+            .then_with(|| left.memory.id.cmp(&right.memory.id))
+    });
+    memories.truncate(200);
+    let mut memories = memories
+        .into_iter()
+        .map(|row| row.memory)
+        .collect::<Vec<_>>();
     memories.sort_by_key(|memory| memory.id);
     Ok(memories)
+}
+
+fn non_empty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
 }
 
 fn parse_observation_file_list(

@@ -124,9 +124,12 @@ fn load_memory_ref_rows(
     memory_ids: &[i64],
 ) -> Result<Vec<MemoryRefRow>> {
     let mut rows = Vec::with_capacity(memory_ids.len());
+    let current_filter =
+        crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
     for memory_id in memory_ids {
         rows.push(conn.query_row(
-            "SELECT
+            &format!(
+                "SELECT
                  COALESCE(
                      m.owner_scope,
                      CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
@@ -142,7 +145,7 @@ fn load_memory_ref_rows(
              FROM memories m
              LEFT JOIN memory_state_keys sk ON sk.id = m.state_key_id
              WHERE m.id = ?1
-               AND m.status = 'active'
+               AND {current_filter}
                AND (
                     (m.owner_scope = 'repo' AND m.owner_key = ?2)
                     OR m.target_project = ?2
@@ -152,7 +155,8 @@ fn load_memory_ref_rows(
                         AND COALESCE(m.scope, 'project') != 'global'
                     )
                )
-             LIMIT 1",
+             LIMIT 1"
+            ),
             params![memory_id, source_project],
             |row| {
                 Ok(MemoryRefRow {

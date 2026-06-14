@@ -444,6 +444,134 @@ async fn graph_candidate_rejects_conflict_ref_outside_prompt_memory_refs() -> Re
 }
 
 #[tokio::test]
+async fn graph_candidate_memory_ref_cap_applies_after_evidence_filtering() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-memory-ref-cap-after-filter")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    let event_id =
+        insert_graph_source_observation(&conn, &task, "Memory 1 conflicts with memory 2.")?;
+    set_graph_memory_evidence(&conn, &[1, 2], &[event_id])?;
+    for memory_id in 1_000..1_250 {
+        insert_graph_memory(&conn, &task.project, memory_id)?;
+        conn.execute(
+            "UPDATE memories
+             SET evidence_event_ids = ?1,
+                 updated_at_epoch = ?2
+             WHERE id = ?3",
+            params![
+                serde_json::to_string(&vec![memory_id + 10_000])?,
+                memory_id,
+                memory_id
+            ],
+        )?;
+    }
+
+    let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
+        assert!(prompt.contains("ref=\"memory:1\""), "prompt: {prompt}");
+        assert!(prompt.contains("ref=\"memory:2\""), "prompt: {prompt}");
+        Ok(graph_candidate_xml("conflicts", "memory:2", event_id))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_memory_refs_exclude_expired_active_memories() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-memory-ref-expired")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    let event_id = insert_graph_source_observation(
+        &conn,
+        &task,
+        "Expired memory 1 should not be offered as a conflict endpoint.",
+    )?;
+    set_graph_memory_evidence(&conn, &[1], &[event_id])?;
+    conn.execute("UPDATE memories SET expires_at_epoch = 1 WHERE id = 1", [])?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
+        assert!(
+            !prompt.contains("ref=\"memory:1\""),
+            "expired memory must not be exposed: {prompt}"
+        );
+        Ok("<no_graph_candidates reason=\"no current memory refs\"/>".to_string())
+    })
+    .await?;
+
+    assert_eq!(result, GraphCandidateResult::NoCandidates);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_candidate_memory_refs_include_same_topic_older_conflicts() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let (task, event_ids) = graph_test_task_with_events(
+        &mut conn,
+        "sess-graph-memory-ref-old-topic-conflict",
+        &[
+            "Older memory 1 said provider A is required.",
+            "New memory 2 says provider B is required.",
+        ],
+    )?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    insert_graph_memory(&conn, &task.project, 3)?;
+    conn.execute(
+        "UPDATE memories SET topic_key = 'provider-choice' WHERE id IN (1, 2, 3)",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE memories SET memory_type = 'lesson' WHERE id = 3",
+        [],
+    )?;
+    set_graph_memory_evidence(&conn, &[1], &[event_ids[0]])?;
+    set_graph_memory_evidence(&conn, &[2], &[event_ids[1]])?;
+    set_graph_memory_evidence(&conn, &[3], &[event_ids[0]])?;
+    insert_graph_source_observation_with_evidence(
+        &conn,
+        &task,
+        "Memory 2 contradicts the existing provider-choice memory.",
+        &[event_ids[1]],
+    )?;
+
+    let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
+        assert!(
+            prompt.contains("ref=\"memory:1\""),
+            "same-topic older memory should be included: {prompt}"
+        );
+        assert!(
+            prompt.contains("ref=\"memory:2\""),
+            "direct evidence memory should be included: {prompt}"
+        );
+        assert!(
+            !prompt.contains("ref=\"memory:3\""),
+            "same-topic memory with a different memory_type should not be included: {prompt}"
+        );
+        Ok(graph_candidate_xml("conflicts", "memory:2", event_ids[1]))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        GraphCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn graph_candidate_routes_unsupported_auto_edge_to_review() -> Result<()> {
     let mut conn = graph_test_conn();
     let task = graph_test_task(&mut conn, "sess-graph-unsupported-file")?;
@@ -907,6 +1035,49 @@ fn graph_review_approval_rejects_conflict_without_prompt_memory_refs() -> Result
     assert_eq!(review_status, "pending_review");
     assert_eq!(graph_edge_count, 0);
     assert_eq!(memory_edge_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_review_approval_rejects_expired_prompt_memory_ref() -> Result<()> {
+    let mut conn = graph_test_conn();
+    let task = graph_test_task(&mut conn, "sess-graph-conflict-expired-after-prompt")?;
+    insert_graph_memory(&conn, &task.project, 1)?;
+    insert_graph_memory(&conn, &task.project, 2)?;
+    let event_id =
+        insert_graph_source_observation(&conn, &task, "Memory 1 now conflicts with memory 2.")?;
+    set_graph_memory_evidence(&conn, &[1, 2], &[event_id])?;
+    process_with_graph_generator(&mut conn, &task, |_prompt| async move {
+        Ok(graph_candidate_xml("conflicts", "memory:2", event_id))
+    })
+    .await?;
+    conn.execute("UPDATE memories SET expires_at_epoch = 1 WHERE id = 2", [])?;
+
+    let pending = review::list_pending(&conn, None, 10)?;
+    assert_eq!(pending.len(), 1);
+    let err = review::approve_candidate(&mut conn, pending[0].id)
+        .expect_err("expired memory refs must fail closed at approval time");
+    assert!(
+        err.to_string()
+            .contains("does not resolve to an active memory"),
+        "unexpected error: {err}"
+    );
+    let review_status: String =
+        conn.query_row("SELECT review_status FROM graph_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let graph_edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))?;
+    let memory_edge_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| row.get(0))?;
+    let operation_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_operation_log", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(graph_edge_count, 0);
+    assert_eq!(memory_edge_count, 0);
+    assert_eq!(operation_count, 0);
     Ok(())
 }
 
