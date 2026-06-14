@@ -6,9 +6,10 @@ use crate::memory::Memory;
 
 use super::format::format_epoch_date;
 
-pub(super) fn annotate_memories_with_temporal_facts(
+pub(super) fn annotate_memories_with_temporal_facts_for_query(
     conn: &Connection,
     memories: &mut [Memory],
+    query: Option<&str>,
 ) -> Result<()> {
     if memories.is_empty()
         || !crate::retrieval::temporal::sqlite_table_exists(conn, "memory_facts")?
@@ -16,7 +17,7 @@ pub(super) fn annotate_memories_with_temporal_facts(
         return Ok(());
     }
     let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
-    let labels = current_fact_labels_by_memory_id(conn, &ids)?;
+    let labels = current_fact_labels_by_memory_id(conn, &ids, query)?;
     for memory in memories {
         let Some(memory_labels) = labels.get(&memory.id) else {
             continue;
@@ -36,6 +37,7 @@ pub(super) fn annotate_memories_with_temporal_facts(
 fn current_fact_labels_by_memory_id(
     conn: &Connection,
     memory_ids: &[i64],
+    query: Option<&str>,
 ) -> Result<HashMap<i64, Vec<String>>> {
     let has_invalidated_at_epoch = crate::memory::facts::invalidated_at_epoch_available(conn)?;
     let placeholders = (1..=memory_ids.len())
@@ -74,22 +76,63 @@ fn current_fact_labels_by_memory_id(
             row.get::<_, Option<i64>>(5)?,
         ))
     })?;
-    let mut labels: HashMap<i64, Vec<String>> = HashMap::new();
-    for row in rows {
+    let query_tokens = query
+        .map(crate::retrieval::query_expand::core_tokens)
+        .unwrap_or_default();
+    let query_refs = query_tokens.iter().map(String::as_str).collect::<Vec<_>>();
+    let match_terms = crate::retrieval::temporal::normalized_fact_terms(&query_refs);
+    let mut label_rows: HashMap<i64, Vec<FactLabelRow>> = HashMap::new();
+    for (order, row) in rows.enumerate() {
         let (memory_id, subject, predicate, object, valid_from, valid_to) = row?;
-        let entry = labels.entry(memory_id).or_default();
-        if entry.len() >= 2 {
-            continue;
-        }
-        entry.push(format!(
-            "{} {} {} ({})",
-            subject,
-            predicate,
-            object,
-            validity_label(valid_from, valid_to)
-        ));
+        let match_count = fact_match_count(&match_terms, &subject, &predicate, &object);
+        label_rows.entry(memory_id).or_default().push(FactLabelRow {
+            label: format!(
+                "{} {} {} ({})",
+                subject,
+                predicate,
+                object,
+                validity_label(valid_from, valid_to)
+            ),
+            match_count,
+            order,
+        });
     }
+    let labels = label_rows
+        .into_iter()
+        .map(|(memory_id, mut rows)| {
+            rows.sort_by(|left, right| {
+                right
+                    .match_count
+                    .cmp(&left.match_count)
+                    .then_with(|| left.order.cmp(&right.order))
+            });
+            (
+                memory_id,
+                rows.into_iter()
+                    .take(2)
+                    .map(|row| row.label)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
     Ok(labels)
+}
+
+struct FactLabelRow {
+    label: String,
+    match_count: usize,
+    order: usize,
+}
+
+fn fact_match_count(terms: &[String], subject: &str, predicate: &str, object: &str) -> usize {
+    if terms.is_empty() {
+        return 0;
+    }
+    let haystack = format!("{subject} {predicate} {object}").to_lowercase();
+    terms
+        .iter()
+        .filter(|term| haystack.contains(term.as_str()))
+        .count()
 }
 
 fn validity_label(valid_from: Option<i64>, valid_to: Option<i64>) -> String {

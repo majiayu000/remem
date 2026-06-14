@@ -1,4 +1,4 @@
-use chrono::{Local, TimeZone};
+use chrono::{Local, TimeZone, Utc};
 
 use crate::memory::MemoryType;
 
@@ -21,8 +21,7 @@ pub(super) fn format_epoch_short(epoch: i64) -> String {
 }
 
 pub(super) fn format_epoch_date(epoch: i64) -> String {
-    Local
-        .timestamp_opt(epoch, 0)
+    Utc.timestamp_opt(epoch, 0)
         .single()
         .map(|dt| dt.format("%Y-%m-%d").to_string())
         .unwrap_or_else(|| epoch.to_string())
@@ -53,4 +52,14 @@ pub(super) fn truncate_chars_with_ellipsis(value: &str, max_chars: usize) -> Str
     let mut truncated: String = value.chars().take(max_chars - 3).collect();
     truncated.push_str("...");
     truncated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_epoch_date_uses_utc_day() {
+        assert_eq!(format_epoch_date(1_767_308_400), "2026-01-01");
+    }
 }

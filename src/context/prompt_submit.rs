@@ -6,6 +6,7 @@ use rusqlite::params;
 use crate::memory::Memory;
 
 use super::audit::{memory_render_metadata, record_context_injection_items, ContextAuditItem};
+use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
 use super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::host::resolve_host_kind;
 use super::hybrid_context::query_hybrid_context_memories;
@@ -51,7 +52,7 @@ pub(crate) fn prompt_submit_additional_context(
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
     let current_branch = crate::db::detect_git_branch(cwd);
-    let retrieved = query_hybrid_context_memories(
+    let mut retrieved = query_hybrid_context_memories(
         conn,
         project,
         prompt,
@@ -59,6 +60,7 @@ pub(crate) fn prompt_submit_additional_context(
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
     )?;
+    annotate_memories_with_temporal_facts_for_query(conn, &mut retrieved, Some(prompt))?;
     let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
     let mut rendered = Vec::new();
     let mut audit_items = Vec::new();
@@ -301,6 +303,47 @@ mod tests {
 
         assert!(output.contains("SQLCipher storage decision"));
         assert!(output.contains("src=memory:#"));
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_injects_fact_only_memory_with_temporal_label() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-fact";
+        let now = chrono::Utc::now().timestamp();
+        let memory_id = insert_prompt_submit_memory(
+            &conn,
+            project,
+            "Opaque signer source",
+            "Structured fact only.",
+        )?;
+        conn.execute(
+            "INSERT INTO memory_facts
+             (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+              learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+              confidence, supersedes_fact_id, status, invalidated_at_epoch,
+              created_at_epoch, updated_at_epoch)
+             VALUES (?1, 'HarborMint', 'verified_by', 'Toma Reed', ?2, NULL, ?3, ?4,
+                     NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+            params![project, now - 1_000, now - 900, memory_id],
+        )?;
+
+        let output = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-fact-hit",
+            "Who signs HarborMint with Toma Reed?",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("fact-only prompt should inject context"))?;
+
+        assert!(output.contains("Opaque signer source"), "{output}");
+        assert!(output.contains("Temporal facts:"), "{output}");
+        assert!(
+            output.contains("HarborMint verified_by Toma Reed"),
+            "{output}"
+        );
         Ok(())
     }
 

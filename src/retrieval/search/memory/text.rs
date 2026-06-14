@@ -29,6 +29,8 @@ pub struct SearchWeights {
     pub vector: f64,
     pub entity: f64,
     pub temporal: f64,
+    #[serde(default = "default_fact_weight")]
+    pub fact: f64,
     pub like_fallback: f64,
     pub max_vector_distance: f32,
     pub rrf_k: f64,
@@ -42,12 +44,17 @@ impl Default for SearchWeights {
             vector: VECTOR_WEIGHT,
             entity: ENTITY_WEIGHT,
             temporal: TEMPORAL_WEIGHT,
+            fact: FACT_WEIGHT,
             like_fallback: LIKE_FALLBACK_WEIGHT,
             max_vector_distance: MAX_VECTOR_DISTANCE,
             rrf_k: RRF_K,
             min_evidence_confidence: MIN_EVIDENCE_CONFIDENCE,
         }
     }
+}
+
+fn default_fact_weight() -> f64 {
+    FACT_WEIGHT
 }
 
 pub(super) struct QuerySearchWithExplain {
@@ -338,13 +345,14 @@ fn build_query_search_plan(
         &core_refs,
         project,
         memory_type,
+        &[],
         branch,
         fetch,
         include_stale,
         crate::retrieval::temporal::FactTimeMode::from_query(query_text),
     )?;
     if !fact_ids.is_empty() {
-        channels.push(NamedChannel::enabled("fact", FACT_WEIGHT, fact_ids));
+        channels.push(NamedChannel::enabled("fact", weights.fact, fact_ids));
     }
 
     if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {

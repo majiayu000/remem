@@ -22,6 +22,7 @@ pub fn search_fact_memory_ids(
     terms: &[&str],
     project: Option<&str>,
     memory_type: Option<&str>,
+    excluded_memory_types: &[&str],
     branch: Option<&str>,
     limit: i64,
     include_inactive: bool,
@@ -108,6 +109,12 @@ pub fn search_fact_memory_ids(
         params.push(Box::new(memory_type.to_string()));
         idx += 1;
     }
+    push_excluded_memory_type_filter(
+        excluded_memory_types,
+        &mut idx,
+        &mut conditions,
+        &mut params,
+    );
     if let Some(branch) = branch.filter(|branch| !branch.trim().is_empty()) {
         conditions.push(format!("(m.branch = ?{idx} OR m.branch IS NULL)"));
         params.push(Box::new(branch.to_string()));
@@ -143,7 +150,31 @@ pub(crate) fn sqlite_table_exists(conn: &Connection, table: &str) -> Result<bool
         .is_some())
 }
 
-fn normalized_fact_terms(terms: &[&str]) -> Vec<String> {
+fn push_excluded_memory_type_filter(
+    excluded_memory_types: &[&str],
+    idx: &mut usize,
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn ToSql>>,
+) {
+    if excluded_memory_types.is_empty() {
+        return;
+    }
+    let placeholders = excluded_memory_types
+        .iter()
+        .map(|memory_type| {
+            let placeholder = format!("?{idx}");
+            params.push(Box::new((*memory_type).to_string()));
+            *idx += 1;
+            placeholder
+        })
+        .collect::<Vec<_>>();
+    conditions.push(format!(
+        "m.memory_type NOT IN ({})",
+        placeholders.join(", ")
+    ));
+}
+
+pub(crate) fn normalized_fact_terms(terms: &[&str]) -> Vec<String> {
     let mut normalized = Vec::new();
     let mut seen = HashSet::new();
     for term in terms {
@@ -373,6 +404,7 @@ mod tests {
             &["HarborMint", "Toma"],
             Some("/repo"),
             None,
+            &[],
             None,
             10,
             false,
@@ -422,6 +454,7 @@ mod tests {
             &["HarborMint", "Toma"],
             Some("/repo"),
             None,
+            &[],
             None,
             10,
             false,

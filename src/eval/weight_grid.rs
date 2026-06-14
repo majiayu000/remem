@@ -272,6 +272,9 @@ fn default_candidate_grid() -> Vec<SearchWeights> {
             },
         );
     }
+    for fact in [0.0, default.fact, 1.8] {
+        push_unique(&mut candidates, SearchWeights { fact, ..default });
+    }
     candidates
 }
 
@@ -296,6 +299,7 @@ fn compare_candidates(
         .then_with(|| left.weights.vector.total_cmp(&right.weights.vector))
         .then_with(|| left.weights.entity.total_cmp(&right.weights.entity))
         .then_with(|| left.weights.temporal.total_cmp(&right.weights.temporal))
+        .then_with(|| left.weights.fact.total_cmp(&right.weights.fact))
         .then_with(|| {
             left.weights
                 .like_fallback
@@ -384,6 +388,7 @@ fn weight_distance(candidate: SearchWeights, default: SearchWeights) -> f64 {
         + (candidate.vector - default.vector).abs()
         + (candidate.entity - default.entity).abs()
         + (candidate.temporal - default.temporal).abs()
+        + (candidate.fact - default.fact).abs()
         + (candidate.like_fallback - default.like_fallback).abs()
         + f64::from((candidate.max_vector_distance - default.max_vector_distance).abs())
         + (candidate.rrf_k - default.rrf_k).abs()
@@ -411,7 +416,7 @@ impl Display for WeightGridReport {
         for candidate in self.candidates.iter().take(10) {
             writeln!(
                 f,
-                "  #{:02} score={:.4} dist={:.2} fts={:.2} vector={:.2} entity={:.2} temporal={:.2} like={:.2} confidence={:.2}",
+                "  #{:02} score={:.4} dist={:.2} fts={:.2} vector={:.2} entity={:.2} temporal={:.2} fact={:.2} like={:.2} confidence={:.2}",
                 candidate.rank,
                 candidate.score,
                 candidate.distance_from_defaults,
@@ -419,6 +424,7 @@ impl Display for WeightGridReport {
                 candidate.weights.vector,
                 candidate.weights.entity,
                 candidate.weights.temporal,
+                candidate.weights.fact,
                 candidate.weights.like_fallback,
                 candidate.weights.min_evidence_confidence
             )?;

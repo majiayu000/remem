@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-use super::search_with_branch_explain;
+use super::{search_with_branch_explain, search_with_branch_weights, SearchWeights};
 
 fn setup_explain_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
@@ -482,6 +482,70 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
         .iter()
         .any(|contribution| contribution.channel == "fact" && contribution.score > 0.0));
     assert_eq!(explain.filtered_result_count, 0);
+    Ok(())
+}
+
+#[test]
+fn zero_fact_weight_disables_fact_only_results() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "Opaque source",
+            content: "Details live only in structured facts.",
+            scope: "project",
+            updated_at_epoch: now - 100,
+        },
+    )?;
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('/repo', 'HarborMint', 'verified_by', 'Toma Reed', ?1, ?2, ?3, 1,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![now - 1_000, now + 1_000, now - 900],
+    )?;
+
+    let disabled = search_with_branch_weights(
+        &conn,
+        Some("Who signs HarborMint with Toma Reed?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+        SearchWeights {
+            fact: 0.0,
+            max_vector_distance: 0.0,
+            min_evidence_confidence: 0.0,
+            ..SearchWeights::default()
+        },
+    )?;
+    let enabled = search_with_branch_weights(
+        &conn,
+        Some("Who signs HarborMint with Toma Reed?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+        SearchWeights {
+            max_vector_distance: 0.0,
+            min_evidence_confidence: 0.0,
+            ..SearchWeights::default()
+        },
+    )?;
+
+    assert!(disabled.is_empty());
+    assert_eq!(enabled.first().map(|memory| memory.id), Some(1));
     Ok(())
 }
 

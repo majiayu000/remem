@@ -206,6 +206,19 @@ fn hybrid_context_fact_retrieval_labels_validity_in_core_output() -> anyhow::Res
         params![project, valid_from, now - 9_000],
     )?;
     conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES
+           (?1, 'UnrelatedService', 'verified_by', 'Mira Lane', ?2, NULL, ?3, 100,
+            NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3),
+           (?1, 'UnrelatedService', 'blocked_by', 'North Region', ?2, NULL, ?3, 100,
+            NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+        params![project, now - 500, now - 400],
+    )?;
+    conn.execute(
         "INSERT INTO workstreams
          (id, project, title, status, next_action, created_at_epoch, updated_at_epoch)
          VALUES (1, ?1, 'HarborMint signer', 'active',
@@ -221,6 +234,7 @@ fn hybrid_context_fact_retrieval_labels_validity_in_core_output() -> anyhow::Res
         .context("fact channel should retrieve source memory")?;
 
     assert!(memory.text.contains("Temporal facts:"));
+    assert!(memory.text.contains("Toma Reed"));
     assert!(memory.text.contains("valid_from=2026-01-02"));
     assert!(memory.text.contains("valid_to=open"));
 
@@ -229,6 +243,53 @@ fn hybrid_context_fact_retrieval_labels_validity_in_core_output() -> anyhow::Res
     assert!(output.contains("HarborMint signer source"), "{output}");
     assert!(output.contains("Temporal facts:"), "{output}");
     assert!(output.contains("valid_from=2026-01-02"), "{output}");
+    Ok(())
+}
+
+#[test]
+fn hybrid_context_fact_retrieval_filters_excluded_types_before_ranking() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    for (id, memory_type, title, age) in [
+        (1, "preference", "Preference fact source", 100),
+        (2, "lesson", "Lesson fact source", 200),
+        (3, "decision", "Decision fact source", 300),
+    ] {
+        insert_memory(
+            &conn,
+            id,
+            project,
+            Some(title),
+            memory_type,
+            title,
+            "Opaque source body without signer terms.",
+            now - age,
+        );
+        conn.execute(
+            "INSERT INTO memory_facts
+             (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+              learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+              confidence, supersedes_fact_id, status, invalidated_at_epoch,
+              created_at_epoch, updated_at_epoch)
+             VALUES (?1, 'HarborMint', 'verified_by', 'Toma Reed', ?2, NULL, ?3, ?4,
+                     NULL, '[]', 0.95, NULL, 'active', NULL, ?3, ?3)",
+            params![project, now - 1_000, now - age, id],
+        )?;
+    }
+
+    let memories = query_hybrid_context_memories(
+        &conn,
+        project,
+        "Who signs HarborMint with Toma Reed?",
+        None,
+        &["preference", "lesson"],
+        1,
+    )?;
+
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].title, "Decision fact source");
     Ok(())
 }
 

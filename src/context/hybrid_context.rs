@@ -424,12 +424,12 @@ fn query_local_fact_channel(
 ) -> Result<Vec<WeightedRankedHit>> {
     let tokens = crate::retrieval::query_expand::core_tokens(query);
     let token_refs = tokens.iter().map(String::as_str).collect::<Vec<_>>();
-    let memory_type = single_included_memory_type(excluded_types);
     let ids = crate::retrieval::temporal::search_fact_memory_ids(
         conn,
         &token_refs,
         Some(project),
-        memory_type,
+        None,
+        excluded_types,
         current_branch,
         limit,
         false,
@@ -557,17 +557,6 @@ fn query_local_like_channel(
     let refs = crate::db::to_sql_refs(&params);
     let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, i64>(0))?;
     Ok(rank_ordered_hits(crate::db::query::collect_rows(rows)?))
-}
-
-fn single_included_memory_type(excluded_types: &[&str]) -> Option<&'static str> {
-    let indexed = crate::memory::MemoryType::ALL
-        .iter()
-        .copied()
-        .filter(|memory_type| memory_type.is_indexed())
-        .map(crate::memory::MemoryType::as_str)
-        .filter(|memory_type| !excluded_types.contains(memory_type))
-        .collect::<Vec<_>>();
-    (indexed.len() == 1).then_some(indexed[0])
 }
 
 fn push_context_memory_filters(

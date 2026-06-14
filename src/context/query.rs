@@ -74,7 +74,11 @@ pub(super) fn load_context_data_with_policy(
     errors.append(&mut memory_selection.errors);
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
-    if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts(conn, &mut memories) {
+    if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts_for_query(
+        conn,
+        &mut memories,
+        memory_selection.fact_label_query.as_deref(),
+    ) {
         let message = format!("failed to load temporal fact labels for {project}: {e}");
         crate::log::error("context", &message);
         errors.push(ContextLoadError::new("memories", message));
@@ -112,6 +116,7 @@ struct ContextMemorySelection {
     owner_traces: Vec<OwnerTrace>,
     owner_counts: OwnerCounts,
     diagnostics: super::types::ContextDiagnostics,
+    fact_label_query: Option<String>,
 }
 
 pub(super) struct ContextMemoryRow {
@@ -135,6 +140,7 @@ fn load_project_memories(
     let mut seen_ids = HashSet::new();
     let mut abstained = false;
     let mut task_abstention_query = None;
+    let mut fact_label_query = None;
 
     let excluded_types = policy
         .section(SectionKind::MemoryIndex)
@@ -149,6 +155,7 @@ fn load_project_memories(
         summaries,
         workstreams,
     ) {
+        fact_label_query = Some(implicit_query.clone());
         match query_hybrid_context_memories(
             conn,
             project,
@@ -280,6 +287,7 @@ fn load_project_memories(
         errors,
         owner_traces: traces,
         owner_counts,
+        fact_label_query,
         diagnostics: if collect_diagnostics {
             super::diagnostics::collect_context_diagnostics(
                 conn,
