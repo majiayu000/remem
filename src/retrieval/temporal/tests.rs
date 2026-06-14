@@ -213,6 +213,55 @@ fn search_by_time_uses_created_at_for_event_time() -> Result<()> {
 }
 
 #[test]
+fn search_by_time_uses_reference_time_when_available() -> Result<()> {
+    let conn = setup_conn();
+    conn.execute_batch("ALTER TABLE memories ADD COLUMN reference_time_epoch INTEGER;")?;
+    let now = chrono::Utc::now().timestamp();
+    let reference_time = now - 90 * 86_400;
+
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES
+         (1, NULL, 'alpha', NULL, 'imported now', 'historical episode', 'decision', NULL,
+          ?1, ?1, ?2, 'active', 'main', 'project')",
+        rusqlite::params![now, reference_time],
+    )?;
+
+    let historical_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: reference_time - 10,
+            end_epoch: reference_time + 10,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+    assert_eq!(historical_ids, vec![1]);
+
+    let today_ids = search_by_time_filtered(
+        &conn,
+        &TemporalConstraint {
+            start_epoch: now - 10,
+            end_epoch: now + 10,
+            field: TemporalField::EventTime,
+        },
+        Some("alpha"),
+        Some("decision"),
+        Some("main"),
+        10,
+        false,
+    )?;
+    assert!(today_ids.is_empty());
+    Ok(())
+}
+
+#[test]
 fn search_by_time_prefers_temporal_fact_event_time() -> Result<()> {
     let conn = setup_conn();
     conn.execute_batch(MIGRATIONS[12].sql)?;

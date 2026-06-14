@@ -194,18 +194,6 @@ pub(super) fn detect_adapter_for_host(
         .or_else(|| crate::adapter::detect_adapter(input))
 }
 
-#[cfg(test)]
-fn record_capture_event(
-    conn: &rusqlite::Connection,
-    host: &str,
-    event: &crate::adapter::ParsedHookEvent,
-    summary: &crate::adapter::EventSummary,
-) -> Result<i64> {
-    let content = capture_event_content(event, summary);
-    let event_id = db::unique_capture_event_id("tool_result", &content);
-    record_capture_event_with_id(conn, host, &event_id, event, summary)
-}
-
 fn record_capture_event_with_id(
     conn: &rusqlite::Connection,
     host: &str,
@@ -214,7 +202,7 @@ fn record_capture_event_with_id(
     summary: &crate::adapter::EventSummary,
 ) -> Result<i64> {
     let content = capture_event_content(event, summary);
-    let outcome = db::record_captured_event_with_id(
+    let outcome = db::record_captured_event_with_id_and_reference_time(
         conn,
         &db::CaptureEventInput {
             host,
@@ -228,6 +216,7 @@ fn record_capture_event_with_id(
             task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
         },
         Some(event_id),
+        event.reference_time_epoch,
     )?;
     Ok(outcome.event_row_id)
 }
@@ -307,8 +296,8 @@ mod tests {
 
     use super::super::spill::spill_capture_event;
     use super::{
-        event_skip_reason, observe_input, record_capture_event, skip_detail,
-        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+        capture_event_content, event_skip_reason, observe_input, record_capture_event_with_id,
+        skip_detail, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -318,6 +307,7 @@ mod tests {
             session_id: "session".to_string(),
             cwd: Some("/tmp".to_string()),
             project: "/tmp".to_string(),
+            reference_time_epoch: None,
             tool_name: "Bash".to_string(),
             tool_input: Some(serde_json::json!({ "command": "cargo test" })),
             tool_response: Some(serde_json::json!({ "exitCode": 0 })),
@@ -452,6 +442,7 @@ mod tests {
             session_id: "session".to_string(),
             cwd: Some("/tmp".to_string()),
             project: "/tmp".to_string(),
+            reference_time_epoch: None,
             tool_name: "Bash".to_string(),
             tool_input: Some(serde_json::json!({ "command": command })),
             tool_response: Some(serde_json::json!({ "exitCode": 0 })),
@@ -475,6 +466,7 @@ mod tests {
             session_id: "session".to_string(),
             cwd: Some("/tmp".to_string()),
             project: "/tmp".to_string(),
+            reference_time_epoch: None,
             tool_name: "Bash".to_string(),
             tool_input: Some(serde_json::json!({ "command": command })),
             tool_response: Some(serde_json::json!({ "exitCode": 0 })),
@@ -491,13 +483,14 @@ mod tests {
     }
 
     #[test]
-    fn record_capture_event_writes_ledger_and_coalesced_task() {
+    fn record_capture_event_writes_ledger_and_coalesced_task() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("observe-capture-ledger");
-        let conn = db::open_db().expect("db should open");
+        let conn = db::open_db()?;
         let event = ParsedHookEvent {
             session_id: "sess-observe".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: Some(1_600_000_000),
             tool_name: "Edit".to_string(),
             tool_input: Some(serde_json::json!({ "file_path": "src/lib.rs" })),
             tool_response: None,
@@ -510,19 +503,32 @@ mod tests {
             exit_code: None,
         };
 
-        record_capture_event(&conn, "claude-code", &event, &summary)
-            .expect("capture event should write");
+        let event_id =
+            db::unique_capture_event_id("tool_result", &capture_event_content(&event, &summary));
+        record_capture_event_with_id(&conn, "claude-code", &event_id, &event, &summary)?;
+        let mut retry_event = event.clone();
+        retry_event.reference_time_epoch = None;
+        record_capture_event_with_id(&conn, "claude-code", &event_id, &retry_event, &summary)?;
 
-        let captured_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))
-            .expect("captured count should query");
-        let task_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM extraction_tasks", [], |row| {
+        let captured_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
+        let task_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM extraction_tasks", [], |row| {
                 row.get(0)
-            })
-            .expect("task count should query");
+            })?;
         assert_eq!(captured_count, 1);
         assert_eq!(task_count, 1);
+        let (created_at, reference_time, inserted_at): (i64, i64, i64) = conn.query_row(
+            "SELECT created_at_epoch, reference_time_epoch, inserted_at_epoch
+                 FROM captured_events
+                 WHERE session_id = 'sess-observe'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(created_at, 1_600_000_000);
+        assert_eq!(reference_time, 1_600_000_000);
+        assert!(inserted_at >= reference_time);
+        Ok(())
     }
 
     #[tokio::test]
@@ -745,6 +751,7 @@ mod tests {
             session_id: "sess-persist-fail".to_string(),
             cwd: Some("/tmp/remem".to_string()),
             project: "/tmp/remem".to_string(),
+            reference_time_epoch: None,
             tool_name: "Edit".to_string(),
             tool_input: Some(serde_json::json!({"file_path": "src/lib.rs"})),
             tool_response: Some(serde_json::json!({"content": "edited"})),

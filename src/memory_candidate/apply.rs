@@ -112,6 +112,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             .with_superseded_ids(superseded_ids.clone());
 
         let evidence_event_ids: Vec<i64> = serde_json::from_str(evidence_json)?;
+        let reference_time_epoch = evidence_valid_from_epoch(conn, &evidence_event_ids)?;
         let memory_id = insert_routed_memory(
             conn,
             session_id,
@@ -124,6 +125,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             evidence_json,
             memory_scope,
             state_key.as_ref(),
+            reference_time_epoch,
         )?;
         plan.target_memory_id = Some(memory_id);
         let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
@@ -161,6 +163,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             memory_id,
             candidate,
             &evidence_event_ids,
+            reference_time_epoch,
         )
         .with_context(|| {
             format!("failed to write temporal fact for promoted candidate id={candidate_id}")
@@ -352,6 +355,7 @@ fn insert_routed_memory(
     evidence_json: &str,
     scope: &str,
     state_key: Option<&crate::memory::state_key::StateKeyDecision>,
+    reference_time_epoch: i64,
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
@@ -369,15 +373,15 @@ fn insert_routed_memory(
     conn.execute(
         "INSERT INTO memories
          (session_id, project, topic_key, title, content, memory_type, files, search_context,
-          created_at_epoch, updated_at_epoch, status, branch, scope,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
           evidence_event_ids, source_candidate_id, confidence,
           source_project, target_project, owner_scope, owner_key, topic_domain,
           routing_confidence, routing_reason, context_class, expires_at_epoch,
           valid_from_epoch)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7,
-                 ?8, ?8, 'active', NULL, ?9,
-                 ?10, ?11, ?12,
-                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                 ?8, ?8, ?9, 'active', NULL, ?10,
+                 ?11, ?12, ?13,
+                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
         params![
             session_id,
             memory_project,
@@ -387,6 +391,7 @@ fn insert_routed_memory(
             candidate.memory_type,
             search_context,
             now,
+            reference_time_epoch,
             scope,
             evidence_json,
             candidate_id,
@@ -429,8 +434,8 @@ fn insert_candidate_event_time_fact(
     memory_id: i64,
     candidate: &ParsedMemoryCandidate,
     evidence_event_ids: &[i64],
+    valid_from_epoch: i64,
 ) -> Result<i64> {
-    let valid_from_epoch = evidence_valid_from_epoch(conn, evidence_event_ids)?;
     crate::memory::facts::insert_temporal_fact_in_current_tx(
         conn,
         &crate::memory::facts::TemporalFactInput {
@@ -459,7 +464,9 @@ fn evidence_valid_from_epoch(conn: &Connection, evidence_event_ids: &[i64]) -> R
     for event_id in evidence_event_ids {
         let epoch: i64 = conn
             .query_row(
-                "SELECT created_at_epoch FROM captured_events WHERE id = ?1",
+                "SELECT COALESCE(reference_time_epoch, created_at_epoch)
+                 FROM captured_events
+                 WHERE id = ?1",
                 [event_id],
                 |row| row.get(0),
             )

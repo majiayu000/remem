@@ -73,8 +73,42 @@ pub fn insert_memory_full(
     scope: &str,
     created_at_override: Option<i64>,
 ) -> Result<i64> {
+    insert_memory_full_with_reference_time(
+        conn,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        branch,
+        scope,
+        created_at_override,
+        created_at_override,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_memory_full_with_reference_time(
+    conn: &Connection,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+    created_at_override: Option<i64>,
+    reference_time_override: Option<i64>,
+) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let created_at = created_at_override.unwrap_or(now);
+    let reference_time = reference_time_override
+        .or(created_at_override)
+        .unwrap_or(created_at);
     let (expires_at_epoch, valid_from_epoch) =
         crate::memory::lifecycle::ttl_metadata(memory_type, topic_key, content, now);
     let search_context = build_search_context(memory_type, topic_key, content, files);
@@ -144,6 +178,7 @@ pub fn insert_memory_full(
                 &ownership,
                 state_key.as_ref(),
                 now,
+                reference_time,
             )?;
             refresh_memory_entities(conn, id, title, content)?;
             refresh_memory_embedding(conn, id, title, content, memory_type, topic_key)?;
@@ -155,11 +190,11 @@ pub fn insert_memory_full(
         conn.execute(
             "INSERT INTO memories \
              (session_id, project, topic_key, title, content, memory_type, files, search_context, \
-              created_at_epoch, updated_at_epoch, status, branch, scope, \
+              created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope, \
               source_project, target_project, owner_scope, owner_key, context_class, \
               expires_at_epoch, valid_from_epoch) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active', ?11, ?12, \
-                     ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active', ?12, ?13, \
+                     ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 session_id,
                 project,
@@ -171,6 +206,7 @@ pub fn insert_memory_full(
                 search_context,
                 created_at,
                 now,
+                reference_time,
                 branch,
                 scope,
                 ownership.source_project,
@@ -203,11 +239,12 @@ pub fn insert_memory_full_with_operation_log(
     branch: Option<&str>,
     scope: &str,
     created_at_override: Option<i64>,
+    reference_time_override: Option<i64>,
     operation_input: &MemoryOperationInput,
     operation_plan: &MemoryOperationPlan,
 ) -> Result<(i64, MemoryLifecycleOp)> {
     with_operation_savepoint(conn, || {
-        let id = insert_memory_full(
+        let id = insert_memory_full_with_reference_time(
             conn,
             session_id,
             project,
@@ -219,6 +256,7 @@ pub fn insert_memory_full_with_operation_log(
             branch,
             scope,
             created_at_override,
+            reference_time_override,
         )?;
         let mut logged_plan = operation_plan.clone();
         logged_plan.target_memory_id = Some(id);
@@ -285,22 +323,23 @@ fn update_existing_memory(
     ownership: &DefaultOwnership<'_>,
     state_key: Option<&StateKeyDecision>,
     now: i64,
+    reference_time: i64,
 ) -> Result<()> {
     let state_key_id = attach_state_key(conn, id, memory_type, ownership, state_key, now)?;
     clear_obsolete_state_key_links(conn, id, state_key_id, now)?;
     conn.execute(
         "UPDATE memories SET session_id = ?1, topic_key = ?2, title = ?3, content = ?4, \
          memory_type = ?5, files = ?6, updated_at_epoch = ?7, branch = ?8, \
-         scope = ?9, search_context = ?10, \
+         scope = ?9, search_context = ?10, reference_time_epoch = ?11, \
          status = 'active', valid_to_epoch = NULL, \
-         expires_at_epoch = ?11, valid_from_epoch = ?12, \
-         state_key_id = ?13, \
-         source_project = COALESCE(source_project, ?14), \
-         target_project = COALESCE(target_project, ?15), \
-         owner_scope = COALESCE(owner_scope, ?16), \
-         owner_key = COALESCE(owner_key, ?17), \
-         context_class = COALESCE(context_class, ?18) \
-         WHERE id = ?19",
+         expires_at_epoch = ?12, valid_from_epoch = ?13, \
+         state_key_id = ?14, \
+         source_project = COALESCE(source_project, ?15), \
+         target_project = COALESCE(target_project, ?16), \
+         owner_scope = COALESCE(owner_scope, ?17), \
+         owner_key = COALESCE(owner_key, ?18), \
+         context_class = COALESCE(context_class, ?19) \
+         WHERE id = ?20",
         params![
             session_id,
             topic_key,
@@ -312,6 +351,7 @@ fn update_existing_memory(
             branch,
             scope,
             search_context,
+            reference_time,
             expires_at_epoch,
             valid_from_epoch,
             state_key_id,

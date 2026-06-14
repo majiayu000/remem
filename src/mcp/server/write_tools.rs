@@ -112,7 +112,12 @@ impl MemoryServer {
                     .filter(|source| !source.trim().is_empty())
                     .or_else(|| Some("manual_save".to_string())),
             };
-            let saved = service::save_memory(conn, &req).map_err(|e| {
+            let saved = service::save_memory_with_reference_time(
+                conn,
+                &req,
+                params.reference_time_epoch,
+            )
+            .map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));
                 map_save_memory_error(TOOL, e)
             })?;
@@ -141,6 +146,7 @@ impl MemoryServer {
                     "branch": saved.branch,
                     "operation": saved.operation,
                     "created_at_epoch": saved.created_at_epoch,
+                    "reference_time_epoch": saved.reference_time_epoch,
                     "updated_at_epoch": saved.updated_at_epoch,
                     "upserted": saved.upserted,
                     "local_copy": {

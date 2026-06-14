@@ -210,6 +210,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "content_identity_sha256",
         sql: include_str!("../migrations/v041_content_identity_sha256.sql"),
     },
+    Migration {
+        version: 42,
+        name: "reference_time_epoch",
+        sql: include_str!("../migrations/v042_reference_time_epoch.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

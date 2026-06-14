@@ -77,9 +77,29 @@ fn no_observations_response(reason: &str) -> String {
 async fn observation_extract_writes_observation_with_evidence() -> Result<()> {
     let mut conn = setup_conn();
     capture(&conn, "sess-obs", "cargo test fixed the failure")?;
+    let reference_time_epoch = chrono::NaiveDate::from_ymd_opt(2020, 9, 13)
+        .context("valid date")?
+        .and_hms_opt(12, 26, 40)
+        .context("valid time")?
+        .and_utc()
+        .timestamp();
+    conn.execute(
+        "UPDATE captured_events SET reference_time_epoch = ?1",
+        params![reference_time_epoch],
+    )?;
     let task = claim_extract_task(&mut conn)?;
 
-    let result = process_with_extractor(&mut conn, &task, |_prompt| async {
+    let result = process_with_extractor(&mut conn, &task, |prompt| async move {
+        let payload: serde_json::Value = serde_json::from_str(&prompt)?;
+        assert_eq!(
+            payload["transcript_events"][0]["reference_time_iso"],
+            "2020-09-13"
+        );
+        assert!(payload["quality_gates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gate| gate.as_str().unwrap().contains("reference_time_iso")));
         Ok(observation_response(
             "discovery",
             "Tests fixed",
@@ -90,15 +110,17 @@ async fn observation_extract_writes_observation_with_evidence() -> Result<()> {
     .await?;
 
     assert_eq!(result, ObservationExtractResult::Written(1));
-    let (text, evidence, confidence): (String, String, f64) = conn.query_row(
-        "SELECT text, evidence_event_ids, confidence FROM observations
+    let (text, evidence, confidence, stored_reference_time): (String, String, f64, i64) = conn
+        .query_row(
+            "SELECT text, evidence_event_ids, confidence, reference_time_epoch FROM observations
          WHERE session_row_id IS NOT NULL",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
     assert_eq!(text, "cargo test fixed the failure");
     assert!(evidence.contains('1'));
     assert_eq!(confidence, 0.84);
+    assert_eq!(stored_reference_time, reference_time_epoch);
     Ok(())
 }
 

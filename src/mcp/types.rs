@@ -126,6 +126,10 @@ pub(super) struct SaveMemoryParams {
     )]
     pub branch: Option<String>,
     #[schemars(
+        description = "Explicit episode/source event time (Unix epoch seconds) used to resolve relative dates. Preferred for historical backfills; created_at_epoch is used only when this is omitted."
+    )]
+    pub reference_time_epoch: Option<i64>,
+    #[schemars(
         description = "Optional override for the memory's creation timestamp (Unix epoch seconds). Use only for backfilling historical entries; defaults to now when omitted."
     )]
     pub created_at_epoch: Option<i64>,

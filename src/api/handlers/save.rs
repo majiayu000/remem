@@ -16,6 +16,7 @@ pub(in crate::api) async fn handle_save_memory(
         Err(response) => return response,
     };
 
+    let reference_time_epoch = req.reference_time_epoch;
     let save_req = service::SaveMemoryRequest {
         text: req.text,
         title: req.title,
@@ -34,7 +35,7 @@ pub(in crate::api) async fn handle_save_memory(
         claim_source: req.claim_source.or_else(|| Some("api_save".to_string())),
     };
 
-    match service::save_memory(&conn, &save_req) {
+    match service::save_memory_with_reference_time(&conn, &save_req, reference_time_epoch) {
         Ok(saved) => (
             StatusCode::CREATED,
             Json(SaveMemoryResponse {
@@ -47,6 +48,7 @@ pub(in crate::api) async fn handle_save_memory(
                 branch: saved.branch,
                 operation: saved.operation,
                 created_at_epoch: saved.created_at_epoch,
+                reference_time_epoch: saved.reference_time_epoch,
                 updated_at_epoch: saved.updated_at_epoch,
                 upserted: saved.upserted,
                 local_copy: LocalCopyResponse {

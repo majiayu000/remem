@@ -86,6 +86,9 @@ const SEARCH_RESPONSE_PREVIEW_BYTES: usize = 240;
 struct HookInput {
     session_id: Option<String>,
     cwd: Option<String>,
+    reference_time_epoch: Option<i64>,
+    created_at_epoch: Option<i64>,
+    timestamp: Option<serde_json::Value>,
     tool_name: Option<String>,
     tool_input: Option<serde_json::Value>,
     tool_response: Option<serde_json::Value>,
@@ -109,11 +112,20 @@ pub(crate) fn parse_tool_hook(raw_json: &str) -> Option<ParsedHookEvent> {
     };
     let session_id = hook.session_id?;
     let cwd = hook.cwd;
+    let reference_time_epoch = hook
+        .reference_time_epoch
+        .or(hook.created_at_epoch)
+        .or_else(|| {
+            hook.timestamp.as_ref().and_then(|value| {
+                crate::memory::reference_time::parse_json_epoch_value(Some(value))
+            })
+        });
     let project = db::project_from_cwd(cwd.as_deref().unwrap_or("."));
     Some(ParsedHookEvent {
         session_id,
         cwd,
         project,
+        reference_time_epoch,
         tool_name: hook.tool_name.unwrap_or_else(|| "unknown".into()),
         tool_input: hook.tool_input,
         tool_response: hook.tool_response.or(hook.tool_output).or(hook.tool_result),

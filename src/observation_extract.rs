@@ -42,6 +42,7 @@ struct EvidenceEvent {
     content: String,
     token_estimate: i64,
     created_at_epoch: i64,
+    reference_time_epoch: i64,
 }
 
 struct EvidenceRange {
@@ -96,6 +97,7 @@ pub(crate) fn build_eval_extract_request(
                 content: event.content.to_string(),
                 token_estimate: event.token_estimate,
                 created_at_epoch: event.created_at_epoch,
+                reference_time_epoch: event.created_at_epoch,
             })
             .collect(),
         summary_context: None,
@@ -216,7 +218,8 @@ fn load_evidence_range(
                     e.content_text,
                     ''
                 ) AS content,
-                e.token_estimate, e.created_at_epoch
+                e.token_estimate, e.created_at_epoch,
+                COALESCE(e.reference_time_epoch, e.created_at_epoch)
          FROM captured_events e
          LEFT JOIN event_blobs b ON b.id = e.content_blob_id
          WHERE e.host_id = ?1
@@ -244,6 +247,7 @@ fn load_evidence_range(
                     content: row.get(4)?,
                     token_estimate: row.get(5)?,
                     created_at_epoch: row.get(6)?,
+                    reference_time_epoch: row.get(7)?,
                 })
             },
         )?
@@ -330,6 +334,7 @@ fn persist_observations(
         .unwrap_or("unknown-capture-session");
     let memory_session_id = format!("capture-observation-{session_row_id}");
     let evidence_json = serde_json::to_string(&range.event_ids)?;
+    let reference_time_epoch = range.reference_time_epoch();
     let tx = conn.transaction()?;
     let mut inserted = 0usize;
     for observation in observations {
@@ -378,8 +383,9 @@ fn persist_observations(
                  observation_type = ?4,
                  text = ?5,
                  evidence_event_ids = ?6,
-                 confidence = ?7
-             WHERE id = ?8",
+                 confidence = ?7,
+                 reference_time_epoch = ?8
+             WHERE id = ?9",
             params![
                 task.host_id,
                 task.project_id,
@@ -388,6 +394,7 @@ fn persist_observations(
                 text,
                 evidence_json,
                 observation.confidence.unwrap_or(DEFAULT_CONFIDENCE),
+                reference_time_epoch,
                 obs_id
             ],
         )?;
@@ -402,6 +409,15 @@ fn persist_observations(
         ),
     );
     Ok(inserted)
+}
+
+impl EvidenceRange {
+    fn reference_time_epoch(&self) -> i64 {
+        self.events
+            .last()
+            .map(|event| event.reference_time_epoch)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp())
+    }
 }
 
 fn observation_exists(

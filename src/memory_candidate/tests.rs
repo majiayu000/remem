@@ -184,6 +184,17 @@ fn low_risk_candidate_xml() -> String {
 async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let task = setup_task(&mut conn, "sess-candidate-auto")?;
+    let reference_time_epoch = 1_600_000_000_i64;
+    conn.execute(
+        "UPDATE captured_events
+         SET reference_time_epoch = ?1
+         WHERE id = ?2",
+        params![
+            reference_time_epoch,
+            task.high_watermark_event_id
+                .ok_or_else(|| anyhow::anyhow!("task watermark"))?
+        ],
+    )?;
     insert_source_observation(
         &conn,
         &task,
@@ -288,12 +299,18 @@ async fn memory_candidate_auto_promotes_low_risk_project_candidate() -> Result<(
     assert_eq!(memory_state_key, "decision-worker-loop");
     assert_eq!(current_memory_id, memory_id);
     let event_epoch: i64 = conn.query_row(
-        "SELECT created_at_epoch FROM captured_events WHERE id = ?1",
+        "SELECT reference_time_epoch FROM captured_events WHERE id = ?1",
         params![task
             .high_watermark_event_id
             .ok_or_else(|| anyhow::anyhow!("task watermark"))?],
         |row| row.get(0),
     )?;
+    let memory_reference_time: i64 = conn.query_row(
+        "SELECT reference_time_epoch FROM memories WHERE id = ?1",
+        params![memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(memory_reference_time, event_epoch);
     let (
         fact_project,
         fact_subject,

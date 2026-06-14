@@ -465,15 +465,50 @@ fn test_created_at_override() {
     )
     .unwrap();
 
-    let row: (i64, i64) = conn
+    let row: (i64, i64, i64) = conn
         .query_row(
-            "SELECT created_at_epoch, updated_at_epoch FROM memories WHERE id = ?1",
+            "SELECT created_at_epoch, updated_at_epoch, reference_time_epoch FROM memories WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
     assert_eq!(row.0, custom_epoch);
     assert_ne!(row.1, custom_epoch);
+    assert_eq!(row.2, custom_epoch);
+}
+
+#[test]
+fn test_reference_time_override() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let created_at: i64 = 1_700_000_000;
+    let reference_time: i64 = 1_600_000_000;
+    let id = insert_memory_full_with_reference_time(
+        &conn,
+        Some("s1"),
+        "proj",
+        None,
+        "Imported event",
+        "Yesterday meant the historical episode date.",
+        "discovery",
+        None,
+        None,
+        "project",
+        Some(created_at),
+        Some(reference_time),
+    )
+    .unwrap();
+
+    let row: (i64, i64) = conn
+        .query_row(
+            "SELECT created_at_epoch, reference_time_epoch FROM memories WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(row.0, created_at);
+    assert_eq!(row.1, reference_time);
 }
 
 #[test]

@@ -11,6 +11,7 @@ pub struct ParsedHookEvent {
     pub session_id: String,
     pub cwd: Option<String>,
     pub project: String,
+    pub reference_time_epoch: Option<i64>,
     pub tool_name: String,
     pub tool_input: Option<serde_json::Value>,
     pub tool_response: Option<serde_json::Value>,
@@ -96,6 +97,7 @@ mod tests {
         assert_eq!(adapter.name(), "claude-code");
         assert_eq!(event.session_id, "s1");
         assert_eq!(event.tool_name, "Edit");
+        assert_eq!(event.reference_time_epoch, None);
     }
 
     #[test]

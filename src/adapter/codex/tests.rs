@@ -36,6 +36,7 @@ fn classifies_bash_event() {
         session_id: "s1".into(),
         cwd: Some("/tmp".into()),
         project: "test".into(),
+        reference_time_epoch: None,
         tool_name: "Bash".into(),
         tool_input: Some(serde_json::json!({"command": "python test.py"})),
         tool_response: Some(serde_json::json!({"exitCode": 1, "stderr": "failed"})),

@@ -66,9 +66,11 @@ fn import_memories_into_runtime(
     let branch_expr = optional_column_or_literal(&columns, "branch", "NULL");
     let scope_expr = optional_column_or_literal(&columns, "scope", "'project'");
     let status_expr = optional_column_or_literal(&columns, "status", "'active'");
+    let reference_time_expr = optional_column_or_literal(&columns, "reference_time_epoch", "NULL");
     let query = format!(
         "SELECT id, {session_expr}, project, topic_key, title, content, memory_type, {files_expr},
-                created_at_epoch, updated_at_epoch, {status_expr}, {branch_expr}, {scope_expr}
+                created_at_epoch, updated_at_epoch, {status_expr}, {branch_expr}, {scope_expr},
+                {reference_time_expr}
          FROM memories"
     );
     let mut stmt = source.prepare(&query)?;
@@ -93,9 +95,17 @@ fn import_memories_into_runtime(
         let scope: String = row
             .get::<_, Option<String>>(12)?
             .unwrap_or_else(|| "project".to_string());
+        let reference_time = row.get::<_, Option<i64>>(13)?.or(Some(created_at));
         let topic_key = topic_key.unwrap_or_else(|| format!("imported-{source_id}"));
 
         if title.is_empty() && content.is_empty() {
+            stats.memories_skipped += 1;
+            continue;
+        }
+        if let Err(error) =
+            validate_import_reference_time(source_id, &title, &content, reference_time)
+        {
+            crate::log::warn("import", &error.to_string());
             stats.memories_skipped += 1;
             continue;
         }
@@ -114,6 +124,7 @@ fn import_memories_into_runtime(
             files,
             created_at,
             updated_at,
+            reference_time.unwrap_or(created_at),
             &status,
             branch,
             &scope,
@@ -185,6 +196,22 @@ fn read_optional_text_column(
     }
 }
 
+fn validate_import_reference_time(
+    source_id: i64,
+    title: &str,
+    content: &str,
+    reference_time_epoch: Option<i64>,
+) -> Result<()> {
+    let has_relative_time = crate::memory::reference_time::contains_relative_time_reference(title)
+        || crate::memory::reference_time::contains_relative_time_reference(content);
+    if has_relative_time && reference_time_epoch.is_none_or(|epoch| epoch <= 0) {
+        anyhow::bail!(
+            "skipped source memory id={source_id}: relative dates require a positive reference_time_epoch"
+        );
+    }
+    Ok(())
+}
+
 fn runtime_memory_exists(
     conn: &Connection,
     project: &str,
@@ -217,6 +244,7 @@ fn insert_imported_memory(
     files: Option<String>,
     created_at: i64,
     updated_at: i64,
+    reference_time_epoch: i64,
     status: &str,
     branch: Option<String>,
     scope: &str,
@@ -232,8 +260,8 @@ fn insert_imported_memory(
         conn.execute(
             "INSERT INTO memories
              (session_id, project, topic_key, title, content, memory_type, files, search_context,
-              created_at_epoch, updated_at_epoch, status, branch, scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 session_id,
                 project,
@@ -245,6 +273,7 @@ fn insert_imported_memory(
                 search_context,
                 created_at,
                 updated_at,
+                reference_time_epoch,
                 status,
                 branch,
                 scope
@@ -413,6 +442,89 @@ mod tests {
 
         assert_eq!(results.memories.len(), 1);
         assert_eq!(results.memories[0].title, "Imported runtime memory");
+        let reference_time: i64 = runtime_conn.query_row(
+            "SELECT reference_time_epoch
+             FROM memories
+             WHERE topic_key = 'import-runtime-topic'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(reference_time, 100);
+
+        cleanup_temp_db_files(&source_path);
+        Ok(())
+    }
+
+    #[test]
+    fn backup_import_preserves_explicit_reference_time() -> Result<()> {
+        let _data_dir = ScopedTestDataDir::new("import-reference-time");
+        let source_path = unique_temp_db_path("runtime-import-reference-time");
+        let source = create_source_db(&source_path);
+        source.execute(
+            "ALTER TABLE memories ADD COLUMN reference_time_epoch INTEGER",
+            [],
+        )?;
+        let project = "/tmp/remem-import-reference-time";
+        source.execute(
+            "INSERT INTO memories
+                 (id, session_id, project, topic_key, title, content, memory_type, files,
+                  created_at_epoch, updated_at_epoch, status, branch, scope, reference_time_epoch)
+                 VALUES (1, 's1', ?1, 'historical-topic',
+                         'Imported historical memory',
+                         'Yesterday referred to the old episode date.',
+                         'decision', NULL, 200, 300, 'active', NULL, 'project', 100)",
+            [project],
+        )?;
+        drop(source);
+
+        let runtime_conn = crate::db::open_db()?;
+        let stats = import_memories_into_runtime(&source_path, &runtime_conn)?;
+        assert_eq!(stats.memories_imported, 1);
+        let row: (i64, i64) = runtime_conn.query_row(
+            "SELECT created_at_epoch, reference_time_epoch
+             FROM memories
+             WHERE topic_key = 'historical-topic'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(row, (200, 100));
+
+        cleanup_temp_db_files(&source_path);
+        Ok(())
+    }
+
+    #[test]
+    fn backup_import_skips_relative_dates_without_valid_reference_time() -> Result<()> {
+        let _data_dir = ScopedTestDataDir::new("import-relative-missing-reference");
+        let source_path = unique_temp_db_path("runtime-import-relative-missing-reference");
+        let source = create_source_db(&source_path);
+        let project = "/tmp/remem-import-relative-missing-reference";
+        source.execute(
+            "INSERT INTO memories
+                 (id, session_id, project, topic_key, title, content, memory_type, files,
+                  created_at_epoch, updated_at_epoch, status, branch, scope)
+                 VALUES (1, 's1', ?1, 'relative-topic',
+                         'Yesterday decision',
+                         'Yesterday we changed the ingestion boundary.',
+                         'decision', NULL, 0, 200, 'active', NULL, 'project')",
+            [project],
+        )?;
+        source.execute(
+            "INSERT INTO memories
+                 (id, session_id, project, topic_key, title, content, memory_type, files,
+                  created_at_epoch, updated_at_epoch, status, branch, scope)
+                 VALUES (2, 's1', ?1, 'relative-cn-topic',
+                         '上个月 decision',
+                         '上个月我们调整了 ingestion boundary.',
+                         'decision', NULL, 0, 200, 'active', NULL, 'project')",
+            [project],
+        )?;
+        drop(source);
+
+        let runtime_conn = crate::db::open_db()?;
+        let stats = import_memories_into_runtime(&source_path, &runtime_conn)?;
+        assert_eq!(stats.memories_imported, 0);
+        assert_eq!(stats.memories_skipped, 2);
 
         cleanup_temp_db_files(&source_path);
         Ok(())
