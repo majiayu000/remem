@@ -569,7 +569,7 @@ async fn graph_candidate_memory_refs_include_same_topic_older_conflicts() -> Res
         &mut conn,
         "sess-graph-memory-ref-old-topic-conflict",
         &[
-            "Older memory 1 said provider A is required.",
+            "Older imported memory 1 said provider A is required.",
             "New memory 2 says provider B is required.",
         ],
     )?;
@@ -584,7 +584,6 @@ async fn graph_candidate_memory_refs_include_same_topic_older_conflicts() -> Res
         "UPDATE memories SET memory_type = 'lesson' WHERE id = 3",
         [],
     )?;
-    set_graph_memory_evidence(&conn, &[1], &[event_ids[0]])?;
     set_graph_memory_evidence(&conn, &[2], &[event_ids[1]])?;
     set_graph_memory_evidence(&conn, &[3], &[event_ids[0]])?;
     insert_graph_source_observation_with_evidence(
@@ -597,7 +596,11 @@ async fn graph_candidate_memory_refs_include_same_topic_older_conflicts() -> Res
     let result = process_with_graph_generator(&mut conn, &task, |prompt| async move {
         assert!(
             prompt.contains("ref=\"memory:1\""),
-            "same-topic older memory should be included: {prompt}"
+            "same-topic older memory without evidence should be included: {prompt}"
+        );
+        assert!(
+            prompt.contains("ref=\"memory:1\" type=\"decision\" topic_key=\"provider-choice\" evidence_event_ids=\"\""),
+            "evidence-less memory should render with empty evidence list: {prompt}"
         );
         assert!(
             prompt.contains("ref=\"memory:2\""),

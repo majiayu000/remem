@@ -186,47 +186,146 @@ struct MemoryRow {
 
 fn load_memory_rows(conn: &Connection, project: &str, ids: &[i64]) -> Result<Vec<MemoryRow>> {
     let mut rows = Vec::with_capacity(ids.len());
+    let current_filter =
+        crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
     for id in ids {
-        rows.push(conn.query_row(
-            "SELECT
-                 COALESCE(
-                     m.owner_scope,
-                     CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
-                 ) AS owner_scope,
-                 COALESCE(
-                     m.owner_key,
-                     CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user:default' ELSE m.project END
-                 ) AS owner_key,
-                 m.memory_type,
-                 m.topic_key,
-                 sk.state_key,
-                 m.state_key_id
-             FROM memories m
-             LEFT JOIN memory_state_keys sk ON sk.id = m.state_key_id
-             WHERE m.id = ?1
-               AND m.status = 'active'
-               AND (
-                    (m.owner_scope = 'repo' AND m.owner_key = ?2)
-                    OR m.target_project = ?2
-                    OR (
-                        m.owner_scope IS NULL
-                        AND m.project = ?2
-                        AND COALESCE(m.scope, 'project') != 'global'
-                    )
-               )
-             LIMIT 1",
-            params![id, project],
-            |row| {
-                Ok(MemoryRow {
-                    owner_scope: row.get(0)?,
-                    owner_key: row.get(1)?,
-                    memory_type: row.get(2)?,
-                    topic_key: row.get(3)?,
-                    state_key: row.get(4)?,
-                    state_key_id: row.get(5)?,
-                })
-            },
-        )?);
+        if let Some(row) = conn
+            .query_row(
+                &format!(
+                    "SELECT
+                     COALESCE(
+                         m.owner_scope,
+                         CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+                     ) AS owner_scope,
+                     COALESCE(
+                         m.owner_key,
+                         CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user:default' ELSE m.project END
+                     ) AS owner_key,
+                     m.memory_type,
+                     m.topic_key,
+                     sk.state_key,
+                     m.state_key_id
+                 FROM memories m
+                 LEFT JOIN memory_state_keys sk ON sk.id = m.state_key_id
+                 WHERE m.id = ?1
+                   AND {current_filter}
+                   AND (
+                        (m.owner_scope = 'repo' AND m.owner_key = ?2)
+                        OR m.target_project = ?2
+                        OR (
+                            m.owner_scope IS NULL
+                            AND m.project = ?2
+                            AND COALESCE(m.scope, 'project') != 'global'
+                        )
+                   )
+                 LIMIT 1"
+                ),
+                params![id, project],
+                |row| {
+                    Ok(MemoryRow {
+                        owner_scope: row.get(0)?,
+                        owner_key: row.get(1)?,
+                        memory_type: row.get(2)?,
+                        topic_key: row.get(3)?,
+                        state_key: row.get(4)?,
+                        state_key_id: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?
+        {
+            rows.push(row);
+        }
     }
     Ok(rows)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dream::candidates::MemoryCandidate;
+    use crate::memory::insert_memory;
+    use crate::memory::tests_helper::setup_memory_schema;
+
+    fn cluster_for_ids(first_id: i64, second_id: i64) -> Cluster {
+        Cluster {
+            members: vec![
+                MemoryCandidate {
+                    id: first_id,
+                    topic_key: Some("conflict-a".to_string()),
+                    title: "Use provider A".to_string(),
+                    content: "Use provider A for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 1,
+                },
+                MemoryCandidate {
+                    id: second_id,
+                    topic_key: Some("conflict-b".to_string()),
+                    title: "Use provider B".to_string(),
+                    content: "Use provider B for embeddings.".to_string(),
+                    memory_type: "decision".to_string(),
+                    updated_at_epoch: 2,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn record_conflict_rejects_expired_memory() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        setup_memory_schema(&conn);
+        let project = "test-dream-expired-conflict";
+        let first_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-a"),
+            "Use provider A",
+            "Use provider A for embeddings.",
+            "decision",
+            None,
+        )?;
+        let second_id = insert_memory(
+            &conn,
+            Some("sess-1"),
+            project,
+            Some("conflict-b"),
+            "Use provider B",
+            "Use provider B for embeddings.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
+            params![second_id],
+        )?;
+        let cluster = cluster_for_ids(first_id, second_id);
+
+        let Err(error) = record_conflict(
+            &mut conn,
+            project,
+            &cluster,
+            &[first_id, second_id],
+            Some("expired provider conflict"),
+        ) else {
+            panic!("expired conflict memory should be rejected");
+        };
+        assert!(
+            error.to_string().contains("active repo memories"),
+            "unexpected error: {error}"
+        );
+        let conflict_edge_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_edges WHERE edge_type = 'conflicts'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(conflict_edge_count, 0);
+        let operation_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_operation_log WHERE operation = 'conflict'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(operation_count, 0);
+        Ok(())
+    }
 }

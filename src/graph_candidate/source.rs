@@ -207,7 +207,6 @@ fn load_graph_source_memories(
          FROM memories m
          LEFT JOIN memory_candidates c ON c.id = m.source_candidate_id
          WHERE {current_filter}
-           AND COALESCE(m.evidence_event_ids, c.evidence_event_ids) IS NOT NULL
            AND (
                 (m.owner_scope = 'repo' AND m.owner_key = ?1)
                 OR m.target_project = ?1
@@ -227,7 +226,7 @@ fn load_graph_source_memories(
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<i64>>(6)?,
                 row.get::<_, i64>(7)?,
             ))
@@ -248,8 +247,14 @@ fn load_graph_source_memories(
         updated_at_epoch,
     ) in rows
     {
-        let memory_event_ids = serde_json::from_str::<Vec<i64>>(&evidence_json)
-            .with_context(|| format!("memory {id} has malformed evidence_event_ids"))?;
+        let memory_event_ids = evidence_json
+            .as_deref()
+            .map(|raw| {
+                serde_json::from_str::<Vec<i64>>(raw)
+                    .with_context(|| format!("memory {id} has malformed evidence_event_ids"))
+            })
+            .transpose()?
+            .unwrap_or_default();
         let evidence_overlap = memory_event_ids
             .iter()
             .any(|event_id| evidence_event_ids.contains(event_id));
