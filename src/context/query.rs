@@ -87,7 +87,6 @@ pub(super) fn load_context_data_with_policy(
         crate::log::error("context", &message);
         errors.push(ContextLoadError::new("memories", message));
     }
-    let staleness_labels = load_staleness_labels(conn, project, &mut errors, &memories);
     let lessons = memory::lesson::list_lessons_for_context(
         conn,
         project,
@@ -100,6 +99,12 @@ pub(super) fn load_context_data_with_policy(
         errors.push(ContextLoadError::new("lessons", message));
         Vec::new()
     });
+    let staleness_memories = memories
+        .iter()
+        .chain(lessons.iter().map(|lesson| &lesson.memory))
+        .cloned()
+        .collect::<Vec<_>>();
+    let staleness_labels = load_staleness_labels(conn, &staleness_memories);
 
     LoadedContext {
         memories,
@@ -117,24 +122,26 @@ pub(super) fn load_context_data_with_policy(
 
 fn load_staleness_labels(
     conn: &Connection,
-    project: &str,
-    errors: &mut Vec<ContextLoadError>,
     memories: &[Memory],
 ) -> std::collections::HashMap<i64, memory::MemoryStalenessLabel> {
     let now_epoch = chrono::Utc::now().timestamp();
-    match memory::memory_staleness_labels_for_memories(conn, memories, now_epoch) {
-        Ok(labels) => labels,
-        Err(e) => {
-            let message =
-                format!("failed to load source-anchor staleness labels for {project}: {e}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("memories", message));
-            memories
-                .iter()
-                .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
-                .collect()
-        }
-    }
+    memories
+        .iter()
+        .map(|memory| {
+            let label = memory::memory_staleness_label_with_conn(conn, memory, now_epoch)
+                .unwrap_or_else(|error| {
+                    crate::log::warn(
+                        "context",
+                        &format!(
+                            "source-anchor staleness label fallback for memory {}: {error}",
+                            memory.id
+                        ),
+                    );
+                    memory::memory_staleness_label(memory, now_epoch)
+                });
+            (memory.id, label)
+        })
+        .collect()
 }
 
 struct ContextMemorySelection {

@@ -311,6 +311,69 @@ fn source_anchor_requires_verification_after_same_branch_file_change() -> Result
     Ok(())
 }
 
+#[test]
+fn source_anchor_treats_branchless_source_commit_as_branch_neutral() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let mut memory = tracked_staleness_memory(Some(r#"["src/lib.rs"]"#));
+    memory.branch = Some("main".to_string());
+    link_staleness_commit_without_branch(
+        &conn,
+        1,
+        "source-branchless",
+        100,
+        &["src/lib.rs"],
+        "mem-session-1",
+    )?;
+    insert_staleness_commit_on_branch(&conn, 2, "later-main", 200, &["src/lib.rs"], "main")?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_treats_branchless_later_commit_as_branch_neutral() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let mut memory = tracked_staleness_memory(Some(r#"["src/lib.rs"]"#));
+    memory.branch = Some("main".to_string());
+    link_staleness_commit_on_branch(
+        &conn,
+        1,
+        "source-main",
+        100,
+        &["src/lib.rs"],
+        "mem-session-1",
+        "main",
+    )?;
+    insert_staleness_commit_without_branch(&conn, 2, "later-branchless", 200, &["src/lib.rs"])?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
+#[test]
+fn source_anchor_normalizes_absolute_memory_files_against_project() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let memory = tracked_staleness_memory(Some(r#"["/proj/src/lib.rs"]"#));
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-relative",
+        100,
+        &["src/lib.rs"],
+        "mem-session-1",
+    )?;
+    insert_staleness_commit(&conn, 2, "later-relative", 200, &["src/lib.rs"])?;
+
+    let label = memory_staleness_label_with_conn(&conn, &memory, 1_700_000_000)?;
+
+    assert_eq!(label.source_anchor, "verify-before-trust");
+    Ok(())
+}
+
 fn migrated_staleness_db() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
@@ -443,7 +506,25 @@ fn link_staleness_commit_on_branch(
     memory_session_id: &str,
     branch: &str,
 ) -> Result<()> {
-    insert_staleness_commit_on_branch(conn, id, sha, epoch, changed_files, branch)?;
+    insert_staleness_commit_with_branch(conn, id, sha, epoch, changed_files, Some(branch))?;
+    conn.execute(
+        "INSERT INTO git_commit_sessions
+         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
+         VALUES (?1, ?2, ?3, 'test', ?4)",
+        params![id, format!("content-{id}"), memory_session_id, epoch],
+    )?;
+    Ok(())
+}
+
+fn link_staleness_commit_without_branch(
+    conn: &Connection,
+    id: i64,
+    sha: &str,
+    epoch: i64,
+    changed_files: &[&str],
+    memory_session_id: &str,
+) -> Result<()> {
+    insert_staleness_commit_with_branch(conn, id, sha, epoch, changed_files, None)?;
     conn.execute(
         "INSERT INTO git_commit_sessions
          (commit_id, session_id, memory_session_id, source, linked_at_epoch)
@@ -462,7 +543,7 @@ fn link_staleness_commit_with_sessions(
     session_id: &str,
     memory_session_id: &str,
 ) -> Result<()> {
-    insert_staleness_commit_on_branch(conn, id, sha, epoch, changed_files, "main")?;
+    insert_staleness_commit_with_branch(conn, id, sha, epoch, changed_files, Some("main"))?;
     conn.execute(
         "INSERT INTO git_commit_sessions
          (commit_id, session_id, memory_session_id, source, linked_at_epoch)
@@ -489,6 +570,27 @@ fn insert_staleness_commit_on_branch(
     epoch: i64,
     changed_files: &[&str],
     branch: &str,
+) -> Result<()> {
+    insert_staleness_commit_with_branch(conn, id, sha, epoch, changed_files, Some(branch))
+}
+
+fn insert_staleness_commit_without_branch(
+    conn: &Connection,
+    id: i64,
+    sha: &str,
+    epoch: i64,
+    changed_files: &[&str],
+) -> Result<()> {
+    insert_staleness_commit_with_branch(conn, id, sha, epoch, changed_files, None)
+}
+
+fn insert_staleness_commit_with_branch(
+    conn: &Connection,
+    id: i64,
+    sha: &str,
+    epoch: i64,
+    changed_files: &[&str],
+    branch: Option<&str>,
 ) -> Result<()> {
     let changed_files = serde_json::to_string(changed_files)?;
     conn.execute(

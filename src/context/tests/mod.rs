@@ -8,6 +8,7 @@ mod ownership;
 mod render;
 mod retrieval;
 mod sessions;
+mod staleness;
 
 pub(super) fn sample_memory(id: i64, memory_type: &str, title: &str) -> Memory {
     sample_memory_with_epoch(id, memory_type, title, 1_710_000_000)

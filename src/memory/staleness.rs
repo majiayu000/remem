@@ -115,7 +115,7 @@ fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'stat
     if let Some(session_id) = non_empty_trimmed(memory.session_id.as_deref()) {
         push_unique(&mut session_ids, session_id.to_string());
     }
-    let mut touched_files = parse_file_list(memory.files.as_deref())?;
+    let mut touched_files = parse_file_list(memory.files.as_deref(), &project)?;
     if session_ids.is_empty() || touched_files.is_empty() {
         let evidence = evidence_anchor_for_memory(conn, memory, &project)?;
         project = evidence.project;
@@ -213,7 +213,7 @@ fn source_commit_anchor_for_session(
          JOIN git_commit_sessions l ON l.commit_id = c.id
          WHERE c.project = ?1
            AND (l.memory_session_id = ?2 OR l.session_id = ?2)
-           AND (?3 IS NULL OR c.branch = ?3)
+           AND (?3 IS NULL OR c.branch = ?3 OR c.branch IS NULL)
            AND COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch) <= ?4
          ORDER BY COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch) DESC,
                   c.id DESC
@@ -238,7 +238,7 @@ fn source_commit_anchor_for_session(
             .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
         if changed_files
             .iter()
-            .any(|changed_file| paths_overlap(changed_file, touched_files))
+            .any(|changed_file| paths_overlap(changed_file, touched_files, project))
         {
             return Ok(Some(anchor));
         }
@@ -264,7 +264,7 @@ fn later_commit_touches_any_file(
                AND id > ?3
              )
            )
-           AND (?4 IS NULL OR branch = ?4)",
+           AND (?4 IS NULL OR branch = ?4 OR branch IS NULL)",
     )?;
     let mut rows = stmt.query(params![project, anchor.epoch, anchor.id, branch_filter])?;
     while let Some(row) = rows.next()? {
@@ -273,7 +273,7 @@ fn later_commit_touches_any_file(
             .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
         if changed_files
             .iter()
-            .any(|changed_file| paths_overlap(changed_file, touched_files))
+            .any(|changed_file| paths_overlap(changed_file, touched_files, project))
         {
             return Ok(true);
         }
@@ -520,7 +520,7 @@ fn add_legacy_event_files(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| row.get::<_, String>(0))?;
     for row in rows {
-        touched_files.extend(parse_file_list(Some(&row?))?);
+        touched_files.extend(parse_file_list(Some(&row?), project)?);
     }
     Ok(())
 }
@@ -594,8 +594,8 @@ fn add_observation_files_by_evidence_events(
             .iter()
             .any(|event_id| wanted.contains(event_id))
         {
-            touched_files.extend(parse_file_list(files_read.as_deref())?);
-            touched_files.extend(parse_file_list(files_modified.as_deref())?);
+            touched_files.extend(parse_file_list(files_read.as_deref(), project)?);
+            touched_files.extend(parse_file_list(files_modified.as_deref(), project)?);
         }
     }
     Ok(())
@@ -635,8 +635,8 @@ fn add_legacy_observation_files(
     })?;
     for row in rows {
         let (files_read, files_modified) = row?;
-        touched_files.extend(parse_file_list(files_read.as_deref())?);
-        touched_files.extend(parse_file_list(files_modified.as_deref())?);
+        touched_files.extend(parse_file_list(files_read.as_deref(), project)?);
+        touched_files.extend(parse_file_list(files_modified.as_deref(), project)?);
     }
     Ok(())
 }
@@ -700,7 +700,7 @@ fn push_unique_i64(values: &mut Vec<i64>, value: i64) {
     }
 }
 
-fn parse_file_list(raw: Option<&str>) -> Result<HashSet<String>> {
+fn parse_file_list(raw: Option<&str>, project: &str) -> Result<HashSet<String>> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(HashSet::new());
     };
@@ -717,7 +717,7 @@ fn parse_file_list(raw: Option<&str>) -> Result<HashSet<String>> {
     };
     Ok(files
         .into_iter()
-        .filter_map(|file| normalize_file_path(&file))
+        .filter_map(|file| normalize_file_path_for_project(&file, project))
         .collect())
 }
 
@@ -726,8 +726,8 @@ fn parse_json_file_array(raw: &str) -> Result<Vec<String>> {
     Ok(files)
 }
 
-fn paths_overlap(changed_file: &str, touched_files: &HashSet<String>) -> bool {
-    let Some(changed_file) = normalize_file_path(changed_file) else {
+fn paths_overlap(changed_file: &str, touched_files: &HashSet<String>, project: &str) -> bool {
+    let Some(changed_file) = normalize_file_path_for_project(changed_file, project) else {
         return false;
     };
     touched_files.iter().any(|memory_file| {
@@ -744,6 +744,21 @@ fn paths_overlap(changed_file: &str, touched_files: &HashSet<String>) -> bool {
 fn normalize_file_path(path: &str) -> Option<String> {
     let trimmed = path.trim().trim_start_matches("./").trim_matches('/');
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn normalize_file_path_for_project(path: &str, project: &str) -> Option<String> {
+    let normalized = normalize_file_path(path)?;
+    let Some(project) = normalize_file_path(project) else {
+        return Some(normalized);
+    };
+    if normalized == project {
+        return None;
+    }
+    normalized
+        .strip_prefix(&format!("{project}/"))
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+        .or(Some(normalized))
 }
 
 #[cfg(test)]

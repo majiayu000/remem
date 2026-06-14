@@ -17,8 +17,9 @@ use super::invocation::{
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
-    empty_state_output, render_core_memory_with_limits_and_staleness, render_lessons_with_limit,
-    render_lessons_with_summary, render_memory_index_with_limits_excluding_and_staleness,
+    empty_state_output, render_core_memory_with_limits_and_staleness,
+    render_lessons_with_limit_and_staleness, render_lessons_with_summary_and_staleness,
+    render_memory_index_with_limits_excluding_and_staleness,
     render_memory_index_with_summary_and_staleness, render_recent_sessions_with_limit,
     render_workstreams_with_limits, render_workstreams_with_summary,
 };
@@ -152,11 +153,12 @@ fn render_loaded_context_for_eval(
 
     render_context_load_errors(&mut output, &loaded.errors);
     if !loaded.lessons.is_empty() {
-        render_lessons_with_limit(
+        render_lessons_with_limit_and_staleness(
             &mut output,
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+            &loaded.staleness_labels,
         );
     }
     if !loaded.memories.is_empty() {
@@ -488,11 +490,12 @@ fn render_context_output_with_policy(
 
     if !loaded.lessons.is_empty() {
         let before = char_len(&output);
-        let lesson_summary = render_lessons_with_summary(
+        let lesson_summary = render_lessons_with_summary_and_staleness(
             &mut output,
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+            &loaded.staleness_labels,
         );
         lesson_ids = lesson_summary.ids;
         stats.lessons = SectionRenderStats {

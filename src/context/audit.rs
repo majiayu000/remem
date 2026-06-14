@@ -115,10 +115,6 @@ impl ContextAuditItem {
     }
 }
 
-pub(in crate::context) fn memory_render_metadata(memory: &Memory, now_epoch: i64) -> String {
-    memory_render_metadata_with_labels(memory, now_epoch, &HashMap::new())
-}
-
 pub(in crate::context) fn memory_render_metadata_with_labels(
     memory: &Memory,
     now_epoch: i64,
