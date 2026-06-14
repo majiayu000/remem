@@ -99,6 +99,38 @@ pub(crate) fn current_fact_filter_sql(alias: &str, has_invalidated_at_epoch: boo
     }
 }
 
+pub(crate) fn as_of_validity_filter_sql(
+    alias: &str,
+    epoch_param_idx: usize,
+    has_invalidated_at_epoch: bool,
+) -> String {
+    let alias = alias.trim();
+    let prefix = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{alias}.")
+    };
+    if has_invalidated_at_epoch {
+        let outer_id = if alias.is_empty() {
+            "memory_facts.id".to_string()
+        } else {
+            format!("{alias}.id")
+        };
+        format!(
+            "({prefix}valid_to_epoch IS NULL OR {prefix}valid_to_epoch > ?{epoch_param_idx} \
+              OR ({prefix}invalidated_at_epoch IS NOT NULL \
+                  AND {prefix}invalidated_at_epoch > ?{epoch_param_idx} \
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_facts AS replacement
+                      WHERE replacement.supersedes_fact_id = {outer_id}
+                        AND replacement.learned_at_epoch <= ?{epoch_param_idx}
+                  )))"
+        )
+    } else {
+        format!("({prefix}valid_to_epoch IS NULL OR {prefix}valid_to_epoch > ?{epoch_param_idx})")
+    }
+}
+
 pub fn insert_temporal_fact(conn: &mut Connection, input: &TemporalFactInput<'_>) -> Result<i64> {
     validate_input(input)?;
     let now = chrono::Utc::now().timestamp();
@@ -230,16 +262,7 @@ fn query_facts(
         conditions.push(format!(
             "(valid_from_epoch IS NULL OR valid_from_epoch <= ?{idx})"
         ));
-        if has_invalidated_at_epoch {
-            conditions.push(format!(
-                "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx} \
-                  OR (invalidated_at_epoch IS NOT NULL AND invalidated_at_epoch > ?{idx}))"
-            ));
-        } else {
-            conditions.push(format!(
-                "(valid_to_epoch IS NULL OR valid_to_epoch > ?{idx})"
-            ));
-        }
+        conditions.push(as_of_validity_filter_sql("", idx, has_invalidated_at_epoch));
         conditions.push(format!("learned_at_epoch <= ?{idx}"));
         if has_invalidated_at_epoch {
             conditions.push(format!(
