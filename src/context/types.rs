@@ -1,6 +1,7 @@
 use crate::memory::lesson::LessonMemory;
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryStalenessLabel};
 use crate::workstream::WorkStream;
+use std::collections::HashMap;
 use std::fmt;
 
 use super::host::HostKind;
@@ -27,6 +28,7 @@ pub(super) struct SessionSummaryBrief {
 #[derive(Debug)]
 pub(super) struct LoadedContext {
     pub memories: Vec<Memory>,
+    pub staleness_labels: HashMap<i64, MemoryStalenessLabel>,
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,

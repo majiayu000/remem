@@ -16,6 +16,7 @@ const HOST: &str = "codex-cli";
 const USER_PROMPT_HOST: &str = "claude-code";
 const CURRENT_BRANCH: &str = "main";
 const ABSTENTION_FORBIDDEN_TITLE: &str = "Unrelated recent deployment note";
+const STALE_ANCHOR_TITLE: &str = "Stale source anchor decision";
 const USER_PROMPT_SESSION: &str = "eval-user-prompt-submit";
 
 #[derive(Clone, Copy)]
@@ -124,6 +125,18 @@ const FIXTURE_MEMORIES: &[FixtureMemory] = &[
         updated_offset: 40,
         expected: InjectionExpectation::Filler,
     },
+    FixtureMemory {
+        id: 8,
+        project: PROJECT,
+        topic_key: "inject-stale-source-anchor",
+        title: STALE_ANCHOR_TITLE,
+        content: "The legacy source anchor references src/stale_anchor.rs and must be verified before trust after later code changes.",
+        memory_type: "decision",
+        branch: Some(CURRENT_BRANCH),
+        status: "active",
+        updated_offset: -3,
+        expected: InjectionExpectation::Expected,
+    },
 ];
 
 pub fn run_sandbox_eval(options: InjectionEvalOptions) -> Result<InjectionEvalReport> {
@@ -188,6 +201,12 @@ fn run_sandbox_eval_inner(
         .contains(ABSTENTION_FORBIDDEN_TITLE);
     let abstention_false_positive_bound =
         InjectionRateMetric::new(usize::from(abstention_passed), 1);
+    let stale_anchor_labeling_passed = snapshot.rendered_output.contains(STALE_ANCHOR_TITLE)
+        && snapshot
+            .rendered_output
+            .contains("source_anchor=verify-before-trust");
+    let stale_anchor_labeling =
+        InjectionRateMetric::new(usize::from(stale_anchor_labeling_passed), 1);
     let user_prompt_submit_passed = user_prompt_context
         .as_deref()
         .is_some_and(|output| output.contains("Migration locking fix"));
@@ -199,6 +218,7 @@ fn run_sandbox_eval_inner(
     let all_checks_passed = expected_memory_recall.is_perfect()
         && forbidden_memory_exclusion.is_perfect()
         && abstention_false_positive_bound.is_perfect()
+        && stale_anchor_labeling.is_perfect()
         && user_prompt_submit_memory_recall.is_perfect()
         && user_prompt_submit_abstention_false_positive_bound.is_perfect();
     let mut failing_examples = Vec::new();
@@ -212,6 +232,10 @@ fn run_sandbox_eval_inner(
         failing_examples.push(format!(
             "abstention rendered unrelated memory: {ABSTENTION_FORBIDDEN_TITLE}"
         ));
+    }
+    if !stale_anchor_labeling_passed {
+        failing_examples
+            .push("stale source-anchor memory missing verify-before-trust label".to_string());
     }
     if !user_prompt_submit_passed {
         failing_examples
@@ -248,6 +272,7 @@ fn run_sandbox_eval_inner(
             expected_memory_recall,
             forbidden_memory_exclusion,
             abstention_false_positive_bound,
+            stale_anchor_labeling,
             user_prompt_submit_memory_recall,
             user_prompt_submit_abstention_false_positive_bound,
             all_checks_passed,
@@ -297,20 +322,23 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
             "INSERT INTO memories
              (id, session_id, project, topic_key, title, content, memory_type, files,
               created_at_epoch, updated_at_epoch, status, branch, scope)
-             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, ?8, ?9, 'project')",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10, ?11, 'project')",
             params![
                 memory.id,
+                fixture_session_id(memory),
                 memory.project,
                 memory.topic_key,
                 memory.title,
                 memory.content,
                 memory.memory_type,
+                fixture_files(memory),
                 now + memory.updated_offset,
                 memory.status,
                 memory.branch,
             ],
         )?;
     }
+    seed_stale_anchor_commits(&tx, now)?;
     tx.execute(
         "INSERT INTO workstreams
          (id, project, title, description, status, progress, next_action, blockers,
@@ -320,6 +348,51 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
         params![ABSTENTION_PROJECT, now],
     )?;
     tx.commit()?;
+    Ok(())
+}
+
+fn fixture_session_id(memory: &FixtureMemory) -> Option<&'static str> {
+    (memory.id == 8).then_some("inject-stale-source-anchor-session")
+}
+
+fn fixture_files(memory: &FixtureMemory) -> Option<&'static str> {
+    (memory.id == 8).then_some(r#"["src/stale_anchor.rs"]"#)
+}
+
+fn seed_stale_anchor_commits(tx: &rusqlite::Transaction<'_>, now: i64) -> Result<()> {
+    let source_epoch = now - 20;
+    let later_epoch = now - 10;
+    tx.execute(
+        "INSERT INTO git_commits
+         (id, project, repo_path, sha, short_sha, branch, message, authored_at_epoch,
+          changed_files, created_at_epoch, updated_at_epoch)
+         VALUES (1, ?1, ?1, 'source-anchor-sha', 'source-', 'main',
+                 'Capture stale anchor source', ?2, ?3, ?2, ?2)",
+        params![
+            PROJECT,
+            source_epoch,
+            serde_json::to_string(&["src/stale_anchor.rs"])?
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO git_commit_sessions
+         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
+         VALUES (1, 'content-stale-anchor', 'inject-stale-source-anchor-session',
+                 'test', ?1)",
+        params![source_epoch],
+    )?;
+    tx.execute(
+        "INSERT INTO git_commits
+         (id, project, repo_path, sha, short_sha, branch, message, authored_at_epoch,
+          changed_files, created_at_epoch, updated_at_epoch)
+         VALUES (2, ?1, ?1, 'later-anchor-sha', 'later-a', 'main',
+                 'Change stale anchor file', ?2, ?3, ?2, ?2)",
+        params![
+            PROJECT,
+            later_epoch,
+            serde_json::to_string(&["src/stale_anchor.rs"])?
+        ],
+    )?;
     Ok(())
 }
 

@@ -1,8 +1,10 @@
 use anyhow::Result;
 use rusqlite::params;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::memory::{age_staleness_label, memory_staleness as shared_memory_staleness, Memory};
+use crate::memory::{
+    age_staleness_label, memory_staleness as shared_memory_staleness, Memory, MemoryStalenessLabel,
+};
 
 use super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
@@ -114,10 +116,18 @@ impl ContextAuditItem {
 }
 
 pub(in crate::context) fn memory_render_metadata(memory: &Memory, now_epoch: i64) -> String {
+    memory_render_metadata_with_labels(memory, now_epoch, &HashMap::new())
+}
+
+pub(in crate::context) fn memory_render_metadata_with_labels(
+    memory: &Memory,
+    now_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> String {
     format!(
-        "src=memory:#{}; {}",
+        "src=memory:#{};{}",
         memory.id,
-        memory_staleness(memory, now_epoch)
+        memory_staleness_with_labels(memory, now_epoch, staleness_labels).replace("; ", ";")
     )
 }
 
@@ -136,6 +146,17 @@ pub(in crate::context) fn memory_provenance(memory: &Memory) -> String {
 
 pub(in crate::context) fn memory_staleness(memory: &Memory, now_epoch: i64) -> String {
     shared_memory_staleness(memory, now_epoch)
+}
+
+fn memory_staleness_with_labels(
+    memory: &Memory,
+    now_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> String {
+    staleness_labels
+        .get(&memory.id)
+        .map(|label| label.label.clone())
+        .unwrap_or_else(|| memory_staleness(memory, now_epoch))
 }
 
 pub(in crate::context) fn record_context_injection_items(

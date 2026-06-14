@@ -112,10 +112,22 @@ impl MemoryServer {
                 .into_iter()
                 .map(|memory| {
                     let staleness = requested_explain.then(|| {
-                        crate::memory::memory_staleness_label(
-                            &memory,
-                            chrono::Utc::now().timestamp(),
-                        )
+                        let now_epoch = chrono::Utc::now().timestamp();
+                        match crate::memory::memory_staleness_label_with_conn(
+                            conn, &memory, now_epoch,
+                        ) {
+                            Ok(label) => label,
+                            Err(err) => {
+                                crate::log::warn(
+                                    "mcp",
+                                    &format!(
+                                        "memory {} staleness source-anchor lookup failed: {}",
+                                        memory.id, err
+                                    ),
+                                );
+                                crate::memory::memory_staleness_label(&memory, now_epoch)
+                            }
+                        }
                     });
                     let updated = chrono::DateTime::from_timestamp(memory.updated_at_epoch, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())

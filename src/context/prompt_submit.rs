@@ -1,11 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use rusqlite::params;
 
 use crate::memory::Memory;
 
-use super::audit::{memory_render_metadata, record_context_injection_items, ContextAuditItem};
+use super::audit::{
+    memory_render_metadata_with_labels, record_context_injection_items, ContextAuditItem,
+};
 use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
 use super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::host::resolve_host_kind;
@@ -101,7 +103,12 @@ pub(crate) fn prompt_submit_additional_context(
     audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
         ContextAuditItem::injected_memory(memory, "prompt_submit", index as i64 + 1)
     }));
-    let output = render_prompt_submit_context(&rendered);
+    let staleness_labels = crate::memory::memory_staleness_labels_for_memories(
+        conn,
+        &rendered,
+        chrono::Utc::now().timestamp(),
+    )?;
+    let output = render_prompt_submit_context(&rendered, &staleness_labels);
     let decision = prompt_submit_decision(output);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))
@@ -148,7 +155,10 @@ fn prompt_relevance_passes(prompt: &str, memory: &Memory) -> bool {
         .any(|token| memory_text.contains(token))
 }
 
-fn render_prompt_submit_context(memories: &[Memory]) -> String {
+fn render_prompt_submit_context(
+    memories: &[Memory],
+    staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
+) -> String {
     let mut output = String::from("# remem prompt context\n\n## Relevant Memories\n");
     let now = chrono::Utc::now().timestamp();
     for memory in memories {
@@ -158,7 +168,7 @@ fn render_prompt_submit_context(memories: &[Memory]) -> String {
             memory.title,
             memory.memory_type,
             format_epoch_short(memory.updated_at_epoch),
-            memory_render_metadata(memory, now)
+            memory_render_metadata_with_labels(memory, now, staleness_labels)
         );
         if char_len(&output) + char_len(&header) >= PROMPT_SUBMIT_CHAR_LIMIT {
             break;

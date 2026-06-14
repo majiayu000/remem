@@ -96,7 +96,7 @@ fn sample_explain() -> SearchExplain {
             staleness: crate::memory::MemoryStalenessLabel {
                 status: "active".to_string(),
                 age: "fresh",
-                source_anchor: "untracked",
+                source_anchor: "untracked".to_string(),
                 label: "status=active; staleness=fresh; source_anchor=untracked".to_string(),
             },
             contributions: vec![ChannelContribution {

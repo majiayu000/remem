@@ -1,6 +1,7 @@
 mod explain;
 mod listing;
 mod runner;
+mod source_anchor;
 #[cfg(test)]
 mod tests;
 mod text;
