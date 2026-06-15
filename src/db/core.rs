@@ -142,7 +142,7 @@ pub fn open_db_no_migrate() -> Result<Connection> {
 
 pub fn open_db_for_hook() -> Result<Connection> {
     let conn = open_db_no_migrate().context(
-        "hook database open requires an existing current schema; run `remem install` or `remem migrate` outside the hook path",
+        "hook database open requires an existing current schema; run `remem install` outside the hook path",
     )?;
     let invariant_errors = crate::migrate::validate_schema_invariants(&conn)?;
     if !invariant_errors.is_empty() {

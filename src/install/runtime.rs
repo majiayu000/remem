@@ -14,6 +14,7 @@ use crate::install::paths::{binary_path, old_hooks_path, remem_data_dir};
 pub(in crate::install) struct RuntimeStoreReady {
     pub(in crate::install) key_path: std::path::PathBuf,
     pub(in crate::install) db_path: std::path::PathBuf,
+    pub(in crate::install) schema_version: i64,
     pub(in crate::install) created_key: bool,
     pub(in crate::install) encrypted_existing_db: bool,
 }
@@ -54,7 +55,7 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
             remem_data_dir().join(".key").display()
         );
         eprintln!(
-            "  db     -> {} (initialize encrypted database if missing)",
+            "  db     -> {} (initialize or migrate encrypted database if needed)",
             crate::db::db_path().display()
         );
         print_install_path_warnings(&bin);
@@ -77,13 +78,14 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
         }
     );
     eprintln!(
-        "  db     -> {} ({})",
+        "  db     -> {} ({}, schema v{})",
         runtime_store.db_path.display(),
         if runtime_store.encrypted_existing_db {
             "encrypted existing database"
         } else {
             "ready"
-        }
+        },
+        runtime_store.schema_version
     );
 
     let runtime_hosts = hosts
@@ -140,16 +142,16 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
 
     if key_path.exists() {
         ensure_env_key_matches_persisted_key_if_set(&key_path)?;
-        let conn = crate::db::open_db().with_context(|| {
+        let schema_version = migrate_runtime_store(&key_path, &db_path).with_context(|| {
             format!(
                 "open remem database with existing SQLCipher key {}; run `remem status` after fixing the reported database/key error",
                 key_path.display()
             )
         })?;
-        drop(conn);
         return Ok(RuntimeStoreReady {
             key_path,
             db_path,
+            schema_version,
             created_key: false,
             encrypted_existing_db: false,
         });
@@ -202,20 +204,37 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
         }
     }
 
-    let conn = crate::db::open_db().with_context(|| {
+    let schema_version = migrate_runtime_store(&key_path, &db_path).with_context(|| {
         format!(
             "initialize encrypted remem database {}; run `remem encrypt` manually and rerun `remem install`",
             db_path.display()
         )
     })?;
-    drop(conn);
 
     Ok(RuntimeStoreReady {
         key_path,
         db_path,
+        schema_version,
         created_key: true,
         encrypted_existing_db: db_existed,
     })
+}
+
+fn migrate_runtime_store(key_path: &Path, db_path: &Path) -> Result<i64> {
+    let conn = crate::db::open_db().with_context(|| {
+        format!(
+            "open and migrate remem database {} with SQLCipher key {}",
+            db_path.display(),
+            key_path.display()
+        )
+    })?;
+    crate::migrate::ensure_schema_current(&conn).with_context(|| {
+        format!(
+            "verify remem database {} is hook-safe after install migration",
+            db_path.display()
+        )
+    })?;
+    Ok(crate::migrate::latest_schema_version())
 }
 
 fn env_cipher_key_is_set() -> Result<bool> {
