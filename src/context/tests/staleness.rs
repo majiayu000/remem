@@ -1,8 +1,11 @@
-use crate::memory::lesson::{save_lesson, SaveLessonRequest};
+use crate::memory::lesson::{save_lesson, LessonMemory, LessonMetadata, SaveLessonRequest};
+use crate::memory::memory_staleness_label_for_anchor;
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 
 use super::super::audit::build_context_audit_items;
 use super::super::query::load_context_data;
+use super::super::sections::render_lessons_with_limit_and_staleness;
 use super::super::types::ContextDiagnostics;
 use super::{insert_memory, setup_context_schema};
 
@@ -148,6 +151,27 @@ fn load_context_data_includes_lesson_memories_in_staleness_labels() {
 }
 
 #[test]
+fn render_lessons_includes_source_anchor_staleness_labels() {
+    let mut output = String::new();
+    let lessons = vec![sample_lesson(1, "Stale lesson", 0.9, 2)];
+    let mut labels = HashMap::new();
+    labels.insert(
+        1,
+        memory_staleness_label_for_anchor(
+            &lessons[0].memory,
+            chrono::Utc::now().timestamp(),
+            "verify-before-trust",
+        ),
+    );
+
+    let rendered = render_lessons_with_limit_and_staleness(&mut output, &lessons, 1, 240, &labels);
+
+    assert_eq!(rendered, 1);
+    assert!(output.contains("Stale lesson"));
+    assert!(output.contains("source_anchor=verify-before-trust"));
+}
+
+#[test]
 fn context_audit_uses_rendered_source_anchor_labels() {
     let conn = Connection::open_in_memory().unwrap();
     setup_context_schema(&conn);
@@ -204,6 +228,21 @@ fn context_audit_uses_rendered_source_anchor_labels() {
     assert!(audit_items[0]
         .staleness
         .contains("source_anchor=verify-before-trust"));
+}
+
+fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {
+    let memory = super::sample_memory(id, "lesson", title);
+    LessonMemory {
+        memory,
+        metadata: LessonMetadata {
+            memory_id: id,
+            confidence,
+            reinforcement_count,
+            source_evidence: None,
+            last_reinforced_at_epoch: 1_710_000_000,
+            stale_after_epoch: None,
+        },
+    }
 }
 
 fn setup_context_git_trace_schema(conn: &Connection) {

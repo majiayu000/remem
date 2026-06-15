@@ -1,7 +1,5 @@
 use crate::memory::lesson::{LessonMemory, LessonMetadata};
-use crate::memory::memory_staleness_label_for_anchor;
 use crate::workstream::{WorkStream, WorkStreamStatus};
-use std::collections::HashMap;
 
 use super::super::host::HostKind;
 use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
@@ -13,7 +11,7 @@ use super::super::render::{
 };
 use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
-    render_lessons_with_limit_and_staleness, render_memory_index, render_memory_index_with_limits,
+    render_memory_index, render_memory_index_with_limits,
     render_memory_index_with_limits_excluding, render_recent_sessions,
     render_recent_sessions_with_limit, render_workstreams, render_workstreams_with_limits,
 };
@@ -207,27 +205,6 @@ fn render_lessons_respects_item_and_char_limits() {
     assert!(output.contains("reinforced 3"));
     assert!(!output.contains("Second lesson"));
     assert!(output.chars().count() <= 240);
-}
-
-#[test]
-fn render_lessons_includes_source_anchor_staleness_labels() {
-    let mut output = String::new();
-    let lessons = vec![sample_lesson(1, "Stale lesson", 0.9, 2)];
-    let mut labels = HashMap::new();
-    labels.insert(
-        1,
-        memory_staleness_label_for_anchor(
-            &lessons[0].memory,
-            chrono::Utc::now().timestamp(),
-            "verify-before-trust",
-        ),
-    );
-
-    let rendered = render_lessons_with_limit_and_staleness(&mut output, &lessons, 1, 240, &labels);
-
-    assert_eq!(rendered, 1);
-    assert!(output.contains("Stale lesson"));
-    assert!(output.contains("source_anchor=verify-before-trust"));
 }
 
 #[test]
