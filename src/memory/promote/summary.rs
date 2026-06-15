@@ -213,16 +213,13 @@ fn summary_topic_key(
     memory_type: &str,
     topic_prefix: &str,
     title: &str,
-    candidate_text: &str,
+    _candidate_text: &str,
     hash_seed: &str,
 ) -> String {
     let fallback = format!("{}-{}", topic_prefix, content_hash(hash_seed));
-    if let Some(decision) = crate::memory::state_key::derive_state_key(
-        memory_type,
-        Some(&fallback),
-        title,
-        candidate_text,
-    ) {
+    if let Some(decision) =
+        crate::memory::state_key::derive_state_key(memory_type, Some(&fallback), title, hash_seed)
+    {
         return decision.state_key;
     }
     summary_semantic_topic_key(topic_prefix, hash_seed).unwrap_or(fallback)

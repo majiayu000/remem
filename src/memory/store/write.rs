@@ -135,14 +135,16 @@ pub fn insert_memory_full_with_reference_time(
 
     if existing_id.is_none() {
         if let Some(decision) = &state_key {
-            existing_id = state_key::current_memory_id(
-                conn,
-                ownership.owner_scope,
-                ownership.owner_key,
-                memory_type,
-                &decision.state_key,
-                now,
-            )?;
+            if decision.allows_direct_upsert() {
+                existing_id = state_key::current_memory_id(
+                    conn,
+                    ownership.owner_scope,
+                    ownership.owner_key,
+                    memory_type,
+                    &decision.state_key,
+                    now,
+                )?;
+            }
         }
     }
     if existing_id.is_none() {

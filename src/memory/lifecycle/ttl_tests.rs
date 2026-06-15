@@ -320,6 +320,69 @@ fn exact_topic_update_still_replaces_legacy_memory_without_state_key() -> Result
 }
 
 #[test]
+fn semantic_state_key_update_supersedes_hash_like_decision_topic() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let project = "test-lifecycle";
+    let old_id = insert_memory(
+        &conn,
+        Some("s1"),
+        project,
+        Some("decision-11111111"),
+        "Optimize CJK search",
+        "Use FTS5 trigram tokenizer for CJK text search support.",
+        "decision",
+        None,
+    )?;
+
+    let outcome = apply_update(
+        &conn,
+        Some("s2"),
+        project,
+        "decision-22222222",
+        "Refine CJK search",
+        "Switch CJK search to FTS5 trigram tokenization.",
+        "decision",
+        None,
+        None,
+        "project",
+        &[],
+    )?;
+    let new_id = outcome.memory_id.context("replacement memory id")?;
+    assert_ne!(old_id, new_id);
+    assert_eq!(outcome.superseded, 1);
+
+    let old_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [old_id],
+        |row| row.get(0),
+    )?;
+    let (state_key, current_memory_id): (String, i64) = conn.query_row(
+        "SELECT sk.state_key, sk.current_memory_id
+         FROM memory_state_keys sk
+         JOIN memories m ON m.state_key_id = sk.id
+         WHERE m.id = ?1",
+        [new_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let supersedes_edges: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_edges
+         WHERE edge_type = 'supersedes'
+           AND from_memory_id = ?1
+           AND to_memory_id = ?2",
+        [old_id, new_id],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(old_status, "stale");
+    assert_eq!(state_key, "decision-cjk-fts5-search-tokenizer-trigram");
+    assert_eq!(current_memory_id, new_id);
+    assert_eq!(supersedes_edges, 1);
+    Ok(())
+}
+
+#[test]
 fn hash_like_topic_update_replaces_same_semantic_state_key_and_moves_current_pointer() -> Result<()>
 {
     let conn = Connection::open_in_memory()?;
