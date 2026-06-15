@@ -61,6 +61,53 @@ fn save_memory_preserves_distinct_created_and_reference_times() -> anyhow::Resul
 }
 
 #[test]
+fn semantic_state_key_direct_save_keeps_distinct_hash_like_topics() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-semantic-state-key-distinct-direct-rows");
+    let conn = db::open_db()?;
+    let first = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Use FTS5 trigram tokenizer for CJK text search support.".to_string(),
+            title: Some("Optimize CJK search".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("decision-11111111".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let second = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Switch CJK search to FTS5 trigram tokenization.".to_string(),
+            title: Some("Refine CJK search".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("decision-22222222".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.operation, "add");
+    assert_eq!(second.operation, "add");
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE memory_type = 'decision' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    let operations = conn
+        .prepare("SELECT operation FROM memory_operation_log ORDER BY id ASC")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    assert_eq!(active_count, 2);
+    assert_eq!(operations, vec!["add".to_string(), "add".to_string()]);
+    Ok(())
+}
+
+#[test]
 fn semantic_preference_duplicate_logs_update() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("semantic-preference-duplicate-update");
     let conn = db::open_db()?;

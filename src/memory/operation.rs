@@ -103,16 +103,22 @@ pub fn plan_direct_save(
 ) -> Result<(MemoryOperationInput, MemoryOperationPlan)> {
     let now = chrono::Utc::now().timestamp();
     let (owner_scope, owner_key) = owner_for_scope(project, scope);
-    let state_key =
-        crate::memory::state_key::derive_state_key(memory_type, topic_key, title, content)
-            .map(|decision| decision.state_key);
+    let state_key_decision =
+        crate::memory::state_key::derive_state_key(memory_type, topic_key, title, content);
+    let state_key = state_key_decision
+        .as_ref()
+        .map(|decision| decision.state_key.clone());
+    let direct_upsert_state_key = state_key_decision
+        .as_ref()
+        .filter(|decision| decision.allows_direct_upsert())
+        .map(|decision| decision.state_key.as_str());
     let existing_match = existing_memory_for_direct_save(
         conn,
         project,
         scope,
         memory_type,
         topic_key,
-        state_key.as_deref(),
+        direct_upsert_state_key,
         title,
         content,
         branch,

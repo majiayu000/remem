@@ -69,6 +69,12 @@ pub struct StateKeyDecision {
     pub reason: String,
 }
 
+impl StateKeyDecision {
+    pub fn allows_direct_upsert(&self) -> bool {
+        self.reason != "semantic_slot_terms"
+    }
+}
+
 pub fn derive_state_key(
     memory_type: &str,
     topic_key: Option<&str>,
@@ -274,12 +280,19 @@ fn derive_semantic_state_key(
     content: &str,
 ) -> Option<StateKeyDecision> {
     let prefix = semantic_slot_prefix(memory_type)?;
-    let mut terms = semantic_slot_terms(content);
+    let terms = semantic_slot_terms(content);
     if terms.len() < MIN_SEMANTIC_SLOT_TERMS {
         return None;
     }
-    terms.truncate(MAX_SEMANTIC_SLOT_TERMS);
-    let raw_key = format!("{prefix}-{}", terms.join("-"));
+    let mut key_terms = terms
+        .iter()
+        .take(MAX_SEMANTIC_SLOT_TERMS)
+        .cloned()
+        .collect::<Vec<_>>();
+    if terms.len() > MAX_SEMANTIC_SLOT_TERMS {
+        key_terms.push(semantic_terms_signature(&terms));
+    }
+    let raw_key = format!("{prefix}-{}", key_terms.join("-"));
     let state_key = crate::memory::promote::slugify_for_topic(&raw_key, 120);
     if state_key.is_empty() {
         return None;
@@ -322,16 +335,39 @@ fn add_cjk_semantic_slot_terms(text: &str, terms: &mut BTreeSet<String>) {
     if !text.chars().any(is_cjk) {
         return;
     }
+
+    let mut matches = Vec::new();
     for (cjk, canonical) in CJK_SEMANTIC_SLOT_TERMS {
-        if text.contains(cjk) {
-            let Some(term) = normalize_semantic_slot_term(canonical) else {
-                continue;
-            };
-            if !is_semantic_slot_stopword(&term) {
-                terms.insert(term);
-            }
+        for (start, _) in text.match_indices(cjk) {
+            matches.push((start, start + cjk.len(), cjk.len(), *canonical));
         }
     }
+    matches.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+
+    let mut claimed = Vec::new();
+    for (start, end, _, canonical) in matches {
+        if claimed
+            .iter()
+            .any(|(claimed_start, claimed_end)| start < *claimed_end && end > *claimed_start)
+        {
+            continue;
+        }
+        claimed.push((start, end));
+        let Some(term) = normalize_semantic_slot_term(canonical) else {
+            continue;
+        };
+        if !is_semantic_slot_stopword(&term) {
+            terms.insert(term);
+        }
+    }
+}
+
+fn semantic_terms_signature(terms: &[String]) -> String {
+    let joined = terms.join("\0");
+    format!(
+        "sig{:08x}",
+        crate::db::deterministic_hash(joined.as_bytes()) as u32
+    )
 }
 
 fn normalize_semantic_slot_term(raw: &str) -> Option<String> {
@@ -569,6 +605,52 @@ mod tests {
 
         assert_eq!(first.state_key, "decision-cjk-search-tokenizer-trigram");
         assert_eq!(first.state_key, second.state_key);
+    }
+
+    #[test]
+    fn truncated_semantic_slot_key_includes_full_term_signature() {
+        let vector = derive_state_key(
+            "decision",
+            Some("decision-11111111"),
+            "Vector rotation",
+            "Use API auth cache migration token rotation vector.",
+        )
+        .expect("vector decision should derive");
+        let workflow = derive_state_key(
+            "decision",
+            Some("decision-22222222"),
+            "Workflow rotation",
+            "Use API auth cache migration token rotation workflow.",
+        )
+        .expect("workflow decision should derive");
+
+        assert!(vector
+            .state_key
+            .starts_with("decision-api-auth-cache-migration-rotation-token-"));
+        assert!(workflow
+            .state_key
+            .starts_with("decision-api-auth-cache-migration-rotation-token-"));
+        assert_ne!(vector.state_key, workflow.state_key);
+    }
+
+    #[test]
+    fn cjk_semantic_slot_terms_use_longest_non_overlapping_matches() {
+        let decision = derive_state_key(
+            "decision",
+            Some("decision-11111111"),
+            "服务器部署",
+            "服务器部署配置端口超时性能验证。",
+        )
+        .expect("CJK decision should derive");
+
+        assert!(decision
+            .state_key
+            .starts_with("decision-config-deploy-performance-port-server-timeout-"));
+        assert!(
+            !decision.state_key.contains("-service-"),
+            "服务器 should not also contribute the shorter 服务 term: {}",
+            decision.state_key
+        );
     }
 
     #[test]
