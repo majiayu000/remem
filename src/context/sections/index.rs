@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::memory::{Memory, MemoryType};
+use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
 
-use super::super::audit::memory_render_metadata;
+use super::super::audit::memory_render_metadata_with_labels;
 use super::super::format::{
     char_len, format_epoch_short, truncate_chars_with_ellipsis, type_label,
 };
@@ -23,6 +23,7 @@ pub(in crate::context) fn render_memory_index_with_limits(
     render_memory_index_with_limits_excluding(output, memories, limits, &excluded_ids)
 }
 
+#[cfg(test)]
 pub(in crate::context) fn render_memory_index_with_limits_excluding(
     output: &mut String,
     memories: &[Memory],
@@ -32,17 +33,51 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding(
     render_memory_index_with_summary(output, memories, limits, excluded_ids).count
 }
 
+pub(in crate::context) fn render_memory_index_with_limits_excluding_and_staleness(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> usize {
+    render_memory_index_with_summary_and_staleness(
+        output,
+        memories,
+        limits,
+        excluded_ids,
+        staleness_labels,
+    )
+    .count
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::context) struct IndexRenderSummary {
     pub count: usize,
     pub ids: Vec<i64>,
 }
 
+#[cfg(test)]
 pub(in crate::context) fn render_memory_index_with_summary(
     output: &mut String,
     memories: &[Memory],
     limits: &ContextLimits,
     excluded_ids: &HashSet<i64>,
+) -> IndexRenderSummary {
+    render_memory_index_with_summary_and_staleness(
+        output,
+        memories,
+        limits,
+        excluded_ids,
+        &HashMap::new(),
+    )
+}
+
+pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> IndexRenderSummary {
     if limits.memory_index_limit == 0 || limits.memory_index_char_limit == 0 {
         return IndexRenderSummary::default();
@@ -93,6 +128,7 @@ pub(in crate::context) fn render_memory_index_with_summary(
                 &mut total_chars,
                 &mut rendered_ids,
                 now,
+                staleness_labels,
             );
         }
     }
@@ -115,6 +151,7 @@ pub(in crate::context) fn render_memory_index_with_summary(
                     &mut total_chars,
                     &mut rendered_ids,
                     now,
+                    staleness_labels,
                 );
             }
         }
@@ -140,6 +177,7 @@ fn push_memory_index_line(
     total_chars: &mut usize,
     rendered_ids: &mut Vec<i64>,
     now_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> usize {
     let section_label = if label == memory_type {
         memory_type.to_string()
@@ -163,7 +201,7 @@ fn push_memory_index_line(
             memory.id,
             memory.title,
             date,
-            memory_render_metadata(memory, now_epoch)
+            memory_render_metadata_with_labels(memory, now_epoch, staleness_labels)
         );
         let separator = if first { "" } else { " | " };
         let next_len = char_len(separator) + char_len(&item);

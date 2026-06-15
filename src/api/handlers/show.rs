@@ -7,7 +7,7 @@ use axum::{
 
 use crate::memory;
 
-use super::super::helpers::{error_response, memory_to_item, open_request_db};
+use super::super::helpers::{error_response, memory_to_item_with_conn, open_request_db};
 use super::super::types::{DbState, ShowParams};
 
 pub(in crate::api) async fn handle_get_memory(
@@ -20,7 +20,9 @@ pub(in crate::api) async fn handle_get_memory(
     };
 
     match memory::get_memories_by_ids(&conn, &[params.id], None) {
-        Ok(results) if !results.is_empty() => Json(memory_to_item(&results[0])).into_response(),
+        Ok(results) if !results.is_empty() => {
+            Json(memory_to_item_with_conn(&conn, &results[0])).into_response()
+        }
         Ok(_) => {
             error_response(StatusCode::NOT_FOUND, "not_found", "Memory not found").into_response()
         }

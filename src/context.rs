@@ -12,6 +12,7 @@ mod hybrid_context;
 mod implicit_query;
 mod injection_gate;
 mod invocation;
+mod memory_selection;
 mod memory_traits;
 mod ownership;
 mod policy;

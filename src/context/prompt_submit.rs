@@ -1,11 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use rusqlite::params;
 
 use crate::memory::Memory;
 
-use super::audit::{memory_render_metadata, record_context_injection_items, ContextAuditItem};
+use super::audit::{
+    memory_render_metadata_with_labels, record_context_injection_items, ContextAuditItem,
+};
 use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
 use super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::host::resolve_host_kind;
@@ -98,10 +100,16 @@ pub(crate) fn prompt_submit_additional_context(
         return Ok(None);
     }
 
+    let staleness_labels = prompt_submit_staleness_labels(conn, &rendered);
     audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
-        ContextAuditItem::injected_memory(memory, "prompt_submit", index as i64 + 1)
+        ContextAuditItem::injected_memory_with_labels(
+            memory,
+            "prompt_submit",
+            index as i64 + 1,
+            &staleness_labels,
+        )
     }));
-    let output = render_prompt_submit_context(&rendered);
+    let output = render_prompt_submit_context(&rendered, &staleness_labels);
     let decision = prompt_submit_decision(output);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))
@@ -148,7 +156,10 @@ fn prompt_relevance_passes(prompt: &str, memory: &Memory) -> bool {
         .any(|token| memory_text.contains(token))
 }
 
-fn render_prompt_submit_context(memories: &[Memory]) -> String {
+fn render_prompt_submit_context(
+    memories: &[Memory],
+    staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
+) -> String {
     let mut output = String::from("# remem prompt context\n\n## Relevant Memories\n");
     let now = chrono::Utc::now().timestamp();
     for memory in memories {
@@ -158,7 +169,7 @@ fn render_prompt_submit_context(memories: &[Memory]) -> String {
             memory.title,
             memory.memory_type,
             format_epoch_short(memory.updated_at_epoch),
-            memory_render_metadata(memory, now)
+            memory_render_metadata_with_labels(memory, now, staleness_labels)
         );
         if char_len(&output) + char_len(&header) >= PROMPT_SUBMIT_CHAR_LIMIT {
             break;
@@ -173,6 +184,30 @@ fn render_prompt_submit_context(memories: &[Memory]) -> String {
         }
     }
     output
+}
+
+fn prompt_submit_staleness_labels(
+    conn: &rusqlite::Connection,
+    memories: &[Memory],
+) -> HashMap<i64, crate::memory::MemoryStalenessLabel> {
+    let now_epoch = chrono::Utc::now().timestamp();
+    memories
+        .iter()
+        .map(|memory| {
+            let label = crate::memory::memory_staleness_label_with_conn(conn, memory, now_epoch)
+                .unwrap_or_else(|error| {
+                    crate::log::warn(
+                        "context",
+                        &format!(
+                            "prompt-submit source-anchor label fallback for memory {}: {error}",
+                            memory.id
+                        ),
+                    );
+                    crate::memory::memory_staleness_label(memory, now_epoch)
+                });
+            (memory.id, label)
+        })
+        .collect()
 }
 
 fn empty_prompt_submit_decision() -> ContextGateDecision {
@@ -349,6 +384,36 @@ mod tests {
             output.contains("HarborMint verified_by Toma Reed"),
             "{output}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_falls_back_when_source_anchor_label_fails() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-staleness-fallback";
+        let memory_id = insert_prompt_submit_memory(
+            &conn,
+            project,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+        )?;
+        conn.execute(
+            "UPDATE memories SET files = '[not-json' WHERE id = ?1",
+            [memory_id],
+        )?;
+
+        let output = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-staleness-fallback",
+            "How should SQLCipher protect private persisted data?",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("prompt should still inject context"))?;
+
+        assert!(output.contains("SQLCipher storage decision"), "{output}");
+        assert!(output.contains("source_anchor=untracked"), "{output}");
         Ok(())
     }
 

@@ -166,6 +166,7 @@ pub(super) fn search_with_query_weights(
     let fused = weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k);
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = load_ordered_memories(conn, &fused_ids)?;
+    let (ordered, fused) = super::source_anchor::apply_score_demotions(conn, &fused, ordered)?;
     let (ordered, _) =
         gate_and_annotate_memories(conn, query_text, project, &fused, &plan, ordered)?;
     Ok(paginate_memories(ordered, limit, offset))
@@ -225,10 +226,12 @@ pub(super) fn search_with_query_explain(
     let fused = weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k);
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = load_ordered_memories(conn, &fused_ids)?;
+    let (ordered, fused) = super::source_anchor::apply_score_demotions(conn, &fused, ordered)?;
     let (ordered, gated_fused) =
         gate_and_annotate_memories(conn, query_text, project, &fused, &plan, ordered)?;
     let paged = paginate_memories(ordered, limit, offset);
     let explain = build_explain(
+        conn,
         query_text,
         project,
         memory_type,
@@ -436,6 +439,7 @@ fn build_query_search_plan(
 }
 
 fn build_explain(
+    conn: &Connection,
     query_text: &str,
     project: Option<&str>,
     memory_type: Option<&str>,
@@ -479,7 +483,7 @@ fn build_explain(
             project: memory.project.clone(),
             scope: memory.scope.clone(),
             visibility: visibility_label(memory, project).to_string(),
-            staleness: memory::memory_staleness_label(memory, now_epoch),
+            staleness: super::source_anchor::label_for_memory(conn, memory, now_epoch),
             contributions: contributions_for(memory.id, plan),
         })
         .collect();

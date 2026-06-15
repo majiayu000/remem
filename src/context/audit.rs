@@ -1,8 +1,10 @@
 use anyhow::Result;
 use rusqlite::params;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::memory::{age_staleness_label, memory_staleness as shared_memory_staleness, Memory};
+use crate::memory::{
+    age_staleness_label, memory_staleness as shared_memory_staleness, Memory, MemoryStalenessLabel,
+};
 
 use super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
@@ -26,6 +28,18 @@ pub(in crate::context) struct ContextAuditItem {
 impl ContextAuditItem {
     pub fn injected_memory(memory: &Memory, channel: &'static str, render_order: i64) -> Self {
         Self::memory_item(memory, channel, Some(render_order), "injected", None)
+    }
+
+    pub fn injected_memory_with_labels(
+        memory: &Memory,
+        channel: &'static str,
+        render_order: i64,
+        staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+    ) -> Self {
+        let mut item = Self::injected_memory(memory, channel, render_order);
+        item.staleness =
+            memory_staleness_with_labels(memory, chrono::Utc::now().timestamp(), staleness_labels);
+        item
     }
 
     pub fn dropped_memory(memory: &Memory, channel: &'static str, reason: &'static str) -> Self {
@@ -113,11 +127,15 @@ impl ContextAuditItem {
     }
 }
 
-pub(in crate::context) fn memory_render_metadata(memory: &Memory, now_epoch: i64) -> String {
+pub(in crate::context) fn memory_render_metadata_with_labels(
+    memory: &Memory,
+    now_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> String {
     format!(
-        "src=memory:#{}; {}",
+        "src=memory:#{};{}",
         memory.id,
-        memory_staleness(memory, now_epoch)
+        memory_staleness_with_labels(memory, now_epoch, staleness_labels).replace("; ", ";")
     )
 }
 
@@ -136,6 +154,17 @@ pub(in crate::context) fn memory_provenance(memory: &Memory) -> String {
 
 pub(in crate::context) fn memory_staleness(memory: &Memory, now_epoch: i64) -> String {
     shared_memory_staleness(memory, now_epoch)
+}
+
+fn memory_staleness_with_labels(
+    memory: &Memory,
+    now_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> String {
+    staleness_labels
+        .get(&memory.id)
+        .map(|label| label.label.clone())
+        .unwrap_or_else(|| memory_staleness(memory, now_epoch))
 }
 
 pub(in crate::context) fn record_context_injection_items(
@@ -217,20 +246,22 @@ pub(in crate::context) fn build_context_audit_items(
     let index = index_ids.iter().copied().collect::<HashSet<_>>();
     for id in core_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory(
+            items.push(ContextAuditItem::injected_memory_with_labels(
                 memory,
                 "core",
                 render_order,
+                &loaded.staleness_labels,
             ));
             render_order += 1;
         }
     }
     for id in index_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory(
+            items.push(ContextAuditItem::injected_memory_with_labels(
                 memory,
                 "index",
                 render_order,
+                &loaded.staleness_labels,
             ));
             render_order += 1;
         }
@@ -247,10 +278,11 @@ pub(in crate::context) fn build_context_audit_items(
     let lesson = lesson_ids.iter().copied().collect::<HashSet<_>>();
     for id in lesson_ids {
         if let Some(lesson_memory) = loaded.lessons.iter().find(|lesson| lesson.memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory(
+            items.push(ContextAuditItem::injected_memory_with_labels(
                 &lesson_memory.memory,
                 "lessons",
                 render_order,
+                &loaded.staleness_labels,
             ));
             render_order += 1;
         }

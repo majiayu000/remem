@@ -17,9 +17,10 @@ use super::invocation::{
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
-    empty_state_output, render_core_memory_with_limits, render_lessons_with_limit,
-    render_lessons_with_summary, render_memory_index_with_limits_excluding,
-    render_memory_index_with_summary, render_recent_sessions_with_limit,
+    empty_state_output, render_core_memory_with_limits_and_staleness,
+    render_lessons_with_limit_and_staleness, render_lessons_with_summary_and_staleness,
+    render_memory_index_with_limits_excluding_and_staleness,
+    render_memory_index_with_summary_and_staleness, render_recent_sessions_with_limit,
     render_workstreams_with_limits, render_workstreams_with_summary,
 };
 use super::types::{ContextLoadError, ContextRequest};
@@ -152,23 +153,29 @@ fn render_loaded_context_for_eval(
 
     render_context_load_errors(&mut output, &loaded.errors);
     if !loaded.lessons.is_empty() {
-        render_lessons_with_limit(
+        render_lessons_with_limit_and_staleness(
             &mut output,
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+            &loaded.staleness_labels,
         );
     }
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(policy);
-        let core_summary =
-            render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
+        let core_summary = render_core_memory_with_limits_and_staleness(
+            &mut output,
+            &loaded.memories,
+            &render_limits,
+            &loaded.staleness_labels,
+        );
         let core_ids: HashSet<i64> = core_summary.ids.into_iter().collect();
-        render_memory_index_with_limits_excluding(
+        render_memory_index_with_limits_excluding_and_staleness(
             &mut output,
             &loaded.memories,
             &render_limits,
             &core_ids,
+            &loaded.staleness_labels,
         );
     }
     if !loaded.workstreams.is_empty() {
@@ -483,11 +490,12 @@ fn render_context_output_with_policy(
 
     if !loaded.lessons.is_empty() {
         let before = char_len(&output);
-        let lesson_summary = render_lessons_with_summary(
+        let lesson_summary = render_lessons_with_summary_and_staleness(
             &mut output,
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+            &loaded.staleness_labels,
         );
         lesson_ids = lesson_summary.ids;
         stats.lessons = SectionRenderStats {
@@ -498,8 +506,12 @@ fn render_context_output_with_policy(
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(&policy);
         let before = char_len(&output);
-        let core_summary =
-            render_core_memory_with_limits(&mut output, &loaded.memories, &render_limits);
+        let core_summary = render_core_memory_with_limits_and_staleness(
+            &mut output,
+            &loaded.memories,
+            &render_limits,
+            &loaded.staleness_labels,
+        );
         let core_count = core_summary.count;
         stats.core_ids = core_summary.ids.clone();
         stats.core = SectionRenderStats {
@@ -508,11 +520,12 @@ fn render_context_output_with_policy(
         };
         let before = char_len(&output);
         let core_ids = core_summary.ids.into_iter().collect();
-        let index_summary = render_memory_index_with_summary(
+        let index_summary = render_memory_index_with_summary_and_staleness(
             &mut output,
             &loaded.memories,
             &render_limits,
             &core_ids,
+            &loaded.staleness_labels,
         );
         index_ids = index_summary.ids;
         stats.index = SectionRenderStats {

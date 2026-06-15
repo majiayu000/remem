@@ -8,7 +8,31 @@ use crate::{db, memory};
 
 use super::types::{ErrorDetail, ErrorResponse, MemoryItem};
 
-pub(super) fn memory_to_item(memory: &memory::Memory) -> MemoryItem {
+pub(super) fn memory_to_item_with_conn(
+    conn: &rusqlite::Connection,
+    memory: &memory::Memory,
+) -> MemoryItem {
+    let now_epoch = chrono::Utc::now().timestamp();
+    let staleness = match memory::memory_staleness_label_with_conn(conn, memory, now_epoch) {
+        Ok(label) => label,
+        Err(err) => {
+            crate::log::warn(
+                "api",
+                &format!(
+                    "memory {} staleness source-anchor lookup failed: {}",
+                    memory.id, err
+                ),
+            );
+            memory::memory_staleness_label(memory, now_epoch)
+        }
+    };
+    memory_to_item_with_staleness(memory, staleness)
+}
+
+fn memory_to_item_with_staleness(
+    memory: &memory::Memory,
+    staleness: memory::MemoryStalenessLabel,
+) -> MemoryItem {
     MemoryItem {
         id: memory.id,
         title: memory.title.clone(),
@@ -17,7 +41,7 @@ pub(super) fn memory_to_item(memory: &memory::Memory) -> MemoryItem {
         project: memory.project.clone(),
         scope: memory.scope.clone(),
         status: memory.status.clone(),
-        staleness: memory::memory_staleness_label(memory, chrono::Utc::now().timestamp()),
+        staleness,
         topic_key: memory.topic_key.clone(),
         branch: memory.branch.clone(),
         created_at_epoch: memory.created_at_epoch,

@@ -1,7 +1,7 @@
-use crate::memory::{Memory, MemoryType};
+use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
 use std::collections::HashMap;
 
-use super::super::audit::memory_render_metadata;
+use super::super::audit::memory_render_metadata_with_labels;
 use super::super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::super::memory_traits::is_memory_self_diagnostic;
 use super::super::policy::ContextLimits;
@@ -21,10 +21,20 @@ pub(in crate::context) fn render_core_memory(output: &mut String, memories: &[Me
     render_core_memory_with_limits(output, memories, &ContextLimits::default());
 }
 
+#[cfg(test)]
 pub(in crate::context) fn render_core_memory_with_limits(
     output: &mut String,
     memories: &[Memory],
     limits: &ContextLimits,
+) -> CoreRenderSummary {
+    render_core_memory_with_limits_and_staleness(output, memories, limits, &HashMap::new())
+}
+
+pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> CoreRenderSummary {
     if limits.core_item_limit == 0 || limits.core_char_limit == 0 {
         return CoreRenderSummary::default();
@@ -78,6 +88,7 @@ pub(in crate::context) fn render_core_memory_with_limits(
             memory,
             limits.core_char_limit,
             now,
+            staleness_labels,
         ) {
             selected_ids.insert(memory.id);
             *type_counts.entry(memory.memory_type.as_str()).or_default() += 1;
@@ -100,6 +111,7 @@ pub(in crate::context) fn render_core_memory_with_limits(
             memory,
             limits.core_char_limit,
             now,
+            staleness_labels,
         );
     }
 
@@ -121,7 +133,7 @@ pub(in crate::context) fn render_core_memory_with_limits(
             memory.title,
             memory.memory_type,
             date,
-            memory_render_metadata(memory, now)
+            memory_render_metadata_with_labels(memory, now, staleness_labels)
         ));
         output.push_str(&preview);
         output.push('\n');
@@ -139,6 +151,7 @@ fn push_selected_memory<'a>(
     memory: &'a Memory,
     max_chars: usize,
     now_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> bool {
     let header = format!(
         "**#{} {}** ({}, {}; {})\n",
@@ -146,7 +159,7 @@ fn push_selected_memory<'a>(
         memory.title,
         memory.memory_type,
         format_epoch_short(memory.updated_at_epoch),
-        memory_render_metadata(memory, now_epoch)
+        memory_render_metadata_with_labels(memory, now_epoch, staleness_labels)
     );
     let fixed_chars = char_len(&header) + 1;
     if *total_chars + fixed_chars >= max_chars {

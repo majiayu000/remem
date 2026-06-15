@@ -46,6 +46,7 @@ pub struct InjectionMetricSummary {
     pub expected_memory_recall: InjectionRateMetric,
     pub forbidden_memory_exclusion: InjectionRateMetric,
     pub abstention_false_positive_bound: InjectionRateMetric,
+    pub stale_anchor_labeling: InjectionRateMetric,
     pub user_prompt_submit_memory_recall: InjectionRateMetric,
     pub user_prompt_submit_abstention_false_positive_bound: InjectionRateMetric,
     pub all_checks_passed: bool,
@@ -89,6 +90,13 @@ impl Display for InjectionEvalReport {
             self.metrics.abstention_false_positive_bound.passed,
             self.metrics.abstention_false_positive_bound.total,
             self.metrics.abstention_false_positive_bound.rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "stale_anchor_labeling: {}/{} ({:.1}%)",
+            self.metrics.stale_anchor_labeling.passed,
+            self.metrics.stale_anchor_labeling.total,
+            self.metrics.stale_anchor_labeling.rate * 100.0
         )?;
         writeln!(
             f,
