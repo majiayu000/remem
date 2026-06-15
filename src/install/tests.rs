@@ -1,8 +1,50 @@
 use serde_json::json;
 
+use anyhow::Context;
+use rusqlite::{params, Connection};
+
 use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp, HookStrategy};
 use super::runtime::ensure_runtime_store_ready;
 use crate::db::test_support::ScopedTestDataDir;
+
+fn seed_plaintext_runtime_db_through(
+    test_dir: &ScopedTestDataDir,
+    max_migration_version: i64,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(&test_dir.path)?;
+    let conn = Connection::open(test_dir.db_path())?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         CREATE TABLE IF NOT EXISTS _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+
+    for migration in crate::migrate::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= max_migration_version)
+    {
+        conn.execute_batch(migration.sql).with_context(|| {
+            format!(
+                "seed migration v{:03}_{}",
+                migration.version, migration.name
+            )
+        })?;
+        conn.execute(
+            "INSERT OR IGNORE INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, ?3)",
+            params![migration.version, migration.name, 1_700_000_000_i64],
+        )?;
+    }
+
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {};",
+        12 + max_migration_version
+    ))?;
+    Ok(())
+}
 
 #[test]
 fn ensure_runtime_store_ready_initializes_encrypted_db_for_status() -> anyhow::Result<()> {
@@ -15,6 +57,10 @@ fn ensure_runtime_store_ready_initializes_encrypted_db_for_status() -> anyhow::R
 
     assert!(ready.created_key);
     assert!(!ready.encrypted_existing_db);
+    assert_eq!(
+        ready.schema_version,
+        crate::migrate::latest_schema_version()
+    );
     assert_eq!(ready.key_path, test_dir.path.join(".key"));
     assert_eq!(ready.db_path, test_dir.db_path());
     let saved_key = std::fs::read_to_string(&ready.key_path)?;
@@ -25,6 +71,56 @@ fn ensure_runtime_store_ready_initializes_encrypted_db_for_status() -> anyhow::R
     let conn = crate::db::open_db_read_only()?;
     let stats = crate::db::query_system_stats(&conn)?;
     assert_eq!(stats.active_memories, 0);
+    Ok(())
+}
+
+#[test]
+fn ensure_runtime_store_ready_migrates_existing_db_before_hooks() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-runtime-migrates-db");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    let latest = crate::migrate::latest_schema_version();
+    seed_plaintext_runtime_db_through(&test_dir, latest - 1)?;
+
+    let ready = ensure_runtime_store_ready()?;
+
+    assert!(ready.created_key);
+    assert!(ready.encrypted_existing_db);
+    assert_eq!(ready.schema_version, latest);
+    let conn = crate::db::open_db_for_hook()?;
+    let latest_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM _schema_migrations WHERE version = ?1",
+        [latest],
+        |row| row.get(0),
+    )?;
+    assert_eq!(latest_rows, 1);
+    let prompt_ref_column: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('graph_candidates')
+         WHERE name = 'prompt_memory_ref_ids'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(prompt_ref_column, 1);
+    Ok(())
+}
+
+#[test]
+fn install_dry_run_does_not_initialize_runtime_store() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-dry-run-no-db");
+    std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    test_dir.remove_db_files();
+
+    super::runtime::install(super::InstallTarget::Codex, true, false)?;
+
+    assert!(
+        !test_dir.path.join(".key").exists(),
+        "dry-run install must not create a key file"
+    );
+    assert!(
+        !test_dir.db_path().exists(),
+        "dry-run install must not create or migrate the database"
+    );
     Ok(())
 }
 
@@ -43,6 +139,10 @@ fn ensure_runtime_store_ready_encrypts_existing_plaintext_db() -> anyhow::Result
 
     assert!(ready.created_key);
     assert!(ready.encrypted_existing_db);
+    assert_eq!(
+        ready.schema_version,
+        crate::migrate::latest_schema_version()
+    );
     assert!(test_dir.path.join("remem.db.bak").exists());
     let header = std::fs::read(&ready.db_path)?;
     assert_ne!(&header[..16], b"SQLite format 3\0");
