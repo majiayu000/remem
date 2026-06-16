@@ -29,6 +29,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     if !invariant_errors.is_empty() {
         return Ok(DryRunResult {
             migration_version,
+            sqlite_user_version: raw_current_version,
             current_version,
             pending_count: applied_pending_count(&applied),
             error: Some(format!("schema drift: {}", invariant_errors.join("; "))),
@@ -40,6 +41,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         Err(error) => {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: applied_pending_count(&applied),
                 error: Some(format!("database clone: {}", error)),
@@ -51,6 +53,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         Err(error) => {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: applied_pending_count(&applied),
                 error: Some(format!("database clone: {}", error)),
@@ -62,6 +65,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         Err(error) => {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: applied_pending_count(&applied),
                 error: Some(format!("database clone: {}", error)),
@@ -72,6 +76,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         if let Err(error) = crate::db::configure_cipher(&test_conn, Some(&key)) {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: applied_pending_count(&applied),
                 error: Some(format!("database clone: {}", error)),
@@ -81,6 +86,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     if let Err(error) = clone_database(real_conn, &mut test_conn) {
         return Ok(DryRunResult {
             migration_version,
+            sqlite_user_version: raw_current_version,
             current_version,
             pending_count: applied_pending_count(&applied),
             error: Some(format!("database clone: {}", error)),
@@ -90,6 +96,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         if let Err(error) = backfill_to_baseline(&test_conn) {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: applied_pending_count(&applied),
                 error: Some(format!("baseline backfill: {}", error)),
@@ -105,6 +112,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     if pending.is_empty() {
         return Ok(DryRunResult {
             migration_version,
+            sqlite_user_version: raw_current_version,
             current_version,
             pending_count: 0,
             error: None,
@@ -115,6 +123,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         if let Err(error) = test_conn.execute_batch(migration.sql) {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: pending.len(),
                 error: Some(format!(
@@ -126,6 +135,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         if let Err(error) = run_post_migration_hook(&test_conn, migration.version, migration.name) {
             return Ok(DryRunResult {
                 migration_version,
+                sqlite_user_version: raw_current_version,
                 current_version,
                 pending_count: pending.len(),
                 error: Some(format!(
@@ -139,6 +149,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     if let Err(error) = backfill_to_baseline(&test_conn) {
         return Ok(DryRunResult {
             migration_version,
+            sqlite_user_version: raw_current_version,
             current_version,
             pending_count: pending.len(),
             error: Some(format!("baseline backfill: {}", error)),
@@ -147,6 +158,7 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
 
     Ok(DryRunResult {
         migration_version,
+        sqlite_user_version: raw_current_version,
         current_version,
         pending_count: pending.len(),
         error: None,

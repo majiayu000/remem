@@ -42,8 +42,8 @@ pub(super) fn check_schema_migration(conn: Option<&Connection>, open_error: Opti
                     "Schema",
                     Status::Ok,
                     format!(
-                        "migrations v{} (sqlite user_version {}, up to date)",
-                        result.migration_version, result.current_version
+                        "migrations v{} (sqlite user_version {}, logical user_version {}, up to date)",
+                        result.migration_version, result.sqlite_user_version, result.current_version
                     ),
                 )
             } else {
@@ -51,8 +51,11 @@ pub(super) fn check_schema_migration(conn: Option<&Connection>, open_error: Opti
                     "Schema",
                     Status::Ok,
                     format!(
-                        "migrations v{} (sqlite user_version {}, {} pending migration(s), dry-run passed)",
-                        result.migration_version, result.current_version, result.pending_count
+                        "migrations v{} (sqlite user_version {}, logical user_version {}, {} pending migration(s), dry-run passed)",
+                        result.migration_version,
+                        result.sqlite_user_version,
+                        result.current_version,
+                        result.pending_count
                     ),
                 )
             }
