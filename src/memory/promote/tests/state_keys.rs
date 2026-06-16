@@ -206,7 +206,7 @@ fn summary_workflow_preference_variants_promote_through_same_state_key() -> Resu
         Some("Capture workflow preference"),
         None,
         None,
-        Some("Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output (tests, lint, job IDs); avoids unsafe content fallbacks."),
+        Some("Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output: tests, lint, job IDs."),
     )?;
     let first_memory_id = approve_latest_pending_candidate(&mut conn)?;
 
@@ -218,7 +218,7 @@ fn summary_workflow_preference_variants_promote_through_same_state_key() -> Resu
         Some("Capture refined workflow preference"),
         None,
         None,
-        Some("Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output (tests, build, job IDs, artifacts); checklist-driven done only with artifact proof."),
+        Some("Prefers one change per commit with concrete evidence from tests, build artifacts, and checklist proof."),
     )?;
     let second_topic_key: String = conn.query_row(
         "SELECT topic_key
