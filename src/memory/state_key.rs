@@ -249,6 +249,16 @@ fn derive_compat_preference_state_key(
         return None;
     }
     let combined = format!("{title}\n{content}");
+    if mentions_small_reversible_changes(&combined)
+        && mentions_concrete_verification(&combined)
+        && !mentions_cumulative_workflow_subrule(&combined)
+    {
+        return Some(StateKeyDecision {
+            state_key: "small-reversible-verified-changes".to_string(),
+            confidence: 0.95,
+            reason: "preference_domain_small_reversible_verified_changes".to_string(),
+        });
+    }
     if mentions_verification_status(&combined) && mentions_data_code_separation(&combined) {
         return Some(StateKeyDecision {
             state_key: "verification-status-separation".to_string(),
@@ -508,6 +518,79 @@ fn mentions_codesign_binary(text: &str) -> bool {
             || lower.contains("cp "))
 }
 
+fn mentions_small_reversible_changes(text: &str) -> bool {
+    let compact_cjk = text
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !matches!(ch, ',' | '，' | '、' | ';' | '；'))
+        .collect::<String>();
+    if compact_cjk.contains("一处改动一个提交") {
+        return true;
+    }
+
+    let words = normalized_ascii_words(text);
+    words.contains(" one change per commit ") || words.contains(" one change one commit ")
+}
+
+fn mentions_concrete_verification(text: &str) -> bool {
+    let terms = ascii_term_set(text);
+    let words = normalized_ascii_words(text);
+    [
+        "artifact",
+        "build",
+        "checklist",
+        "command",
+        "evidence",
+        "lint",
+        "output",
+        "proof",
+        "test",
+        "typecheck",
+    ]
+    .iter()
+    .any(|term| terms.contains(*term))
+        || words.contains(" job id ")
+        || words.contains(" job ids ")
+        || words.contains(" build artifact ")
+        || words.contains(" build artifacts ")
+        || words.contains(" checklist proof ")
+        || words.contains(" command output ")
+        || words.contains(" test output ")
+        || text.contains("证据")
+        || text.contains("输出")
+        || text.contains("测试")
+}
+
+fn mentions_cumulative_workflow_subrule(text: &str) -> bool {
+    text.split([';', '；']).skip(1).any(|tail| {
+        let terms = ascii_term_set(tail);
+        terms.contains("avoid")
+            || terms.contains("unsafe")
+            || terms.contains("fallback")
+            || terms.contains("checklist")
+            || terms.contains("done")
+            || tail.contains("必须")
+            || tail.contains("只")
+    })
+}
+
+fn ascii_term_set(text: &str) -> BTreeSet<String> {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter_map(normalize_semantic_slot_term)
+        .collect()
+}
+
+fn normalized_ascii_words(text: &str) -> String {
+    let mut words = String::from(" ");
+    for raw in text.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+        if raw.is_empty() {
+            continue;
+        }
+        words.push_str(&raw.to_ascii_lowercase());
+        words.push(' ');
+    }
+    words
+}
+
 fn is_cjk(ch: char) -> bool {
     matches!(
         ch,
@@ -516,190 +599,4 @@ fn is_cjk(ch: char) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stable_topic_key_is_preserved_as_state_key() {
-        let decision = derive_state_key(
-            "decision",
-            Some("deploy-target"),
-            "Deploy target",
-            "Deploy to staging.",
-        )
-        .expect("stable topic key should derive");
-        assert_eq!(decision.state_key, "deploy-target");
-        assert_eq!(decision.reason, "stable_topic_key");
-    }
-
-    #[test]
-    fn hash_like_topic_key_uses_ascii_preference_domain() {
-        let decision = derive_state_key(
-            "preference",
-            Some("preference-1234abcd"),
-            "Preference",
-            "Keep verification status separate from data and code changes.",
-        )
-        .expect("semantic preference should derive");
-        assert_eq!(decision.state_key, "verification-status-separation");
-    }
-
-    #[test]
-    fn hash_like_decision_uses_semantic_slot_terms() {
-        let Some(decision) = derive_state_key(
-            "decision",
-            Some("decision-deadbeef"),
-            "Optimize CJK search",
-            "Use FTS5 trigram tokenizer for CJK text search support.",
-        ) else {
-            panic!("semantic decision should derive");
-        };
-
-        assert_eq!(
-            decision.state_key,
-            "decision-cjk-fts5-search-tokenizer-trigram"
-        );
-        assert_eq!(decision.reason, "semantic_slot_terms");
-    }
-
-    #[test]
-    fn hash_like_decision_paraphrase_uses_same_semantic_slot() {
-        let Some(first) = derive_state_key(
-            "decision",
-            Some("decision-11111111"),
-            "Optimize CJK search",
-            "Use FTS5 trigram tokenizer for CJK text search support.",
-        ) else {
-            panic!("first decision should derive");
-        };
-        let Some(second) = derive_state_key(
-            "decision",
-            Some("decision-22222222"),
-            "Refine CJK search",
-            "Switch CJK search to FTS5 trigram tokenization.",
-        ) else {
-            panic!("second decision should derive");
-        };
-
-        assert_eq!(first.state_key, second.state_key);
-    }
-
-    #[test]
-    fn hash_like_cjk_decision_paraphrase_uses_same_semantic_slot() {
-        let Some(first) = derive_state_key(
-            "decision",
-            Some("decision-11111111"),
-            "优化中文搜索",
-            "使用三元组分词器支持中文搜索。",
-        ) else {
-            panic!("first CJK decision should derive");
-        };
-        let Some(second) = derive_state_key(
-            "decision",
-            Some("decision-22222222"),
-            "调整中文搜索",
-            "中文搜索改用三元组分词器。",
-        ) else {
-            panic!("second CJK decision should derive");
-        };
-
-        assert_eq!(first.state_key, "decision-cjk-search-tokenizer-trigram");
-        assert_eq!(first.state_key, second.state_key);
-    }
-
-    #[test]
-    fn truncated_semantic_slot_key_includes_full_term_signature() {
-        let vector = derive_state_key(
-            "decision",
-            Some("decision-11111111"),
-            "Vector rotation",
-            "Use API auth cache migration token rotation vector.",
-        )
-        .expect("vector decision should derive");
-        let workflow = derive_state_key(
-            "decision",
-            Some("decision-22222222"),
-            "Workflow rotation",
-            "Use API auth cache migration token rotation workflow.",
-        )
-        .expect("workflow decision should derive");
-
-        assert!(vector
-            .state_key
-            .starts_with("decision-api-auth-cache-migration-rotation-token-"));
-        assert!(workflow
-            .state_key
-            .starts_with("decision-api-auth-cache-migration-rotation-token-"));
-        assert_ne!(vector.state_key, workflow.state_key);
-    }
-
-    #[test]
-    fn cjk_semantic_slot_terms_use_longest_non_overlapping_matches() {
-        let decision = derive_state_key(
-            "decision",
-            Some("decision-11111111"),
-            "服务器部署",
-            "服务器部署配置端口超时性能验证。",
-        )
-        .expect("CJK decision should derive");
-
-        assert!(decision
-            .state_key
-            .starts_with("decision-config-deploy-performance-port-server-timeout-"));
-        assert!(
-            !decision.state_key.contains("-service-"),
-            "服务器 should not also contribute the shorter 服务 term: {}",
-            decision.state_key
-        );
-    }
-
-    #[test]
-    fn hash_like_topic_key_uses_cjk_preference_domain() {
-        let decision = derive_state_key(
-            "preference",
-            Some("preference-deadbeef"),
-            "Preference",
-            "验证状态必须和数据、代码变更分开说明。",
-        )
-        .expect("CJK semantic preference should derive");
-        assert_eq!(decision.state_key, "verification-status-separation");
-    }
-
-    #[test]
-    fn ambiguous_hash_like_non_preference_is_not_invented() {
-        assert!(derive_state_key(
-            "decision",
-            Some("decision-deadbeef"),
-            "Decision",
-            "A short ambiguous note.",
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn current_memory_id_excludes_expired_active_memory() -> Result<()> {
-        let conn = rusqlite::Connection::open_in_memory()?;
-        crate::memory::tests_helper::setup_memory_schema(&conn);
-        let project = "test/proj";
-        let state_key = "repo-test-proj-dev-server";
-        let memory_id = crate::memory::insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some(state_key),
-            "Dev server",
-            "Local dev server is currently running at localhost:3000.",
-            "decision",
-            None,
-        )?;
-        conn.execute(
-            "UPDATE memories SET expires_at_epoch = ?1 WHERE id = ?2",
-            rusqlite::params![99_i64, memory_id],
-        )?;
-
-        let current = current_memory_id(&conn, "repo", project, "decision", state_key, 100)?;
-
-        assert_eq!(current, None);
-        Ok(())
-    }
-}
+mod tests;
