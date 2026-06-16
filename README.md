@@ -27,45 +27,81 @@ Language: **English** | [简体中文](README.zh-CN.md)
 | "Last session we decided to..." (reconstruct manually) | Decision history with rationale |
 | Bug context lost after session ends | Root cause + fix preserved |
 
-## Install
+## Quickstart
 
 ```bash
-# Option 1: Homebrew
 brew install majiayu000/tap/remem
+remem install --target codex
+remem status
+```
 
-# Option 2: Quick install (prebuilt GitHub Release binary, then auto-configures hooks)
-curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+If you do not use Homebrew:
 
-# Pin a specific release or install into a custom bin directory
-REMEM_VERSION=v0.5.42 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
-REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
-REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+```bash
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
+~/.local/bin/remem install --target codex
+~/.local/bin/remem status
+```
 
-# Option 3: Manual GitHub Release download
+`remem install --target codex` creates or updates:
+
+- `~/.remem/.key` and the encrypted `~/.remem/remem.db`
+- `~/.remem/config.toml` memory-AI profiles
+- Codex MCP registration in `~/.codex/config.toml`
+- Codex SessionStart/Stop hooks in `~/.codex/hooks.json`
+
+Success looks like:
+
+- `remem install` prints `key`, `db`, `config`, `MCP`, `hooks`, and `binary`
+  lines.
+- `remem status` prints database counts instead of an error.
+
+Restart Codex after installation and finish one session. Then run `remem doctor`.
+For a Codex-only setup, it reports Schema, Key format, Database, and the Codex
+Hooks/MCP rows as ok. If Claude Code config directories already exist, Claude
+rows can warn until you also run `remem install --target claude` or
+`remem install --target all`. If it warns about multiple `remem` binaries,
+follow the printed install-path fix so hooks keep using the intended binary.
+
+For Claude Code, use `remem install --target claude`; to configure both hosts,
+use `remem install --target all`.
+
+## Other Install Channels
+
+```bash
+# Quick install options
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_VERSION=vX.Y.Z sh
+~/.local/bin/remem install --target codex
+
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
+~/.local/bin/remem install --target codex
+
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
+remem install --target codex
+
+# npm wrapper
+npm install -g @majiayu000/remem
+remem install --target codex
+
+# Cargo
+cargo install remem-ai --bin remem
+remem install --target codex
+
+# Manual GitHub Release download
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
+remem install --target codex
 
-# Option 4: Cargo
-cargo install remem-ai --bin remem
-
-# Option 5: Build from source
+# Build from source
 git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
-
-# If you used Cargo or source install, configure detected Claude Code/Codex hooks + MCP
-remem install
-
-# Optional: target one host explicitly
-remem install --target codex    # auto | claude | codex | all
-remem install --dry-run         # preview config changes
+remem install --target codex
 ```
-
-Restart your AI coding tool after installation.
 
 Use one canonical `remem` command on PATH. Standalone and source installs
 should normally live at `~/.local/bin/remem`; Windows standalone installs
@@ -104,15 +140,7 @@ Expected commands are host-only; model, executor, and context policy live in
 
 ## Use With Codex
 
-For Codex-only setup:
-
-```bash
-remem install --target codex
-remem doctor
-remem status
-```
-
-`remem install --target codex` configures Codex in three ways:
+`remem install --target codex` configures Codex in four ways:
 
 - Enables Codex hooks with `[features].hooks = true` in `~/.codex/config.toml`
 - Registers `remem` as an MCP server in `~/.codex/config.toml`

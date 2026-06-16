@@ -225,6 +225,8 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
 
 pub(crate) struct DryRunResult {
+    pub migration_version: i64,
+    pub sqlite_user_version: i64,
     pub current_version: i64,
     pub pending_count: usize,
     pub error: Option<String>,
