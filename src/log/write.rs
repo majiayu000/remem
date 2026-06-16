@@ -40,7 +40,7 @@ pub(crate) fn rotate_if_needed(path: &Path, max_bytes: u64) {
 fn write_log(level: &str, component: &str, msg: &str) {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("[{}] [{}] [{}] {}", now, level, component, msg);
-    if std::env::var_os("REMEM_STDERR_TO_LOG").is_none() {
+    if should_mirror_to_stderr(level, component) {
         eprintln!("{}", line);
     }
     if let Some(path) = log_path() {
@@ -71,6 +71,16 @@ fn write_log(level: &str, component: &str, msg: &str) {
             }
         }
     }
+}
+
+fn should_mirror_to_stderr(level: &str, component: &str) -> bool {
+    if std::env::var_os("REMEM_STDERR_TO_LOG").is_some() {
+        return false;
+    }
+    if level == "INFO" && component == "migrate" {
+        return debug_enabled();
+    }
+    true
 }
 
 pub fn open_log_append() -> Option<std::fs::File> {
@@ -114,4 +124,70 @@ pub fn warn(component: &str, msg: &str) {
 
 pub fn error(component: &str, msg: &str) {
     write_log("ERROR", component, msg);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_log_env<T>(
+        debug: Option<&str>,
+        stderr_to_log: Option<&str>,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let _guard = match ENV_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(error) => panic!("log env lock should acquire: {error}"),
+        };
+        let previous_debug = std::env::var("REMEM_DEBUG").ok();
+        let previous_stderr_to_log = std::env::var("REMEM_STDERR_TO_LOG").ok();
+
+        match debug {
+            Some(value) => unsafe { std::env::set_var("REMEM_DEBUG", value) },
+            None => unsafe { std::env::remove_var("REMEM_DEBUG") },
+        }
+        match stderr_to_log {
+            Some(value) => unsafe { std::env::set_var("REMEM_STDERR_TO_LOG", value) },
+            None => unsafe { std::env::remove_var("REMEM_STDERR_TO_LOG") },
+        }
+
+        let result = f();
+
+        match previous_debug {
+            Some(value) => unsafe { std::env::set_var("REMEM_DEBUG", value) },
+            None => unsafe { std::env::remove_var("REMEM_DEBUG") },
+        }
+        match previous_stderr_to_log {
+            Some(value) => unsafe { std::env::set_var("REMEM_STDERR_TO_LOG", value) },
+            None => unsafe { std::env::remove_var("REMEM_STDERR_TO_LOG") },
+        }
+
+        result
+    }
+
+    #[test]
+    fn migrate_info_is_not_mirrored_to_stderr_by_default() {
+        with_log_env(None, None, || {
+            assert!(!super::should_mirror_to_stderr("INFO", "migrate"));
+            assert!(super::should_mirror_to_stderr("INFO", "install"));
+            assert!(super::should_mirror_to_stderr("ERROR", "migrate"));
+        });
+    }
+
+    #[test]
+    fn migrate_info_is_mirrored_to_stderr_when_debug_enabled() {
+        with_log_env(Some("1"), None, || {
+            assert!(super::should_mirror_to_stderr("INFO", "migrate"));
+        });
+    }
+
+    #[test]
+    fn stderr_to_log_disables_stderr_mirroring() {
+        with_log_env(Some("1"), Some("1"), || {
+            assert!(!super::should_mirror_to_stderr("INFO", "migrate"));
+            assert!(!super::should_mirror_to_stderr("ERROR", "migrate"));
+        });
+    }
 }
