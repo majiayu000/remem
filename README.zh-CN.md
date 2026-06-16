@@ -32,16 +32,14 @@
 ```bash
 brew install majiayu000/tap/remem
 remem install --target codex
-remem doctor
 remem status
 ```
 
 如果不用 Homebrew：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
 remem install --target codex
-remem doctor
 remem status
 ```
 
@@ -56,36 +54,41 @@ remem status
 
 - `remem install` 输出 `key`、`db`、`config`、`MCP`、`hooks`、`binary`
   等摘要行。
-- `remem doctor` 中 Schema、Key format、Database、Hooks、MCP 为 ok。首次
-  安装后，在重启 Codex 并完成一个会话前，出现 no capture heartbeat 警告是正常的。
-  如果出现多个 `remem` 二进制的 install-path 警告，按输出里的 fix 提示处理，
-  确保 hooks 使用预期的二进制。
 - `remem status` 能输出数据库计数，而不是报错。
 
-安装后重启 Codex。Claude Code 使用 `remem install --target claude`；两个
-host 都配置则使用 `remem install --target all`。
+安装后重启 Codex 并完成一次会话，然后运行 `remem doctor`。Codex-only setup
+下，Schema、Key format、Database，以及 Codex 的 Hooks/MCP 行应为 ok。如果本机
+已经有 Claude Code 配置目录，Claude 行可能会 warning；需要时再运行
+`remem install --target claude` 或 `remem install --target all`。如果出现多个
+`remem` 二进制的 install-path 警告，按输出里的 fix 提示处理，确保 hooks 使用
+预期的二进制。
+
+Claude Code 使用 `remem install --target claude`；两个 host 都配置则使用
+`remem install --target all`。
 
 ## 其他安装渠道
 
 ```bash
 # 快速安装选项
-REMEM_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
-REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
-REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_VERSION=vX.Y.Z sh
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
+remem install --target codex
 
 # npm wrapper
 npm install -g @majiayu000/remem
+remem install --target codex
 
 # Cargo
 cargo install remem-ai --bin remem
-remem install
+remem install --target codex
 
 # 手动下载 GitHub Release
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
-remem install
+remem install --target codex
 
 # 源码构建
 git clone https://github.com/majiayu000/remem.git
@@ -93,7 +96,7 @@ cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
-remem install
+remem install --target codex
 ```
 
 PATH 上建议只保留一个 canonical `remem` 命令。Standalone 和源码安装通常放在
@@ -317,7 +320,6 @@ capture_adapter = "codex-cli"
 [memory_ai.profiles.codex]
 executor = "codex-cli"
 model = "gpt-5.2"
-reasoning_effort = "low"
 path = "codex"
 ```
 
