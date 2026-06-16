@@ -41,15 +41,21 @@ pub(super) fn check_schema_migration(conn: Option<&Connection>, open_error: Opti
                 Check::new(
                     "Schema",
                     Status::Ok,
-                    format!("v{} (up to date)", result.current_version),
+                    format!(
+                        "migrations v{} (sqlite user_version {}, logical user_version {}, up to date)",
+                        result.migration_version, result.sqlite_user_version, result.current_version
+                    ),
                 )
             } else {
                 Check::new(
                     "Schema",
                     Status::Ok,
                     format!(
-                        "v{} ({} pending migration(s), dry-run passed)",
-                        result.current_version, result.pending_count
+                        "migrations v{} (sqlite user_version {}, logical user_version {}, {} pending migration(s), dry-run passed)",
+                        result.migration_version,
+                        result.sqlite_user_version,
+                        result.current_version,
+                        result.pending_count
                     ),
                 )
             }
@@ -116,5 +122,40 @@ fn check_key_format_value(source: &str, key_text: &str, is_file: bool) -> Check 
             Status::Fail,
             format!("invalid SQLCipher key in {source}: {error}"),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db;
+    use crate::db::test_support::ScopedTestDataDir;
+
+    use super::*;
+
+    #[test]
+    fn schema_check_labels_migration_version_and_sqlite_user_version() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("doctor-schema-version-label");
+        std::fs::create_dir_all(&test_dir.path)?;
+        std::fs::write(test_dir.path.join(".key"), "doctor-schema-key")?;
+        let conn = db::open_db()?;
+
+        let check = check_schema_migration(Some(&conn), None);
+
+        assert_eq!(check.icon(), "ok");
+        assert!(
+            check.detail.contains(&format!(
+                "migrations v{}",
+                crate::migrate::latest_schema_version()
+            )),
+            "got: {}",
+            check.detail
+        );
+        assert!(
+            check.detail.contains("sqlite user_version"),
+            "got: {}",
+            check.detail
+        );
+        assert!(check.detail.contains("up to date"), "got: {}", check.detail);
+        Ok(())
     }
 }

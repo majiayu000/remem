@@ -40,7 +40,7 @@ pub(crate) fn rotate_if_needed(path: &Path, max_bytes: u64) {
 fn write_log(level: &str, component: &str, msg: &str) {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("[{}] [{}] [{}] {}", now, level, component, msg);
-    if std::env::var_os("REMEM_STDERR_TO_LOG").is_none() {
+    if should_mirror_to_stderr(level, component) {
         eprintln!("{}", line);
     }
     if let Some(path) = log_path() {
@@ -71,6 +71,30 @@ fn write_log(level: &str, component: &str, msg: &str) {
             }
         }
     }
+}
+
+fn should_mirror_to_stderr(level: &str, component: &str) -> bool {
+    should_mirror_to_stderr_with_env(
+        level,
+        component,
+        debug_enabled(),
+        std::env::var_os("REMEM_STDERR_TO_LOG").is_some(),
+    )
+}
+
+fn should_mirror_to_stderr_with_env(
+    level: &str,
+    component: &str,
+    debug_enabled: bool,
+    stderr_to_log: bool,
+) -> bool {
+    if stderr_to_log {
+        return false;
+    }
+    if level == "INFO" && component == "migrate" {
+        return debug_enabled;
+    }
+    true
 }
 
 pub fn open_log_append() -> Option<std::fs::File> {
@@ -114,4 +138,37 @@ pub fn warn(component: &str, msg: &str) {
 
 pub fn error(component: &str, msg: &str) {
     write_log("ERROR", component, msg);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn migrate_info_is_not_mirrored_to_stderr_by_default() {
+        assert!(!super::should_mirror_to_stderr_with_env(
+            "INFO", "migrate", false, false
+        ));
+        assert!(super::should_mirror_to_stderr_with_env(
+            "INFO", "install", false, false
+        ));
+        assert!(super::should_mirror_to_stderr_with_env(
+            "ERROR", "migrate", false, false
+        ));
+    }
+
+    #[test]
+    fn migrate_info_is_mirrored_to_stderr_when_debug_enabled() {
+        assert!(super::should_mirror_to_stderr_with_env(
+            "INFO", "migrate", true, false
+        ));
+    }
+
+    #[test]
+    fn stderr_to_log_disables_stderr_mirroring() {
+        assert!(!super::should_mirror_to_stderr_with_env(
+            "INFO", "migrate", true, true
+        ));
+        assert!(!super::should_mirror_to_stderr_with_env(
+            "ERROR", "migrate", true, true
+        ));
+    }
 }

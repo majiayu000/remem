@@ -22,7 +22,11 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
 
     let Some(conn) = conn else {
         if failures.is_empty() {
-            return Check::new("Capture liveness", Status::Warn, "cannot open database");
+            return Check::new(
+                "Capture liveness",
+                Status::Warn,
+                join_detail(&warnings, "cannot open database"),
+            );
         }
         return Check::new("Capture liveness", Status::Fail, failures.join("; "));
     };
@@ -185,12 +189,13 @@ fn hook_warning_blocks_capture(detail: &str) -> bool {
 
 fn install_path_setup_finding(check: &Check) -> Option<SetupFinding> {
     match check.status {
-        Status::Fail | Status::Warn => Some(SetupFinding {
+        Status::Fail => Some(SetupFinding {
             status: Status::Fail,
-            detail: format!(
-                "Install paths stale or mismatched: {}; hooks may execute a stale binary",
-                check.detail
-            ),
+            detail: format!("Install paths failed: {}", check.detail),
+        }),
+        Status::Warn => Some(SetupFinding {
+            status: Status::Warn,
+            detail: format!("Install paths warning: {}", check.detail),
         }),
         Status::Ok => None,
     }
@@ -408,17 +413,19 @@ mod tests {
     }
 
     #[test]
-    fn capture_liveness_fails_on_stale_install_path_setup() {
+    fn capture_liveness_warns_on_stale_install_path_setup() -> anyhow::Result<()> {
+        let conn = setup_liveness_conn()?;
         let setup = vec![Check::new(
             "Install paths",
             Status::Warn,
             "2 remem executable(s) found; configured /opt/remem; candidates: /usr/local/bin/remem (0.5.1); fix: remove or upgrade stale installs",
         )];
 
-        let check = check_capture_liveness(None, &setup);
+        let check = check_capture_liveness(Some(&conn), &setup);
 
-        assert!(matches!(check.status, Status::Fail));
-        assert!(check.detail.contains("Install paths stale or mismatched"));
-        assert!(check.detail.contains("stale binary"));
+        assert!(matches!(check.status, Status::Warn));
+        assert!(check.detail.contains("Install paths warning"));
+        assert!(check.detail.contains("no capture heartbeat yet"));
+        Ok(())
     }
 }
