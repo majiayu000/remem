@@ -270,6 +270,13 @@ fn derive_compat_preference_state_key(
             reason: "preference_domain_codesign_binary".to_string(),
         });
     }
+    if mentions_small_reversible_changes(&combined) && mentions_concrete_verification(&combined) {
+        return Some(StateKeyDecision {
+            state_key: "small-reversible-verified-changes".to_string(),
+            confidence: 0.95,
+            reason: "preference_domain_small_reversible_verified_changes".to_string(),
+        });
+    }
 
     None
 }
@@ -508,6 +515,34 @@ fn mentions_codesign_binary(text: &str) -> bool {
             || lower.contains("cp "))
 }
 
+fn mentions_small_reversible_changes(text: &str) -> bool {
+    text.contains("一处改动一个提交")
+}
+
+fn mentions_concrete_verification(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let has_verification =
+        lower.contains("verification") || lower.contains("verify") || text.contains("验证");
+    let has_evidence = [
+        "artifact",
+        "build",
+        "command",
+        "evidence",
+        "job id",
+        "lint",
+        "output",
+        "test",
+        "typecheck",
+    ]
+    .iter()
+    .any(|term| lower.contains(term))
+        || text.contains("证据")
+        || text.contains("输出")
+        || text.contains("测试");
+
+    has_verification && has_evidence
+}
+
 fn is_cjk(ch: char) -> bool {
     matches!(
         ch,
@@ -542,6 +577,33 @@ mod tests {
         )
         .expect("semantic preference should derive");
         assert_eq!(decision.state_key, "verification-status-separation");
+    }
+
+    #[test]
+    fn hash_like_preference_small_reversible_verified_changes_uses_stable_domain() {
+        let Some(first) = derive_state_key(
+            "preference",
+            Some("preference-11111111"),
+            "Preference",
+            "Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output (tests, lint, job IDs); avoids unsafe content fallbacks.",
+        ) else {
+            panic!("first workflow preference should derive");
+        };
+        let Some(second) = derive_state_key(
+            "preference",
+            Some("preference-22222222"),
+            "Preference",
+            "Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output (tests, build, job IDs, artifacts); checklist-driven done only with artifact proof.",
+        ) else {
+            panic!("second workflow preference should derive");
+        };
+
+        assert_eq!(first.state_key, "small-reversible-verified-changes");
+        assert_eq!(first.state_key, second.state_key);
+        assert_eq!(
+            first.reason,
+            "preference_domain_small_reversible_verified_changes"
+        );
     }
 
     #[test]

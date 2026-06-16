@@ -319,6 +319,86 @@ fn test_summary_preference_paraphrases_promote_through_same_state_key() -> Resul
 }
 
 #[test]
+fn test_summary_workflow_preference_variants_promote_through_same_state_key() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let project = "test/proj";
+
+    record_summary_evidence(&conn, "session-small-change-a", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-small-change-a",
+        project,
+        Some("Capture workflow preference"),
+        None,
+        None,
+        Some("Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output (tests, lint, job IDs); avoids unsafe content fallbacks."),
+    )?;
+    let first_candidate_id: i64 = conn.query_row(
+        "SELECT id FROM memory_candidates WHERE review_status = 'pending_review'",
+        [],
+        |row| row.get(0),
+    )?;
+    let first_memory_id = approve_candidate(&mut conn, first_candidate_id)?
+        .ok_or_else(|| anyhow::anyhow!("first candidate should promote"))?;
+
+    record_summary_evidence(&conn, "session-small-change-b", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-small-change-b",
+        project,
+        Some("Capture refined workflow preference"),
+        None,
+        None,
+        Some("Prefers small, reversible changes (“一处改动一个提交”) with concrete verification output (tests, build, job IDs, artifacts); checklist-driven done only with artifact proof."),
+    )?;
+    let second_candidate_id: i64 = conn.query_row(
+        "SELECT id
+         FROM memory_candidates
+         WHERE review_status = 'pending_review'
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let second_topic_key: String = conn.query_row(
+        "SELECT topic_key FROM memory_candidates WHERE id = ?1",
+        [second_candidate_id],
+        |row| row.get(0),
+    )?;
+    let second_memory_id = approve_candidate(&mut conn, second_candidate_id)?
+        .ok_or_else(|| anyhow::anyhow!("second candidate should promote"))?;
+
+    let first_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [first_memory_id],
+        |row| row.get(0),
+    )?;
+    let (second_status, state_key, current_memory_id): (String, String, i64) = conn.query_row(
+        "SELECT m.status, sk.state_key, sk.current_memory_id
+         FROM memories m
+         JOIN memory_state_keys sk ON sk.id = m.state_key_id
+         WHERE m.id = ?1",
+        [second_memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_eq!(second_topic_key, "small-reversible-verified-changes");
+    assert_eq!(first_status, "stale");
+    assert_eq!(second_status, "active");
+    assert_eq!(state_key, "small-reversible-verified-changes");
+    assert_eq!(current_memory_id, second_memory_id);
+    assert_eq!(active_count, 1);
+    Ok(())
+}
+
+#[test]
 fn test_summary_candidates_missing_evidence_fails_closed() -> Result<()> {
     let mut conn = setup_conn()?;
 
