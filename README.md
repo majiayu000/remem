@@ -39,8 +39,8 @@ If you do not use Homebrew:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
-remem install --target codex
-remem status
+~/.local/bin/remem install --target codex
+~/.local/bin/remem status
 ```
 
 `remem install --target codex` creates or updates:
@@ -71,8 +71,12 @@ use `remem install --target all`.
 ```bash
 # Quick install options
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_VERSION=vX.Y.Z sh
-curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
+~/.local/bin/remem install --target codex
+
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
+~/.local/bin/remem install --target codex
+
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
 remem install --target codex
 
 # npm wrapper

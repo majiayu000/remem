@@ -39,8 +39,8 @@ remem status
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
-remem install --target codex
-remem status
+~/.local/bin/remem install --target codex
+~/.local/bin/remem status
 ```
 
 `remem install --target codex` 会创建或更新：
@@ -71,8 +71,12 @@ Claude Code 使用 `remem install --target claude`；两个 host 都配置则使
 ```bash
 # 快速安装选项
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_VERSION=vX.Y.Z sh
-curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
+~/.local/bin/remem install --target codex
+
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
+~/.local/bin/remem install --target codex
+
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
 remem install --target codex
 
 # npm wrapper
