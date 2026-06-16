@@ -27,45 +27,74 @@
 | “上次我们决定了什么...” 需要手动回溯 | 决策历史可追踪 |
 | 会话结束就丢失修复背景 | 根因与修复被持续保留 |
 
-## 安装
+## 快速开始
 
 ```bash
-# 方式 1：Homebrew
 brew install majiayu000/tap/remem
+remem install --target codex
+remem doctor
+remem status
+```
 
-# 方式 2：快速安装（GitHub Release 预编译二进制，并自动配置 hooks）
+如果不用 Homebrew：
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+remem install --target codex
+remem doctor
+remem status
+```
 
-# 固定版本、指定安装目录，或只安装二进制不改 hooks/MCP
-REMEM_VERSION=v0.5.42 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+`remem install --target codex` 会创建或更新：
+
+- `~/.remem/.key` 和加密的 `~/.remem/remem.db`
+- `~/.remem/config.toml` memory-AI profiles
+- `~/.codex/config.toml` 中的 Codex MCP 注册
+- `~/.codex/hooks.json` 中的 Codex SessionStart/Stop hooks
+
+成功状态应该是：
+
+- `remem install` 输出 `key`、`db`、`config`、`MCP`、`hooks`、`binary`
+  等摘要行。
+- `remem doctor` 中 Schema、Key format、Database、Hooks、MCP 为 ok。首次
+  安装后，在重启 Codex 并完成一个会话前，出现 no capture heartbeat 警告是正常的。
+  如果出现多个 `remem` 二进制的 install-path 警告，按输出里的 fix 提示处理，
+  确保 hooks 使用预期的二进制。
+- `remem status` 能输出数据库计数，而不是报错。
+
+安装后重启 Codex。Claude Code 使用 `remem install --target claude`；两个
+host 都配置则使用 `remem install --target all`。
+
+## 其他安装渠道
+
+```bash
+# 快速安装选项
+REMEM_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
-# 方式 3：手动下载 GitHub Release
+# npm wrapper
+npm install -g @majiayu000/remem
+
+# Cargo
+cargo install remem-ai --bin remem
+remem install
+
+# 手动下载 GitHub Release
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
+remem install
 
-# 方式 4：Cargo 安装
-cargo install remem-ai --bin remem
-
-# 方式 5：源码构建
+# 源码构建
 git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
-
-# 如果使用 Cargo 或源码安装，配置检测到的 Claude Code/Codex hooks + MCP
 remem install
-
-# 可选：明确指定安装目标
-remem install --target codex    # auto | claude | codex | all
-remem install --dry-run         # 预览配置改动
 ```
-
-安装后重启对应的 AI 编程工具。
 
 PATH 上建议只保留一个 canonical `remem` 命令。Standalone 和源码安装通常放在
 `~/.local/bin/remem`；Windows standalone 安装建议放在
@@ -102,15 +131,7 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 
 ## 在 Codex 中使用
 
-只配置 Codex：
-
-```bash
-remem install --target codex
-remem doctor
-remem status
-```
-
-`remem install --target codex` 会配置三类 Codex 集成：
+`remem install --target codex` 会配置四类 Codex 集成：
 
 - 在 `~/.codex/config.toml` 中启用 `[features].hooks = true`
 - 在 `~/.codex/config.toml` 中注册 `remem` MCP server
@@ -263,7 +284,7 @@ Memory AI 执行策略配置在 `~/.remem/config.toml`（可用 `REMEM_CONFIG`
 ```bash
 remem config path
 remem config show
-remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem config set memory_ai.profiles.codex.model gpt-5.2
 ```
 
 日常切模型推荐用更高层的 `remem model` 命令：
@@ -295,7 +316,7 @@ capture_adapter = "codex-cli"
 
 [memory_ai.profiles.codex]
 executor = "codex-cli"
-model = "gpt-5.4-mini"
+model = "gpt-5.2"
 reasoning_effort = "low"
 path = "codex"
 ```
@@ -316,7 +337,7 @@ remem encrypt
 remem api --port 5567
 remem status
 remem config show
-remem config set memory_ai.profiles.codex.model gpt-5.4-mini
+remem config set memory_ai.profiles.codex.model gpt-5.2
 remem model current
 remem model list
 remem model use balanced --dry-run

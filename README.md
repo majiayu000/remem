@@ -27,45 +27,75 @@ Language: **English** | [简体中文](README.zh-CN.md)
 | "Last session we decided to..." (reconstruct manually) | Decision history with rationale |
 | Bug context lost after session ends | Root cause + fix preserved |
 
-## Install
+## Quickstart
 
 ```bash
-# Option 1: Homebrew
 brew install majiayu000/tap/remem
+remem install --target codex
+remem doctor
+remem status
+```
 
-# Option 2: Quick install (prebuilt GitHub Release binary, then auto-configures hooks)
+If you do not use Homebrew:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+remem install --target codex
+remem doctor
+remem status
+```
 
-# Pin a specific release or install into a custom bin directory
-REMEM_VERSION=v0.5.42 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
+`remem install --target codex` creates or updates:
+
+- `~/.remem/.key` and the encrypted `~/.remem/remem.db`
+- `~/.remem/config.toml` memory-AI profiles
+- Codex MCP registration in `~/.codex/config.toml`
+- Codex SessionStart/Stop hooks in `~/.codex/hooks.json`
+
+Success looks like:
+
+- `remem install` prints `key`, `db`, `config`, `MCP`, `hooks`, and `binary`
+  lines.
+- `remem doctor` reports Schema, Key format, Database, Hooks, and MCP as ok.
+  A warning about no capture heartbeat is normal until you restart Codex and
+  finish one session. If it warns about multiple `remem` binaries, follow the
+  printed install-path fix so hooks keep using the intended binary.
+- `remem status` prints database counts instead of an error.
+
+Restart Codex after installation. For Claude Code, use
+`remem install --target claude`; to configure both hosts, use
+`remem install --target all`.
+
+## Other Install Channels
+
+```bash
+# Quick install options
+REMEM_VERSION=vX.Y.Z curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 REMEM_NO_CONFIG=1 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh
 
-# Option 3: Manual GitHub Release download
+# npm wrapper
+npm install -g @majiayu000/remem
+
+# Cargo
+cargo install remem-ai --bin remem
+remem install
+
+# Manual GitHub Release download
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
+remem install
 
-# Option 4: Cargo
-cargo install remem-ai --bin remem
-
-# Option 5: Build from source
+# Build from source
 git clone https://github.com/majiayu000/remem.git
 cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
-
-# If you used Cargo or source install, configure detected Claude Code/Codex hooks + MCP
 remem install
-
-# Optional: target one host explicitly
-remem install --target codex    # auto | claude | codex | all
-remem install --dry-run         # preview config changes
 ```
-
-Restart your AI coding tool after installation.
 
 Use one canonical `remem` command on PATH. Standalone and source installs
 should normally live at `~/.local/bin/remem`; Windows standalone installs
@@ -104,15 +134,7 @@ Expected commands are host-only; model, executor, and context policy live in
 
 ## Use With Codex
 
-For Codex-only setup:
-
-```bash
-remem install --target codex
-remem doctor
-remem status
-```
-
-`remem install --target codex` configures Codex in three ways:
+`remem install --target codex` configures Codex in four ways:
 
 - Enables Codex hooks with `[features].hooks = true` in `~/.codex/config.toml`
 - Registers `remem` as an MCP server in `~/.codex/config.toml`
