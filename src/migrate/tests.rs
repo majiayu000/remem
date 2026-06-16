@@ -398,6 +398,8 @@ fn dry_run_pending_reports_no_pending_for_current_schema() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
+    assert_eq!(result.migration_version, super::latest_schema_version());
+    assert_eq!(result.sqlite_user_version, logical_user_version());
     assert_eq!(result.pending_count, 0);
     assert!(
         result.error.is_none(),
@@ -415,6 +417,8 @@ fn dry_run_reports_logical_version_when_user_version_is_stale() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
+    assert_eq!(result.migration_version, super::latest_schema_version());
+    assert_eq!(result.sqlite_user_version, 14);
     assert_eq!(result.current_version, logical_user_version());
     assert_eq!(result.pending_count, 0);
     assert!(result.error.is_none());
@@ -427,6 +431,8 @@ fn dry_run_pending_reports_pending_for_new_db() -> Result<()> {
 
     let result = dry_run_pending(&conn)?;
 
+    assert_eq!(result.migration_version, 0);
+    assert_eq!(result.sqlite_user_version, 0);
     assert_eq!(result.current_version, 0);
     assert_eq!(result.pending_count, MIGRATIONS.len());
     assert!(result.error.is_none());
