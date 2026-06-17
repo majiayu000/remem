@@ -279,28 +279,22 @@ pub fn vector_search_embedding_filtered(
             "memory_embeddings table is missing; run migrations/backfill",
         ));
     }
-    if embedding_count(conn)? == 0
-        && super::vector_candidates::matching_memory_count(conn, filters)? > 0
-    {
-        return Ok(VectorSearchOutcome::disabled(
-            "memory_embeddings table is empty; run `remem reindex-embeddings --limit 1000`",
-        ));
-    }
-
     let profile = query_embedding.profile();
-    if super::vector_candidates::matching_embedding_count(conn, filters, profile)? == 0
-        && super::vector_candidates::matching_memory_count(conn, filters)? > 0
-    {
-        return Ok(VectorSearchOutcome::disabled(format!(
-            "memory_embeddings has no rows for model={} dimensions={}; run `remem reindex-embeddings --limit 1000`",
-            profile.model, profile.dimensions
-        )));
-    }
-
     let candidate_ids =
         super::vector_candidates::select_candidate_ids(conn, filters, profile, limit)?;
     let candidates_scanned = candidate_ids.len();
     if candidate_ids.is_empty() {
+        if super::vector_candidates::matching_memory_count(conn, filters)? > 0 {
+            if embedding_count(conn)? == 0 {
+                return Ok(VectorSearchOutcome::disabled(
+                    "memory_embeddings table is empty; run `remem reindex-embeddings --limit 1000`",
+                ));
+            }
+            return Ok(VectorSearchOutcome::disabled(format!(
+                "memory_embeddings has no rows for model={} dimensions={}; run `remem reindex-embeddings --limit 1000`",
+                profile.model, profile.dimensions
+            )));
+        }
         return Ok(VectorSearchOutcome::ready_with_scan_count(vec![], 0));
     }
     let placeholders = std::iter::repeat_n("?", candidate_ids.len())

@@ -41,26 +41,20 @@ pub(crate) fn select_candidate_ids(
     let span = (max_id - min_id + 1).max(1);
     let mut ids = Vec::with_capacity(limit);
 
-    for bucket in 0..buckets {
-        if ids.len() >= limit {
-            break;
-        }
-        let start = min_id + span.saturating_mul(bucket as i64) / buckets as i64;
-        let mut end = min_id + span.saturating_mul((bucket + 1) as i64) / buckets as i64 - 1;
-        if bucket + 1 == buckets {
-            end = max_id;
-        }
-        append_bucket_ids(
-            conn,
-            filters,
-            profile,
-            start,
-            end.max(start),
+    append_bucket_ids(
+        conn,
+        filters,
+        profile,
+        BucketPlan {
+            min_id,
+            max_id,
+            buckets,
+            span,
             per_bucket,
-            limit,
-            &mut ids,
-        )?;
-    }
+            total_limit: limit,
+        },
+        &mut ids,
+    )?;
 
     if ids.len() < limit {
         append_recent_ids(conn, filters, profile, limit, &mut ids)?;
@@ -68,30 +62,6 @@ pub(crate) fn select_candidate_ids(
 
     ids.truncate(limit);
     Ok(ids)
-}
-
-pub(crate) fn matching_embedding_count(
-    conn: &Connection,
-    filters: VectorSearchFilters<'_>,
-    profile: EmbeddingProfile<'_>,
-) -> Result<i64> {
-    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-        Box::new(profile.model.to_string()),
-        Box::new(profile.dimensions as i64),
-    ];
-    let (conditions, mut filter_values) = memory_filter_conditions(filters, 3);
-    values.append(&mut filter_values);
-    let sql = format!(
-        "SELECT COUNT(*)
-         FROM memory_embeddings e
-         JOIN memories m ON m.id = e.memory_id
-         WHERE e.model = ?1
-           AND e.dimensions = ?2
-           AND {}",
-        conditions.join(" AND ")
-    );
-    let refs = crate::db::to_sql_refs(&values);
-    Ok(conn.query_row(&sql, refs.as_slice(), |row| row.get(0))?)
 }
 
 fn embedding_id_bounds(
@@ -109,39 +79,58 @@ fn embedding_id_bounds(
     Ok(min_id.zip(max_id))
 }
 
+struct BucketPlan {
+    min_id: i64,
+    max_id: i64,
+    buckets: usize,
+    span: i64,
+    per_bucket: usize,
+    total_limit: usize,
+}
+
 fn append_bucket_ids(
     conn: &Connection,
     filters: VectorSearchFilters<'_>,
     profile: EmbeddingProfile<'_>,
-    start: i64,
-    end: i64,
-    per_bucket: usize,
-    total_limit: usize,
+    plan: BucketPlan,
     ids: &mut Vec<i64>,
 ) -> Result<()> {
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-        Box::new(start),
-        Box::new(end),
+        Box::new(plan.min_id),
+        Box::new(plan.buckets as i64),
+        Box::new(plan.span),
+        Box::new(plan.max_id),
         Box::new(profile.model.to_string()),
         Box::new(profile.dimensions as i64),
     ];
-    let (mut conditions, mut filter_values) = memory_filter_conditions(filters, 5);
+    let (mut conditions, mut filter_values) = memory_filter_conditions(filters, 7);
     values.append(&mut filter_values);
-    let limit_idx = values.len() + 1;
-    values.push(Box::new(per_bucket as i64));
-    conditions.insert(0, "e.memory_id BETWEEN ?1 AND ?2".to_string());
-    conditions.insert(1, "e.model = ?3".to_string());
-    conditions.insert(2, "e.dimensions = ?4".to_string());
+    let per_bucket_idx = values.len() + 1;
+    values.push(Box::new(plan.per_bucket as i64));
+    let total_limit_idx = values.len() + 1;
+    values.push(Box::new(plan.total_limit as i64));
+    conditions.insert(0, "e.memory_id BETWEEN ?1 AND ?4".to_string());
+    conditions.insert(1, "e.model = ?5".to_string());
+    conditions.insert(2, "e.dimensions = ?6".to_string());
     let sql = format!(
-        "SELECT e.memory_id
-         FROM memory_embeddings e
-         JOIN memories m ON m.id = e.memory_id
-         WHERE {}
-         ORDER BY e.memory_id
-         LIMIT ?{limit_idx}",
+        "WITH bucketed AS (
+             SELECT e.memory_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ((e.memory_id - ?1) * ?2 / ?3)
+                        ORDER BY e.memory_id
+                    ) AS bucket_rank
+             FROM memory_embeddings e
+             JOIN memories m ON m.id = e.memory_id
+             WHERE {}
+         )
+         SELECT memory_id
+         FROM bucketed
+         WHERE bucket_rank <= ?{per_bucket_idx}
+         ORDER BY memory_id
+         LIMIT ?{total_limit_idx}",
         conditions.join(" AND ")
     );
-    append_ids_from_query(conn, &sql, &values, total_limit, ids)
+    append_ids_from_query(conn, &sql, &values, plan.total_limit, ids)
 }
 
 fn append_recent_ids(
@@ -224,4 +213,63 @@ fn memory_filter_conditions(
         values.push(Box::new(memory_type.to_string()));
     }
     (conditions, values)
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use rusqlite::{params, Connection};
+
+    use super::*;
+    use crate::retrieval::embedding::{EmbeddingProfile, LOCAL_EMBEDDING_MODEL};
+
+    #[test]
+    fn bucketed_candidate_selection_spreads_across_id_ranges() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let blob = vec![0u8; crate::retrieval::embedding::LOCAL_EMBEDDING_DIMENSIONS * 4];
+
+        conn.execute("BEGIN IMMEDIATE", [])?;
+        for id in 1..=1_024_i64 {
+            conn.execute(
+                "INSERT INTO memories
+                 (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+                 VALUES (?1, '/repo', 'Vector candidate', 'Candidate coverage', 'decision', ?1, ?1, 'active')",
+                params![id],
+            )?;
+            conn.execute(
+                "INSERT INTO memory_embeddings
+                 (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+                 VALUES (?1, ?2, ?3, ?4, 'hash', ?1)",
+                params![
+                    id,
+                    &blob,
+                    crate::retrieval::embedding::LOCAL_EMBEDDING_DIMENSIONS as i64,
+                    LOCAL_EMBEDDING_MODEL
+                ],
+            )?;
+        }
+        conn.execute("COMMIT", [])?;
+
+        let ids = select_candidate_ids(
+            &conn,
+            VectorSearchFilters {
+                project: Some("/repo"),
+                ..VectorSearchFilters::default()
+            },
+            EmbeddingProfile {
+                model: LOCAL_EMBEDDING_MODEL,
+                dimensions: crate::retrieval::embedding::LOCAL_EMBEDDING_DIMENSIONS,
+            },
+            10,
+        )?;
+
+        assert_eq!(ids.len(), VECTOR_SEARCH_MIN_CANDIDATES);
+        assert!(
+            ids.iter().any(|id| *id > 900),
+            "bucket sampling should cover late id ranges, got max={:?}",
+            ids.iter().max()
+        );
+        Ok(())
+    }
 }

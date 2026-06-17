@@ -51,6 +51,12 @@ pub(in crate::context) fn build_context_debug_trace(
         stats.sessions.chars,
         stats.workstreams.chars
     ));
+    if !stats.timings.is_empty() {
+        trace.push_str(&format!(
+            "- timings {}\n",
+            crate::perf::format_phase_timings(&stats.timings)
+        ));
+    }
     trace.push_str(&format!(
         "- context diagnostics candidate_pool_total={} current_rows={} selected_ids=[{}]\n",
         loaded.diagnostics.candidate_pool_total,

@@ -107,6 +107,7 @@ fn sample_explain() -> SearchExplain {
         }],
         has_more: false,
         raw_fallback_count: 0,
+        timings: vec![],
     }
 }
 

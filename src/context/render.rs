@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::time::Instant;
 
 use anyhow::Result;
 
@@ -14,18 +14,18 @@ use super::injection_gate::{
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
-use super::policy::{ContextLimits, ContextPolicy, SectionKind};
+use super::policy::{ContextPolicy, SectionKind};
 use super::query::load_context_data_with_policy;
 use super::sections::{
     empty_state_output, render_core_memory_with_limits_and_staleness,
-    render_lessons_with_limit_and_staleness, render_lessons_with_summary_and_staleness,
-    render_memory_index_with_limits_excluding_and_staleness,
-    render_memory_index_with_summary_and_staleness, render_recent_sessions_with_limit,
-    render_workstreams_with_limits, render_workstreams_with_summary,
+    render_lessons_with_summary_and_staleness, render_memory_index_with_summary_and_staleness,
+    render_recent_sessions_with_limit, render_workstreams_with_summary,
 };
 use super::types::{ContextLoadError, ContextRequest};
+mod eval;
 mod stats;
 mod timer;
+pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
 pub(in crate::context) use stats::{ContextRenderStats, SectionRenderStats};
 use timer::log_context_timer;
 
@@ -35,165 +35,6 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
     pub(in crate::context) stats: ContextRenderStats,
     pub(in crate::context) audit_items: Vec<ContextAuditItem>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ContextEvalSnapshot {
-    pub memory_topic_keys: Vec<String>,
-    pub memory_titles: Vec<String>,
-    pub rendered_output: String,
-    pub total_included: usize,
-    pub safe_owner_included: usize,
-    pub unsafe_owner_included: usize,
-    pub excluded_owner_titles: Vec<String>,
-}
-
-pub(crate) fn governance_eval_snapshot(
-    conn: &rusqlite::Connection,
-    project: &str,
-    current_branch: Option<&str>,
-) -> Result<ContextEvalSnapshot> {
-    let policy = ContextPolicy::from_limits(ContextLimits::default());
-    let loaded = load_context_data_with_policy(conn, project, current_branch, &policy, true);
-    let rendered_output = render_loaded_context_for_eval(conn, project, &policy, &loaded)?;
-    let rendered_memories = loaded
-        .memories
-        .iter()
-        .filter(|memory| rendered_output.contains(&memory.title))
-        .collect::<Vec<_>>();
-    let memory_topic_keys = rendered_memories
-        .iter()
-        .filter_map(|memory| memory.topic_key.clone())
-        .collect::<Vec<_>>();
-    let memory_titles = rendered_memories
-        .iter()
-        .map(|memory| memory.title.clone())
-        .collect::<Vec<_>>();
-    let unsafe_owner_included = loaded
-        .owner_traces
-        .iter()
-        .filter(|trace| trace.included)
-        .filter(|trace| !matches!(trace.owner_scope.as_deref(), Some("repo") | None))
-        .count();
-    let excluded_owner_titles = loaded
-        .owner_traces
-        .iter()
-        .filter(|trace| !trace.included)
-        .map(|trace| trace.title.clone())
-        .collect::<Vec<_>>();
-    let total_included = loaded.memories.len();
-
-    Ok(ContextEvalSnapshot {
-        memory_topic_keys,
-        memory_titles,
-        rendered_output,
-        total_included,
-        safe_owner_included: total_included.saturating_sub(unsafe_owner_included),
-        unsafe_owner_included,
-        excluded_owner_titles,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SessionStartEvalSnapshot {
-    pub rendered_output: String,
-    pub output_chars: usize,
-    pub memories_loaded: usize,
-    pub core_count: usize,
-    pub index_count: usize,
-    pub lesson_count: usize,
-    pub preference_count: usize,
-    pub session_count: usize,
-    pub workstream_count: usize,
-    pub truncated: bool,
-}
-
-pub(crate) fn session_start_eval_snapshot(
-    cwd: &str,
-    project: &str,
-    current_branch: Option<&str>,
-    host: &str,
-) -> Result<SessionStartEvalSnapshot> {
-    let request = ContextRequest {
-        cwd: cwd.to_string(),
-        project: project.to_string(),
-        session_id: Some("eval-session-start".to_string()),
-        hook_source: Some("SessionStart".to_string()),
-        current_branch: current_branch.map(str::to_string),
-        host: super::host::resolve_host_kind(Some(host)),
-        use_colors: false,
-    };
-    let policy = ContextPolicy::from_limits(ContextLimits::default());
-    let rendered = match open_context_connection_or_error(&request, &policy) {
-        Ok(conn) => render_context_output_with_policy(&conn, &request, false, policy)?,
-        Err(rendered) => *rendered,
-    };
-    Ok(SessionStartEvalSnapshot {
-        rendered_output: rendered.output,
-        output_chars: rendered.stats.output_chars,
-        memories_loaded: rendered.stats.memories_loaded,
-        core_count: rendered.stats.core.count,
-        index_count: rendered.stats.index.count,
-        lesson_count: rendered.stats.lessons.count,
-        preference_count: rendered.stats.preferences.count,
-        session_count: rendered.stats.sessions.count,
-        workstream_count: rendered.stats.workstreams.count,
-        truncated: rendered.stats.truncated,
-    })
-}
-
-fn render_loaded_context_for_eval(
-    conn: &rusqlite::Connection,
-    project: &str,
-    policy: &ContextPolicy,
-    loaded: &super::types::LoadedContext,
-) -> Result<String> {
-    let (preference_output, _) = render_preferences_to_buffer(conn, project, project, policy)?;
-    let mut output = preference_output;
-
-    render_context_load_errors(&mut output, &loaded.errors);
-    if !loaded.lessons.is_empty() {
-        render_lessons_with_limit_and_staleness(
-            &mut output,
-            &loaded.lessons,
-            policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
-            policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
-            &loaded.staleness_labels,
-        );
-    }
-    if !loaded.memories.is_empty() {
-        let render_limits = section_render_limits(policy);
-        let core_summary = render_core_memory_with_limits_and_staleness(
-            &mut output,
-            &loaded.memories,
-            &render_limits,
-            &loaded.staleness_labels,
-        );
-        let core_ids: HashSet<i64> = core_summary.ids.into_iter().collect();
-        render_memory_index_with_limits_excluding_and_staleness(
-            &mut output,
-            &loaded.memories,
-            &render_limits,
-            &core_ids,
-            &loaded.staleness_labels,
-        );
-    }
-    if !loaded.workstreams.is_empty() {
-        render_workstreams_with_limits(
-            &mut output,
-            &loaded.workstreams,
-            policy.section_item_limit(SectionKind::Workstreams, 5),
-            policy.section_char_limit(SectionKind::Workstreams, 1_200),
-        );
-    }
-    if !loaded.summaries.is_empty() {
-        render_recent_sessions_with_limit(
-            &mut output,
-            &loaded.summaries,
-            policy.section_char_limit(SectionKind::Sessions, 2_200),
-        );
-    }
-    Ok(output)
 }
 
 pub fn generate_context(
@@ -241,6 +82,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         use_colors: invocation.use_colors,
     };
     let policy = resolve_profile(request.host).default_policy();
+    let db_open_start = Instant::now();
     let conn = match open_context_connection_or_error(&request, &policy) {
         Ok(conn) => conn,
         Err(rendered) => {
@@ -283,34 +125,39 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             return Ok(());
         }
     };
-    let (mut decision, stats, precheck, audit_items) = if use_gate {
+    let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
+    let (mut decision, mut stats, precheck, audit_items) = if use_gate {
+        let precheck_start = Instant::now();
         let precheck =
             pre_render_context_gate(&conn, &invocation, &request, &policy, debug_enabled);
+        let precheck_timing = crate::perf::PhaseTiming::elapsed("pre_render_gate", precheck_start);
         if let Some(decision) = precheck.decision {
-            (
-                decision,
-                ContextRenderStats::default(),
-                precheck.precheck,
-                Vec::new(),
-            )
+            let mut stats = ContextRenderStats::default();
+            stats.timings.push(db_open_timing.clone());
+            stats.timings.push(precheck_timing);
+            (decision, stats, precheck.precheck, Vec::new())
         } else {
             let rendered =
                 render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
+            let mut stats = rendered.stats;
+            stats.timings.insert(0, precheck_timing);
+            stats.timings.insert(0, db_open_timing.clone());
+            let gate_start = Instant::now();
             let decision = apply_context_gate_with_data_version(
                 &conn,
                 &invocation,
                 rendered.output,
                 precheck.data_version.as_deref(),
             );
-            (
-                decision,
-                rendered.stats,
-                precheck.precheck,
-                rendered.audit_items,
-            )
+            stats
+                .timings
+                .push(crate::perf::PhaseTiming::elapsed("gate_apply", gate_start));
+            (decision, stats, precheck.precheck, rendered.audit_items)
         }
     } else {
         let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
+        let mut stats = rendered.stats;
+        stats.timings.insert(0, db_open_timing.clone());
         (
             ContextGateDecision {
                 output: rendered.output,
@@ -320,7 +167,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 context_hash: None,
                 output_mode: None,
             },
-            rendered.stats,
+            stats,
             ContextGatePrecheck::Off,
             rendered.audit_items,
         )
@@ -330,6 +177,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
     if !audit_items.is_empty() {
+        let audit_write_start = Instant::now();
         if let Err(error) =
             record_context_injection_items(&conn, &invocation, &decision, &audit_items)
         {
@@ -338,6 +186,10 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 &format!("failed to write audit rows: {error}"),
             );
         }
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "audit_write",
+            audit_write_start,
+        ));
     }
     print!("{}", decision.output);
     log_context_timer(timer, &request, &decision, &stats, precheck);
@@ -403,7 +255,9 @@ fn render_context_output_with_policy(
     debug: bool,
     policy: ContextPolicy,
 ) -> Result<RenderedContext> {
+    let render_total_start = Instant::now();
     let profile = resolve_profile(request.host);
+    let load_start = Instant::now();
     let mut loaded = load_context_data_with_policy(
         conn,
         &request.project,
@@ -411,6 +265,8 @@ fn render_context_output_with_policy(
         &policy,
         debug,
     );
+    let load_timing = crate::perf::PhaseTiming::elapsed("load_context_data", load_start);
+    let preference_start = Instant::now();
     let (preference_output, preference_details) =
         match render_preferences_to_buffer(conn, &request.project, &request.cwd, &policy) {
             Ok(rendered) => rendered,
@@ -429,6 +285,8 @@ fn render_context_output_with_policy(
                 )
             }
         };
+    let preference_timing =
+        crate::perf::PhaseTiming::elapsed("render_preferences", preference_start);
     let preference_summary = preference_details.summary;
 
     if preference_summary.rendered == 0
@@ -480,15 +338,23 @@ fn render_context_output_with_policy(
         },
         ..ContextRenderStats::default()
     };
+    stats.timings.push(load_timing);
+    stats.timings.push(preference_timing);
 
+    let section_start = Instant::now();
     let before = char_len(&output);
     output.push_str(&preference_output);
     stats.preferences = SectionRenderStats {
         count: preference_summary.rendered,
         chars: char_len(&output).saturating_sub(before),
     };
+    stats.timings.push(crate::perf::PhaseTiming::elapsed(
+        "section_preferences",
+        section_start,
+    ));
 
     if !loaded.lessons.is_empty() {
+        let section_start = Instant::now();
         let before = char_len(&output);
         let lesson_summary = render_lessons_with_summary_and_staleness(
             &mut output,
@@ -502,9 +368,14 @@ fn render_context_output_with_policy(
             count: lesson_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "section_lessons",
+            section_start,
+        ));
     }
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(&policy);
+        let section_start = Instant::now();
         let before = char_len(&output);
         let core_summary = render_core_memory_with_limits_and_staleness(
             &mut output,
@@ -518,6 +389,11 @@ fn render_context_output_with_policy(
             count: core_count,
             chars: char_len(&output).saturating_sub(before),
         };
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "section_core",
+            section_start,
+        ));
+        let section_start = Instant::now();
         let before = char_len(&output);
         let core_ids = core_summary.ids.into_iter().collect();
         let index_summary = render_memory_index_with_summary_and_staleness(
@@ -532,8 +408,13 @@ fn render_context_output_with_policy(
             count: index_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "section_index",
+            section_start,
+        ));
     }
     if !loaded.workstreams.is_empty() {
+        let section_start = Instant::now();
         let before = char_len(&output);
         let workstream_summary = render_workstreams_with_summary(
             &mut output,
@@ -546,8 +427,13 @@ fn render_context_output_with_policy(
             count: workstream_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "section_workstreams",
+            section_start,
+        ));
     }
     if !loaded.summaries.is_empty() {
+        let section_start = Instant::now();
         let before = char_len(&output);
         let session_count = render_recent_sessions_with_limit(
             &mut output,
@@ -558,9 +444,14 @@ fn render_context_output_with_policy(
             count: session_count,
             chars: char_len(&output).saturating_sub(before),
         };
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "section_sessions",
+            section_start,
+        ));
     }
 
     if debug {
+        let diagnostics_start = Instant::now();
         super::diagnostics::apply_preference_diagnostics(
             conn,
             &request.project,
@@ -569,6 +460,10 @@ fn render_context_output_with_policy(
         );
         output.push_str(&build_context_debug_trace(
             request, &policy, &loaded, &stats,
+        ));
+        stats.timings.push(crate::perf::PhaseTiming::elapsed(
+            "debug_trace",
+            diagnostics_start,
         ));
     }
 
@@ -584,6 +479,7 @@ fn render_context_output_with_policy(
         policy.limits.total_char_limit,
         &stats_footer,
     );
+    let audit_start = Instant::now();
     let audit_items = build_context_audit_items(
         &loaded,
         &stats.core_ids,
@@ -591,6 +487,14 @@ fn render_context_output_with_policy(
         &lesson_ids,
         &workstream_ids,
     );
+    stats.timings.push(crate::perf::PhaseTiming::elapsed(
+        "audit_items",
+        audit_start,
+    ));
+    stats.timings.push(crate::perf::PhaseTiming::elapsed(
+        "render_total",
+        render_total_start,
+    ));
     Ok(RenderedContext {
         output,
         stats,
