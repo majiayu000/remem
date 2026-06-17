@@ -48,6 +48,8 @@ pub struct SearchExplainChannel {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates_scanned: Option<usize>,
     pub hits: Vec<ChannelHit>,
 }
 

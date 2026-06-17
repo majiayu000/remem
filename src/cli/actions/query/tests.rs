@@ -80,6 +80,7 @@ fn sample_explain() -> SearchExplain {
             name: "fts".to_string(),
             enabled: true,
             disabled_reason: None,
+            candidates_scanned: None,
             hits: vec![crate::retrieval::search::ChannelHit {
                 memory_id: 1,
                 rank: 1,

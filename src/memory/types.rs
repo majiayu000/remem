@@ -388,6 +388,8 @@ pub mod tests_helper {
             );
             CREATE INDEX idx_memory_embeddings_model
                 ON memory_embeddings(model, updated_at_epoch);
+            CREATE INDEX idx_memory_embeddings_profile_memory_id
+                ON memory_embeddings(model, dimensions, memory_id);
             CREATE TABLE memory_operation_log (
                 id INTEGER PRIMARY KEY,
                 operation TEXT NOT NULL,

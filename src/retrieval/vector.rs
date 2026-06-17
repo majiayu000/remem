@@ -20,6 +20,7 @@ pub struct VectorSearchOutcome {
     pub hits: Vec<VectorHit>,
     pub disabled_reason: Option<String>,
     pub candidates_scanned: usize,
+    pub timings: Vec<crate::perf::PhaseTiming>,
 }
 
 impl VectorSearchOutcome {
@@ -28,6 +29,19 @@ impl VectorSearchOutcome {
             hits: vec![],
             disabled_reason: Some(reason.into()),
             candidates_scanned: 0,
+            timings: vec![],
+        }
+    }
+
+    fn disabled_with_timings(
+        reason: impl Into<String>,
+        timings: Vec<crate::perf::PhaseTiming>,
+    ) -> Self {
+        Self {
+            hits: vec![],
+            disabled_reason: Some(reason.into()),
+            candidates_scanned: 0,
+            timings,
         }
     }
 
@@ -37,10 +51,19 @@ impl VectorSearchOutcome {
     }
 
     pub fn ready_with_scan_count(hits: Vec<VectorHit>, candidates_scanned: usize) -> Self {
+        Self::ready_with_scan_count_and_timings(hits, candidates_scanned, vec![])
+    }
+
+    fn ready_with_scan_count_and_timings(
+        hits: Vec<VectorHit>,
+        candidates_scanned: usize,
+        timings: Vec<crate::perf::PhaseTiming>,
+    ) -> Self {
         Self {
             hits,
             disabled_reason: None,
             candidates_scanned,
+            timings,
         }
     }
 }
@@ -279,70 +302,91 @@ pub fn vector_search_embedding_filtered(
             "memory_embeddings table is missing; run migrations/backfill",
         ));
     }
+    let mut timings = Vec::new();
     let profile = query_embedding.profile();
-    let candidate_ids =
-        super::vector_candidates::select_candidate_ids(conn, filters, profile, limit)?;
+    let candidate_ids = crate::perf::time_result(&mut timings, "vector_select_candidates", || {
+        super::vector_candidates::select_candidate_ids(conn, filters, profile, limit)
+    })?;
     let candidates_scanned = candidate_ids.len();
     if candidate_ids.is_empty() {
         if super::vector_candidates::matching_memory_count(conn, filters)? > 0 {
             if embedding_count(conn)? == 0 {
-                return Ok(VectorSearchOutcome::disabled(
+                return Ok(VectorSearchOutcome::disabled_with_timings(
                     "memory_embeddings table is empty; run `remem reindex-embeddings --limit 1000`",
+                    timings,
                 ));
             }
-            return Ok(VectorSearchOutcome::disabled(format!(
-                "memory_embeddings has no rows for model={} dimensions={}; run `remem reindex-embeddings --limit 1000`",
-                profile.model, profile.dimensions
-            )));
+            return Ok(VectorSearchOutcome::disabled_with_timings(
+                format!(
+                    "memory_embeddings has no rows for model={} dimensions={}; run `remem reindex-embeddings --limit 1000`",
+                    profile.model, profile.dimensions
+                ),
+                timings,
+            ));
         }
-        return Ok(VectorSearchOutcome::ready_with_scan_count(vec![], 0));
+        return Ok(VectorSearchOutcome::ready_with_scan_count_and_timings(
+            vec![],
+            0,
+            timings,
+        ));
     }
     let placeholders = std::iter::repeat_n("?", candidate_ids.len())
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
         "SELECT memory_id, embedding, dimensions
-         FROM memory_embeddings
-         WHERE memory_id IN ({placeholders})
-           AND model = ?
-           AND dimensions = ?"
+         FROM memory_embeddings INDEXED BY idx_memory_embeddings_profile_memory_id
+         WHERE model = ?
+           AND dimensions = ?
+           AND memory_id IN ({placeholders})"
     );
-    let mut param_values = candidate_ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect::<Vec<_>>();
-    param_values.push(Box::new(profile.model.to_string()));
-    param_values.push(Box::new(profile.dimensions as i64));
-    let refs = crate::db::to_sql_refs(&param_values);
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(refs.as_slice(), |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, Vec<u8>>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+        Box::new(profile.model.to_string()),
+        Box::new(profile.dimensions as i64),
+    ];
+    param_values.extend(
+        candidate_ids
+            .iter()
+            .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>),
+    );
+    let candidates = crate::perf::time_result(&mut timings, "vector_load_embeddings", || {
+        let refs = crate::db::to_sql_refs(&param_values);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        crate::db::query::collect_rows(rows)
     })?;
-    let candidates = crate::db::query::collect_rows(rows)?;
-    let mut hits = Vec::new();
-    for (memory_id, blob, dimensions) in candidates {
-        let embedding = decode_embedding(&blob, dimensions)
-            .with_context(|| format!("invalid embedding blob for memory id={memory_id}"))?;
-        let distance = cosine_distance(query_embedding.values(), &embedding)?;
-        hits.push(VectorHit {
-            memory_id,
-            distance,
+    let mut hits = crate::perf::time_result(&mut timings, "vector_decode_cosine", || {
+        let mut hits = Vec::new();
+        for (memory_id, blob, dimensions) in candidates {
+            let embedding = decode_embedding(&blob, dimensions)
+                .with_context(|| format!("invalid embedding blob for memory id={memory_id}"))?;
+            let distance = cosine_distance(query_embedding.values(), &embedding)?;
+            hits.push(VectorHit {
+                memory_id,
+                distance,
+            });
+        }
+        Ok(hits)
+    })?;
+    crate::perf::time_value(&mut timings, "vector_sort_truncate", || {
+        hits.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.memory_id.cmp(&b.memory_id))
         });
-    }
-    hits.sort_by(|a, b| {
-        a.distance
-            .partial_cmp(&b.distance)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.memory_id.cmp(&b.memory_id))
+        hits.truncate(limit);
     });
-    hits.truncate(limit);
-    Ok(VectorSearchOutcome::ready_with_scan_count(
+    Ok(VectorSearchOutcome::ready_with_scan_count_and_timings(
         hits,
         candidates_scanned,
+        timings,
     ))
 }
 
@@ -375,7 +419,9 @@ fn create_embedding_table(conn: &Connection) -> Result<()> {
              FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
          );
          CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model
-             ON memory_embeddings(model, updated_at_epoch);",
+             ON memory_embeddings(model, updated_at_epoch);
+         CREATE INDEX IF NOT EXISTS idx_memory_embeddings_profile_memory_id
+             ON memory_embeddings(model, dimensions, memory_id);",
     )?;
     Ok(())
 }
