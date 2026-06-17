@@ -26,6 +26,7 @@ pub mod staleness;
 pub mod state_key;
 pub mod store;
 pub mod types;
+pub(crate) mod usage;
 
 pub use crate::retrieval::memory_search::{
     search_memories_fts, search_memories_fts_filtered, search_memories_fts_hits_filtered,

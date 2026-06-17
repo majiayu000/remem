@@ -225,6 +225,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_embeddings_profile_index",
         sql: include_str!("../migrations/v044_memory_embeddings_profile_index.sql"),
     },
+    Migration {
+        version: 45,
+        name: "memory_usage_columns",
+        sql: include_str!("../migrations/v045_memory_usage_columns.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

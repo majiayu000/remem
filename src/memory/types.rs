@@ -348,6 +348,8 @@ pub mod tests_helper {
                 status TEXT NOT NULL DEFAULT 'active',
                 branch TEXT,
                 scope TEXT DEFAULT 'project',
+                last_accessed_epoch INTEGER,
+                access_count INTEGER NOT NULL DEFAULT 0,
                 source_project TEXT,
                 target_project TEXT,
                 owner_scope TEXT,
@@ -390,6 +392,58 @@ pub mod tests_helper {
                 ON memory_embeddings(model, updated_at_epoch);
             CREATE INDEX idx_memory_embeddings_profile_memory_id
                 ON memory_embeddings(model, dimensions, memory_id);
+            CREATE TABLE context_injection_items (
+                id INTEGER PRIMARY KEY,
+                injection_run_id TEXT NOT NULL,
+                host TEXT NOT NULL,
+                project TEXT NOT NULL,
+                session_id TEXT,
+                injection_key TEXT NOT NULL,
+                hook_source TEXT,
+                context_hash TEXT,
+                output_mode TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                item_kind TEXT NOT NULL,
+                item_id INTEGER,
+                memory_id INTEGER,
+                channel TEXT NOT NULL,
+                score REAL,
+                render_order INTEGER,
+                status TEXT NOT NULL,
+                drop_reason TEXT,
+                title TEXT,
+                provenance TEXT,
+                staleness TEXT,
+                injected_at_epoch INTEGER NOT NULL
+            );
+            CREATE TABLE memory_citation_events (
+                id INTEGER PRIMARY KEY,
+                host TEXT NOT NULL,
+                project TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                message_hash TEXT NOT NULL,
+                citation_line_present INTEGER NOT NULL DEFAULT 0,
+                parsed_count INTEGER NOT NULL DEFAULT 0,
+                matched_count INTEGER NOT NULL DEFAULT 0,
+                inserted_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                created_at_epoch INTEGER NOT NULL,
+                UNIQUE(host, project, session_id, source, message_hash)
+            );
+            CREATE TABLE memory_usage_events (
+                id INTEGER PRIMARY KEY,
+                citation_event_id INTEGER NOT NULL,
+                host TEXT NOT NULL,
+                project TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                message_hash TEXT NOT NULL,
+                memory_id INTEGER NOT NULL,
+                context_injection_item_id INTEGER,
+                created_at_epoch INTEGER NOT NULL,
+                UNIQUE(host, project, session_id, source, message_hash, memory_id)
+            );
             CREATE TABLE memory_operation_log (
                 id INTEGER PRIMARY KEY,
                 operation TEXT NOT NULL,

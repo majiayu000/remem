@@ -27,6 +27,58 @@ fn test_memory_insert_and_query() {
 }
 
 #[test]
+fn mark_memories_accessed_updates_usage_columns_once_per_call() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let first = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        None,
+        "Usage target",
+        "Accessed through full-detail retrieval.",
+        "decision",
+        None,
+    )
+    .unwrap();
+    let second = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        None,
+        "Other target",
+        "Also accessed through full-detail retrieval.",
+        "decision",
+        None,
+    )
+    .unwrap();
+
+    mark_memories_accessed(&conn, &[first, second, first]).unwrap();
+    mark_memories_accessed(&conn, &[first]).unwrap();
+
+    let first_usage: (i64, Option<i64>) = conn
+        .query_row(
+            "SELECT access_count, last_accessed_epoch FROM memories WHERE id = ?1",
+            [first],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let second_usage: (i64, Option<i64>) = conn
+        .query_row(
+            "SELECT access_count, last_accessed_epoch FROM memories WHERE id = ?1",
+            [second],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(first_usage.0, 2);
+    assert!(first_usage.1.is_some());
+    assert_eq!(second_usage.0, 1);
+    assert!(second_usage.1.is_some());
+}
+
+#[test]
 fn test_memory_fts_search() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
