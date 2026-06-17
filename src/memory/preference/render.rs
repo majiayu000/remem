@@ -12,7 +12,7 @@ pub struct PreferenceRenderSummary {
     pub global_rendered: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct PreferenceRenderDetails {
     pub summary: PreferenceRenderSummary,
     pub rendered_ids: Vec<i64>,
@@ -140,7 +140,6 @@ pub(crate) fn render_preferences_with_context_details(
     let mut total_chars = 0usize;
     let mut summary = PreferenceRenderSummary::default();
     let mut rendered_ids = Vec::new();
-
     for &idx in &keep_indices {
         let (pref, source) = &all_prefs[idx];
         let text = pref.text.trim();

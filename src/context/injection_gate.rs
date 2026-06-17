@@ -8,10 +8,13 @@ use super::policy::ContextPolicy;
 use super::types::ContextRequest;
 
 mod data_version;
+mod data_version_hint;
 mod delta;
+mod hybrid_substrate_hint;
 mod pre_render;
 mod store;
 
+pub(in crate::context) use data_version_hint::compute_data_version_hint;
 pub(super) use pre_render::pre_render_context_gate;
 use store::{load_gate_row, record_suppression, upsert_emit_row, GateRow};
 

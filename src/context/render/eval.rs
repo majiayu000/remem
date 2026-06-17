@@ -4,10 +4,11 @@ use anyhow::Result;
 
 use super::{
     open_context_connection_or_error, render_context_load_errors,
-    render_context_output_with_policy, render_preferences_to_buffer, section_render_limits,
+    render_context_output_with_policy, section_render_limits,
 };
 use crate::context::policy::{ContextLimits, ContextPolicy, SectionKind};
 use crate::context::query::load_context_data_with_policy;
+use crate::context::render_inputs::render_preferences_to_buffer;
 use crate::context::sections::{
     render_core_memory_with_limits_and_staleness, render_lessons_with_limit_and_staleness,
     render_memory_index_with_limits_excluding_and_staleness, render_recent_sessions_with_limit,
@@ -103,7 +104,7 @@ pub(crate) fn session_start_eval_snapshot(
     };
     let policy = ContextPolicy::from_limits(ContextLimits::default());
     let rendered = match open_context_connection_or_error(&request, &policy) {
-        Ok(conn) => render_context_output_with_policy(&conn, &request, false, policy)?,
+        Ok(conn) => render_context_output_with_policy(&conn, &request, None, false, policy, None)?,
         Err(rendered) => *rendered,
     };
     Ok(SessionStartEvalSnapshot {

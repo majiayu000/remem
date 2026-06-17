@@ -657,15 +657,13 @@ mod tests {
 
     #[test]
     fn stable_worker_dir_absolutizes_relative_data_dir() -> anyhow::Result<()> {
-        let _test_dir = ScopedTestDataDir::new("summary-worker-relative-dir");
         let relative = std::path::PathBuf::from(format!(
             ".remem-summary-worker-relative-{}-{}",
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        std::env::set_var("REMEM_DATA_DIR", &relative);
 
-        let got = stable_worker_dir();
+        let got = db::with_data_dir(&relative, stable_worker_dir);
 
         assert_eq!(got, std::env::current_dir()?.join(&relative));
         assert!(got.is_absolute());

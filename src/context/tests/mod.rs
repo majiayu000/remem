@@ -3,6 +3,7 @@ use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
 mod diagnostics;
+mod gate_pipeline;
 mod load;
 mod ownership;
 mod render;

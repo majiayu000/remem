@@ -635,34 +635,6 @@ fn render_context_output_exposes_primary_memory_query_failures() {
 }
 
 #[test]
-fn strict_context_pipeline_opens_one_database_connection() -> anyhow::Result<()> {
-    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-single-db-open");
-    let setup = crate::db::test_support::runtime_connection()?;
-    drop(setup);
-
-    crate::db::test_support::reset_runtime_connection_open_count();
-    let cwd = data_dir.path.to_string_lossy().to_string();
-    let transcript_path = data_dir.path.join("transcript.jsonl");
-    let invocation = ContextInvocation {
-        cwd: cwd.clone(),
-        project: crate::db::project_from_cwd(&cwd),
-        session_id: Some("sess-single-db-open".to_string()),
-        transcript_path: Some(transcript_path.to_string_lossy().to_string()),
-        source: Some("session_start".to_string()),
-        host: HostKind::CodexCli,
-        use_colors: false,
-        debug: false,
-        force: false,
-        gate_mode: Some("strict".to_string()),
-    };
-
-    generate_context_for_test(invocation, true)?;
-
-    assert_eq!(crate::db::test_support::runtime_connection_open_count(), 1);
-    Ok(())
-}
-
-#[test]
 fn context_audit_rows_reconstruct_injected_memories_for_session() -> anyhow::Result<()> {
     let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-audit-injected");
     let conn = crate::db::test_support::runtime_connection()?;
