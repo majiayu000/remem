@@ -169,3 +169,50 @@ fn strict_context_pipeline_hybrid_fts_failure_does_not_suppress_existing_gate_ro
     assert_eq!(second_data_version, first_data_version);
     Ok(())
 }
+
+#[test]
+fn strict_context_pipeline_suppresses_with_null_fts_search_context() -> anyhow::Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("context-gate-null-search-context");
+    let conn = crate::db::test_support::runtime_connection()?;
+    let cwd = data_dir.path.to_string_lossy().to_string();
+    let project = crate::db::project_from_cwd(&cwd);
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, owner_scope, owner_key, target_project)
+         VALUES (1, 'sess-source', ?1, 'Null search context', 'Legacy row without search_context.',
+                 'decision', 1, 1, 'active', 'repo', ?1, ?1)",
+        params![project],
+    )?;
+    let stored_search_context: Option<String> = conn.query_row(
+        "SELECT search_context FROM memories WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(stored_search_context.is_none());
+    drop(conn);
+
+    let transcript_path = data_dir.path.join("transcript.jsonl");
+    let invocation = strict_invocation(&cwd, &transcript_path, "sess-null-search-context");
+    generate_context_for_test(invocation.clone(), true)?;
+
+    let conn = crate::db::test_support::runtime_connection()?;
+    let (first_suppress_count, first_data_version) = gate_row(&conn, "sess-null-search-context")?;
+    assert_eq!(first_suppress_count, 0);
+    assert!(first_data_version
+        .as_deref()
+        .is_some_and(|value| value.starts_with("v3:")));
+    drop(conn);
+
+    generate_context_for_test(invocation, true)?;
+
+    let conn = crate::db::test_support::runtime_connection()?;
+    let (second_suppress_count, second_data_version) = gate_row(&conn, "sess-null-search-context")?;
+    assert_eq!(
+        second_suppress_count, 1,
+        "strict pre-render should suppress using the stored data_version instead of rendering again"
+    );
+    assert_eq!(second_data_version, first_data_version);
+    Ok(())
+}

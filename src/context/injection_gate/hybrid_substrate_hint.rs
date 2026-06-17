@@ -31,7 +31,7 @@ fn push_fts_signal(
         if has_search_context { "1" } else { "0" },
     );
     let search_context_expr = if has_search_context {
-        "f.search_context"
+        "COALESCE(f.search_context, '')"
     } else {
         "''"
     };
@@ -246,5 +246,55 @@ impl SubstrateVersionBuilder {
 
     fn finish(self) -> String {
         format!("{:x}", self.hasher.finalize())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_conn(search_context: Option<&str>) -> Result<Connection> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                 id INTEGER PRIMARY KEY,
+                 project TEXT NOT NULL,
+                 title TEXT NOT NULL,
+                 content TEXT NOT NULL,
+                 search_context TEXT,
+                 updated_at_epoch INTEGER NOT NULL
+             );
+             CREATE VIRTUAL TABLE memories_fts USING fts5(
+                 title, content, search_context,
+                 content='memories',
+                 content_rowid='id',
+                 tokenize='trigram'
+             );",
+        )?;
+        conn.execute(
+            "INSERT INTO memories (id, project, title, content, search_context, updated_at_epoch)
+             VALUES (1, '/repo', 'Title', 'Body', ?1, 10)",
+            [search_context],
+        )?;
+        conn.execute(
+            "INSERT INTO memories_fts (rowid, title, content, search_context)
+             SELECT id, title, content, COALESCE(search_context, '')
+             FROM memories
+             WHERE id = 1",
+            [],
+        )?;
+        Ok(conn)
+    }
+
+    #[test]
+    fn fts_search_context_null_is_fingerprinted_as_empty() -> Result<()> {
+        let null_conn = setup_conn(None)?;
+        let empty_conn = setup_conn(Some(""))?;
+
+        let null_fingerprint = compute_hybrid_substrate_fingerprint(&null_conn, "/repo")?;
+        let empty_fingerprint = compute_hybrid_substrate_fingerprint(&empty_conn, "/repo")?;
+
+        assert_eq!(null_fingerprint, empty_fingerprint);
+        Ok(())
     }
 }
