@@ -39,6 +39,13 @@ pub(in crate::context) fn compute_data_version_hint(
 
     let now = chrono::Utc::now().timestamp();
     version.push("day_bucket", &(now / 86_400).to_string());
+    version.push(
+        "hybrid_substrate",
+        &super::hybrid_substrate_hint::compute_hybrid_substrate_fingerprint(
+            conn,
+            &request.project,
+        )?,
+    );
     push_commit_signal(conn, request, &mut version)?;
     push_memory_signal(conn, request, now, policy, &mut version)?;
     push_memory_state_key_signal(conn, &request.project, &mut version)?;
@@ -79,7 +86,7 @@ fn push_commit_signal(
         &recent_messages.len().to_string(),
     );
 
-    if !sqlite_table_exists(conn, "git_commits")? {
+    if !crate::retrieval::temporal::sqlite_table_exists(conn, "git_commits")? {
         version.push("git_commits_table", "missing");
         return Ok(());
     }
@@ -130,7 +137,7 @@ fn push_commit_signal(
     )?;
     push_rows("git_commit", rows, version)?;
 
-    if !sqlite_table_exists(conn, "git_commit_sessions")? {
+    if !crate::retrieval::temporal::sqlite_table_exists(conn, "git_commit_sessions")? {
         version.push("git_commit_sessions_table", "missing");
         return Ok(());
     }
@@ -272,7 +279,7 @@ fn push_memory_fact_signal(
     project: &str,
     version: &mut DataVersionHintBuilder,
 ) -> Result<()> {
-    if !sqlite_table_exists(conn, "memory_facts")? {
+    if !crate::retrieval::temporal::sqlite_table_exists(conn, "memory_facts")? {
         version.push("memory_facts_table", "missing");
         return Ok(());
     }
@@ -675,17 +682,6 @@ fn push_memory(
             memory.scope.clone(),
         ],
     );
-}
-
-fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool> {
-    Ok(conn.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM sqlite_master
-             WHERE type = 'table' AND name = ?1
-         )",
-        [table],
-        |row| row.get::<_, i64>(0),
-    )? != 0)
 }
 
 struct DataVersionHintBuilder {

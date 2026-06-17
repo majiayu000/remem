@@ -10,6 +10,7 @@ use super::types::ContextRequest;
 mod data_version;
 mod data_version_hint;
 mod delta;
+mod hybrid_substrate_hint;
 mod pre_render;
 mod store;
 
