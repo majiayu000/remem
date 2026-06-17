@@ -37,16 +37,44 @@ pub async fn process_summary_job_input(
         capture_raw_archive(&conn, &hook, &session_id, &project, cwd)
     });
 
-    let msg = time_value(&mut timings, "prepare_message", || {
-        let assistant_msg = hook
-            .last_assistant_message
+    let assistant_msg = time_value(&mut timings, "extract_assistant_message", || {
+        hook.last_assistant_message
             .clone()
             .or_else(|| {
                 hook.transcript_path
                     .as_deref()
                     .and_then(extract_last_assistant_message)
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    });
+    if !assistant_msg.is_empty() {
+        let usage_msg_hash = hash_message(&assistant_msg);
+        let usage_report = time_result(&mut timings, "memory_citations", || {
+            crate::memory::usage::record_stop_memory_citations(
+                &conn,
+                host,
+                &project,
+                &session_id,
+                &usage_msg_hash,
+                &assistant_msg,
+            )
+        })?;
+        if usage_report.parsed_count > 0 || usage_report.duplicate_event {
+            crate::log::info(
+                "summary-job",
+                &format!(
+                    "memory citations parsed={} matched={} inserted={} duplicate={} project={}",
+                    usage_report.parsed_count,
+                    usage_report.matched_count,
+                    usage_report.inserted_count,
+                    usage_report.duplicate_event,
+                    project
+                ),
+            );
+        }
+    }
+
+    let msg = time_value(&mut timings, "prepare_message", || {
         prepare_assistant_message(assistant_msg)
     });
     let Some(msg) = msg else {
@@ -54,6 +82,7 @@ pub async fn process_summary_job_input(
         log_summary_job_timing("no_message", &project, &timings);
         return Ok(());
     };
+    let msg_hash = hash_message(&msg);
 
     if time_result(&mut timings, "cooldown_check", || {
         db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)
@@ -67,7 +96,6 @@ pub async fn process_summary_job_input(
         return Ok(());
     }
 
-    let msg_hash = hash_message(&msg);
     if time_result(&mut timings, "duplicate_check", || {
         db::is_duplicate_message(&conn, &project, &msg_hash)
     })? {
@@ -347,6 +375,7 @@ fn log_summary_job_timing(status: &str, project: &str, timings: &[PhaseTiming]) 
 mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
+    use rusqlite::params;
 
     #[tokio::test]
     async fn bad_transcript_path_uses_last_assistant_message_hook_fallback() -> Result<()> {
@@ -379,6 +408,116 @@ mod tests {
         assert_eq!(path, missing_transcript.to_string_lossy());
         assert_eq!(kind, "read_error");
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_records_memory_citations_before_cooldown_skip() -> Result<()> {
+        let (_data_dir, cwd, memory_id) =
+            setup_cited_memory_session("summary-memory-citation", "session-citation")?;
+
+        let message = format!(
+            "This response is long enough for summary preparation and uses injected memory.\nMemory citations: memory:#{memory_id}"
+        );
+        let payload = serde_json::json!({
+            "session_id": "session-citation",
+            "cwd": cwd,
+            "last_assistant_message": message
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        assert_eq!(memory_usage_counts(memory_id)?, (1, 1, 1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_records_memory_citations_from_raw_tail_after_summary_truncation() -> Result<()>
+    {
+        let (_data_dir, cwd, memory_id) =
+            setup_cited_memory_session("summary-memory-citation-tail", "session-citation-tail")?;
+        let message = format!(
+            "{}\nMemory citations: memory:#{memory_id}",
+            "This long response pushes the citation past the summary truncation point. "
+                .repeat(220)
+        );
+        assert!(message.len() > 12_000);
+        let payload = serde_json::json!({
+            "session_id": "session-citation-tail",
+            "cwd": cwd,
+            "last_assistant_message": message
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        assert_eq!(memory_usage_counts(memory_id)?, (1, 1, 1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_records_memory_citations_before_summary_skip() -> Result<()> {
+        let (_data_dir, cwd, memory_id) =
+            setup_cited_memory_session("summary-memory-citation-skip", "session-citation-skip")?;
+        let payload = serde_json::json!({
+            "session_id": "session-citation-skip",
+            "cwd": cwd,
+            "last_assistant_message": format!("<skip_summary />\nMemory citations: memory:#{memory_id}")
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        assert_eq!(memory_usage_counts(memory_id)?, (1, 1, 1));
+        Ok(())
+    }
+
+    fn setup_cited_memory_session(
+        test_name: &str,
+        session_id: &str,
+    ) -> Result<(ScopedTestDataDir, String, i64)> {
+        let data_dir = ScopedTestDataDir::new(test_name);
+        std::fs::create_dir_all(&data_dir.path)?;
+        let cwd = std::fs::canonicalize(&data_dir.path)?
+            .to_string_lossy()
+            .to_string();
+        let project = db::project_from_cwd(&cwd);
+        let conn = db::open_db()?;
+        let memory_id = crate::memory::insert_memory(
+            &conn,
+            Some("seed-session"),
+            &project,
+            None,
+            "Usage target",
+            "The assistant should cite this injected memory.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "INSERT INTO context_injection_items
+             (injection_run_id, host, project, session_id, injection_key, output_mode,
+              decision, item_kind, item_id, memory_id, channel, render_order, status,
+              title, provenance, staleness, injected_at_epoch)
+             VALUES ('run-1', 'codex-cli', ?1, ?2, 'key-1', 'full',
+                     'emitted', 'memory', ?3, ?3, 'core', 1, 'injected',
+                     'Usage target', 'src=memory', 'current', 100)",
+            params![project, session_id, memory_id],
+        )?;
+        conn.execute(
+            "INSERT INTO summarize_cooldown(project, last_summarize_epoch, last_message_hash)
+             VALUES (?1, ?2, NULL)",
+            params![project, chrono::Utc::now().timestamp()],
+        )?;
+        Ok((data_dir, cwd, memory_id))
+    }
+
+    fn memory_usage_counts(memory_id: i64) -> Result<(i64, i64, i64)> {
+        let conn = db::open_db()?;
+        Ok(conn.query_row(
+            "SELECT
+                 (SELECT COUNT(*) FROM memory_citation_events),
+                 (SELECT COUNT(*) FROM memory_usage_events),
+                 (SELECT access_count FROM memories WHERE id = ?1)",
+            [memory_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?)
     }
 
     #[test]

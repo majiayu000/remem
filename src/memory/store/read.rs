@@ -8,6 +8,31 @@ pub fn get_recent_memories(conn: &Connection, project: &str, limit: i64) -> Resu
     list_memories(conn, project, None, limit, 0, false, None)
 }
 
+pub fn mark_memories_accessed(conn: &Connection, ids: &[i64]) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let placeholders = (2..ids.len() + 2)
+        .map(|idx| format!("?{idx}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "UPDATE memories
+         SET last_accessed_epoch = ?1,
+             access_count = COALESCE(access_count, 0) + 1
+         WHERE id IN ({placeholders})"
+    );
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now)];
+    params.extend(
+        ids.iter()
+            .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>),
+    );
+    let refs = crate::db::to_sql_refs(&params);
+    Ok(conn.execute(&sql, refs.as_slice())?)
+}
+
 pub fn get_recent_memories_excluding_types(
     conn: &Connection,
     project: &str,

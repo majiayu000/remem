@@ -11,8 +11,10 @@ use tower::ServiceExt;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
-use super::handlers::{handle_search, handle_status, search_request_from_params};
-use super::types::SearchParams;
+use super::handlers::{
+    handle_get_memory, handle_search, handle_status, search_request_from_params,
+};
+use super::types::{SearchParams, ShowParams};
 use super::DbState;
 
 fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
@@ -154,6 +156,41 @@ async fn search_handler_hides_inactive_memories_by_default() -> anyhow::Result<(
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     assert_eq!(titles, vec!["aurora active"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_memory_handler_marks_memory_accessed() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-get-memory-usage");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-usage"),
+        "proj-a",
+        None,
+        "usage target",
+        "single-memory API detail reads should update usage columns",
+        "decision",
+        None,
+    )?;
+    drop(conn);
+
+    let response = handle_get_memory(
+        State(DbState),
+        axum::extract::Query(ShowParams { id: memory_id }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let conn = db::open_db()?;
+    let usage: (i64, Option<i64>) = conn.query_row(
+        "SELECT access_count, last_accessed_epoch FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(usage.0, 1);
+    assert!(usage.1.is_some());
     Ok(())
 }
 

@@ -521,6 +521,44 @@ fn get_observations_attaches_topic_trace_for_memory_topic_key() {
 }
 
 #[test]
+fn get_observations_marks_memory_accessed() {
+    let _dir = ScopedTestDataDir::new("mcp-memory-usage");
+    let conn = crate::db::open_db().expect("db opens");
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-usage"),
+        "/repo",
+        None,
+        "Usage target",
+        "Full-detail retrieval should update usage columns.",
+        "decision",
+        None,
+    )
+    .expect("memory insert succeeds");
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    server
+        .get_observations(Parameters(GetObservationsParams {
+            ids: vec![memory_id],
+            project: Some("/repo".to_string()),
+            source: Some("memory".to_string()),
+        }))
+        .expect("expansion succeeds");
+
+    let conn = crate::db::open_db().expect("db reopens");
+    let usage: (i64, Option<i64>) = conn
+        .query_row(
+            "SELECT access_count, last_accessed_epoch FROM memories WHERE id = ?1",
+            [memory_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("usage row loads");
+    assert_eq!(usage.0, 1);
+    assert!(usage.1.is_some());
+}
+
+#[test]
 fn search_labels_sparse_result_raw_fallback_as_raw_archive() {
     let _dir = ScopedTestDataDir::new("mcp-search-raw-fallback");
     let conn = crate::db::open_db().expect("db opens");

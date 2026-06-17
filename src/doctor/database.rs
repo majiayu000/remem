@@ -237,6 +237,74 @@ pub(super) fn check_capture_drops(conn: Option<&Connection>) -> Check {
     Check::new("Capture drops", Status::Warn, detail)
 }
 
+pub(super) fn check_memory_usage_feedback(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new(
+            "Memory usage feedback",
+            Status::Warn,
+            "cannot open database",
+        );
+    };
+
+    let stats = match crate::memory::usage::query_memory_usage_feedback_stats(conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check::new(
+                "Memory usage feedback",
+                Status::Warn,
+                format!("cannot load citation usage stats: {}", err),
+            );
+        }
+    };
+    if stats.total_events == 0 {
+        let active_memories = match active_memory_count(conn) {
+            Ok(count) => count,
+            Err(err) => {
+                return Check::new(
+                    "Memory usage feedback",
+                    Status::Warn,
+                    format!("cannot count active memories: {}", err),
+                );
+            }
+        };
+        if active_memories == 0 {
+            return Check::new(
+                "Memory usage feedback",
+                Status::Ok,
+                "no citation events yet because this store has no active memories",
+            );
+        }
+        return Check::new(
+            "Memory usage feedback",
+            Status::Warn,
+            format!(
+                "no Stop citation events recorded yet for {} active memor{}; citation usage stays empty until agents cite injected memories; full-detail reads may still update access_count",
+                active_memories,
+                if active_memories == 1 { "y" } else { "ies" }
+            ),
+        );
+    }
+
+    let detail = format!(
+        "{} citation event(s), parsed={} ({:.1}%), matched={} ({:.1}% of parsed), usage_events={}",
+        stats.total_events,
+        stats.parsed_events,
+        percent(stats.parsed_events, stats.total_events),
+        stats.matched_events,
+        percent(stats.matched_events, stats.parsed_events),
+        stats.usage_events
+    );
+    if stats.inserted_events == 0 {
+        Check::new(
+            "Memory usage feedback",
+            Status::Warn,
+            format!("{detail}; no cited injected memories produced citation usage events"),
+        )
+    } else {
+        Check::new("Memory usage feedback", Status::Ok, detail)
+    }
+}
+
 pub(super) fn check_declared_empty_surfaces(conn: Option<&Connection>) -> Check {
     let Some(conn) = conn else {
         return Check::new(
@@ -444,6 +512,14 @@ fn table_count(conn: &Connection, table: &str) -> Result<i64, rusqlite::Error> {
     conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
         row.get(0)
     })
+}
+
+fn active_memory_count(conn: &Connection) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )
 }
 
 pub(super) fn check_worker_daemon(conn: Option<&Connection>) -> Check {

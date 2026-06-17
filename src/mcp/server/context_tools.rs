@@ -165,11 +165,20 @@ impl MemoryServer {
                         &params.ids,
                         memories.iter().map(|memory| memory.id),
                     )?;
-                    memory_details_with_topic_traces(conn, &memories, params.project.as_deref())
-                        .map_err(|e| {
-                            crate::log::warn("mcp", &format!("load topic traces failed: {}", e));
-                            McpToolError::db_query(TOOL, e)
-                        })?
+                    let details = memory_details_with_topic_traces(
+                        conn,
+                        &memories,
+                        params.project.as_deref(),
+                    )
+                    .map_err(|e| {
+                        crate::log::warn("mcp", &format!("load topic traces failed: {}", e));
+                        McpToolError::db_query(TOOL, e)
+                    })?;
+                    memory::mark_memories_accessed(conn, &params.ids).map_err(|e| {
+                        crate::log::warn("mcp", &format!("mark_memories_accessed failed: {}", e));
+                        McpToolError::db_query(TOOL, e)
+                    })?;
+                    details
                 }
                 other => {
                     return Err(McpToolError::unsupported_source(

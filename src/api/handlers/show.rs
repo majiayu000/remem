@@ -21,7 +21,16 @@ pub(in crate::api) async fn handle_get_memory(
 
     match memory::get_memories_by_ids(&conn, &[params.id], None) {
         Ok(results) if !results.is_empty() => {
-            Json(memory_to_item_with_conn(&conn, &results[0])).into_response()
+            let item = memory_to_item_with_conn(&conn, &results[0]);
+            if let Err(err) = memory::mark_memories_accessed(&conn, &[params.id]) {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "db_error",
+                    &err.to_string(),
+                )
+                .into_response();
+            }
+            Json(item).into_response()
         }
         Ok(_) => {
             error_response(StatusCode::NOT_FOUND, "not_found", "Memory not found").into_response()

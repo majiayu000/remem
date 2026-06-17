@@ -161,6 +161,8 @@ fn render_prompt_submit_context(
     staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
 ) -> String {
     let mut output = String::from("# remem prompt context\n\n## Relevant Memories\n");
+    output.push_str(crate::memory::usage::citation_contract_line());
+    output.push('\n');
     let now = chrono::Utc::now().timestamp();
     for memory in memories {
         let header = format!(
