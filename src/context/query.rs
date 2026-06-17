@@ -125,23 +125,27 @@ fn load_staleness_labels(
     memories: &[Memory],
 ) -> std::collections::HashMap<i64, memory::MemoryStalenessLabel> {
     let now_epoch = chrono::Utc::now().timestamp();
-    memories
-        .iter()
-        .map(|memory| {
-            let label = memory::memory_staleness_label_with_conn(conn, memory, now_epoch)
-                .unwrap_or_else(|error| {
-                    crate::log::warn(
-                        "context",
-                        &format!(
-                            "source-anchor staleness label fallback for memory {}: {error}",
-                            memory.id
-                        ),
-                    );
-                    memory::memory_staleness_label(memory, now_epoch)
-                });
-            (memory.id, label)
-        })
-        .collect()
+    memory::staleness::memory_staleness_labels_for_memories_lossy(
+        conn,
+        memories,
+        now_epoch,
+        |id, error| {
+            crate::log::warn(
+                "context",
+                &format!("source-anchor staleness label fallback for memory {id}: {error}"),
+            );
+        },
+    )
+    .unwrap_or_else(|error| {
+        crate::log::warn(
+            "context",
+            &format!("source-anchor staleness batch fallback: {error}"),
+        );
+        memories
+            .iter()
+            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
+            .collect()
+    })
 }
 
 struct ContextMemorySelection {

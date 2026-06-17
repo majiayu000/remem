@@ -29,6 +29,41 @@ pub(super) fn memory_to_item_with_conn(
     memory_to_item_with_staleness(memory, staleness)
 }
 
+pub(super) fn memories_to_items_with_conn(
+    conn: &rusqlite::Connection,
+    memories: &[memory::Memory],
+) -> Vec<MemoryItem> {
+    let now_epoch = chrono::Utc::now().timestamp();
+    let staleness_labels = memory::staleness::memory_staleness_labels_for_memories_lossy(
+        conn,
+        memories,
+        now_epoch,
+        |id, error| {
+            crate::log::warn(
+                "api",
+                &format!("memory {id} staleness source-anchor lookup failed: {error}"),
+            );
+        },
+    )
+    .unwrap_or_else(|error| {
+        crate::log::warn("api", &format!("staleness batch fallback: {error}"));
+        memories
+            .iter()
+            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
+            .collect()
+    });
+    memories
+        .iter()
+        .map(|memory| {
+            let staleness = staleness_labels
+                .get(&memory.id)
+                .cloned()
+                .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch));
+            memory_to_item_with_staleness(memory, staleness)
+        })
+        .collect()
+}
+
 fn memory_to_item_with_staleness(
     memory: &memory::Memory,
     staleness: memory::MemoryStalenessLabel,

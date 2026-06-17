@@ -107,28 +107,46 @@ impl MemoryServer {
                 explain,
                 raw_hits,
             } = search_set;
+            let staleness_labels = if requested_explain {
+                let now_epoch = chrono::Utc::now().timestamp();
+                crate::memory::staleness::memory_staleness_labels_for_memories_lossy(
+                    conn,
+                    &memories,
+                    now_epoch,
+                    |id, error| {
+                        crate::log::warn(
+                            "mcp",
+                            &format!(
+                                "memory {id} staleness source-anchor lookup failed: {error}"
+                            ),
+                        );
+                    },
+                )
+                .unwrap_or_else(|error| {
+                    crate::log::warn(
+                        "mcp",
+                        &format!("search staleness batch fallback: {error}"),
+                    );
+                    memories
+                        .iter()
+                        .map(|memory| {
+                            (
+                                memory.id,
+                                crate::memory::memory_staleness_label(memory, now_epoch),
+                            )
+                        })
+                        .collect()
+                })
+            } else {
+                std::collections::HashMap::new()
+            };
 
             let search_results: Vec<SearchResult> = memories
                 .into_iter()
                 .map(|memory| {
-                    let staleness = requested_explain.then(|| {
-                        let now_epoch = chrono::Utc::now().timestamp();
-                        match crate::memory::memory_staleness_label_with_conn(
-                            conn, &memory, now_epoch,
-                        ) {
-                            Ok(label) => label,
-                            Err(err) => {
-                                crate::log::warn(
-                                    "mcp",
-                                    &format!(
-                                        "memory {} staleness source-anchor lookup failed: {}",
-                                        memory.id, err
-                                    ),
-                                );
-                                crate::memory::memory_staleness_label(&memory, now_epoch)
-                            }
-                        }
-                    });
+                    let staleness = requested_explain
+                        .then(|| staleness_labels.get(&memory.id).cloned())
+                        .flatten();
                     let updated = chrono::DateTime::from_timestamp(memory.updated_at_epoch, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
                         .unwrap_or_default();

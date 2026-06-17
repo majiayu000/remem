@@ -191,23 +191,32 @@ fn prompt_submit_staleness_labels(
     memories: &[Memory],
 ) -> HashMap<i64, crate::memory::MemoryStalenessLabel> {
     let now_epoch = chrono::Utc::now().timestamp();
-    memories
-        .iter()
-        .map(|memory| {
-            let label = crate::memory::memory_staleness_label_with_conn(conn, memory, now_epoch)
-                .unwrap_or_else(|error| {
-                    crate::log::warn(
-                        "context",
-                        &format!(
-                            "prompt-submit source-anchor label fallback for memory {}: {error}",
-                            memory.id
-                        ),
-                    );
-                    crate::memory::memory_staleness_label(memory, now_epoch)
-                });
-            (memory.id, label)
-        })
-        .collect()
+    crate::memory::staleness::memory_staleness_labels_for_memories_lossy(
+        conn,
+        memories,
+        now_epoch,
+        |id, error| {
+            crate::log::warn(
+                "context",
+                &format!("prompt-submit source-anchor label fallback for memory {id}: {error}"),
+            );
+        },
+    )
+    .unwrap_or_else(|error| {
+        crate::log::warn(
+            "context",
+            &format!("prompt-submit staleness batch fallback: {error}"),
+        );
+        memories
+            .iter()
+            .map(|memory| {
+                (
+                    memory.id,
+                    crate::memory::memory_staleness_label(memory, now_epoch),
+                )
+            })
+            .collect()
+    })
 }
 
 fn empty_prompt_submit_decision() -> ContextGateDecision {

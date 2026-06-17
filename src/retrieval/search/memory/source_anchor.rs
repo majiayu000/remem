@@ -16,10 +16,27 @@ pub(crate) fn apply_score_demotions(
         return Ok((ordered, fused.to_vec()));
     }
     let now_epoch = chrono::Utc::now().timestamp();
-    let labels = ordered
-        .iter()
-        .map(|memory| (memory.id, label_for_memory(conn, memory, now_epoch)))
-        .collect::<HashMap<_, _>>();
+    let labels = memory::staleness::memory_staleness_labels_for_memories_lossy(
+        conn,
+        &ordered,
+        now_epoch,
+        |id, error| {
+            crate::log::warn(
+                "retrieval",
+                &format!("source-anchor label fallback for memory {id}: {error}"),
+            );
+        },
+    )
+    .unwrap_or_else(|error| {
+        crate::log::warn(
+            "retrieval",
+            &format!("source-anchor batch fallback: {error}"),
+        );
+        ordered
+            .iter()
+            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
+            .collect()
+    });
     let original_rank = fused
         .iter()
         .enumerate()
@@ -61,23 +78,6 @@ pub(crate) fn apply_score_demotions(
         .filter_map(|(id, _)| id_to_memory.get(id).cloned())
         .collect::<Vec<_>>();
     Ok((ordered, demoted))
-}
-
-pub(super) fn label_for_memory(
-    conn: &Connection,
-    memory: &Memory,
-    now_epoch: i64,
-) -> memory::MemoryStalenessLabel {
-    memory::memory_staleness_label_with_conn(conn, memory, now_epoch).unwrap_or_else(|error| {
-        crate::log::warn(
-            "retrieval",
-            &format!(
-                "source-anchor label fallback for memory {}: {error}",
-                memory.id
-            ),
-        );
-        memory::memory_staleness_label(memory, now_epoch)
-    })
 }
 
 #[cfg(test)]

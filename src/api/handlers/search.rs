@@ -7,7 +7,7 @@ use axum::{
 
 use crate::memory::service;
 
-use super::super::helpers::{error_response, memory_to_item_with_conn, open_request_db};
+use super::super::helpers::{error_response, memories_to_items_with_conn, open_request_db};
 use super::super::types::{
     DbState, MemoryItem, Meta, MultiHopInfo, RawHitItem, SearchParams, SearchResponse,
 };
@@ -71,11 +71,7 @@ pub(in crate::api) async fn handle_search(
     match service::search_memories(&conn, &req) {
         Ok(results) => {
             let count = results.memories.len();
-            let items: Vec<MemoryItem> = results
-                .memories
-                .iter()
-                .map(|memory| memory_to_item_with_conn(&conn, memory))
-                .collect();
+            let items: Vec<MemoryItem> = memories_to_items_with_conn(&conn, &results.memories);
             let raw_hits: Vec<RawHitItem> = results
                 .raw_hits
                 .into_iter()
