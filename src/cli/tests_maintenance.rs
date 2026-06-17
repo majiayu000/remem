@@ -26,7 +26,10 @@ fn cli_parses_encrypt_rekey_raw() {
 fn cli_parses_backfill_embeddings_limit() {
     let cli = Cli::parse_from(["remem", "backfill-embeddings", "--limit", "250"]);
     match cli.command {
-        Commands::BackfillEmbeddings { limit } => assert_eq!(limit, 250),
+        Commands::BackfillEmbeddings { limit, batch_size } => {
+            assert_eq!(limit, 250);
+            assert_eq!(batch_size, 1000);
+        }
         _ => panic!("expected backfill-embeddings command"),
     }
 }
@@ -35,7 +38,29 @@ fn cli_parses_backfill_embeddings_limit() {
 fn cli_parses_reindex_embeddings_alias() {
     let cli = Cli::parse_from(["remem", "reindex-embeddings", "--limit", "50"]);
     match cli.command {
-        Commands::BackfillEmbeddings { limit } => assert_eq!(limit, 50),
+        Commands::BackfillEmbeddings { limit, batch_size } => {
+            assert_eq!(limit, 50);
+            assert_eq!(batch_size, 1000);
+        }
+        _ => panic!("expected reindex-embeddings alias"),
+    }
+}
+
+#[test]
+fn cli_parses_reindex_embeddings_batch_size() {
+    let cli = Cli::parse_from([
+        "remem",
+        "reindex-embeddings",
+        "--limit",
+        "100000",
+        "--batch-size",
+        "5000",
+    ]);
+    match cli.command {
+        Commands::BackfillEmbeddings { limit, batch_size } => {
+            assert_eq!(limit, 100000);
+            assert_eq!(batch_size, 5000);
+        }
         _ => panic!("expected reindex-embeddings alias"),
     }
 }

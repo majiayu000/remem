@@ -460,12 +460,12 @@ pub(super) enum Commands {
     EvalLocal,
     /// Backfill entity records for existing memories.
     BackfillEntities,
-    /// Backfill or reindex missing/stale vector embeddings for existing memories.
     #[command(visible_alias = "reindex-embeddings")]
     BackfillEmbeddings {
-        /// Maximum memory rows to backfill or reindex in this run.
         #[arg(long, default_value_t = 1000)]
         limit: i64,
+        #[arg(long, default_value_t = 1000, help = "Rows per measured write batch")]
+        batch_size: i64,
     },
     /// Encrypt the local database or migrate its key format.
     Encrypt {
