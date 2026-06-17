@@ -10,6 +10,7 @@ use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 use super::host::resolve_hook_host;
 use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
+use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
@@ -80,27 +81,25 @@ pub(super) async fn summarize_input(
             &format!("summary hook spill replay failed; continuing with current payload: {error}"),
         );
     }
-    match time_result(&mut timings, "spawn_check", || {
-        should_spawn_worker_once(&conn)
+    match time_result(&mut timings, "worker_once_spawn", || {
+        spawn_worker_once_if_idle(&conn)
     }) {
-        Ok(true) => {
-            if let Err(error) = time_result(&mut timings, "worker_once_spawn", spawn_worker_once) {
-                crate::log::error(
-                    "summarize",
-                    &format!("summary jobs queued but worker --once spawn failed: {error}"),
-                );
-            }
+        Ok(WorkerSpawnDecision::Spawned) => {
+            crate::log::info("summarize", "worker --once spawned");
         }
-        Ok(false) => {
+        Ok(WorkerSpawnDecision::SkippedHealthyWorker) => {
+            crate::log::info("summarize", "worker heartbeat healthy; skip worker --once");
+        }
+        Ok(WorkerSpawnDecision::SkippedLaunchInProgress) => {
             crate::log::info(
                 "summarize",
-                "worker daemon heartbeat healthy; skip worker --once",
+                "worker --once launch already in progress; skip spawn",
             );
         }
         Err(error) => {
             crate::log::error(
                 "summarize",
-                &format!("summary jobs queued but worker spawn check failed: {error}"),
+                &format!("summary jobs queued but worker --once spawn failed: {error}"),
             );
         }
     }
@@ -268,60 +267,6 @@ fn enqueue_summary_jobs(
     Ok(())
 }
 
-fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
-    Ok(db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
-}
-
-fn spawn_worker_once() -> Result<()> {
-    let exe = std::env::current_exe()?;
-    let worker_dir = stable_worker_dir();
-    let stderr_file = crate::log::open_log_append();
-    let stderr_cfg = match stderr_file {
-        Some(file) => std::process::Stdio::from(file),
-        None => std::process::Stdio::null(),
-    };
-    let mut command = std::process::Command::new(&exe);
-    command
-        .arg("worker")
-        .arg("--once")
-        .current_dir(&worker_dir)
-        .env("REMEM_DATA_DIR", &worker_dir)
-        .env("REMEM_STDERR_TO_LOG", "1")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(stderr_cfg);
-    let _child = command.spawn()?;
-    Ok(())
-}
-
-fn stable_worker_dir() -> std::path::PathBuf {
-    let data_dir = match crate::db::absolute_data_dir() {
-        Ok(path) => path,
-        Err(err) => {
-            crate::log::warn(
-                "summarize",
-                &format!(
-                    "failed to resolve worker dir from REMEM_DATA_DIR: {}; falling back to temp dir",
-                    err
-                ),
-            );
-            return std::env::temp_dir();
-        }
-    };
-    if let Err(err) = std::fs::create_dir_all(&data_dir) {
-        crate::log::warn(
-            "summarize",
-            &format!(
-                "failed to create worker dir {}: {}; falling back to temp dir",
-                data_dir.display(),
-                err
-            ),
-        );
-        return std::env::temp_dir();
-    }
-    data_dir
-}
-
 fn clean_optional(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -349,7 +294,7 @@ mod tests {
 
     use super::{
         compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
-        should_spawn_worker_once, stable_worker_dir, summarize_input, summary_payload_with_cwd,
+        summarize_input, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -578,98 +523,6 @@ mod tests {
                 "dream".to_string()
             ]
         );
-    }
-
-    #[test]
-    fn missing_daemon_uses_stop_fallback_spawn() {
-        let _test_dir = ScopedTestDataDir::new("summary-missing-daemon");
-        let conn = db::open_db().expect("db should open");
-
-        assert!(
-            should_spawn_worker_once(&conn).expect("daemon check should run"),
-            "missing heartbeat should keep worker --once fallback"
-        );
-    }
-
-    #[test]
-    fn healthy_daemon_skips_stop_spawn() {
-        let _test_dir = ScopedTestDataDir::new("summary-healthy-daemon");
-        let conn = db::open_db().expect("db should open");
-        let now = chrono::Utc::now().timestamp();
-        db::upsert_worker_heartbeat(
-            &conn,
-            "worker-daemon",
-            i64::from(std::process::id()),
-            now - 5,
-            now - 5,
-        )
-        .expect("heartbeat should insert");
-
-        assert!(
-            !should_spawn_worker_once(&conn).expect("daemon check should run"),
-            "healthy heartbeat should skip worker --once fallback"
-        );
-    }
-
-    #[test]
-    fn healthy_once_worker_does_not_skip_stop_spawn() -> anyhow::Result<()> {
-        let _test_dir = ScopedTestDataDir::new("summary-healthy-once-worker");
-        let conn = db::open_db()?;
-        let now = chrono::Utc::now().timestamp();
-        db::upsert_worker_heartbeat(
-            &conn,
-            "worker-once-test",
-            i64::from(std::process::id()),
-            now - 5,
-            now - 5,
-        )?;
-
-        assert!(
-            should_spawn_worker_once(&conn)?,
-            "healthy worker --once heartbeat should not suppress Stop fallback"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn stale_daemon_uses_stop_fallback_spawn() {
-        let _test_dir = ScopedTestDataDir::new("summary-stale-daemon");
-        let conn = db::open_db().expect("db should open");
-        let now = chrono::Utc::now().timestamp();
-        db::upsert_worker_heartbeat(&conn, "worker-daemon", 123, now - 900, now - 900)
-            .expect("heartbeat should insert");
-
-        assert!(
-            should_spawn_worker_once(&conn).expect("daemon check should run"),
-            "stale heartbeat should keep worker --once fallback"
-        );
-    }
-
-    #[test]
-    fn stable_worker_dir_uses_data_dir() {
-        let data_dir = ScopedTestDataDir::new("summary-worker-dir");
-
-        let got = stable_worker_dir();
-
-        assert_eq!(got, data_dir.path);
-        assert!(got.is_dir());
-    }
-
-    #[test]
-    fn stable_worker_dir_absolutizes_relative_data_dir() -> anyhow::Result<()> {
-        let relative = std::path::PathBuf::from(format!(
-            ".remem-summary-worker-relative-{}-{}",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-
-        let got = db::with_data_dir(&relative, stable_worker_dir);
-
-        assert_eq!(got, std::env::current_dir()?.join(&relative));
-        assert!(got.is_absolute());
-        assert!(got.is_dir());
-        std::fs::remove_dir_all(relative)?;
-        Ok(())
     }
 
     #[test]

@@ -111,9 +111,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
 
     loop {
         let mut conn = db::open_db()?;
-        if !once {
-            record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
-        }
+        record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
         let recovered = db::requeue_stuck_jobs(&conn)?;
         if recovered > 0 {
             crate::log::warn("worker", &format!("requeued {} stuck job(s)", recovered));
@@ -355,6 +353,35 @@ mod tests {
         anyhow::ensure!(
             heartbeat.started_at_epoch <= heartbeat.updated_at_epoch,
             "heartbeat should be valid immediately after singleton acquisition"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn worker_once_refreshes_heartbeat_in_drain_loop() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-once-loop-heartbeat");
+        let conn = db::open_db()?;
+        conn.execute_batch(
+            "CREATE TABLE heartbeat_updates (owner TEXT NOT NULL);
+             CREATE TRIGGER record_worker_heartbeat_update
+             AFTER UPDATE ON worker_heartbeats
+             BEGIN
+                 INSERT INTO heartbeat_updates (owner) VALUES (new.owner);
+             END;",
+        )?;
+        drop(conn);
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let update_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM heartbeat_updates WHERE owner LIKE 'worker-once-%'",
+            [],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(
+            update_count >= 1,
+            "worker --once should refresh its heartbeat inside the drain loop"
         );
         Ok(())
     }
