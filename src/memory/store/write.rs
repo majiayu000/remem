@@ -8,6 +8,7 @@ use crate::memory::{
     operation::{
         insert_operation_log, with_operation_savepoint, MemoryOperationInput, MemoryOperationPlan,
     },
+    preference::consolidation::PreferenceConsolidationKind,
 };
 
 pub fn insert_memory(
@@ -116,6 +117,7 @@ pub fn insert_memory_full_with_reference_time(
     let state_key = state_key::derive_state_key(memory_type, topic_key, title, content);
 
     let mut existing_id = None;
+    let mut preference_conflict = false;
     if let Some(topic_key) = topic_key {
         if !topic_key.is_empty() {
             existing_id = conn
@@ -147,7 +149,31 @@ pub fn insert_memory_full_with_reference_time(
             }
         }
     }
-    if existing_id.is_none() {
+    if memory_type == "preference" && existing_id.is_none() {
+        if let Some(preference_match) =
+            crate::memory::preference::consolidation::find_preference_consolidation(
+                conn,
+                ownership.owner_scope,
+                ownership.owner_key,
+                scope,
+                branch,
+                content,
+                now,
+            )?
+        {
+            match preference_match.kind {
+                PreferenceConsolidationKind::SamePreference
+                | PreferenceConsolidationKind::Refinement => {
+                    existing_id = Some(preference_match.memory_id);
+                }
+                PreferenceConsolidationKind::Contradiction => {
+                    preference_conflict = true;
+                }
+            }
+        }
+    }
+
+    if existing_id.is_none() && !preference_conflict {
         existing_id = crate::memory::semantic_dedup::find_curated_duplicate_id(
             conn,
             project,
@@ -266,6 +292,18 @@ pub fn insert_memory_full_with_operation_log(
         crate::memory::edge::insert_supersedes_edges(
             conn,
             &logged_plan.superseded_ids,
+            id,
+            crate::memory::edge::MemoryEdgeWriteContext {
+                source_candidate_id: operation_input.source_candidate_id,
+                source_operation_id: Some(operation_id),
+                confidence: operation_input.confidence,
+                reason: Some(logged_plan.reason.as_str()),
+                ..Default::default()
+            },
+        )?;
+        crate::memory::edge::insert_conflicts_edges(
+            conn,
+            &logged_plan.conflicting_ids,
             id,
             crate::memory::edge::MemoryEdgeWriteContext {
                 source_candidate_id: operation_input.source_candidate_id,

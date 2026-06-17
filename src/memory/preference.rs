@@ -1,3 +1,5 @@
+pub(crate) mod consolidation;
+
 mod command;
 mod query;
 mod render;

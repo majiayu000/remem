@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::lifecycle::MemoryLifecycleOp;
+use crate::memory::preference::consolidation::PreferenceConsolidationKind;
 
 pub const PLANNER_VERSION: &str = "memory-operation-planner-v1";
 
@@ -155,6 +156,17 @@ pub fn plan_direct_save(
                 ExistingMemoryMatchSource::TopicKey | ExistingMemoryMatchSource::StateKey => {
                     "existing state/topic memory will be updated".to_string()
                 }
+                ExistingMemoryMatchSource::PreferenceConsolidation {
+                    kind: PreferenceConsolidationKind::Contradiction,
+                    reason,
+                } => {
+                    return Ok((
+                        input,
+                        MemoryOperationPlan::new(MemoryLifecycleOp::Conflict, state_key, reason)
+                            .with_conflicting_ids(vec![existing_match.memory.id]),
+                    ));
+                }
+                ExistingMemoryMatchSource::PreferenceConsolidation { reason, .. } => reason,
                 ExistingMemoryMatchSource::Semantic { similarity } => {
                     format!(
                         "semantic duplicate memory will be updated (similarity {similarity:.3})"
@@ -277,7 +289,13 @@ struct ExistingMemoryMatch {
 enum ExistingMemoryMatchSource {
     TopicKey,
     StateKey,
-    Semantic { similarity: f32 },
+    PreferenceConsolidation {
+        kind: PreferenceConsolidationKind,
+        reason: String,
+    },
+    Semantic {
+        similarity: f32,
+    },
 }
 
 impl ExistingMemory {
@@ -353,6 +371,31 @@ fn existing_memory_for_direct_save(
                 return Ok(Some(ExistingMemoryMatch {
                     memory,
                     source: ExistingMemoryMatchSource::StateKey,
+                }));
+            }
+        }
+    }
+
+    if memory_type == "preference" {
+        let (owner_scope, owner_key) = owner_for_scope(project, scope);
+        if let Some(preference_match) =
+            crate::memory::preference::consolidation::find_preference_consolidation(
+                conn,
+                owner_scope,
+                &owner_key,
+                scope,
+                branch,
+                content,
+                now_epoch,
+            )?
+        {
+            if let Some(memory) = load_existing_memory(conn, preference_match.memory_id)? {
+                return Ok(Some(ExistingMemoryMatch {
+                    memory,
+                    source: ExistingMemoryMatchSource::PreferenceConsolidation {
+                        kind: preference_match.kind,
+                        reason: preference_match.reason,
+                    },
                 }));
             }
         }

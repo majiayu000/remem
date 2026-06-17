@@ -108,8 +108,8 @@ fn semantic_state_key_direct_save_keeps_distinct_hash_like_topics() -> anyhow::R
 }
 
 #[test]
-fn semantic_preference_duplicate_logs_update() -> anyhow::Result<()> {
-    let _dir = ScopedTestDataDir::new("semantic-preference-duplicate-update");
+fn preference_duplicate_logs_update() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("preference-duplicate-update");
     let conn = db::open_db()?;
     let first = save_memory(
         &conn,
@@ -155,10 +155,282 @@ fn semantic_preference_duplicate_logs_update() -> anyhow::Result<()> {
     assert!(
         logs[1]
             .1
-            .contains("semantic duplicate memory will be updated"),
-        "semantic update should be auditable, got: {}",
+            .contains("generic preference consolidation kind=refinement"),
+        "preference consolidation update should be auditable, got: {}",
         logs[1].1
     );
+    Ok(())
+}
+
+#[test]
+fn generic_preference_direct_save_updates_paraphrase_without_domain_key() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("generic-preference-direct-paraphrase");
+    let conn = db::open_db()?;
+    let first = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise Chinese progress updates.".to_string(),
+            title: Some("Progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let second = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer brief Chinese status notes.".to_string(),
+            title: Some("Status note preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-22222222".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.operation, "update");
+    let (content, active_count): (String, i64) = conn.query_row(
+        "SELECT content,
+                (SELECT COUNT(*) FROM memories
+                 WHERE memory_type = 'preference' AND status = 'active')
+         FROM memories
+         WHERE id = ?1",
+        [first.id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(content, "Prefer brief Chinese status notes.");
+    assert_eq!(active_count, 1);
+    let reason: String = conn.query_row(
+        "SELECT reason FROM memory_operation_log ORDER BY id DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(
+        reason.contains("generic preference consolidation kind=refinement"),
+        "generic consolidation should be auditable, got: {reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn generic_preference_direct_save_records_conflict_without_merging() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("generic-preference-direct-conflict");
+    let conn = db::open_db()?;
+    let first = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise Chinese progress updates.".to_string(),
+            title: Some("Progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let second = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Do not provide brief Chinese status notes.".to_string(),
+            title: Some("No status note preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-22222222".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.operation, "conflict");
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 2);
+    let (operation, conflicting_ids): (String, String) = conn.query_row(
+        "SELECT operation, conflicting_ids
+         FROM memory_operation_log
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(operation, "conflict");
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&conflicting_ids)?,
+        vec![first.id]
+    );
+    let conflict_edge_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_edges
+         WHERE edge_type = 'conflicts'
+           AND from_memory_id = ?1
+           AND to_memory_id = ?2",
+        [first.id, second.id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(conflict_edge_count, 1);
+    Ok(())
+}
+
+#[test]
+fn generic_preference_direct_save_ignores_non_preference_writes() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("generic-preference-direct-non-preference");
+    let conn = db::open_db()?;
+    let preference = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise Chinese progress updates.".to_string(),
+            title: Some("Progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let discovery = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer brief Chinese status notes.".to_string(),
+            title: Some("Observed status wording".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("discovery-22222222".to_string()),
+            memory_type: Some("discovery".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_ne!(discovery.id, preference.id);
+    assert_eq!(discovery.operation, "add");
+    let preference_row: (String, String) = conn.query_row(
+        "SELECT memory_type, content FROM memories WHERE id = ?1",
+        [preference.id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(
+        preference_row,
+        (
+            "preference".to_string(),
+            "Prefer concise Chinese progress updates.".to_string()
+        )
+    );
+    let discovery_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE memory_type = 'discovery' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(discovery_count, 1);
+    Ok(())
+}
+
+#[test]
+fn generic_preference_direct_save_prefers_exact_match_over_conflict() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("generic-preference-direct-exact-before-conflict");
+    let conn = db::open_db()?;
+    let chinese = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise Chinese progress updates.".to_string(),
+            title: Some("Progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let english = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise English progress updates.".to_string(),
+            title: Some("English progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-22222222".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let repeated_chinese = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise Chinese progress updates.".to_string(),
+            title: Some("Progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-33333333".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_eq!(english.operation, "conflict");
+    assert_eq!(repeated_chinese.id, chinese.id);
+    assert_eq!(repeated_chinese.operation, "noop");
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 2);
+    let operation: String = conn.query_row(
+        "SELECT operation FROM memory_operation_log ORDER BY id DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(operation, "noop");
+    Ok(())
+}
+
+#[test]
+fn generic_preference_direct_save_keeps_distinct_generic_preferences() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("generic-preference-direct-distinct");
+    let conn = db::open_db()?;
+    let first = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise Chinese progress updates.".to_string(),
+            title: Some("Progress update preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-11111111".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+    let second = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Prefer concise verification logs after tests.".to_string(),
+            title: Some("Verification log preference".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("preference-22222222".to_string()),
+            memory_type: Some("preference".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.operation, "add");
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_count, 2);
     Ok(())
 }
 

@@ -262,6 +262,90 @@ fn summary_workflow_preference_variants_promote_through_same_state_key() -> Resu
 }
 
 #[test]
+fn summary_generic_preference_paraphrases_consolidate_without_domain_key() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let project = "test/proj";
+
+    record_summary_evidence(&conn, "session-generic-pref-a", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-generic-pref-a",
+        project,
+        Some("Capture communication preference"),
+        None,
+        None,
+        Some("Prefer concise Chinese progress updates."),
+    )?;
+    let first_topic_key: String = conn.query_row(
+        "SELECT topic_key
+         FROM memory_candidates
+         WHERE review_status = 'pending_review'
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let first_memory_id = approve_latest_pending_candidate(&mut conn)?;
+
+    record_summary_evidence(&conn, "session-generic-pref-b", project)?;
+    promote_summary_to_memory_candidates(
+        &mut conn,
+        "session-generic-pref-b",
+        project,
+        Some("Capture communication preference refinement"),
+        None,
+        None,
+        Some("Prefer brief Chinese status notes."),
+    )?;
+    let second_topic_key: String = conn.query_row(
+        "SELECT topic_key
+         FROM memory_candidates
+         WHERE review_status = 'pending_review'
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let second_memory_id = approve_latest_pending_candidate(&mut conn)?;
+
+    let first_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [first_memory_id],
+        |row| row.get(0),
+    )?;
+    let second_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [second_memory_id],
+        |row| row.get(0),
+    )?;
+    let (operation, reason): (String, String) = conn.query_row(
+        "SELECT operation, reason
+         FROM memory_operation_log
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let active_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE memory_type = 'preference' AND status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    assert_ne!(first_topic_key, second_topic_key);
+    assert!(first_topic_key.starts_with("preference-"));
+    assert!(second_topic_key.starts_with("preference-"));
+    assert_eq!(first_status, "stale");
+    assert_eq!(second_status, "active");
+    assert_eq!(operation, "update");
+    assert!(reason.contains("generic preference consolidation kind=refinement"));
+    assert_eq!(active_count, 1);
+    Ok(())
+}
+
+#[test]
 fn summary_decision_contradiction_supersedes_same_state_key() -> Result<()> {
     let mut conn = setup_conn()?;
     let project = "test/proj";

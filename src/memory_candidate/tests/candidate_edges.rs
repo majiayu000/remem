@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::params;
 
+use crate::memory_candidate::review::approve_candidate;
+
 use super::{
     insert_source_observation, low_risk_candidate_xml, process_with_generator, setup_conn,
     setup_task, MemoryCandidateResult,
@@ -187,5 +189,172 @@ async fn memory_candidate_newer_same_topic_supersedes_old_memory() -> Result<()>
         |row| row.get(0),
     )?;
     assert_eq!(derived_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn preference_candidate_approval_consolidates_generic_paraphrase() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-preference-generic-update")?;
+    insert_source_observation(
+        &conn,
+        &task,
+        "User prefers brief Chinese status notes during long-running work.",
+    )?;
+    let old_id = crate::memory::insert_memory_full(
+        &conn,
+        None,
+        "/tmp/remem",
+        Some("preference-11111111"),
+        "Progress update preference",
+        "Prefer concise Chinese progress updates.",
+        "preference",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate>\
+                <scope>project</scope>\
+                <type>preference</type>\
+                <topic_key>preference-22222222</topic_key>\
+                <risk_class>medium</risk_class>\
+                <confidence>0.91</confidence>\
+                <text>Prefer brief Chinese status notes.</text>\
+             </memory_candidate>"
+            .to_string())
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        MemoryCandidateResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: task.high_watermark_event_id.expect("task watermark")
+        }
+    );
+    let candidate_id: i64 =
+        conn.query_row("SELECT id FROM memory_candidates", [], |row| row.get(0))?;
+    let new_id = approve_candidate(&mut conn, candidate_id)?.expect("candidate should approve");
+
+    let old_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        params![old_id],
+        |row| row.get(0),
+    )?;
+    let (new_status, new_content): (String, String) = conn.query_row(
+        "SELECT status, content FROM memories WHERE id = ?1",
+        params![new_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(old_status, "stale");
+    assert_eq!(new_status, "active");
+    assert_eq!(new_content, "Prefer brief Chinese status notes.");
+    let (operation, superseded_ids, reason): (String, String, String) = conn.query_row(
+        "SELECT operation, superseded_ids, reason
+         FROM memory_operation_log
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(operation, "update");
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&superseded_ids)?,
+        vec![old_id]
+    );
+    assert!(reason.contains("generic preference consolidation kind=refinement"));
+    let supersedes_edge_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_edges
+         WHERE edge_type = 'supersedes'
+           AND from_memory_id = ?1
+           AND to_memory_id = ?2",
+        params![old_id, new_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(supersedes_edge_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn preference_candidate_approval_records_generic_conflict() -> Result<()> {
+    let mut conn = setup_conn();
+    let task = setup_task(&mut conn, "sess-preference-generic-conflict")?;
+    insert_source_observation(
+        &conn,
+        &task,
+        "User said not to provide brief Chinese status notes.",
+    )?;
+    let old_id = crate::memory::insert_memory_full(
+        &conn,
+        None,
+        "/tmp/remem",
+        Some("preference-11111111"),
+        "Progress update preference",
+        "Prefer concise Chinese progress updates.",
+        "preference",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+
+    process_with_generator(&mut conn, &task, |_prompt| async {
+        Ok("<memory_candidate>\
+                <scope>project</scope>\
+                <type>preference</type>\
+                <topic_key>preference-22222222</topic_key>\
+                <risk_class>medium</risk_class>\
+                <confidence>0.91</confidence>\
+                <text>Do not provide brief Chinese status notes.</text>\
+             </memory_candidate>"
+            .to_string())
+    })
+    .await?;
+    let candidate_id: i64 =
+        conn.query_row("SELECT id FROM memory_candidates", [], |row| row.get(0))?;
+    let new_id = approve_candidate(&mut conn, candidate_id)?.expect("candidate should approve");
+
+    let old_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        params![old_id],
+        |row| row.get(0),
+    )?;
+    let new_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        params![new_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(old_status, "active");
+    assert_eq!(new_status, "active");
+    let (operation, conflicting_ids, reason): (String, String, String) = conn.query_row(
+        "SELECT operation, conflicting_ids, reason
+         FROM memory_operation_log
+         ORDER BY id DESC
+         LIMIT 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(operation, "conflict");
+    assert_eq!(
+        serde_json::from_str::<Vec<i64>>(&conflicting_ids)?,
+        vec![old_id]
+    );
+    assert!(reason.contains("generic preference consolidation kind=contradiction"));
+    let conflict_edge_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_edges
+         WHERE edge_type = 'conflicts'
+           AND from_memory_id = ?1
+           AND to_memory_id = ?2",
+        params![old_id, new_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(conflict_edge_count, 1);
     Ok(())
 }
