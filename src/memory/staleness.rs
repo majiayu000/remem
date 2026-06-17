@@ -5,8 +5,10 @@ use rusqlite::{params, types::ToSql, Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::Memory;
+use capabilities::StalenessCapabilities;
 use path::{file_path_overlaps, parse_file_list, parse_json_file_array};
 
+mod capabilities;
 mod path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -67,7 +69,8 @@ pub fn memory_staleness_label_with_conn(
     memory: &Memory,
     now_epoch: i64,
 ) -> Result<MemoryStalenessLabel> {
-    let source_anchor = source_anchor_for_memory(conn, memory)?;
+    let capabilities = StalenessCapabilities::load(conn)?;
+    let source_anchor = source_anchor_for_memory(conn, memory, &capabilities)?;
     Ok(memory_staleness_label_for_anchor(
         memory,
         now_epoch,
@@ -80,12 +83,43 @@ pub fn memory_staleness_labels_for_memories(
     memories: &[Memory],
     now_epoch: i64,
 ) -> Result<HashMap<i64, MemoryStalenessLabel>> {
+    if memories.is_empty() {
+        return Ok(HashMap::new());
+    }
     let mut labels = HashMap::new();
+    let capabilities = StalenessCapabilities::load(conn)?;
     for memory in memories {
+        let source_anchor = source_anchor_for_memory(conn, memory, &capabilities)?;
         labels.insert(
             memory.id,
-            memory_staleness_label_with_conn(conn, memory, now_epoch)?,
+            memory_staleness_label_for_anchor(memory, now_epoch, source_anchor),
         );
+    }
+    Ok(labels)
+}
+
+pub(crate) fn memory_staleness_labels_for_memories_lossy(
+    conn: &Connection,
+    memories: &[Memory],
+    now_epoch: i64,
+    mut on_error: impl FnMut(i64, &anyhow::Error),
+) -> Result<HashMap<i64, MemoryStalenessLabel>> {
+    if memories.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut labels = HashMap::new();
+    let capabilities = StalenessCapabilities::load(conn)?;
+    for memory in memories {
+        let label = match source_anchor_for_memory(conn, memory, &capabilities) {
+            Ok(source_anchor) => {
+                memory_staleness_label_for_anchor(memory, now_epoch, source_anchor)
+            }
+            Err(error) => {
+                on_error(memory.id, &error);
+                memory_staleness_label(memory, now_epoch)
+            }
+        };
+        labels.insert(memory.id, label);
     }
     Ok(labels)
 }
@@ -109,12 +143,16 @@ pub fn age_staleness(updated_at_epoch: i64, now_epoch: i64) -> &'static str {
     }
 }
 
-fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'static str> {
-    if !git_trace_tables_exist(conn)? {
+fn source_anchor_for_memory(
+    conn: &Connection,
+    memory: &Memory,
+    capabilities: &StalenessCapabilities,
+) -> Result<&'static str> {
+    if !capabilities.git_trace_tables_exist {
         return Ok("untracked");
     }
 
-    let mut project = source_project_for_memory(conn, memory)?;
+    let mut project = source_project_for_memory(conn, memory, capabilities)?;
     let mut session_ids = Vec::new();
     if let Some(session_id) = non_empty_trimmed(memory.session_id.as_deref()) {
         push_unique(&mut session_ids, session_id.to_string());
@@ -124,7 +162,7 @@ fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'stat
         memory.updated_at_epoch,
     );
     if session_ids.is_empty() || file_epochs.is_empty() {
-        let evidence = evidence_anchor_for_memory(conn, memory, &project)?;
+        let evidence = evidence_anchor_for_memory(conn, memory, &project, capabilities)?;
         project = evidence.project;
         for session_id in evidence.session_ids {
             push_unique(&mut session_ids, session_id);
@@ -162,18 +200,6 @@ fn source_anchor_for_memory(conn: &Connection, memory: &Memory) -> Result<&'stat
     } else {
         Ok("untracked")
     }
-}
-
-fn git_trace_tables_exist(conn: &Connection) -> Result<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*)
-         FROM sqlite_master
-         WHERE type = 'table'
-           AND name IN ('git_commits', 'git_commit_sessions')",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(count == 2)
 }
 
 fn source_commit_anchor_for_file_sessions(
@@ -291,8 +317,12 @@ fn later_commit_touches_file(
     Ok(false)
 }
 
-fn source_project_for_memory(conn: &Connection, memory: &Memory) -> Result<String> {
-    if !column_exists(conn, "memories", "source_project")? {
+fn source_project_for_memory(
+    conn: &Connection,
+    memory: &Memory,
+    capabilities: &StalenessCapabilities,
+) -> Result<String> {
+    if !capabilities.memories_source_project {
         return Ok(memory.project.clone());
     }
     Ok(conn
@@ -309,8 +339,10 @@ fn evidence_anchor_for_memory(
     conn: &Connection,
     memory: &Memory,
     default_project: &str,
+    capabilities: &StalenessCapabilities,
 ) -> Result<EvidenceAnchor> {
-    let (project, event_ids) = memory_evidence_reference(conn, memory, default_project)?;
+    let (project, event_ids) =
+        memory_evidence_reference(conn, memory, default_project, capabilities)?;
     if event_ids.is_empty() {
         return Ok(EvidenceAnchor {
             project,
@@ -322,7 +354,8 @@ fn evidence_anchor_for_memory(
         ..Default::default()
     };
     anchor.event_ids = event_ids;
-    let captured_refs = captured_event_refs(conn, &anchor.project, &anchor.event_ids)?;
+    let captured_refs =
+        captured_event_refs(conn, &anchor.project, &anchor.event_ids, capabilities)?;
     anchor.session_ids = captured_refs.session_ids;
     anchor.session_row_ids = captured_refs.session_row_ids;
     let legacy_event_ids: Vec<i64> = anchor
@@ -337,6 +370,7 @@ fn evidence_anchor_for_memory(
             &anchor.project,
             &legacy_event_ids,
             &mut anchor.file_epochs,
+            capabilities,
         )?;
     }
     add_observation_files(
@@ -347,6 +381,7 @@ fn evidence_anchor_for_memory(
         &anchor.session_ids,
         &captured_refs.event_epochs,
         &mut anchor.file_epochs,
+        capabilities,
     )?;
     Ok(anchor)
 }
@@ -355,15 +390,14 @@ fn memory_evidence_reference(
     conn: &Connection,
     memory: &Memory,
     default_project: &str,
+    capabilities: &StalenessCapabilities,
 ) -> Result<(String, Vec<i64>)> {
-    if !table_exists(conn, "memories")? || !column_exists(conn, "memories", "evidence_event_ids")? {
+    if !capabilities.memories_exists || !capabilities.memories_evidence_event_ids {
         return Ok((default_project.to_string(), Vec::new()));
     }
-    let has_source_candidate = column_exists(conn, "memories", "source_candidate_id")?;
-    let has_source_project = column_exists(conn, "memories", "source_project")?;
     let (project, memory_evidence_json, source_candidate_id) = match (
-        has_source_candidate,
-        has_source_project,
+        capabilities.memories_source_candidate_id,
+        capabilities.memories_source_project,
     ) {
         (true, true) => conn
             .query_row(
@@ -433,20 +467,20 @@ fn memory_evidence_reference(
     let Some(source_candidate_id) = source_candidate_id else {
         return Ok((project, Vec::new()));
     };
-    candidate_evidence_reference(conn, source_candidate_id, &project)
+    candidate_evidence_reference(conn, source_candidate_id, &project, capabilities)
 }
 
 fn candidate_evidence_reference(
     conn: &Connection,
     candidate_id: i64,
     default_project: &str,
+    capabilities: &StalenessCapabilities,
 ) -> Result<(String, Vec<i64>)> {
-    if !table_exists(conn, "memory_candidates")?
-        || !column_exists(conn, "memory_candidates", "evidence_event_ids")?
+    if !capabilities.memory_candidates_exists || !capabilities.memory_candidates_evidence_event_ids
     {
         return Ok((default_project.to_string(), Vec::new()));
     }
-    let row = if table_exists(conn, "projects")? {
+    let row = if capabilities.projects_exists {
         conn.query_row(
             "SELECT COALESCE(p.project_path, ?2), c.evidence_event_ids
              FROM memory_candidates c
@@ -480,15 +514,14 @@ fn captured_event_refs(
     conn: &Connection,
     project: &str,
     event_ids: &[i64],
+    capabilities: &StalenessCapabilities,
 ) -> Result<CapturedEventRefs> {
-    if event_ids.is_empty()
-        || !table_exists(conn, "captured_events")?
-        || !table_exists(conn, "projects")?
+    if event_ids.is_empty() || !capabilities.captured_events_exists || !capabilities.projects_exists
     {
         return Ok(CapturedEventRefs::default());
     }
     let placeholders = placeholders(2, event_ids.len());
-    let event_time_expr = if column_exists(conn, "captured_events", "reference_time_epoch")? {
+    let event_time_expr = if capabilities.captured_events_reference_time_epoch {
         "COALESCE(e.reference_time_epoch, e.created_at_epoch)"
     } else {
         "e.created_at_epoch"
@@ -530,8 +563,9 @@ fn add_legacy_event_files(
     project: &str,
     event_ids: &[i64],
     file_epochs: &mut HashMap<String, i64>,
+    capabilities: &StalenessCapabilities,
 ) -> Result<()> {
-    if event_ids.is_empty() || !table_exists(conn, "events")? {
+    if event_ids.is_empty() || !capabilities.events_exists {
         return Ok(());
     }
     let placeholders = placeholders(2, event_ids.len());
@@ -566,13 +600,12 @@ fn add_observation_files(
     session_ids: &[String],
     event_epochs: &HashMap<i64, i64>,
     file_epochs: &mut HashMap<String, i64>,
+    capabilities: &StalenessCapabilities,
 ) -> Result<()> {
-    if event_ids.is_empty() || !table_exists(conn, "observations")? {
+    if event_ids.is_empty() || !capabilities.observations_exists {
         return Ok(());
     }
-    if column_exists(conn, "observations", "session_row_id")?
-        && column_exists(conn, "observations", "evidence_event_ids")?
-    {
+    if capabilities.observations_session_row_id && capabilities.observations_evidence_event_ids {
         return add_observation_files_by_evidence_events(
             conn,
             project,
@@ -737,30 +770,6 @@ fn parse_evidence_event_ids(raw: Option<&str>, context: &str) -> Result<Vec<i64>
     ids.sort_unstable();
     ids.dedup();
     Ok(ids)
-}
-
-fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
-    let exists = conn.query_row(
-        "SELECT EXISTS(
-             SELECT 1 FROM sqlite_master
-             WHERE type = 'table' AND name = ?1
-         )",
-        [table],
-        |row| row.get::<_, i64>(0),
-    )?;
-    Ok(exists != 0)
-}
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let sql = format!("PRAGMA table_info({table})");
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    for row in rows {
-        if row? == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn placeholders(start: usize, count: usize) -> String {

@@ -535,6 +535,27 @@ fn build_explain(
         .collect();
     let id_to_score: HashMap<i64, f64> = fused.iter().copied().collect();
     let now_epoch = chrono::Utc::now().timestamp();
+    let staleness_labels = memory::staleness::memory_staleness_labels_for_memories_lossy(
+        conn,
+        paged,
+        now_epoch,
+        |id, error| {
+            crate::log::warn(
+                "retrieval",
+                &format!("search explain source-anchor label fallback for memory {id}: {error}"),
+            );
+        },
+    )
+    .unwrap_or_else(|error| {
+        crate::log::warn(
+            "retrieval",
+            &format!("search explain source-anchor batch fallback: {error}"),
+        );
+        paged
+            .iter()
+            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
+            .collect()
+    });
     let results = paged
         .iter()
         .enumerate()
@@ -546,7 +567,10 @@ fn build_explain(
             project: memory.project.clone(),
             scope: memory.scope.clone(),
             visibility: visibility_label(memory, project).to_string(),
-            staleness: super::source_anchor::label_for_memory(conn, memory, now_epoch),
+            staleness: staleness_labels
+                .get(&memory.id)
+                .cloned()
+                .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
             contributions: contributions_for(memory.id, plan),
         })
         .collect();

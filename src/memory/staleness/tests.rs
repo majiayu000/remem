@@ -103,6 +103,45 @@ fn source_anchor_requires_verification_after_later_file_change() -> Result<()> {
 }
 
 #[test]
+fn batch_source_anchor_labels_preserve_per_memory_results() -> Result<()> {
+    let conn = migrated_staleness_db()?;
+    let mut tracked = tracked_staleness_memory(Some(r#"["src/tracked.rs"]"#));
+    tracked.id = 1;
+    let mut changed = tracked_staleness_memory(Some(r#"["src/changed.rs"]"#));
+    changed.id = 2;
+
+    link_staleness_commit(
+        &conn,
+        1,
+        "source-tracked",
+        100,
+        &["src/tracked.rs"],
+        "mem-session-1",
+    )?;
+    link_staleness_commit(
+        &conn,
+        2,
+        "source-changed",
+        100,
+        &["src/changed.rs"],
+        "mem-session-1",
+    )?;
+    insert_staleness_commit(&conn, 3, "later-changed", 200, &["src/changed.rs"])?;
+
+    let labels = memory_staleness_labels_for_memories(&conn, &[tracked, changed], 1_700_000_000)?;
+
+    assert_eq!(
+        labels.get(&1).map(|label| label.source_anchor.as_str()),
+        Some("tracked")
+    );
+    assert_eq!(
+        labels.get(&2).map(|label| label.source_anchor.as_str()),
+        Some("verify-before-trust")
+    );
+    Ok(())
+}
+
+#[test]
 fn source_anchor_matches_directory_overlap() -> Result<()> {
     let conn = migrated_staleness_db()?;
     let memory = tracked_staleness_memory(Some(r#"["src/context"]"#));
