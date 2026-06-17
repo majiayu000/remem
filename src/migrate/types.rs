@@ -220,6 +220,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "graph_candidate_prompt_memory_refs",
         sql: include_str!("../migrations/v043_graph_candidate_prompt_memory_refs.sql"),
     },
+    Migration {
+        version: 44,
+        name: "memory_embeddings_profile_index",
+        sql: include_str!("../migrations/v044_memory_embeddings_profile_index.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

@@ -118,6 +118,8 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX idx_memory_embeddings_model
             ON memory_embeddings(model, updated_at_epoch);
+        CREATE INDEX idx_memory_embeddings_profile_memory_id
+            ON memory_embeddings(model, dimensions, memory_id);
 
         CREATE VIRTUAL TABLE memories_fts USING fts5(
             title, content, search_context,

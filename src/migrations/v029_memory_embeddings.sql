@@ -10,3 +10,6 @@ CREATE TABLE IF NOT EXISTS memory_embeddings (
 
 CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model
     ON memory_embeddings(model, updated_at_epoch);
+
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_profile_memory_id
+    ON memory_embeddings(model, dimensions, memory_id);

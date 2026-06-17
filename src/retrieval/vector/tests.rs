@@ -108,6 +108,40 @@ fn vector_search_respects_filters() -> Result<()> {
 }
 
 #[test]
+fn vector_search_uses_profile_memory_id_index_for_embedding_fetch() -> Result<()> {
+    let conn = setup_vector_conn()?;
+    insert_test_memory(&conn, 1)?;
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+
+    let plan = conn
+        .prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT memory_id, embedding, dimensions
+             FROM memory_embeddings INDEXED BY idx_memory_embeddings_profile_memory_id
+             WHERE model = ?1 AND dimensions = ?2 AND memory_id IN (?3)",
+        )?
+        .query_map(
+            params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64, 1_i64],
+            |row| row.get::<_, String>(3),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    assert!(
+        plan.iter()
+            .any(|detail| detail.contains("idx_memory_embeddings_profile_memory_id")),
+        "embedding fetch should use profile memory_id index, got {plan:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn explicit_embedding_backfill_covers_all_statuses_across_batches() -> Result<()> {
     let conn = setup_vector_conn()?;
     for id in 1..=1_002 {

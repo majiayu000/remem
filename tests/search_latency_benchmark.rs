@@ -1,7 +1,11 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use remem::{migrate, perf::format_phase_timings, retrieval::search};
+use remem::{
+    migrate,
+    perf::format_phase_timings,
+    retrieval::{search, vector},
+};
 
 #[test]
 #[ignore = "large-corpus latency harness; run explicitly with --ignored --nocapture"]
@@ -27,6 +31,7 @@ fn query_search_10k_corpus_reports_phase_timings() -> Result<()> {
              VALUES (?1, '/repo', ?2, ?3, 'decision', ?1, ?1, 'active')",
             params![id, title, content],
         )?;
+        vector::upsert_memory_embedding(&conn, id, &title, content, "decision", None)?;
     }
     conn.execute("COMMIT", [])?;
 
@@ -52,6 +57,23 @@ fn query_search_10k_corpus_reports_phase_timings() -> Result<()> {
 
     assert!(!results.is_empty());
     assert!(explain.timings.iter().any(|timing| timing.phase == "fts"));
+    assert!(
+        explain
+            .timings
+            .iter()
+            .any(|timing| timing.phase == "vector_load_embeddings"),
+        "integrated latency harness must exercise vector embedding load: {:#?}",
+        explain.timings
+    );
+    let vector = explain
+        .channels
+        .iter()
+        .find(|channel| channel.name == "vector" && channel.enabled)
+        .expect("integrated latency harness must exercise enabled vector channel");
+    assert!(
+        vector.candidates_scanned.unwrap_or_default() > 0,
+        "integrated latency harness must report vector candidate scan count: {vector:#?}"
+    );
     assert!(
         elapsed.as_secs_f64() < 5.0,
         "10k in-memory query search exceeded 5s: {:?}",

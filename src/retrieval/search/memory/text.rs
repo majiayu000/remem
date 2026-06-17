@@ -38,6 +38,7 @@ struct NamedChannel {
     name: &'static str,
     weight: f64,
     disabled_reason: Option<String>,
+    candidates_scanned: Option<usize>,
     hits: Vec<WeightedRankedHit>,
 }
 
@@ -59,6 +60,7 @@ impl NamedChannel {
             name,
             weight,
             disabled_reason: None,
+            candidates_scanned: None,
             hits,
         }
     }
@@ -68,8 +70,14 @@ impl NamedChannel {
             name,
             weight,
             disabled_reason: Some(reason.into()),
+            candidates_scanned: None,
             hits: vec![],
         }
+    }
+
+    fn with_candidates_scanned(mut self, candidates_scanned: usize) -> Self {
+        self.candidates_scanned = Some(candidates_scanned);
+        self
     }
 
     fn is_enabled(&self) -> bool {
@@ -414,22 +422,27 @@ fn build_query_search_plan(
     let query_embedding = time_result(&mut timings, "query_embedding", || {
         crate::retrieval::embedding::embed_query(query_text)
     })?;
-    let vector_outcome = time_result(&mut timings, "vector", || {
-        crate::retrieval::vector::vector_search_embedding_filtered(
-            conn,
-            &query_embedding,
-            crate::retrieval::vector::VectorSearchFilters {
-                project,
-                memory_type,
-                branch,
-                include_stale,
-            },
-            fetch as usize,
-        )
-    })?;
+    let vector_start = Instant::now();
+    let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
+        conn,
+        &query_embedding,
+        crate::retrieval::vector::VectorSearchFilters {
+            project,
+            memory_type,
+            branch,
+            include_stale,
+        },
+        fetch as usize,
+    )?;
+    push_elapsed(&mut timings, "vector", vector_start);
+    timings.append(&mut vector_outcome.timings);
     if let Some(reason) = vector_outcome.disabled_reason {
-        channels.push(NamedChannel::disabled("vector", weights.vector, reason));
+        channels.push(
+            NamedChannel::disabled("vector", weights.vector, reason)
+                .with_candidates_scanned(vector_outcome.candidates_scanned),
+        );
     } else {
+        let candidates_scanned = vector_outcome.candidates_scanned;
         let hits = vector_outcome
             .hits
             .into_iter()
@@ -439,11 +452,10 @@ fn build_query_search_plan(
                 normalized_score: vector_similarity_score(hit.distance, weights),
             })
             .collect();
-        channels.push(NamedChannel::enabled_with_hits(
-            "vector",
-            weights.vector,
-            hits,
-        ));
+        channels.push(
+            NamedChannel::enabled_with_hits("vector", weights.vector, hits)
+                .with_candidates_scanned(candidates_scanned),
+        );
     }
 
     if core_refs.is_empty() {
@@ -522,6 +534,7 @@ fn build_explain(
             name: channel.name.to_string(),
             enabled: channel.is_enabled(),
             disabled_reason: channel.disabled_reason.clone(),
+            candidates_scanned: channel.candidates_scanned,
             hits: channel
                 .hits
                 .iter()

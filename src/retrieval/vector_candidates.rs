@@ -70,7 +70,7 @@ fn embedding_id_bounds(
 ) -> Result<Option<(i64, i64)>> {
     let (min_id, max_id): (Option<i64>, Option<i64>) = conn.query_row(
         "SELECT MIN(memory_id), MAX(memory_id)
-         FROM memory_embeddings
+         FROM memory_embeddings INDEXED BY idx_memory_embeddings_profile_memory_id
          WHERE model = ?1
            AND dimensions = ?2",
         (&profile.model, profile.dimensions as i64),
@@ -120,6 +120,7 @@ fn append_bucket_ids(
                         ORDER BY e.memory_id
                     ) AS bucket_rank
              FROM memory_embeddings e
+             INDEXED BY idx_memory_embeddings_profile_memory_id
              JOIN memories m ON m.id = e.memory_id
              WHERE {}
          )
@@ -152,7 +153,7 @@ fn append_recent_ids(
     conditions.insert(1, "e.dimensions = ?2".to_string());
     let sql = format!(
         "SELECT e.memory_id
-         FROM memory_embeddings e
+         FROM memory_embeddings e INDEXED BY idx_memory_embeddings_profile_memory_id
          JOIN memories m ON m.id = e.memory_id
          WHERE {}
          ORDER BY e.memory_id DESC
