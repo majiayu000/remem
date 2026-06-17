@@ -12,7 +12,7 @@ pub(super) fn log_context_timer(
 ) {
     let capabilities = resolve_profile(request.host).capabilities();
     timer.done(&format!(
-        "project={} cwd={} session={} host={} colors={} gate={:?}:{} precheck={} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} lessons={} index={} preferences={} sessions={} workstreams={}",
+        "project={} cwd={} session={} host={} colors={} gate={:?}:{} precheck={} caps=[mcp:{} session_start:{} prompt_submit:{} native_edits:{} bash:{}] context_memories={} core={} lessons={} index={} preferences={} sessions={} workstreams={} timings=[{}]",
         request.project,
         request.cwd,
         request.session_id.as_deref().unwrap_or("-"),
@@ -33,5 +33,6 @@ pub(super) fn log_context_timer(
         stats.preferences.count,
         stats.sessions.count,
         stats.workstreams.count,
+        crate::perf::format_phase_timings(&stats.timings),
     ));
 }

@@ -19,6 +19,7 @@ pub struct SearchExplain {
     pub rrf_k: f64,
     pub min_evidence_confidence: f64,
     pub filtered_result_count: usize,
+    pub timings: Vec<crate::perf::PhaseTiming>,
     pub channels: Vec<SearchExplainChannel>,
     pub results: Vec<SearchExplainResult>,
     pub has_more: bool,

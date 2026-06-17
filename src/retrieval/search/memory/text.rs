@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
+use crate::perf::{push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::common::{
     paginate_memories, rank_normalized_score, sanitize_fts_query, weighted_rank_score,
@@ -29,6 +31,7 @@ struct QuerySearchPlan {
     fetch_limit: i64,
     weights: SearchWeights,
     channels: Vec<NamedChannel>,
+    timings: Vec<PhaseTiming>,
 }
 
 struct NamedChannel {
@@ -147,7 +150,7 @@ pub(super) fn search_with_query_weights(
     branch: Option<&str>,
     weights: SearchWeights,
 ) -> Result<Vec<Memory>> {
-    let plan = build_query_search_plan(
+    let mut plan = build_query_search_plan(
         conn,
         query_text,
         project,
@@ -159,17 +162,36 @@ pub(super) fn search_with_query_weights(
         weights,
     )?;
     if plan.channels.is_empty() {
+        log_search_timing(query_text, project, limit, offset, &plan);
         return Ok(vec![]);
     }
 
-    let channel_inputs = weighted_channel_inputs(&plan.channels);
-    let fused = weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k);
+    let channel_inputs = time_value(&mut plan.timings, "fusion_inputs", || {
+        weighted_channel_inputs(&plan.channels)
+    });
+    let fused = time_value(&mut plan.timings, "rrf_fusion", || {
+        weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
+    });
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
-    let ordered = load_ordered_memories(conn, &fused_ids)?;
-    let (ordered, fused) = super::source_anchor::apply_score_demotions(conn, &fused, ordered)?;
+    let ordered = time_result(&mut plan.timings, "load_memories", || {
+        load_ordered_memories(conn, &fused_ids)
+    })?;
+    let (ordered, fused) = time_result(&mut plan.timings, "source_anchor_demote", || {
+        super::source_anchor::apply_score_demotions(conn, &fused, ordered)
+    })?;
+    let annotate_start = Instant::now();
     let (ordered, _) =
         gate_and_annotate_memories(conn, query_text, project, &fused, &plan, ordered)?;
-    Ok(paginate_memories(ordered, limit, offset))
+    push_elapsed(
+        &mut plan.timings,
+        "confidence_and_fact_labels",
+        annotate_start,
+    );
+    let paged = time_value(&mut plan.timings, "paginate", || {
+        paginate_memories(ordered, limit, offset)
+    });
+    log_search_timing(query_text, project, limit, offset, &plan);
+    Ok(paged)
 }
 
 pub(super) fn search_with_query_explain(
@@ -182,7 +204,7 @@ pub(super) fn search_with_query_explain(
     include_stale: bool,
     branch: Option<&str>,
 ) -> Result<QuerySearchWithExplain> {
-    let plan = build_query_search_plan(
+    let mut plan = build_query_search_plan(
         conn,
         query_text,
         project,
@@ -194,6 +216,7 @@ pub(super) fn search_with_query_explain(
         SearchWeights::default(),
     )?;
     if plan.channels.is_empty() {
+        log_search_timing(query_text, project, limit, offset, &plan);
         return Ok(QuerySearchWithExplain {
             memories: vec![],
             explain: SearchExplain {
@@ -214,6 +237,7 @@ pub(super) fn search_with_query_explain(
                 rrf_k: plan.weights.rrf_k,
                 min_evidence_confidence: plan.weights.min_evidence_confidence,
                 filtered_result_count: 0,
+                timings: plan.timings,
                 channels: vec![],
                 results: vec![],
                 has_more: false,
@@ -222,14 +246,31 @@ pub(super) fn search_with_query_explain(
         });
     }
 
-    let channel_inputs = weighted_channel_inputs(&plan.channels);
-    let fused = weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k);
+    let channel_inputs = time_value(&mut plan.timings, "fusion_inputs", || {
+        weighted_channel_inputs(&plan.channels)
+    });
+    let fused = time_value(&mut plan.timings, "rrf_fusion", || {
+        weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
+    });
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
-    let ordered = load_ordered_memories(conn, &fused_ids)?;
-    let (ordered, fused) = super::source_anchor::apply_score_demotions(conn, &fused, ordered)?;
+    let ordered = time_result(&mut plan.timings, "load_memories", || {
+        load_ordered_memories(conn, &fused_ids)
+    })?;
+    let (ordered, fused) = time_result(&mut plan.timings, "source_anchor_demote", || {
+        super::source_anchor::apply_score_demotions(conn, &fused, ordered)
+    })?;
+    let annotate_start = Instant::now();
     let (ordered, gated_fused) =
         gate_and_annotate_memories(conn, query_text, project, &fused, &plan, ordered)?;
-    let paged = paginate_memories(ordered, limit, offset);
+    push_elapsed(
+        &mut plan.timings,
+        "confidence_and_fact_labels",
+        annotate_start,
+    );
+    let paged = time_value(&mut plan.timings, "paginate", || {
+        paginate_memories(ordered, limit, offset)
+    });
+    let explain_start = Instant::now();
     let explain = build_explain(
         conn,
         query_text,
@@ -244,6 +285,8 @@ pub(super) fn search_with_query_explain(
         fused.len().saturating_sub(gated_fused.len()),
         &paged,
     );
+    push_elapsed(&mut plan.timings, "build_explain", explain_start);
+    log_search_timing(query_text, project, limit, offset, &plan);
     Ok(QuerySearchWithExplain {
         memories: paged,
         explain,
@@ -261,9 +304,13 @@ fn build_query_search_plan(
     branch: Option<&str>,
     weights: SearchWeights,
 ) -> Result<QuerySearchPlan> {
+    let total_start = Instant::now();
+    let mut timings = Vec::new();
     let page_target = (limit.max(1) + offset.max(0) + 1).max(2);
     let fetch = page_target * 3;
-    let expanded = crate::retrieval::query_expand::expand_query(query_text);
+    let expanded = time_value(&mut timings, "query_expand", || {
+        crate::retrieval::query_expand::expand_query(query_text)
+    });
     let expanded_refs: Vec<&str> = expanded.iter().map(|token| token.as_str()).collect();
     let long_tokens: Vec<&str> = expanded_refs
         .iter()
@@ -272,7 +319,7 @@ fn build_query_search_plan(
         .collect();
 
     let core_tokens = crate::retrieval::query_expand::core_tokens(query_text);
-    let claim_terms = claim_terms(query_text, &core_tokens, project);
+    let claim_terms = super::claim::claim_terms(query_text, &core_tokens, project);
     let core_refs: Vec<&str> = core_tokens.iter().map(|token| token.as_str()).collect();
     let mut channels: Vec<NamedChannel> = Vec::new();
     let mut fts_query = None;
@@ -282,16 +329,18 @@ fn build_query_search_plan(
     if !long_tokens.is_empty() {
         let safe_query = sanitize_fts_query(&long_tokens.join(" "));
         fts_query = Some(safe_query.clone());
-        let fts = memory::search_memories_fts_hits_filtered(
-            conn,
-            &safe_query,
-            project,
-            memory_type,
-            fetch,
-            0,
-            include_stale,
-            branch,
-        )?;
+        let fts = time_result(&mut timings, "fts", || {
+            memory::search_memories_fts_hits_filtered(
+                conn,
+                &safe_query,
+                project,
+                memory_type,
+                fetch,
+                0,
+                include_stale,
+                branch,
+            )
+        })?;
         if !fts.is_empty() {
             channels.push(NamedChannel::enabled_with_hits(
                 "fts",
@@ -301,32 +350,36 @@ fn build_query_search_plan(
         }
     }
 
-    let entity_ids = crate::retrieval::entity::search_by_entity_filtered(
-        conn,
-        query_text,
-        project,
-        memory_type,
-        branch,
-        fetch,
-        include_stale,
-    )?;
+    let entity_ids = time_result(&mut timings, "entity", || {
+        crate::retrieval::entity::search_by_entity_filtered(
+            conn,
+            query_text,
+            project,
+            memory_type,
+            branch,
+            fetch,
+            include_stale,
+        )
+    })?;
     if !entity_ids.is_empty() {
         channels.push(NamedChannel::enabled("entity", weights.entity, entity_ids));
     }
 
     if weights.fact > 0.0 {
-        let fact_ids = crate::retrieval::temporal::search_fact_memory_ids(
-            conn,
-            &core_refs,
-            project,
-            memory_type,
-            &[],
-            None,
-            branch,
-            fetch,
-            include_stale,
-            crate::retrieval::temporal::FactTimeMode::from_query(query_text),
-        )?;
+        let fact_ids = time_result(&mut timings, "fact", || {
+            crate::retrieval::temporal::search_fact_memory_ids(
+                conn,
+                &core_refs,
+                project,
+                memory_type,
+                &[],
+                None,
+                branch,
+                fetch,
+                include_stale,
+                crate::retrieval::temporal::FactTimeMode::from_query(query_text),
+            )
+        })?;
         if !fact_ids.is_empty() {
             channels.push(NamedChannel::enabled("fact", weights.fact, fact_ids));
         }
@@ -338,15 +391,17 @@ fn build_query_search_plan(
             temporal_constraint.end_epoch,
         ));
         temporal_field = Some(temporal_constraint.field.as_str().to_string());
-        let temporal_ids = crate::retrieval::temporal::search_by_time_filtered(
-            conn,
-            &temporal_constraint,
-            project,
-            memory_type,
-            branch,
-            fetch,
-            include_stale,
-        )?;
+        let temporal_ids = time_result(&mut timings, "temporal", || {
+            crate::retrieval::temporal::search_by_time_filtered(
+                conn,
+                &temporal_constraint,
+                project,
+                memory_type,
+                branch,
+                fetch,
+                include_stale,
+            )
+        })?;
         if !temporal_ids.is_empty() {
             channels.push(NamedChannel::enabled(
                 "temporal",
@@ -356,18 +411,22 @@ fn build_query_search_plan(
         }
     }
 
-    let query_embedding = crate::retrieval::embedding::embed_query(query_text)?;
-    let vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
-        conn,
-        &query_embedding,
-        crate::retrieval::vector::VectorSearchFilters {
-            project,
-            memory_type,
-            branch,
-            include_stale,
-        },
-        fetch as usize,
-    )?;
+    let query_embedding = time_result(&mut timings, "query_embedding", || {
+        crate::retrieval::embedding::embed_query(query_text)
+    })?;
+    let vector_outcome = time_result(&mut timings, "vector", || {
+        crate::retrieval::vector::vector_search_embedding_filtered(
+            conn,
+            &query_embedding,
+            crate::retrieval::vector::VectorSearchFilters {
+                project,
+                memory_type,
+                branch,
+                include_stale,
+            },
+            fetch as usize,
+        )
+    })?;
     if let Some(reason) = vector_outcome.disabled_reason {
         channels.push(NamedChannel::disabled("vector", weights.vector, reason));
     } else {
@@ -400,16 +459,18 @@ fn build_query_search_plan(
             "stronger retrieval channels returned hits",
         ));
     } else {
-        let like = memory::search_memories_like_filtered(
-            conn,
-            &core_refs,
-            project,
-            memory_type,
-            fetch,
-            0,
-            include_stale,
-            branch,
-        )?;
+        let like = time_result(&mut timings, "like_fallback", || {
+            memory::search_memories_like_filtered(
+                conn,
+                &core_refs,
+                project,
+                memory_type,
+                fetch,
+                0,
+                include_stale,
+                branch,
+            )
+        })?;
         if like.is_empty() {
             channels.push(NamedChannel::disabled(
                 "like_fallback",
@@ -425,6 +486,7 @@ fn build_query_search_plan(
         }
     }
 
+    push_elapsed(&mut timings, "plan_total", total_start);
     Ok(QuerySearchPlan {
         expanded_terms: expanded,
         core_terms: core_tokens,
@@ -435,6 +497,7 @@ fn build_query_search_plan(
         fetch_limit: fetch,
         weights,
         channels,
+        timings,
     })
 }
 
@@ -505,11 +568,33 @@ fn build_explain(
         rrf_k: plan.weights.rrf_k,
         min_evidence_confidence: plan.weights.min_evidence_confidence,
         filtered_result_count,
+        timings: plan.timings.clone(),
         channels,
         results,
         has_more: false,
         raw_fallback_count: 0,
     }
+}
+
+fn log_search_timing(
+    query_text: &str,
+    project: Option<&str>,
+    limit: i64,
+    offset: i64,
+    plan: &QuerySearchPlan,
+) {
+    crate::log::info(
+        "search-perf",
+        &format!(
+            "query={} project={} limit={} offset={} fetch_limit={} {}",
+            crate::db::truncate_str(query_text, 80),
+            project.unwrap_or("-"),
+            limit,
+            offset,
+            plan.fetch_limit,
+            crate::perf::format_phase_timings(&plan.timings)
+        ),
+    );
 }
 
 fn contributions_for(memory_id: i64, plan: &QuerySearchPlan) -> Vec<ChannelContribution> {
@@ -571,7 +656,7 @@ fn candidate_confidence(memory: &Memory, plan: &QuerySearchPlan) -> f64 {
     if plan.claim_terms.is_empty() || has_trusted_non_text_evidence(memory.id, plan) {
         return 1.0;
     }
-    claim_term_coverage(memory, &plan.claim_terms)
+    super::claim::claim_term_coverage(memory, &plan.claim_terms)
 }
 
 fn has_trusted_non_text_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool {
@@ -613,148 +698,6 @@ fn fts_normalized_hits(
             },
         })
         .collect()
-}
-
-fn claim_terms(query_text: &str, core_terms: &[String], project: Option<&str>) -> Vec<String> {
-    let entity_terms: HashSet<String> = crate::retrieval::entity::extract_entities("", query_text)
-        .into_iter()
-        .filter_map(|term| normalize_claim_token(&term))
-        .collect();
-    let project_terms: HashSet<String> = project
-        .into_iter()
-        .flat_map(|project| project.split(|c: char| !c.is_alphanumeric() && !is_cjk(c)))
-        .filter_map(normalize_claim_token)
-        .collect();
-
-    core_terms
-        .iter()
-        .filter_map(|term| normalize_claim_token(term))
-        .filter(|term| !entity_terms.contains(term) && !project_terms.contains(term))
-        .collect()
-}
-
-fn claim_term_coverage(memory: &Memory, claim_terms: &[String]) -> f64 {
-    if claim_terms.is_empty() {
-        return 1.0;
-    }
-    let haystack = format!("{} {}", memory.title, memory.text).to_lowercase();
-    let matched = claim_terms
-        .iter()
-        .filter(|term| claim_term_matches(&haystack, term))
-        .count();
-    matched as f64 / claim_terms.len() as f64
-}
-
-fn claim_term_matches(haystack: &str, term: &str) -> bool {
-    if haystack.contains(term) {
-        return true;
-    }
-    if claim_term_aliases(term)
-        .iter()
-        .any(|alias| haystack.contains(alias))
-    {
-        return true;
-    }
-    claim_term_stems(term)
-        .iter()
-        .any(|stem| stem.chars().count() >= 3 && haystack.contains(stem.as_str()))
-}
-
-fn claim_term_aliases(term: &str) -> &'static [&'static str] {
-    match term {
-        "child" | "children" | "kid" | "kids" => &[
-            "child",
-            "children",
-            "kid",
-            "kids",
-            "son",
-            "daughter",
-            "sons",
-            "daughters",
-        ],
-        _ => &[],
-    }
-}
-
-fn claim_term_stems(term: &str) -> Vec<String> {
-    let mut stems = Vec::new();
-    if let Some(stem) = term.strip_suffix("ing") {
-        stems.push(stem.to_string());
-    }
-    if let Some(stem) = term.strip_suffix("ed") {
-        stems.push(stem.to_string());
-        stems.push(format!("{stem}e"));
-    }
-    if let Some(stem) = term.strip_suffix('s') {
-        stems.push(stem.to_string());
-    }
-    stems
-}
-
-fn normalize_claim_token(term: &str) -> Option<String> {
-    let normalized = term
-        .trim_matches(|c: char| !c.is_alphanumeric() && !is_cjk(c))
-        .to_lowercase();
-    let min_len = if normalized.chars().any(is_cjk) { 2 } else { 3 };
-    if normalized.chars().count() < min_len || is_generic_query_term(&normalized) {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn is_generic_query_term(term: &str) -> bool {
-    matches!(
-        term,
-        "all"
-            | "and"
-            | "are"
-            | "did"
-            | "does"
-            | "for"
-            | "from"
-            | "current"
-            | "had"
-            | "has"
-            | "have"
-            | "handles"
-            | "how"
-            | "into"
-            | "is"
-            | "its"
-            | "latest"
-            | "onto"
-            | "project"
-            | "show"
-            | "that"
-            | "the"
-            | "this"
-            | "through"
-            | "today"
-            | "tomorrow"
-            | "yesterday"
-            | "before"
-            | "after"
-            | "during"
-            | "only"
-            | "production"
-            | "was"
-            | "were"
-            | "what"
-            | "when"
-            | "where"
-            | "which"
-            | "who"
-            | "why"
-            | "with"
-    )
-}
-
-fn is_cjk(c: char) -> bool {
-    matches!(
-        c,
-        '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}'
-    )
 }
 
 fn visibility_label(memory: &Memory, requested_project: Option<&str>) -> &'static str {

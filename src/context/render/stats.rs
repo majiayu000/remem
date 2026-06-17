@@ -25,4 +25,5 @@ pub(in crate::context) struct ContextRenderStats {
     pub core_ids: Vec<i64>,
     pub output_chars: usize,
     pub truncated: bool,
+    pub timings: Vec<crate::perf::PhaseTiming>,
 }

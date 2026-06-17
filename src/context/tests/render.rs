@@ -468,6 +468,7 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
         core_ids: vec![1, 2],
         output_chars: 3_200,
         truncated: true,
+        timings: vec![],
     });
 
     assert!(footer.starts_with("\nLoaded"));

@@ -1,10 +1,14 @@
+use std::time::Instant;
+
 use anyhow::Result;
 
 use crate::db;
 use crate::hook_stdin::read_stdin_with_timeout;
+use crate::perf::{format_phase_timings, push_elapsed, time_result, PhaseTiming};
 
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
+use super::host::resolve_hook_host;
 use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
 
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
@@ -20,6 +24,8 @@ pub(super) async fn summarize_input(
     host: Option<&str>,
     profile: Option<&str>,
 ) -> Result<()> {
+    let total_start = Instant::now();
+    let mut timings = Vec::new();
     let hook: SummarizeInput = match serde_json::from_str(input) {
         Ok(value) => value,
         Err(err) => {
@@ -33,12 +39,16 @@ pub(super) async fn summarize_input(
     if hook.session_id.is_none() {
         return Ok(());
     }
-    let host = resolve_hook_host(host)?;
+    let host = time_result(&mut timings, "resolve_host", || resolve_hook_host(host))?;
     let cwd = effective_cwd(&hook)?;
-    let conn = match db::open_db_for_hook() {
+    let conn = match time_result(&mut timings, "open_db_for_hook", db::open_db_for_hook) {
         Ok(conn) => conn,
         Err(error) => {
-            let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+            let spill_start = Instant::now();
+            let spill_result =
+                spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error);
+            push_elapsed(&mut timings, "spill_payload", spill_start);
+            let path = spill_result?;
             crate::log::error(
                 "summarize",
                 &format!(
@@ -47,26 +57,34 @@ pub(super) async fn summarize_input(
                     error
                 ),
             );
+            push_elapsed(&mut timings, "hook_total", total_start);
+            log_summary_hook_timing("db_open_failed", &host, &timings);
             return Err(error);
         }
     };
-    enqueue_summary_payload(&conn, input, Some(&host), profile)?;
-    if let Err(error) = replay_spilled_summary_hook_payloads(&conn, |conn, record| {
-        enqueue_summary_payload(
-            conn,
-            &record.input,
-            record.host.as_deref(),
-            record.profile.as_deref(),
-        )
+    time_result(&mut timings, "enqueue_summary_payload", || {
+        enqueue_summary_payload(&conn, input, Some(&host), profile)
+    })?;
+    if let Err(error) = time_result(&mut timings, "spill_replay", || {
+        replay_spilled_summary_hook_payloads(&conn, |conn, record| {
+            enqueue_summary_payload(
+                conn,
+                &record.input,
+                record.host.as_deref(),
+                record.profile.as_deref(),
+            )
+        })
     }) {
         crate::log::error(
             "summarize",
             &format!("summary hook spill replay failed; continuing with current payload: {error}"),
         );
     }
-    match should_spawn_worker_once(&conn) {
+    match time_result(&mut timings, "spawn_check", || {
+        should_spawn_worker_once(&conn)
+    }) {
         Ok(true) => {
-            if let Err(error) = spawn_worker_once() {
+            if let Err(error) = time_result(&mut timings, "worker_once_spawn", spawn_worker_once) {
                 crate::log::error(
                     "summarize",
                     &format!("summary jobs queued but worker --once spawn failed: {error}"),
@@ -86,6 +104,8 @@ pub(super) async fn summarize_input(
             );
         }
     }
+    push_elapsed(&mut timings, "hook_total", total_start);
+    log_summary_hook_timing("queued", &host, &timings);
     Ok(())
 }
 
@@ -248,36 +268,6 @@ fn enqueue_summary_jobs(
     Ok(())
 }
 
-fn resolve_hook_host(host: Option<&str>) -> Result<String> {
-    if let Some(host) = clean_optional(host) {
-        return Ok(crate::runtime_config::normalize_host(&host));
-    }
-    if let Some(host) = legacy_hook_host_from_env() {
-        return Ok(host);
-    }
-    crate::runtime_config::default_host()
-}
-
-fn legacy_hook_host_from_env() -> Option<String> {
-    for key in ["REMEM_HOOK_HOST", "REMEM_CONTEXT_HOST"] {
-        if let Ok(host) = std::env::var(key) {
-            if let Some(host) = clean_optional(Some(&host)) {
-                return Some(crate::runtime_config::normalize_host(&host));
-            }
-        }
-    }
-    for key in ["REMEM_SUMMARY_EXECUTOR", "REMEM_EXECUTOR"] {
-        if let Ok(executor) = std::env::var(key) {
-            match executor.trim().to_ascii_lowercase().as_str() {
-                "codex-cli" | "codex" => return Some("codex-cli".to_string()),
-                "claude-cli" | "claude" | "cli" => return Some("claude-code".to_string()),
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
     Ok(db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
 }
@@ -337,6 +327,18 @@ fn clean_optional(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn log_summary_hook_timing(status: &str, host: &str, timings: &[PhaseTiming]) {
+    crate::log::info(
+        "summarize-perf",
+        &format!(
+            "status={} host={} timings=[{}]",
+            status,
+            host,
+            format_phase_timings(timings)
+        ),
+    );
 }
 
 #[cfg(test)]

@@ -345,6 +345,12 @@ fn render_search_explain(explain: &SearchExplain) -> String {
         "  evidence_gate: min_confidence={:.2} filtered={}\n",
         explain.min_evidence_confidence, explain.filtered_result_count
     ));
+    if !explain.timings.is_empty() {
+        output.push_str(&format!(
+            "  timings: {}\n",
+            crate::perf::format_phase_timings(&explain.timings)
+        ));
+    }
     output.push_str("  channels:\n");
     for channel in &explain.channels {
         if !channel.enabled {

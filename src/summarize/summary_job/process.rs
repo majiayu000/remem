@@ -1,7 +1,10 @@
+use std::time::Instant;
+
 use anyhow::Result;
 
 use crate::db;
 use crate::db::project_from_cwd;
+use crate::perf::{format_phase_timings, push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::constants::{
     SUMMARIZE_COOLDOWN_SECS, SUMMARIZE_LOCK_TIMEOUT_SECS, SUMMARY_PROMPT,
@@ -15,87 +18,129 @@ pub async fn process_summary_job_input(
     profile: Option<&str>,
     input: &str,
 ) -> Result<()> {
-    let hook: SummarizeInput = serde_json::from_str(input)?;
+    let total_start = Instant::now();
+    let mut timings = Vec::new();
+    let hook: SummarizeInput = time_result(&mut timings, "parse_payload", || {
+        Ok(serde_json::from_str(input)?)
+    })?;
     let Some(session_id) = hook.session_id.clone() else {
         return Ok(());
     };
     let cwd = hook.cwd.as_deref().unwrap_or(".");
     let project = project_from_cwd(cwd);
 
-    let mut conn = db::open_db()?;
+    let mut conn = time_result(&mut timings, "db_open", db::open_db)?;
 
     // Raw archive ingest happens BEFORE every summarize short-circuit so that
     // "what was said is searchable" is independent of curation outcome.
-    capture_raw_archive(&conn, &hook, &session_id, &project, cwd);
+    time_value(&mut timings, "raw_archive", || {
+        capture_raw_archive(&conn, &hook, &session_id, &project, cwd)
+    });
 
-    let assistant_msg = hook
-        .last_assistant_message
-        .clone()
-        .or_else(|| {
-            hook.transcript_path
-                .as_deref()
-                .and_then(extract_last_assistant_message)
-        })
-        .unwrap_or_default();
-    let Some(msg) = prepare_assistant_message(assistant_msg) else {
+    let msg = time_value(&mut timings, "prepare_message", || {
+        let assistant_msg = hook
+            .last_assistant_message
+            .clone()
+            .or_else(|| {
+                hook.transcript_path
+                    .as_deref()
+                    .and_then(extract_last_assistant_message)
+            })
+            .unwrap_or_default();
+        prepare_assistant_message(assistant_msg)
+    });
+    let Some(msg) = msg else {
+        push_elapsed(&mut timings, "job_total", total_start);
+        log_summary_job_timing("no_message", &project, &timings);
         return Ok(());
     };
 
-    if db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)? {
+    if time_result(&mut timings, "cooldown_check", || {
+        db::is_summarize_on_cooldown(&conn, &project, SUMMARIZE_COOLDOWN_SECS)
+    })? {
         crate::log::info(
             "summary-job",
             &format!("project={} on cooldown, skipping", project),
         );
+        push_elapsed(&mut timings, "job_total", total_start);
+        log_summary_job_timing("cooldown", &project, &timings);
         return Ok(());
     }
 
     let msg_hash = hash_message(&msg);
-    if db::is_duplicate_message(&conn, &project, &msg_hash)? {
+    if time_result(&mut timings, "duplicate_check", || {
+        db::is_duplicate_message(&conn, &project, &msg_hash)
+    })? {
         crate::log::info(
             "summary-job",
             &format!("project={} duplicate message, skipping", project),
         );
+        push_elapsed(&mut timings, "job_total", total_start);
+        log_summary_job_timing("duplicate", &project, &timings);
         return Ok(());
     }
 
-    let memory_sid = db::upsert_session(&conn, &session_id, &project, None)?;
-    let existing_ctx = build_existing_summary_context(&conn, &memory_sid, &project)?;
+    let memory_sid = time_result(&mut timings, "upsert_session", || {
+        db::upsert_session(&conn, &session_id, &project, None)
+    })?;
+    let existing_ctx = time_result(&mut timings, "existing_context", || {
+        build_existing_summary_context(&conn, &memory_sid, &project)
+    })?;
     let user_message = format!(
         "{}Here is the assistant's last response from the session:\n\n{}",
         existing_ctx, msg
     );
 
-    if !db::try_acquire_summarize_lock(&mut conn, &project, SUMMARIZE_LOCK_TIMEOUT_SECS)? {
+    if !time_result(&mut timings, "lock_acquire", || {
+        db::try_acquire_summarize_lock(&mut conn, &project, SUMMARIZE_LOCK_TIMEOUT_SECS)
+    })? {
         crate::log::info(
             "summary-job",
             &format!("project={} summarize lock held, skipping", project),
         );
+        push_elapsed(&mut timings, "job_total", total_start);
+        log_summary_job_timing("lock_held", &project, &timings);
         return Ok(());
     }
 
     let payload_profile = profile_from_payload(input);
     let effective_profile = profile.or(payload_profile.as_deref());
-    let response = call_summary_ai(host, effective_profile, &project, &user_message)
-        .await
-        .map_err(|err| {
+    let ai_start = Instant::now();
+    let response_result = call_summary_ai(host, effective_profile, &project, &user_message).await;
+    push_elapsed(&mut timings, "call_ai", ai_start);
+    let response = match response_result {
+        Ok(response) => response,
+        Err(err) => {
             release_lock_or_log(&conn, &project, "ai-failure");
-            anyhow::anyhow!("summary ai failed: {}", err)
-        })?;
-    let Some(summary) = parse_summary(&response) else {
+            push_elapsed(&mut timings, "job_total", total_start);
+            log_summary_job_timing("ai_error", &project, &timings);
+            return Err(anyhow::anyhow!("summary ai failed: {}", err));
+        }
+    };
+    let Some(summary) = time_value(&mut timings, "parse_summary", || parse_summary(&response))
+    else {
         release_lock_or_log(&conn, &project, "ai-skipped");
         crate::log::info("summary-job", "session skipped by AI");
+        push_elapsed(&mut timings, "job_total", total_start);
+        log_summary_job_timing("ai_skipped", &project, &timings);
         return Ok(());
     };
 
-    finalize_summary(
-        &mut conn,
-        &session_id,
-        &memory_sid,
-        &project,
-        &msg_hash,
-        summary,
-    )?;
-    sync_native_memory(&conn, cwd, &project);
+    time_result(&mut timings, "finalize_summary", || {
+        finalize_summary(
+            &mut conn,
+            &session_id,
+            &memory_sid,
+            &project,
+            &msg_hash,
+            summary,
+        )
+    })?;
+    time_value(&mut timings, "sync_native_memory", || {
+        sync_native_memory(&conn, cwd, &project)
+    });
+    push_elapsed(&mut timings, "job_total", total_start);
+    log_summary_job_timing("summarized", &project, &timings);
     Ok(())
 }
 
@@ -284,6 +329,18 @@ fn profile_from_payload(input: &str) -> Option<String> {
                 .filter(|profile| !profile.is_empty())
                 .map(str::to_string)
         })
+}
+
+fn log_summary_job_timing(status: &str, project: &str, timings: &[PhaseTiming]) {
+    crate::log::info(
+        "summary-job-perf",
+        &format!(
+            "status={} project={} timings=[{}]",
+            status,
+            project,
+            format_phase_timings(timings)
+        ),
+    );
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ mod memory_candidate;
 pub mod migrate;
 mod observation_extract;
 pub mod observe;
+pub mod perf;
 pub mod project_id;
 pub mod retrieval;
 pub mod runtime_config;
