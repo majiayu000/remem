@@ -273,7 +273,9 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         )?,
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
-        Commands::BackfillEmbeddings { limit } => run_backfill_embeddings(limit)?,
+        Commands::BackfillEmbeddings { limit, batch_size } => {
+            run_backfill_embeddings(limit, batch_size)?
+        }
         Commands::Encrypt { rekey_raw } => run_encrypt(rekey_raw)?,
         Commands::Api { port } => api::run_api_server(port).await?,
         Commands::Dream {

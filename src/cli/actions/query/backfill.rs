@@ -1,5 +1,6 @@
 use anyhow::Result;
 use rusqlite::Connection;
+use std::time::Instant;
 
 use crate::db;
 
@@ -61,14 +62,65 @@ where
     Ok(())
 }
 
-pub(in crate::cli) fn run_backfill_embeddings(limit: i64) -> Result<()> {
+pub(in crate::cli) fn run_backfill_embeddings(limit: i64, batch_size: i64) -> Result<()> {
     let conn = db::open_db()?;
     let limit = limit.max(1);
-    println!("Backfilling/reindexing up to {limit} missing or stale memory embeddings...");
+    let batch_size = batch_size.max(1);
+    let pending_before = count_missing_embeddings(&conn)?;
+    println!(
+        "Backfilling/reindexing up to {limit} missing or stale memory embeddings, batch_size={batch_size}, pending_before={pending_before}..."
+    );
 
-    let backfilled = crate::retrieval::vector::reindex_memory_embeddings(&conn, limit)?;
+    let started = Instant::now();
+    let mut backfilled = 0usize;
+    let mut remaining_limit = limit;
+    let mut printed_profile = false;
+    while remaining_limit > 0 {
+        let batch_limit = remaining_limit.min(batch_size);
+        let report =
+            crate::retrieval::vector::reindex_memory_embeddings_with_report(&conn, batch_limit)?;
+        if !printed_profile && !report.model.is_empty() {
+            println!(
+                "Embedding profile: model={} dimensions={}",
+                report.model, report.dimensions
+            );
+            printed_profile = true;
+        }
+        if report.processed == 0 {
+            break;
+        }
+
+        backfilled += report.processed;
+        remaining_limit -= report.processed as i64;
+        let remaining = count_missing_embeddings(&conn)?;
+        let elapsed_ms = report
+            .timings
+            .iter()
+            .find(|timing| timing.phase == "total")
+            .map(|timing| timing.elapsed_ms)
+            .unwrap_or(0);
+        let rows_per_sec = if elapsed_ms == 0 {
+            report.processed as f64
+        } else {
+            report.processed as f64 * 1000.0 / elapsed_ms as f64
+        };
+        println!(
+            "  batch processed={} selected={} remaining={} rows_per_sec={rows_per_sec:.1} {}",
+            report.processed,
+            report.selected,
+            remaining,
+            crate::perf::format_phase_timings(&report.timings)
+        );
+        if report.processed < batch_limit as usize {
+            break;
+        }
+    }
+
     let remaining = count_missing_embeddings(&conn)?;
-    println!("Done. {backfilled} embeddings backfilled/reindexed, {remaining} remaining.");
+    println!(
+        "Done. {backfilled} embeddings backfilled/reindexed, {remaining} remaining, elapsed_ms={}.",
+        started.elapsed().as_millis()
+    );
     Ok(())
 }
 

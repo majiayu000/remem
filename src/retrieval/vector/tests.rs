@@ -181,6 +181,77 @@ fn explicit_embedding_backfill_covers_all_statuses_across_batches() -> Result<()
 }
 
 #[test]
+fn reindex_report_includes_profile_timings_and_remaining_work() -> Result<()> {
+    let conn = setup_vector_conn()?;
+    for id in 1..=3 {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Backfill memory', 'Measured backfill report.', 'decision', 1, ?1, 'active')",
+            params![id],
+        )?;
+    }
+
+    ensure_vec_table(&conn)?;
+    let report = reindex_memory_embeddings_with_report(&conn, 2)?;
+
+    assert_eq!(report.selected, 2);
+    assert_eq!(report.processed, 2);
+    assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
+    assert_eq!(report.dimensions, EMBEDDING_DIMENSIONS);
+    assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 1);
+
+    let phases: Vec<&str> = report
+        .timings
+        .iter()
+        .map(|timing| timing.phase.as_str())
+        .collect();
+    for expected in [
+        "profile_probe",
+        "select_pending",
+        "embed_memory",
+        "upsert_embeddings",
+        "commit",
+        "total",
+    ] {
+        assert!(
+            phases.contains(&expected),
+            "missing timing phase {expected}; got {phases:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn reindex_batch_rolls_back_failed_upserts() -> Result<()> {
+    let conn = setup_vector_conn()?;
+    for (id, updated_at_epoch) in [(1_i64, 2_i64), (2, 1)] {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Backfill memory', 'Batch rollback should be atomic.', 'decision', 1, ?2, 'active')",
+            params![id, updated_at_epoch],
+        )?;
+    }
+    conn.execute_batch(
+        "CREATE TRIGGER fail_embedding_for_memory_2
+         BEFORE INSERT ON memory_embeddings
+         WHEN NEW.memory_id = 2
+         BEGIN
+             SELECT RAISE(FAIL, 'forced embedding failure');
+         END;",
+    )?;
+
+    let error = reindex_memory_embeddings_with_report(&conn, 2).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("memory id=2"), "{message}");
+    assert!(message.contains("forced embedding failure"), "{message}");
+    assert_eq!(embedding_count(&conn)?, 0);
+    assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 2);
+    Ok(())
+}
+
+#[test]
 fn vector_search_ignores_embeddings_from_other_models() -> Result<()> {
     let conn = setup_vector_conn()?;
     insert_test_memory(&conn, 1)?;
