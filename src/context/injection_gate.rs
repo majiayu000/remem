@@ -8,11 +8,12 @@ use super::policy::ContextPolicy;
 use super::types::ContextRequest;
 
 mod data_version;
+mod data_version_hint;
 mod delta;
 mod pre_render;
 mod store;
 
-pub(in crate::context) use data_version::compute_data_version_from_render_inputs;
+pub(in crate::context) use data_version_hint::compute_data_version_hint;
 pub(super) use pre_render::pre_render_context_gate;
 use store::{load_gate_row, record_suppression, upsert_emit_row, GateRow};
 

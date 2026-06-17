@@ -8,8 +8,8 @@ use super::audit::{build_context_audit_items, record_context_injection_items, Co
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
 use super::injection_gate::{
-    apply_context_gate_with_data_version, compute_data_version_from_render_inputs,
-    pre_render_context_gate, ContextGateAction, ContextGateDecision, ContextGatePrecheck,
+    apply_context_gate_with_data_version, compute_data_version_hint, pre_render_context_gate,
+    ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
@@ -36,6 +36,7 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) stats: ContextRenderStats,
     pub(in crate::context) audit_items: Vec<ContextAuditItem>,
     pub(in crate::context) data_version: Option<String>,
+    pub(in crate::context) has_load_errors: bool,
 }
 
 pub fn generate_context(
@@ -129,7 +130,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
     let (mut decision, mut stats, precheck, audit_items) = if use_gate {
         let precheck_start = Instant::now();
-        let mut precheck =
+        let precheck =
             pre_render_context_gate(&conn, &invocation, &request, &policy, debug_enabled);
         let precheck_timing = crate::perf::PhaseTiming::elapsed("pre_render_gate", precheck_start);
         if let Some(decision) = precheck.decision {
@@ -138,45 +139,49 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             stats.timings.push(precheck_timing);
             (decision, stats, precheck.precheck, Vec::new())
         } else {
-            let rendered = match precheck.render_inputs.take() {
-                Some(inputs) => render_context_output_from_inputs(
-                    &conn,
-                    &request,
-                    Some(&invocation),
-                    debug_enabled,
-                    policy,
-                    inputs,
-                )?,
-                None => render_context_output_with_policy(
-                    &conn,
-                    &request,
-                    Some(&invocation),
-                    debug_enabled,
-                    policy,
-                )?,
-            };
+            let prechecked_data_version = precheck.data_version.clone();
+            let rendered = render_context_output_with_policy(
+                &conn,
+                &request,
+                Some(&invocation),
+                debug_enabled,
+                policy,
+                prechecked_data_version,
+            )?;
             let mut stats = rendered.stats;
             stats.timings.insert(0, precheck_timing);
             stats.timings.insert(0, db_open_timing.clone());
-            let gate_data_version = rendered
-                .data_version
-                .as_deref()
-                .or(precheck.data_version.as_deref());
-            let gate_start = Instant::now();
-            let decision = apply_context_gate_with_data_version(
-                &conn,
-                &invocation,
-                rendered.output,
-                gate_data_version,
-            );
-            stats
-                .timings
-                .push(crate::perf::PhaseTiming::elapsed("gate_apply", gate_start));
-            (decision, stats, precheck.precheck, rendered.audit_items)
+            let output = rendered.output;
+            let data_version = rendered.data_version;
+            let has_load_errors = rendered.has_load_errors;
+            let audit_items = rendered.audit_items;
+            let decision = if has_load_errors {
+                ContextGateDecision {
+                    output,
+                    action: ContextGateAction::FailOpen,
+                    reason: "context_load_errors",
+                    key: None,
+                    context_hash: None,
+                    output_mode: Some("fail_open"),
+                }
+            } else {
+                let gate_start = Instant::now();
+                let decision = apply_context_gate_with_data_version(
+                    &conn,
+                    &invocation,
+                    output,
+                    data_version.as_deref(),
+                );
+                stats
+                    .timings
+                    .push(crate::perf::PhaseTiming::elapsed("gate_apply", gate_start));
+                decision
+            };
+            (decision, stats, precheck.precheck, audit_items)
         }
     } else {
         let rendered =
-            render_context_output_with_policy(&conn, &request, None, debug_enabled, policy)?;
+            render_context_output_with_policy(&conn, &request, None, debug_enabled, policy, None)?;
         let mut stats = rendered.stats;
         stats.timings.insert(0, db_open_timing.clone());
         (
@@ -267,7 +272,7 @@ pub(in crate::context) fn render_context_output(
         Ok(conn) => conn,
         Err(rendered) => return Ok(*rendered),
     };
-    render_context_output_with_policy(&conn, request, None, debug, policy)
+    render_context_output_with_policy(&conn, request, None, debug, policy, None)
 }
 
 fn render_context_output_with_policy(
@@ -276,9 +281,18 @@ fn render_context_output_with_policy(
     invocation: Option<&ContextInvocation>,
     debug: bool,
     policy: ContextPolicy,
+    prechecked_data_version: Option<String>,
 ) -> Result<RenderedContext> {
     let inputs = load_context_render_inputs(conn, request, debug, &policy);
-    render_context_output_from_inputs(conn, request, invocation, debug, policy, inputs)
+    render_context_output_from_inputs(
+        conn,
+        request,
+        invocation,
+        debug,
+        policy,
+        inputs,
+        prechecked_data_version,
+    )
 }
 
 fn render_context_output_from_inputs(
@@ -288,21 +302,29 @@ fn render_context_output_from_inputs(
     debug: bool,
     policy: ContextPolicy,
     inputs: ContextRenderInputs,
+    prechecked_data_version: Option<String>,
 ) -> Result<RenderedContext> {
-    let data_version = invocation.and_then(|invocation| {
-        compute_data_version_from_render_inputs(request, invocation, &policy, &inputs)
-            .map_err(|error| {
-                crate::log::warn(
-                    "context-gate",
-                    &format!("render_data_version_skip error={error}"),
-                );
-                error
-            })
-            .ok()
-    });
     let render_total_start = Instant::now();
     let profile = resolve_profile(request.host);
     let mut loaded = inputs.loaded;
+    let has_load_errors = !loaded.errors.is_empty();
+    let data_version = if has_load_errors {
+        None
+    } else {
+        prechecked_data_version.or_else(|| {
+            invocation.and_then(|invocation| {
+                compute_data_version_hint(conn, request, invocation, &policy)
+                    .map_err(|error| {
+                        crate::log::warn(
+                            "context-gate",
+                            &format!("render_data_version_skip error={error}"),
+                        );
+                        error
+                    })
+                    .ok()
+            })
+        })
+    };
     let preference_output = inputs.preference_output;
     let preference_details = inputs.preference_details;
     let load_timing = inputs.load_timing;
@@ -321,6 +343,7 @@ fn render_context_output_from_inputs(
             stats: empty_stats(request),
             audit_items: Vec::new(),
             data_version,
+            has_load_errors,
         });
     }
 
@@ -521,6 +544,7 @@ fn render_context_output_from_inputs(
         stats,
         audit_items,
         data_version,
+        has_load_errors,
     })
 }
 
@@ -561,6 +585,7 @@ fn render_context_open_error(
         stats,
         audit_items: Vec::new(),
         data_version: None,
+        has_load_errors: true,
     }
 }
 

@@ -1,5 +1,4 @@
 use super::*;
-use crate::context::render_inputs::{load_context_render_inputs, ContextRenderInputs};
 use rusqlite::OptionalExtension;
 
 pub(in crate::context) fn pre_render_context_gate(
@@ -31,11 +30,11 @@ pub(in crate::context) fn pre_render_context_gate(
                 "context-gate",
                 &format!("pre_render_skip reason=schema_check error={}", error),
             );
-            return ContextGatePrecheckResult::miss(None, None);
+            return ContextGatePrecheckResult::miss(None);
         }
     };
     if !has_data_version {
-        return ContextGatePrecheckResult::miss(None, None);
+        return ContextGatePrecheckResult::miss(None);
     }
     let key = injection_key(invocation);
     let now = chrono::Utc::now().timestamp();
@@ -51,51 +50,38 @@ pub(in crate::context) fn pre_render_context_gate(
                 "context-gate",
                 &format!("pre_render_skip reason=gate_read error={}", error),
             );
-            return ContextGatePrecheckResult::miss(None, None);
+            return ContextGatePrecheckResult::miss(None);
         }
     };
 
     let Some(row) = row else {
-        return ContextGatePrecheckResult::miss(None, None);
+        return ContextGatePrecheckResult::miss(None);
     };
     if row.data_version.is_none() {
-        return ContextGatePrecheckResult::miss(None, None);
+        return ContextGatePrecheckResult::miss(None);
     }
-
-    let render_inputs = load_context_render_inputs(conn, request, debug_enabled, policy);
-    let current_data_version = match data_version::compute_data_version_from_render_inputs(
-        request,
-        invocation,
-        policy,
-        &render_inputs,
-    ) {
-        Ok(value) => value,
-        Err(error) => {
-            crate::log::warn(
-                "context-gate",
-                &format!("pre_render_skip reason=data_version error={}", error),
-            );
-            return ContextGatePrecheckResult::miss(None, Some(render_inputs));
-        }
-    };
+    let current_data_version =
+        match data_version_hint::compute_data_version_hint(conn, request, invocation, policy) {
+            Ok(value) => value,
+            Err(error) => {
+                crate::log::warn(
+                    "context-gate",
+                    &format!("pre_render_skip reason=data_version error={}", error),
+                );
+                return ContextGatePrecheckResult::miss(None);
+            }
+        };
 
     if row.data_version.as_deref() != Some(current_data_version.as_str()) {
-        return ContextGatePrecheckResult::miss(Some(current_data_version), Some(render_inputs));
+        return ContextGatePrecheckResult::miss(Some(current_data_version));
     }
-    suppress_matching_row(
-        conn,
-        invocation,
-        row,
-        Some(current_data_version),
-        Some(render_inputs),
-    )
+    suppress_matching_row(conn, invocation, row, Some(current_data_version))
 }
 
 pub(in crate::context) struct ContextGatePrecheckResult {
     pub(in crate::context) decision: Option<ContextGateDecision>,
     pub(in crate::context) precheck: ContextGatePrecheck,
     pub(in crate::context) data_version: Option<String>,
-    pub(in crate::context) render_inputs: Option<ContextRenderInputs>,
 }
 
 impl ContextGatePrecheckResult {
@@ -104,16 +90,14 @@ impl ContextGatePrecheckResult {
             decision: None,
             precheck: ContextGatePrecheck::Off,
             data_version: None,
-            render_inputs: None,
         }
     }
 
-    fn miss(data_version: Option<String>, render_inputs: Option<ContextRenderInputs>) -> Self {
+    fn miss(data_version: Option<String>) -> Self {
         Self {
             decision: None,
             precheck: ContextGatePrecheck::Miss,
             data_version,
-            render_inputs,
         }
     }
 
@@ -122,7 +106,6 @@ impl ContextGatePrecheckResult {
             decision: Some(decision),
             precheck: ContextGatePrecheck::Hit,
             data_version: Some(data_version),
-            render_inputs: None,
         }
     }
 }
@@ -132,22 +115,21 @@ fn suppress_matching_row(
     invocation: &ContextInvocation,
     row: GateRow,
     data_version: Option<String>,
-    render_inputs: Option<ContextRenderInputs>,
 ) -> ContextGatePrecheckResult {
     let Some(data_version) = data_version else {
-        return ContextGatePrecheckResult::miss(None, render_inputs);
+        return ContextGatePrecheckResult::miss(None);
     };
     let key = injection_key(invocation);
     let now = chrono::Utc::now().timestamp();
     if !fallback_cooldown_allows_suppression(invocation, &row, now) {
-        return ContextGatePrecheckResult::miss(Some(data_version), render_inputs);
+        return ContextGatePrecheckResult::miss(Some(data_version));
     }
     if let Err(error) = record_suppression(conn, invocation, &key, Some(&data_version), now) {
         crate::log::warn(
             "context-gate",
             &format!("pre_render_skip reason=gate_write error={}", error),
         );
-        return ContextGatePrecheckResult::miss(Some(data_version), render_inputs);
+        return ContextGatePrecheckResult::miss(Some(data_version));
     }
     crate::log::info(
         "context-gate",
@@ -265,10 +247,8 @@ mod tests {
     ) -> anyhow::Result<ContextGateDecision> {
         let request = test_request(invocation);
         let policy = test_policy();
-        let inputs = load_context_render_inputs(conn, &request, false, &policy);
-        let data_version = data_version::compute_data_version_from_render_inputs(
-            &request, invocation, &policy, &inputs,
-        )?;
+        let data_version =
+            data_version_hint::compute_data_version_hint(conn, &request, invocation, &policy)?;
         Ok(apply_context_gate_with_data_version(
             conn,
             invocation,
@@ -325,7 +305,6 @@ mod tests {
         assert!(result.decision.is_none());
         assert_eq!(result.precheck, ContextGatePrecheck::Miss);
         assert!(result.data_version.is_none());
-        assert!(result.render_inputs.is_none());
         Ok(())
     }
 
@@ -458,7 +437,6 @@ mod tests {
         assert!(result.decision.is_none());
         assert_eq!(result.precheck, ContextGatePrecheck::Miss);
         assert!(result.data_version.is_some());
-        assert!(result.render_inputs.is_some());
         Ok(())
     }
 
@@ -495,6 +473,84 @@ mod tests {
              SET content = 'Changed render-relevant memory text.'
              WHERE id = ?1",
             params![memory_id],
+        )?;
+
+        let result = pre_render_for_test(&conn, &invocation);
+        assert!(result.decision.is_none());
+        assert_eq!(result.precheck, ContextGatePrecheck::Miss);
+        assert!(result.data_version.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn strict_pre_render_misses_after_git_commit_signal_change() -> anyhow::Result<()> {
+        let _data_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-commit");
+        let mut invocation = gate_invocation(Some("sess-pre-render-commit"));
+        invocation.gate_mode = Some("strict".to_string());
+        let conn = crate::db::test_support::runtime_connection()?;
+
+        let first = apply_gate_with_current_data_version(
+            &conn,
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        )?;
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        conn.execute(
+            "INSERT INTO git_commits
+             (project, repo_path, sha, short_sha, branch, message,
+              authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch)
+             VALUES (?1, ?1, 'sha-pre-render-commit', 'sha-pre', NULL,
+                     'Change render-driving commit signal', 2000, '[]', 2000, 2000)",
+            params![invocation.project],
+        )?;
+
+        let result = pre_render_for_test(&conn, &invocation);
+        assert!(result.decision.is_none());
+        assert_eq!(result.precheck, ContextGatePrecheck::Miss);
+        assert!(result.data_version.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn strict_pre_render_misses_after_memory_fact_change() -> anyhow::Result<()> {
+        let _data_dir =
+            crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-fact");
+        let mut invocation = gate_invocation(Some("sess-pre-render-fact"));
+        invocation.gate_mode = Some("strict".to_string());
+        let conn = crate::db::test_support::runtime_connection()?;
+        let memory_id = crate::memory::insert_memory_full(
+            &conn,
+            Some("sess-pre-render-fact"),
+            &invocation.project,
+            Some("context-gate-fact"),
+            "Context gate fact row",
+            "A memory with temporal fact labels.",
+            "decision",
+            None,
+            None,
+            "project",
+            None,
+        )?;
+
+        let first = apply_gate_with_current_data_version(
+            &conn,
+            &invocation,
+            "# [/tmp/remem] context now\nBody A\n".to_string(),
+        )?;
+        assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+        conn.execute(
+            "INSERT INTO memory_facts
+             (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+              learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+              confidence, supersedes_fact_id, status, invalidated_at_epoch,
+              created_at_epoch, updated_at_epoch)
+             VALUES (?1, 'context gate', 'uses_file', 'src/context/render.rs',
+                     NULL, NULL, 2000, ?2, NULL, '[]', 0.900000, NULL, 'active',
+                     NULL, 2000, 2000)",
+            params![invocation.project, memory_id],
         )?;
 
         let result = pre_render_for_test(&conn, &invocation);
@@ -672,8 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_pre_render_miss_carries_render_inputs_when_context_load_has_errors(
-    ) -> anyhow::Result<()> {
+    fn strict_pre_render_falls_open_when_data_version_query_fails() -> anyhow::Result<()> {
         let _data_dir =
             crate::db::test_support::ScopedTestDataDir::new("context-gate-pre-render-fail-open");
         let mut invocation = gate_invocation(Some("sess-pre-render-fail-open"));
@@ -691,8 +746,7 @@ mod tests {
         let result = pre_render_for_test(&conn, &invocation);
         assert!(result.decision.is_none());
         assert_eq!(result.precheck, ContextGatePrecheck::Miss);
-        assert!(result.data_version.is_some());
-        assert!(result.render_inputs.is_some());
+        assert!(result.data_version.is_none());
         Ok(())
     }
 

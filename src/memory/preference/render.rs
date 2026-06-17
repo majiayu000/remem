@@ -16,7 +16,6 @@ pub struct PreferenceRenderSummary {
 pub(crate) struct PreferenceRenderDetails {
     pub summary: PreferenceRenderSummary,
     pub rendered_ids: Vec<i64>,
-    pub rendered_memories: Vec<Memory>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,8 +140,6 @@ pub(crate) fn render_preferences_with_context_details(
     let mut total_chars = 0usize;
     let mut summary = PreferenceRenderSummary::default();
     let mut rendered_ids = Vec::new();
-    let mut rendered_memories = Vec::new();
-
     for &idx in &keep_indices {
         let (pref, source) = &all_prefs[idx];
         let text = pref.text.trim();
@@ -160,7 +157,6 @@ pub(crate) fn render_preferences_with_context_details(
         total_chars += line_chars;
         summary.rendered += 1;
         rendered_ids.push(pref.id);
-        rendered_memories.push(pref.clone());
         match source {
             PreferenceSource::Project => summary.project_rendered += 1,
             PreferenceSource::Global => summary.global_rendered += 1,
@@ -171,6 +167,5 @@ pub(crate) fn render_preferences_with_context_details(
     Ok(PreferenceRenderDetails {
         summary,
         rendered_ids,
-        rendered_memories,
     })
 }

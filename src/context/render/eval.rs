@@ -104,7 +104,7 @@ pub(crate) fn session_start_eval_snapshot(
     };
     let policy = ContextPolicy::from_limits(ContextLimits::default());
     let rendered = match open_context_connection_or_error(&request, &policy) {
-        Ok(conn) => render_context_output_with_policy(&conn, &request, None, false, policy)?,
+        Ok(conn) => render_context_output_with_policy(&conn, &request, None, false, policy, None)?,
         Err(rendered) => *rendered,
     };
     Ok(SessionStartEvalSnapshot {
