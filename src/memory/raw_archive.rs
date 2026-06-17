@@ -3,7 +3,7 @@
 //!
 //! Spec: SPEC-raw-archive-vs-curated-memory-2026-04-22.md
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub const ROLE_USER: &str = "user";
@@ -211,42 +211,46 @@ pub fn drain_transcript(
     };
 
     let mut report = RawIngestReport::default();
-    for line in content.lines() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            report.parse_errors += 1;
-            continue;
-        };
-        let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value) else {
-            report.skipped_messages += 1;
-            continue;
-        };
-        if message.text.trim().is_empty() {
-            report.empty_messages += 1;
-            continue;
-        }
+    with_raw_archive_drain_savepoint(conn, || {
+        for line in content.lines() {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                report.parse_errors += 1;
+                continue;
+            };
+            let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
+            else {
+                report.skipped_messages += 1;
+                continue;
+            };
+            if message.text.trim().is_empty() {
+                report.empty_messages += 1;
+                continue;
+            }
 
-        match insert_raw_message(
-            conn,
-            session_id,
-            project,
-            message.role,
-            &message.text,
-            SOURCE_TRANSCRIPT,
-            branch,
-            cwd,
-        ) {
-            Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
-            Ok(Some(_)) => report.duplicates += 1,
-            Ok(None) => report.empty_messages += 1,
-            Err(error) => {
-                report.insert_errors += 1;
-                crate::log::warn(
-                    "raw-archive",
-                    &format!("insert raw message failed: {}", error),
-                );
+            match insert_raw_message(
+                conn,
+                session_id,
+                project,
+                message.role,
+                &message.text,
+                SOURCE_TRANSCRIPT,
+                branch,
+                cwd,
+            ) {
+                Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
+                Ok(Some(_)) => report.duplicates += 1,
+                Ok(None) => report.empty_messages += 1,
+                Err(error) => {
+                    report.insert_errors += 1;
+                    crate::log::warn(
+                        "raw-archive",
+                        &format!("insert raw message failed: {}", error),
+                    );
+                }
             }
         }
-    }
+        Ok(())
+    })?;
     if report.has_failures() {
         record_raw_ingest_failure(
             conn,
@@ -258,6 +262,33 @@ pub fn drain_transcript(
         )?;
     }
     Ok(report)
+}
+
+fn with_raw_archive_drain_savepoint<T>(
+    conn: &Connection,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("SAVEPOINT remem_raw_archive_drain;")
+        .context("start raw archive drain savepoint")?;
+    match f() {
+        Ok(value) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_raw_archive_drain;")
+                .context("release raw archive drain savepoint")?;
+            Ok(value)
+        }
+        Err(error) => {
+            let rollback = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_raw_archive_drain;
+                 RELEASE SAVEPOINT remem_raw_archive_drain;",
+            );
+            match rollback {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(error).context(format!(
+                    "raw archive drain rollback also failed: {rollback_error}"
+                )),
+            }
+        }
+    }
 }
 
 pub fn record_raw_ingest_failure(
@@ -382,403 +413,4 @@ fn fts_query(query: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn setup_conn() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::migrate::run_migrations(&conn).unwrap();
-        conn
-    }
-
-    fn write_temp_transcript(name: &str, content: &str) -> Result<std::path::PathBuf> {
-        let path = std::env::temp_dir().join(format!(
-            "remem-{name}-{}-{}.jsonl",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        std::fs::write(&path, content)?;
-        Ok(path)
-    }
-
-    fn raw_ingest_failure_count(conn: &Connection) -> Result<i64> {
-        Ok(
-            conn.query_row("SELECT COUNT(*) FROM raw_ingest_failures", [], |row| {
-                row.get(0)
-            })?,
-        )
-    }
-
-    #[test]
-    fn insert_is_idempotent_per_session_role_content() -> Result<()> {
-        let conn = setup_conn();
-        let id1 = insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            "hello world",
-            SOURCE_HOOK,
-            None,
-            None,
-        )?
-        .ok_or_else(|| anyhow::anyhow!("first insert returned None"))?;
-        // Same session + same text => deduped onto the existing row.
-        let id2 = insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            "hello world",
-            SOURCE_HOOK,
-            None,
-            None,
-        )?
-        .ok_or_else(|| anyhow::anyhow!("second insert returned None"))?;
-        assert_eq!(id1.id, id2.id);
-        assert!(id1.inserted, "first call must mark inserted");
-        assert!(!id2.inserted, "second call must mark not-inserted");
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
-        assert_eq!(count, 1);
-        let stored_hash: String = conn.query_row(
-            "SELECT content_hash FROM raw_messages WHERE id = ?1",
-            params![id1.id],
-            |row| row.get(0),
-        )?;
-        assert!(stored_hash.starts_with("sha256:content-v1:"));
-        assert_eq!(stored_hash.len(), "sha256:content-v1:".len() + 64);
-        Ok(())
-    }
-
-    #[test]
-    fn insert_reuses_matching_legacy_content_hash() -> Result<()> {
-        let conn = setup_conn();
-        let content = "legacy exact raw message";
-        let legacy_hash = legacy_exact_content_hash(content);
-        conn.execute(
-            "INSERT INTO raw_messages
-             (session_id, project, role, content, content_hash, source, branch, cwd, created_at_epoch)
-             VALUES ('s1', '/proj', ?1, ?2, ?3, ?4, NULL, NULL, 100)",
-            params![ROLE_USER, content, legacy_hash, SOURCE_HOOK],
-        )?;
-        let legacy_id = conn.last_insert_rowid();
-
-        let outcome = insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            content,
-            SOURCE_HOOK,
-            None,
-            None,
-        )?
-        .ok_or_else(|| anyhow::anyhow!("non-empty content returned None"))?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
-
-        assert_eq!(outcome.id, legacy_id);
-        assert!(!outcome.inserted);
-        assert_eq!(count, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn insert_does_not_reuse_mismatched_legacy_content_hash() -> Result<()> {
-        let conn = setup_conn();
-        let content = "target raw content";
-        let legacy_hash = legacy_exact_content_hash(content);
-        conn.execute(
-            "INSERT INTO raw_messages
-             (session_id, project, role, content, content_hash, source, branch, cwd, created_at_epoch)
-             VALUES ('s1', '/proj', ?1, 'different raw content', ?2, ?3, NULL, NULL, 100)",
-            params![ROLE_USER, legacy_hash, SOURCE_HOOK],
-        )?;
-
-        let outcome = insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            content,
-            SOURCE_HOOK,
-            None,
-            None,
-        )?
-        .ok_or_else(|| anyhow::anyhow!("non-empty content returned None"))?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))?;
-        let stored_hash: String = conn.query_row(
-            "SELECT content_hash FROM raw_messages WHERE id = ?1",
-            params![outcome.id],
-            |row| row.get(0),
-        )?;
-
-        assert!(outcome.inserted);
-        assert_eq!(count, 2);
-        assert!(stored_hash.starts_with("sha256:content-v1:"));
-        Ok(())
-    }
-
-    /// Regression for #237: the same text spoken in two different sessions must
-    /// keep BOTH turns. The old UNIQUE(project, role, content_hash) globally
-    /// deduped across sessions and silently dropped the second turn.
-    #[test]
-    fn identical_text_across_sessions_keeps_both_turns() {
-        let conn = setup_conn();
-        let id1 = insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            "let's deploy the service",
-            SOURCE_HOOK,
-            None,
-            None,
-        )
-        .unwrap()
-        .expect("first insert returns Some");
-        let id2 = insert_raw_message(
-            &conn,
-            "s2",
-            "/proj",
-            ROLE_USER,
-            "let's deploy the service",
-            SOURCE_HOOK,
-            None,
-            None,
-        )
-        .unwrap()
-        .expect("second insert returns Some");
-
-        assert!(id1.inserted, "first session turn must be inserted");
-        assert!(id2.inserted, "second session turn must also be inserted");
-        assert_ne!(id1.id, id2.id, "the two sessions must keep distinct rows");
-
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM raw_messages", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 2, "both session turns must be preserved");
-    }
-
-    #[test]
-    fn empty_content_is_skipped() {
-        let conn = setup_conn();
-        let id = insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            "   \n\t  ",
-            SOURCE_HOOK,
-            None,
-            None,
-        )
-        .unwrap();
-        assert!(id.is_none());
-    }
-
-    #[test]
-    fn fts_finds_inserted_content() {
-        let conn = setup_conn();
-        insert_raw_message(
-            &conn,
-            "s1",
-            "/proj",
-            ROLE_USER,
-            "帮我看看 VPS RackNerd 的价格",
-            SOURCE_HOOK,
-            None,
-            None,
-        )
-        .unwrap();
-        let hits = search_raw_messages(
-            &conn,
-            &RawSearchRequest {
-                query: "RackNerd".to_string(),
-                project: Some("/proj".to_string()),
-                branch: None,
-                role: None,
-                limit: 10,
-                offset: 0,
-            },
-        )
-        .unwrap();
-        assert_eq!(hits.len(), 1);
-        assert!(hits[0].content.contains("RackNerd"));
-    }
-
-    #[test]
-    fn search_branch_filter_keeps_matching_and_branchless_raw_messages() {
-        let conn = setup_conn();
-        insert_raw_message(
-            &conn,
-            "s-main",
-            "/proj",
-            ROLE_USER,
-            "shared needle on main",
-            SOURCE_HOOK,
-            Some("main"),
-            None,
-        )
-        .unwrap();
-        insert_raw_message(
-            &conn,
-            "s-feature",
-            "/proj",
-            ROLE_USER,
-            "shared needle on feature",
-            SOURCE_HOOK,
-            Some("feature"),
-            None,
-        )
-        .unwrap();
-        insert_raw_message(
-            &conn,
-            "s-branchless",
-            "/proj",
-            ROLE_USER,
-            "shared needle without branch",
-            SOURCE_HOOK,
-            None,
-            None,
-        )
-        .unwrap();
-
-        let hits = search_raw_messages(
-            &conn,
-            &RawSearchRequest {
-                query: "needle".to_string(),
-                project: Some("/proj".to_string()),
-                branch: Some("main".to_string()),
-                role: None,
-                limit: 10,
-                offset: 0,
-            },
-        )
-        .unwrap();
-        let branches: Vec<Option<String>> = hits.into_iter().map(|hit| hit.branch).collect();
-
-        assert!(branches.contains(&Some("main".to_string())));
-        assert!(branches.contains(&None));
-        assert!(
-            !branches.contains(&Some("feature".to_string())),
-            "{branches:?}"
-        );
-    }
-
-    #[test]
-    fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
-        let conn = setup_conn();
-        let path = write_temp_transcript(
-            "raw-parse-error",
-            format!(
-                "{}\nnot json\n",
-                r#"{"type":"assistant","message":{"content":[{"type":"text","text":"kept message"}]}}"#
-            )
-            .as_str(),
-        )?;
-
-        let report = drain_transcript(
-            &conn,
-            path.to_string_lossy().as_ref(),
-            "session-parse",
-            "/proj",
-            None,
-            None,
-        )?;
-
-        assert_eq!(report.inserted, 1);
-        assert_eq!(report.parse_errors, 1);
-        assert_eq!(raw_ingest_failure_count(&conn)?, 1);
-        let (kind, parse_errors): (String, i64) = conn.query_row(
-            "SELECT error_kind, parse_errors FROM raw_ingest_failures",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(kind, "parse_errors");
-        assert_eq!(parse_errors, 1);
-        std::fs::remove_file(path)?;
-        Ok(())
-    }
-
-    #[test]
-    fn drain_transcript_counts_insert_errors_and_records_failure() -> Result<()> {
-        let conn = setup_conn();
-        conn.execute_batch(
-            "CREATE TRIGGER fail_raw_archive_insert
-             BEFORE INSERT ON raw_messages
-             BEGIN
-                 SELECT RAISE(FAIL, 'raw insert failed');
-             END;",
-        )?;
-        let path = write_temp_transcript(
-            "raw-insert-error",
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"cannot insert"}]}}"#,
-        )?;
-
-        let report = drain_transcript(
-            &conn,
-            path.to_string_lossy().as_ref(),
-            "session-insert",
-            "/proj",
-            None,
-            None,
-        )?;
-
-        assert_eq!(report.inserted, 0);
-        assert_eq!(report.insert_errors, 1);
-        assert_eq!(raw_ingest_failure_count(&conn)?, 1);
-        let (kind, insert_errors): (String, i64) = conn.query_row(
-            "SELECT error_kind, insert_errors FROM raw_ingest_failures",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(kind, "insert_errors");
-        assert_eq!(insert_errors, 1);
-        std::fs::remove_file(path)?;
-        Ok(())
-    }
-
-    #[test]
-    fn drain_transcript_parses_codex_rollout_response_items() -> Result<()> {
-        let conn = setup_conn();
-        let path = write_temp_transcript(
-            "codex-rollout",
-            include_str!("../../tests/fixtures/codex-rollout-minimal.jsonl"),
-        )?;
-
-        let report = drain_transcript(
-            &conn,
-            path.to_string_lossy().as_ref(),
-            "codex-session",
-            "/proj",
-            None,
-            Some("/tmp/remem-codex-fixture"),
-        )?;
-
-        assert_eq!(report.inserted, 2, "{report:?}");
-        assert_eq!(report.parse_errors, 0);
-        assert_eq!(report.insert_errors, 0);
-
-        let rows = search_raw_messages(
-            &conn,
-            &RawSearchRequest {
-                query: "Codex rollout".to_string(),
-                project: Some("/proj".to_string()),
-                branch: None,
-                role: None,
-                limit: 10,
-                offset: 0,
-            },
-        )?;
-        assert_eq!(rows.len(), 2, "{rows:?}");
-        assert!(rows.iter().any(|row| row.role == ROLE_USER));
-        assert!(rows.iter().any(|row| row.role == ROLE_ASSISTANT));
-        assert!(rows.iter().all(|row| row.source == SOURCE_TRANSCRIPT
-            && row.cwd.as_deref() == Some("/tmp/remem-codex-fixture")));
-        std::fs::remove_file(path)?;
-        Ok(())
-    }
-}
+mod tests;
