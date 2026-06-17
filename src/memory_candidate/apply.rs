@@ -7,6 +7,9 @@ use crate::memory::operation::{
     insert_operation_log, same_memory_text, with_operation_savepoint, MemoryOperationInput,
     MemoryOperationPlan,
 };
+use crate::memory::preference::consolidation::{
+    load_active_preference_content, PreferenceConsolidationKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CandidateApplyOutcome {
@@ -68,7 +71,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             source_candidate_id: Some(candidate_id),
             confidence: Some(candidate.confidence),
         };
-        let active = find_active_same_state_or_topic(
+        let mut active = find_active_same_state_or_topic(
             conn,
             candidate,
             route,
@@ -76,6 +79,39 @@ pub(super) fn promote_candidate_to_memory_with_route(
             now,
             candidate_has_ttl,
         )?;
+        let mut generic_preference_reason = None;
+        let mut conflicting_ids = Vec::new();
+        if candidate.memory_type == "preference" && active.is_empty() {
+            if let Some(preference_match) =
+                crate::memory::preference::consolidation::find_preference_consolidation(
+                    conn,
+                    &route.owner_scope,
+                    &route.owner_key,
+                    memory_scope,
+                    None,
+                    &candidate.text,
+                    now,
+                )?
+            {
+                generic_preference_reason = Some(preference_match.reason.clone());
+                match preference_match.kind {
+                    PreferenceConsolidationKind::SamePreference
+                    | PreferenceConsolidationKind::Refinement => {
+                        active.push(ActiveTopicMemory {
+                            id: preference_match.memory_id,
+                            content: load_active_preference_content(
+                                conn,
+                                preference_match.memory_id,
+                            )?,
+                            is_current: true,
+                        });
+                    }
+                    PreferenceConsolidationKind::Contradiction => {
+                        conflicting_ids.push(preference_match.memory_id);
+                    }
+                }
+            }
+        }
         if let Some(existing) = active
             .iter()
             .filter(|row| row.is_current)
@@ -98,18 +134,25 @@ pub(super) fn promote_candidate_to_memory_with_route(
         }
 
         let superseded_ids = active.iter().map(|row| row.id).collect::<Vec<_>>();
-        let op = if superseded_ids.is_empty() {
+        let op = if !conflicting_ids.is_empty() {
+            MemoryLifecycleOp::Conflict
+        } else if superseded_ids.is_empty() {
             MemoryLifecycleOp::Add
         } else {
             MemoryLifecycleOp::Update
         };
-        let reason = if superseded_ids.is_empty() {
-            "candidate creates new current memory"
+        let reason = if let Some(reason) = generic_preference_reason {
+            reason
+        } else if !conflicting_ids.is_empty() {
+            "candidate conflicts with active preference memories".to_string()
+        } else if superseded_ids.is_empty() {
+            "candidate creates new current memory".to_string()
         } else {
-            "candidate replaces active state/topic memories"
+            "candidate replaces active state/topic memories".to_string()
         };
         let mut plan = MemoryOperationPlan::new(op, state_key_value, reason)
-            .with_superseded_ids(superseded_ids.clone());
+            .with_superseded_ids(superseded_ids.clone())
+            .with_conflicting_ids(conflicting_ids.clone());
 
         let evidence_event_ids: Vec<i64> = serde_json::from_str(evidence_json)?;
         let reference_time_epoch = evidence_valid_from_epoch(conn, &evidence_event_ids)?;
@@ -147,6 +190,19 @@ pub(super) fn promote_candidate_to_memory_with_route(
         crate::memory::edge::insert_supersedes_edges(
             conn,
             &superseded_ids,
+            memory_id,
+            crate::memory::edge::MemoryEdgeWriteContext {
+                source_candidate_id: Some(candidate_id),
+                evidence_event_ids: &evidence_event_ids,
+                source_operation_id: Some(operation_id),
+                confidence: Some(candidate.confidence),
+                reason: Some(plan.reason.as_str()),
+                ..Default::default()
+            },
+        )?;
+        crate::memory::edge::insert_conflicts_edges(
+            conn,
+            &conflicting_ids,
             memory_id,
             crate::memory::edge::MemoryEdgeWriteContext {
                 source_candidate_id: Some(candidate_id),
