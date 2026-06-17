@@ -9,7 +9,7 @@ use crate::db;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum WorkerSpawnDecision {
     Spawned,
-    SkippedHealthyWorker,
+    SkippedHealthyDaemon,
     SkippedLaunchInProgress,
 }
 
@@ -21,26 +21,26 @@ pub(super) fn spawn_worker_once_if_idle(
 
 fn spawn_worker_once_if_idle_with(
     conn: &rusqlite::Connection,
-    spawn: impl FnOnce(&rusqlite::Connection) -> Result<()>,
+    spawn: impl FnOnce() -> Result<()>,
 ) -> Result<WorkerSpawnDecision> {
     if !should_spawn_worker_once(conn)? {
-        return Ok(WorkerSpawnDecision::SkippedHealthyWorker);
+        return Ok(WorkerSpawnDecision::SkippedHealthyDaemon);
     }
     let Some(_guard) = acquire_worker_launch_lock()? else {
         return Ok(WorkerSpawnDecision::SkippedLaunchInProgress);
     };
     if !should_spawn_worker_once(conn)? {
-        return Ok(WorkerSpawnDecision::SkippedHealthyWorker);
+        return Ok(WorkerSpawnDecision::SkippedHealthyDaemon);
     }
-    spawn(conn)?;
+    spawn()?;
     Ok(WorkerSpawnDecision::Spawned)
 }
 
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
-    Ok(db::healthy_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
+    Ok(db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
 }
 
-fn spawn_worker_once(conn: &rusqlite::Connection) -> Result<()> {
+fn spawn_worker_once() -> Result<()> {
     let exe = std::env::current_exe()?;
     let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
@@ -58,24 +58,8 @@ fn spawn_worker_once(conn: &rusqlite::Connection) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg);
-    let child = command.spawn()?;
-    if let Err(error) = record_worker_once_launch_heartbeat(conn, i64::from(child.id())) {
-        crate::log::warn(
-            "summarize",
-            &format!("worker --once spawned but launch heartbeat failed: {error}"),
-        );
-    }
+    let _child = command.spawn()?;
     Ok(())
-}
-
-fn record_worker_once_launch_heartbeat(conn: &rusqlite::Connection, pid: i64) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    let owner = format!(
-        "worker-once-launch-{}-{}",
-        pid,
-        chrono::Utc::now().timestamp_millis()
-    );
-    db::upsert_worker_heartbeat(conn, &owner, pid, now, now)
 }
 
 fn stable_worker_dir() -> PathBuf {
@@ -157,8 +141,8 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        record_worker_once_launch_heartbeat, should_spawn_worker_once,
-        spawn_worker_once_if_idle_with, stable_worker_dir, WorkerSpawnDecision,
+        should_spawn_worker_once, spawn_worker_once_if_idle_with, stable_worker_dir,
+        WorkerSpawnDecision,
     };
 
     #[test]
@@ -193,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn healthy_once_worker_skips_stop_spawn() -> anyhow::Result<()> {
+    fn healthy_once_worker_does_not_skip_stop_spawn() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("summary-healthy-once-worker");
         let conn = db::open_db()?;
         let now = chrono::Utc::now().timestamp();
@@ -206,8 +190,8 @@ mod tests {
         )?;
 
         assert!(
-            !should_spawn_worker_once(&conn)?,
-            "healthy worker --once heartbeat should suppress duplicate Stop fallback"
+            should_spawn_worker_once(&conn)?,
+            "healthy worker --once heartbeat should not suppress Stop fallback"
         );
         Ok(())
     }
@@ -248,17 +232,17 @@ mod tests {
                 handles.push(scope.spawn(move || -> anyhow::Result<()> {
                     let conn = db::open_db()?;
                     barrier.wait();
-                    let decision = spawn_worker_once_if_idle_with(&conn, |conn| {
+                    let decision = spawn_worker_once_if_idle_with(&conn, || {
                         spawned.fetch_add(1, Ordering::SeqCst);
                         std::thread::sleep(Duration::from_millis(50));
-                        record_worker_once_launch_heartbeat(conn, i64::from(std::process::id()))
+                        Ok(())
                     })?;
                     match decision {
                         WorkerSpawnDecision::Spawned => {}
                         WorkerSpawnDecision::SkippedLaunchInProgress => {
                             skipped_launch.fetch_add(1, Ordering::SeqCst);
                         }
-                        WorkerSpawnDecision::SkippedHealthyWorker => {
+                        WorkerSpawnDecision::SkippedHealthyDaemon => {
                             skipped_healthy.fetch_add(1, Ordering::SeqCst);
                         }
                     }

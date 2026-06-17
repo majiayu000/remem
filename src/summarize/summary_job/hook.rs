@@ -87,8 +87,11 @@ pub(super) async fn summarize_input(
         Ok(WorkerSpawnDecision::Spawned) => {
             crate::log::info("summarize", "worker --once spawned");
         }
-        Ok(WorkerSpawnDecision::SkippedHealthyWorker) => {
-            crate::log::info("summarize", "worker heartbeat healthy; skip worker --once");
+        Ok(WorkerSpawnDecision::SkippedHealthyDaemon) => {
+            crate::log::info(
+                "summarize",
+                "worker daemon heartbeat healthy; skip worker --once",
+            );
         }
         Ok(WorkerSpawnDecision::SkippedLaunchInProgress) => {
             crate::log::info(
