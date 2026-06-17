@@ -8,14 +8,14 @@ use super::audit::{build_context_audit_items, record_context_injection_items, Co
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::host::resolve_profile;
 use super::injection_gate::{
-    apply_context_gate_with_data_version, pre_render_context_gate, ContextGateAction,
-    ContextGateDecision, ContextGatePrecheck,
+    apply_context_gate_with_data_version, compute_data_version_from_render_inputs,
+    pre_render_context_gate, ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
 use super::policy::{ContextPolicy, SectionKind};
-use super::query::load_context_data_with_policy;
+use super::render_inputs::{load_context_render_inputs, ContextRenderInputs};
 use super::sections::{
     empty_state_output, render_core_memory_with_limits_and_staleness,
     render_lessons_with_summary_and_staleness, render_memory_index_with_summary_and_staleness,
@@ -35,6 +35,7 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
     pub(in crate::context) stats: ContextRenderStats,
     pub(in crate::context) audit_items: Vec<ContextAuditItem>,
+    pub(in crate::context) data_version: Option<String>,
 }
 
 pub fn generate_context(
@@ -128,7 +129,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
     let (mut decision, mut stats, precheck, audit_items) = if use_gate {
         let precheck_start = Instant::now();
-        let precheck =
+        let mut precheck =
             pre_render_context_gate(&conn, &invocation, &request, &policy, debug_enabled);
         let precheck_timing = crate::perf::PhaseTiming::elapsed("pre_render_gate", precheck_start);
         if let Some(decision) = precheck.decision {
@@ -137,17 +138,36 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             stats.timings.push(precheck_timing);
             (decision, stats, precheck.precheck, Vec::new())
         } else {
-            let rendered =
-                render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
+            let rendered = match precheck.render_inputs.take() {
+                Some(inputs) => render_context_output_from_inputs(
+                    &conn,
+                    &request,
+                    Some(&invocation),
+                    debug_enabled,
+                    policy,
+                    inputs,
+                )?,
+                None => render_context_output_with_policy(
+                    &conn,
+                    &request,
+                    Some(&invocation),
+                    debug_enabled,
+                    policy,
+                )?,
+            };
             let mut stats = rendered.stats;
             stats.timings.insert(0, precheck_timing);
             stats.timings.insert(0, db_open_timing.clone());
+            let gate_data_version = rendered
+                .data_version
+                .as_deref()
+                .or(precheck.data_version.as_deref());
             let gate_start = Instant::now();
             let decision = apply_context_gate_with_data_version(
                 &conn,
                 &invocation,
                 rendered.output,
-                precheck.data_version.as_deref(),
+                gate_data_version,
             );
             stats
                 .timings
@@ -155,7 +175,8 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             (decision, stats, precheck.precheck, rendered.audit_items)
         }
     } else {
-        let rendered = render_context_output_with_policy(&conn, &request, debug_enabled, policy)?;
+        let rendered =
+            render_context_output_with_policy(&conn, &request, None, debug_enabled, policy)?;
         let mut stats = rendered.stats;
         stats.timings.insert(0, db_open_timing.clone());
         (
@@ -246,47 +267,46 @@ pub(in crate::context) fn render_context_output(
         Ok(conn) => conn,
         Err(rendered) => return Ok(*rendered),
     };
-    render_context_output_with_policy(&conn, request, debug, policy)
+    render_context_output_with_policy(&conn, request, None, debug, policy)
 }
 
 fn render_context_output_with_policy(
     conn: &rusqlite::Connection,
     request: &ContextRequest,
+    invocation: Option<&ContextInvocation>,
     debug: bool,
     policy: ContextPolicy,
 ) -> Result<RenderedContext> {
+    let inputs = load_context_render_inputs(conn, request, debug, &policy);
+    render_context_output_from_inputs(conn, request, invocation, debug, policy, inputs)
+}
+
+fn render_context_output_from_inputs(
+    conn: &rusqlite::Connection,
+    request: &ContextRequest,
+    invocation: Option<&ContextInvocation>,
+    debug: bool,
+    policy: ContextPolicy,
+    inputs: ContextRenderInputs,
+) -> Result<RenderedContext> {
+    let data_version = invocation.and_then(|invocation| {
+        compute_data_version_from_render_inputs(request, invocation, &policy, &inputs)
+            .map_err(|error| {
+                crate::log::warn(
+                    "context-gate",
+                    &format!("render_data_version_skip error={error}"),
+                );
+                error
+            })
+            .ok()
+    });
     let render_total_start = Instant::now();
     let profile = resolve_profile(request.host);
-    let load_start = Instant::now();
-    let mut loaded = load_context_data_with_policy(
-        conn,
-        &request.project,
-        request.current_branch.as_deref(),
-        &policy,
-        debug,
-    );
-    let load_timing = crate::perf::PhaseTiming::elapsed("load_context_data", load_start);
-    let preference_start = Instant::now();
-    let (preference_output, preference_details) =
-        match render_preferences_to_buffer(conn, &request.project, &request.cwd, &policy) {
-            Ok(rendered) => rendered,
-            Err(error) => {
-                let message = format!(
-                    "failed to render preferences for {}: {error}",
-                    request.project
-                );
-                crate::log::error("context", &message);
-                loaded
-                    .errors
-                    .push(ContextLoadError::new("preferences", message));
-                (
-                    String::new(),
-                    crate::memory::preference::PreferenceRenderDetails::default(),
-                )
-            }
-        };
-    let preference_timing =
-        crate::perf::PhaseTiming::elapsed("render_preferences", preference_start);
+    let mut loaded = inputs.loaded;
+    let preference_output = inputs.preference_output;
+    let preference_details = inputs.preference_details;
+    let load_timing = inputs.load_timing;
+    let preference_timing = inputs.preference_timing;
     let preference_summary = preference_details.summary;
 
     if preference_summary.rendered == 0
@@ -300,6 +320,7 @@ fn render_context_output_with_policy(
             output: empty_context_output(request),
             stats: empty_stats(request),
             audit_items: Vec::new(),
+            data_version,
         });
     }
 
@@ -499,6 +520,7 @@ fn render_context_output_with_policy(
         output,
         stats,
         audit_items,
+        data_version,
     })
 }
 
@@ -538,6 +560,7 @@ fn render_context_open_error(
         output,
         stats,
         audit_items: Vec::new(),
+        data_version: None,
     }
 }
 
@@ -607,26 +630,6 @@ fn section_render_limits(policy: &ContextPolicy) -> super::policy::ContextLimits
     limits.memory_index_char_limit =
         policy.section_char_limit(SectionKind::MemoryIndex, limits.memory_index_char_limit);
     limits
-}
-
-fn render_preferences_to_buffer(
-    conn: &rusqlite::Connection,
-    project: &str,
-    cwd: &str,
-    policy: &ContextPolicy,
-) -> Result<(String, crate::memory::preference::PreferenceRenderDetails)> {
-    let mut output = String::new();
-    let limits = &policy.limits;
-    let details = crate::memory::preference::render_preferences_with_context_details(
-        &mut output,
-        conn,
-        project,
-        cwd,
-        limits.preference_project_limit,
-        limits.preference_global_limit,
-        limits.preference_char_limit,
-    )?;
-    Ok((output, details))
 }
 
 #[cfg(test)]

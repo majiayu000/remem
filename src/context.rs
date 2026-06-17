@@ -19,6 +19,7 @@ mod policy;
 mod prompt_submit;
 mod query;
 mod render;
+mod render_inputs;
 mod sections;
 mod style;
 

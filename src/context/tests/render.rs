@@ -659,6 +659,20 @@ fn strict_context_pipeline_opens_one_database_connection() -> anyhow::Result<()>
     generate_context_for_test(invocation, true)?;
 
     assert_eq!(crate::db::test_support::runtime_connection_open_count(), 1);
+    let conn = crate::db::test_support::runtime_connection()?;
+    let data_version: Option<String> = conn.query_row(
+        "SELECT data_version
+         FROM context_injections
+         WHERE session_id = 'sess-single-db-open'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(
+        data_version
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
+        "first strict render should store a reusable data_version"
+    );
     Ok(())
 }
 
