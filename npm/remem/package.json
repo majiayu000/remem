@@ -1,6 +1,6 @@
 {
   "name": "@majiayu000/remem",
-  "version": "0.5.96",
+  "version": "0.5.97",
   "description": "Persistent memory for Claude Code and OpenAI Codex coding agents",
   "license": "MIT",
   "homepage": "https://majiayu000.github.io/remem/",

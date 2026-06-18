@@ -609,6 +609,7 @@ async fn graph_limits_memory_fanout_per_entity() -> anyhow::Result<()> {
             params![memory_id],
         )?;
     }
+    conn.execute("UPDATE memories SET state_key_id = NULL", [])?;
     drop(conn);
 
     let response = handle_graph(
