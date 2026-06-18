@@ -68,12 +68,16 @@ fn preflight_mcp_database() -> Result<(i64, i64)> {
             crate::build_info::version_label()
         )
     })?;
+    read_mcp_preflight_counts(&conn)
+}
+
+fn read_mcp_preflight_counts(conn: &rusqlite::Connection) -> Result<(i64, i64)> {
     let mem_count: i64 = conn
         .query_row("SELECT count(*) FROM memories", [], |row| row.get(0))
-        .unwrap_or(-1);
+        .context("MCP server database preflight could not read memories table")?;
     let obs_count: i64 = conn
         .query_row("SELECT count(*) FROM observations", [], |row| row.get(0))
-        .unwrap_or(-1);
+        .context("MCP server database preflight could not read observations table")?;
     Ok((mem_count, obs_count))
 }
 
@@ -81,6 +85,7 @@ fn preflight_mcp_database() -> Result<(i64, i64)> {
 mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
+    use rusqlite::Connection;
 
     #[test]
     fn mcp_preflight_rejects_newer_schema_before_serving_tools() -> Result<()> {
@@ -106,6 +111,40 @@ mod tests {
         );
         assert!(
             rendered.contains(&format!("schema v{future}")),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_preflight_rejects_missing_core_tables_before_serving_tools() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("mcp-preflight-missing-table");
+        let setup = crate::db::open_db()?;
+        setup.execute("DROP TABLE observations", [])?;
+        drop(setup);
+
+        let err = preflight_mcp_database().expect_err("missing table must fail before serve");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("preflight failed before serving tools"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("no such table: observations"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_preflight_count_reader_rejects_missing_core_tables() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute("CREATE TABLE memories(id INTEGER PRIMARY KEY)", [])?;
+
+        let err = read_mcp_preflight_counts(&conn).expect_err("missing observations must fail");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("preflight could not read observations table"),
             "{rendered}"
         );
         Ok(())

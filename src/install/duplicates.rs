@@ -200,7 +200,10 @@ where
         .iter()
         .zip(configured_resolved_paths.iter())
     {
-        if seen.contains(resolved_path) || !is_candidate_file(resolved_path) {
+        if seen.contains(resolved_path)
+            || !is_candidate_file(resolved_path)
+            || !path_matches_candidate_names(resolved_path, candidate_names)
+        {
             continue;
         }
         seen.insert(resolved_path.clone());
@@ -325,6 +328,15 @@ fn is_candidate_file(path: &Path) -> bool {
         return false;
     }
     is_executable(&metadata)
+}
+
+fn path_matches_candidate_names(path: &Path, candidate_names: &[&str]) -> bool {
+    let Some(file_name) = path.file_name() else {
+        return false;
+    };
+    candidate_names
+        .iter()
+        .any(|name| file_name == OsStr::new(name))
 }
 
 #[cfg(unix)]
@@ -534,6 +546,22 @@ mod tests {
         let detail = format_doctor_detail(&report);
         assert!(detail.contains("schema v43"), "{detail}");
         assert!(detail.contains("schema v47"), "{detail}");
+    }
+
+    #[test]
+    fn configured_wrapper_path_is_not_probed_as_remem_binary() {
+        let wrapper_dir = temp_dir("wrapper-command");
+        let wrapper = write_candidate(&wrapper_dir, "node", "v24.0.0");
+
+        let report = collect_install_paths(
+            vec![wrapper_dir],
+            std::slice::from_ref(&wrapper),
+            &["remem"],
+            |path| std::fs::read_to_string(path).ok(),
+        );
+
+        assert!(report.candidates.is_empty());
+        assert!(!report.has_warning());
     }
 
     #[test]
