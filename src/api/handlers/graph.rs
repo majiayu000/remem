@@ -26,10 +26,18 @@ pub(in crate::api) async fn handle_graph(
     let limit = params.limit.unwrap_or(60).clamp(1, 200);
 
     let nodes: Vec<NodeRow> = match (|| -> anyhow::Result<Vec<NodeRow>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, canonical_name, entity_type, mention_count \
-             FROM entities ORDER BY mention_count DESC LIMIT ?1",
-        )?;
+        let current_filter =
+            crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
+        let sql = format!(
+            "SELECT e.id, e.canonical_name, e.entity_type, COUNT(DISTINCT me.memory_id) AS mention_count \
+             FROM memory_entities me \
+             JOIN memories m ON m.id = me.memory_id \
+             JOIN entities e ON e.id = me.entity_id \
+             WHERE {current_filter} \
+             GROUP BY e.id, e.canonical_name, e.entity_type \
+             ORDER BY mention_count DESC, e.id ASC LIMIT ?1"
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit], |row| {
             Ok((
                 row.get::<_, i64>(0)?,

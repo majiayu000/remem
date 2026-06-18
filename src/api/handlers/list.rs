@@ -26,9 +26,7 @@ pub(in crate::api) async fn handle_list_memories(
     let mut idx = 1usize;
 
     if let Some(p) = params.project.as_deref().filter(|s| !s.is_empty()) {
-        conditions.push(format!("(project = ?{idx} OR scope = 'global')"));
-        binds.push(Box::new(p.to_string()));
-        idx += 1;
+        push_project_filter(p, &mut idx, &mut conditions, &mut binds);
     }
     if let Some(t) = params.memory_type.as_deref().filter(|s| !s.is_empty()) {
         conditions.push(format!("memory_type = ?{idx}"));
@@ -132,4 +130,28 @@ pub(in crate::api) async fn handle_list_memories(
         },
     })
     .into_response()
+}
+
+fn push_project_filter(
+    project: &str,
+    idx: &mut usize,
+    conditions: &mut Vec<String>,
+    binds: &mut Vec<Box<dyn ToSql>>,
+) {
+    let owner_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let target_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let legacy_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    conditions.push(format!(
+        "((owner_scope = 'repo' AND owner_key = ?{owner_idx}) \
+          OR (owner_scope = 'repo' AND target_project = ?{target_idx}) \
+          OR (owner_scope IS NULL AND project = ?{legacy_idx}) \
+          OR scope = 'global' \
+          OR (owner_scope = 'user' AND owner_key = 'user:default'))"
+    ));
 }

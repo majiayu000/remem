@@ -6,6 +6,8 @@ use axum::{
 };
 use rusqlite::params;
 
+use crate::memory;
+
 use super::super::helpers::{error_response, memory_to_item_with_conn, open_request_db};
 use super::super::types::{DbState, MemoryDetailResponse, MemoryEdgeItem};
 
@@ -44,6 +46,15 @@ pub(in crate::api) async fn handle_memory_detail(
             .into_response()
         }
     };
+
+    if let Err(err) = memory::mark_memories_accessed(&conn, &[id]) {
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "db_error",
+            &err.to_string(),
+        )
+        .into_response();
+    }
 
     let result = (|| -> anyhow::Result<(Vec<String>, Vec<MemoryEdgeItem>)> {
         let mut stmt = conn.prepare(

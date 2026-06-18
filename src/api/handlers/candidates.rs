@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use rusqlite::params;
+use rusqlite::types::ToSql;
 
 use super::super::helpers::{error_response, open_request_db};
 use super::super::types::{CandidateItem, CandidateParams, DbState, ListMeta, ListResponse};
@@ -26,11 +26,21 @@ pub(in crate::api) async fn handle_list_candidates(
     let limit = params.limit.unwrap_or(50).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
 
-    let total: i64 = match conn.query_row(
-        "SELECT COUNT(*) FROM memory_candidates WHERE review_status = ?1",
-        params![status],
-        |row| row.get(0),
-    ) {
+    let mut conditions = vec!["c.review_status = ?1".to_string()];
+    let mut binds: Vec<Box<dyn ToSql>> = vec![Box::new(status.to_string())];
+    let mut idx = 2usize;
+    if let Some(project) = params.project.as_deref().filter(|s| !s.is_empty()) {
+        push_candidate_project_filter(project, &mut idx, &mut conditions, &mut binds);
+    }
+    let where_sql = conditions.join(" AND ");
+
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM memory_candidates c \
+         LEFT JOIN projects p ON p.id = c.project_id \
+         WHERE {where_sql}"
+    );
+    let binds_refs = crate::db::to_sql_refs(&binds);
+    let total: i64 = match conn.query_row(&count_sql, binds_refs.as_slice(), |row| row.get(0)) {
         Ok(n) => n,
         Err(err) => {
             return error_response(
@@ -43,12 +53,20 @@ pub(in crate::api) async fn handle_list_candidates(
     };
 
     let result = (|| -> anyhow::Result<Vec<CandidateItem>> {
-        let mut stmt = conn.prepare(
-            "SELECT id, memory_type, text, scope, confidence, risk_class, review_status, \
-             evidence_event_ids, created_at_epoch FROM memory_candidates \
-             WHERE review_status = ?1 ORDER BY created_at_epoch DESC LIMIT ?2 OFFSET ?3",
-        )?;
-        let rows = stmt.query_map(params![status, limit, offset], |row| {
+        let sql = format!(
+            "SELECT c.id, c.memory_type, c.text, c.scope, c.confidence, c.risk_class, \
+                    c.review_status, c.evidence_event_ids, c.created_at_epoch, \
+                    COALESCE(c.target_project, p.project_path, c.source_project) AS project \
+             FROM memory_candidates c \
+             LEFT JOIN projects p ON p.id = c.project_id \
+             WHERE {where_sql} ORDER BY c.created_at_epoch DESC LIMIT ?{idx} OFFSET ?{}",
+            idx + 1,
+        );
+        binds.push(Box::new(limit));
+        binds.push(Box::new(offset));
+        let mut stmt = conn.prepare(&sql)?;
+        let binds_refs2 = crate::db::to_sql_refs(&binds);
+        let rows = stmt.query_map(binds_refs2.as_slice(), |row| {
             let evidence_json: Option<String> = row.get(7)?;
             let evidence_count = evidence_json
                 .as_deref()
@@ -57,6 +75,7 @@ pub(in crate::api) async fn handle_list_candidates(
                 .unwrap_or(0);
             Ok(CandidateItem {
                 id: row.get(0)?,
+                project: row.get(9)?,
                 memory_type: row.get(1)?,
                 text: row.get(2)?,
                 scope: row.get(3)?,
@@ -94,4 +113,30 @@ pub(in crate::api) async fn handle_list_candidates(
         },
     })
     .into_response()
+}
+
+fn push_candidate_project_filter(
+    project: &str,
+    idx: &mut usize,
+    conditions: &mut Vec<String>,
+    binds: &mut Vec<Box<dyn ToSql>>,
+) {
+    let project_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let source_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let target_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let owner_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    conditions.push(format!(
+        "(p.project_path = ?{project_idx} \
+          OR c.source_project = ?{source_idx} \
+          OR c.target_project = ?{target_idx} \
+          OR (c.owner_scope = 'repo' AND c.owner_key = ?{owner_idx}))"
+    ));
 }

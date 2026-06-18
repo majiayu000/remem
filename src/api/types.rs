@@ -197,6 +197,7 @@ pub(super) struct ListResponse<T: Serialize> {
 
 #[derive(Deserialize)]
 pub(super) struct CandidateParams {
+    pub project: Option<String>,
     pub status: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
@@ -205,6 +206,8 @@ pub(super) struct CandidateParams {
 #[derive(Serialize)]
 pub(super) struct CandidateItem {
     pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     pub memory_type: String,
     pub text: String,
     pub scope: String,

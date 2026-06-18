@@ -18,6 +18,8 @@ use super::handlers::{
 use super::types::{CandidateParams, GraphParams, ListParams, SearchParams, ShowParams};
 use super::DbState;
 
+mod web_regressions;
+
 fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -505,6 +507,7 @@ async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
     let response = handle_list_candidates(
         State(DbState),
         Query(CandidateParams {
+            project: None,
             status: None,
             limit: Some(10),
             offset: None,
