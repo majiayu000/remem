@@ -166,3 +166,112 @@ pub(super) struct SaveMemoryNextStepResponse {
 pub(super) struct ShowParams {
     pub id: i64,
 }
+// ===== remem-web 只读端点类型 =====
+
+#[derive(Deserialize)]
+pub(super) struct ListParams {
+    pub project: Option<String>,
+    #[serde(rename = "type")]
+    pub memory_type: Option<String>,
+    pub scope: Option<String>,
+    pub status: Option<String>,
+    pub branch: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct ListMeta {
+    pub count: usize,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+#[derive(Serialize)]
+pub(super) struct ListResponse<T: Serialize> {
+    pub data: Vec<T>,
+    pub meta: ListMeta,
+}
+
+#[derive(Deserialize)]
+pub(super) struct CandidateParams {
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateItem {
+    pub id: i64,
+    pub memory_type: String,
+    pub text: String,
+    pub scope: String,
+    pub confidence: f64,
+    pub risk_class: String,
+    pub review_status: String,
+    pub evidence_count: i64,
+    pub created_at_epoch: i64,
+}
+
+#[derive(Deserialize)]
+pub(super) struct GraphParams {
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct GraphNodeItem {
+    pub id: i64,
+    pub name: String,
+    pub entity_type: Option<String>,
+    pub mention_count: i64,
+    pub mems: Vec<i64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct GraphEdgeItem {
+    pub a: i64,
+    pub b: i64,
+    pub w: i64,
+}
+
+#[derive(Serialize)]
+pub(super) struct GraphResponse {
+    pub nodes: Vec<GraphNodeItem>,
+    pub edges: Vec<GraphEdgeItem>,
+}
+
+#[derive(Serialize)]
+pub(super) struct MemoryEdgeItem {
+    pub edge_type: String,
+    pub to_memory_id: Option<i64>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct MemoryDetailResponse {
+    #[serde(flatten)]
+    pub memory: MemoryItem,
+    pub entities: Vec<String>,
+    pub edges: Vec<MemoryEdgeItem>,
+}
+
+#[derive(Serialize)]
+pub(super) struct TypeCount {
+    pub memory_type: String,
+    pub count: i64,
+}
+
+#[derive(Serialize)]
+pub(super) struct StatsResponse {
+    pub active_memories: i64,
+    pub total_memories: i64,
+    pub pending_candidates: i64,
+    pub captured_events: i64,
+    pub pending_extraction_tasks: i64,
+    pub ai_calls: i64,
+    pub ai_cost_usd: f64,
+    pub ai_total_tokens: i64,
+    pub type_distribution: Vec<TypeCount>,
+}
