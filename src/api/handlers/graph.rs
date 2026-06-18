@@ -36,7 +36,7 @@ pub(in crate::api) async fn handle_graph(
             "m.expires_at_epoch",
             false,
         )];
-        conditions.push(crate::memory::memory_state_key_current_filter_sql("m"));
+        conditions.push(crate::memory::memory_not_superseded_filter_sql("m"));
         let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
         let mut idx = 1usize;
         if let Some(project) = requested_project.as_deref() {
@@ -97,7 +97,7 @@ pub(in crate::api) async fn handle_graph(
         let mut conditions = vec![
             format!("me.entity_id IN ({})", placeholders.join(",")),
             crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false),
-            crate::memory::memory_state_key_current_filter_sql("m"),
+            crate::memory::memory_not_superseded_filter_sql("m"),
         ];
         if let Some(project) = requested_project.as_deref() {
             push_graph_project_filter(project, &mut idx, &mut conditions, &mut binds);

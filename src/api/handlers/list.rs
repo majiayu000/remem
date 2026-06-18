@@ -51,7 +51,7 @@ pub(in crate::api) async fn handle_list_memories(
             ));
             conditions.push(format!(
                 "({})",
-                crate::memory::memory_state_key_current_filter_sql("memories")
+                crate::memory::memory_not_superseded_filter_sql("memories")
             ));
         } else {
             conditions.push(format!("status = ?{idx}"));
