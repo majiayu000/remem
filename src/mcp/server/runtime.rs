@@ -60,15 +60,17 @@ pub async fn run_mcp_server() -> Result<()> {
 }
 
 fn preflight_mcp_database() -> Result<(i64, i64)> {
-    let conn = db::open_db().with_context(|| {
-        format!(
-            "MCP server database preflight failed before serving tools; \
-             if remem was just upgraded, restart Codex/Claude sessions so MCP servers reconnect to {}; \
-             then verify `remem --version` and run `remem doctor`",
-            crate::build_info::version_label()
-        )
-    })?;
-    read_mcp_preflight_counts(&conn)
+    let conn = db::open_db().with_context(mcp_preflight_context)?;
+    read_mcp_preflight_counts(&conn).with_context(mcp_preflight_context)
+}
+
+fn mcp_preflight_context() -> String {
+    format!(
+        "MCP server database preflight failed before serving tools; \
+         if remem was just upgraded, restart Codex/Claude sessions so MCP servers reconnect to {}; \
+         then verify `remem --version` and run `remem doctor`",
+        crate::build_info::version_label()
+    )
 }
 
 fn read_mcp_preflight_counts(conn: &rusqlite::Connection) -> Result<(i64, i64)> {

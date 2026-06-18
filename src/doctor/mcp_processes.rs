@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::process::Command;
 
 use super::types::{Check, Status};
@@ -10,6 +11,16 @@ struct McpProcess {
 }
 
 pub(super) fn check_mcp_processes() -> Check {
+    #[cfg(not(unix))]
+    {
+        return Check::new(
+            "MCP processes",
+            Status::Ok,
+            "MCP process scan skipped on this platform",
+        );
+    }
+
+    #[cfg(unix)]
     match active_mcp_processes_from_system() {
         Ok(processes) if processes.is_empty() => Check::new(
             "MCP processes",
@@ -32,6 +43,7 @@ pub(super) fn check_mcp_processes() -> Check {
     }
 }
 
+#[cfg(unix)]
 fn active_mcp_processes_from_system() -> anyhow::Result<Vec<McpProcess>> {
     let output = Command::new("ps")
         .args(["-axo", "pid=,comm=,args="])
@@ -135,5 +147,14 @@ mod tests {
 
         assert!(matches!(check.status, Status::Warn));
         assert!(check.detail.contains("restart Codex/Claude sessions"));
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn check_skips_process_scan_on_non_unix_platforms() {
+        let check = check_mcp_processes();
+
+        assert!(matches!(check.status, Status::Ok));
+        assert!(check.detail.contains("skipped"));
     }
 }

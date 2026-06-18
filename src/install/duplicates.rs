@@ -201,6 +201,7 @@ where
         .zip(configured_resolved_paths.iter())
     {
         if seen.contains(resolved_path)
+            || is_unresolved_bare_command(configured_path, resolved_path)
             || !is_candidate_file(resolved_path)
             || !path_matches_candidate_names(resolved_path, candidate_names)
         {
@@ -266,8 +267,11 @@ fn format_configured_paths(paths: &[PathBuf]) -> String {
 }
 
 fn resolve_configured_path(path: &Path, dirs: &[PathBuf], candidate_names: &[&str]) -> PathBuf {
-    resolve_bare_command_path(path, dirs, candidate_names)
-        .unwrap_or_else(|| canonical_or_original(path))
+    if bare_command_name(path).is_some() {
+        return resolve_bare_command_path(path, dirs, candidate_names)
+            .unwrap_or_else(|| path.to_path_buf());
+    }
+    canonical_or_original(path)
 }
 
 fn resolve_bare_command_path(
@@ -306,6 +310,12 @@ fn bare_command_name(path: &Path) -> Option<&OsStr> {
         return None;
     }
     Some(name)
+}
+
+fn is_unresolved_bare_command(configured_path: &Path, resolved_path: &Path) -> bool {
+    bare_command_name(configured_path).is_some()
+        && configured_path == resolved_path
+        && !resolved_path.is_absolute()
 }
 
 fn default_candidate_names() -> &'static [&'static str] {
@@ -587,6 +597,26 @@ mod tests {
             vec![canonical_or_original(&expected)]
         );
         assert!(report.candidates[0].configured);
+    }
+
+    #[test]
+    fn unresolved_configured_command_name_is_not_probed_from_cwd() {
+        let configured = PathBuf::from("remem");
+        let resolved = resolve_configured_path(&configured, &[], &["remem"]);
+
+        assert_eq!(resolved, configured);
+        assert!(is_unresolved_bare_command(&configured, &resolved));
+
+        let report = collect_install_paths(
+            Vec::new(),
+            std::slice::from_ref(&configured),
+            &["remem"],
+            |_| panic!("unresolved bare command should not be probed as a configured binary"),
+        );
+
+        assert_eq!(report.configured_resolved_paths, vec![configured]);
+        assert!(report.candidates.is_empty());
+        assert!(!report.has_warning());
     }
 
     #[test]
