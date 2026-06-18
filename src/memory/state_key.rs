@@ -222,7 +222,12 @@ fn upsert_state_key(
          DO UPDATE SET
              state_label = COALESCE(excluded.state_label, memory_state_keys.state_label),
              state_status = 'active',
-             current_memory_id = COALESCE(excluded.current_memory_id, memory_state_keys.current_memory_id),
+             current_memory_id = CASE
+                 WHEN excluded.current_memory_id IS NULL THEN memory_state_keys.current_memory_id
+                 WHEN memory_state_keys.current_memory_id IS NULL THEN excluded.current_memory_id
+                 WHEN excluded.updated_at_epoch >= memory_state_keys.updated_at_epoch THEN excluded.current_memory_id
+                 ELSE memory_state_keys.current_memory_id
+             END,
              created_at_epoch = MIN(memory_state_keys.created_at_epoch, excluded.created_at_epoch),
              updated_at_epoch = MAX(memory_state_keys.updated_at_epoch, excluded.updated_at_epoch)",
         params![

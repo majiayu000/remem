@@ -45,33 +45,21 @@ pub(super) fn markdown_ownership(doc: &MarkdownMemoryDocument) -> MarkdownOwners
 pub(super) fn update_optional_memory_provenance(
     conn: &Connection,
     memory_id: i64,
-    doc: &MarkdownMemoryDocument,
+    _doc: &MarkdownMemoryDocument,
 ) -> Result<()> {
     if column_exists(conn, "memories", "evidence_event_ids")? {
         conn.execute(
             "UPDATE memories SET evidence_event_ids = ?1 WHERE id = ?2",
-            rusqlite::params![doc.metadata.evidence_event_ids, memory_id],
+            rusqlite::params![Option::<String>::None, memory_id],
         )?;
     }
     if column_exists(conn, "memories", "source_candidate_id")? {
-        let source_candidate_id = markdown_source_candidate_id(conn, doc)?;
         conn.execute(
             "UPDATE memories SET source_candidate_id = ?1 WHERE id = ?2",
-            rusqlite::params![source_candidate_id, memory_id],
+            rusqlite::params![Option::<i64>::None, memory_id],
         )?;
     }
     Ok(())
-}
-
-pub(super) fn markdown_source_candidate_id(
-    conn: &Connection,
-    doc: &MarkdownMemoryDocument,
-) -> Result<Option<i64>> {
-    if let Some(candidate_id) = doc.metadata.source_candidate_id {
-        Ok(source_candidate_id_exists(conn, candidate_id)?.then_some(candidate_id))
-    } else {
-        Ok(None)
-    }
 }
 
 pub(super) fn upsert_markdown_lesson_metadata(
@@ -131,18 +119,5 @@ pub(super) fn default_markdown_lesson_metadata(updated_at_epoch: i64) -> Markdow
         recovery_count: 0,
         correction_count: 0,
         revert_count: 0,
-    }
-}
-
-fn source_candidate_id_exists(conn: &Connection, candidate_id: i64) -> Result<bool> {
-    let result = conn.query_row(
-        "SELECT id FROM memory_candidates WHERE id = ?1 LIMIT 1",
-        rusqlite::params![candidate_id],
-        |row| row.get::<_, i64>(0),
-    );
-    match result {
-        Ok(_) => Ok(true),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
-        Err(error) => Err(error.into()),
     }
 }

@@ -16,15 +16,11 @@ pub(super) fn runtime_memory_id_by_source(
     let result = conn.query_row(
         "SELECT id, title, content, memory_type, topic_key FROM memories
          WHERE id = ?1
-           AND project = ?2
-           AND COALESCE(scope, 'project') = ?3
-           AND created_at_epoch = ?4
-           AND COALESCE(reference_time_epoch, created_at_epoch) = ?5
+           AND created_at_epoch = ?2
+           AND COALESCE(reference_time_epoch, created_at_epoch) = ?3
          LIMIT 1",
         rusqlite::params![
             source_id,
-            doc.metadata.project,
-            doc.metadata.scope,
             doc.metadata.created_at_epoch,
             doc.metadata
                 .reference_time_epoch
@@ -87,11 +83,15 @@ pub(super) fn runtime_memory_id(
     if doc.metadata.scope == "global" {
         return runtime_global_memory_id(conn, doc, topic_key);
     }
+    let ownership = markdown_ownership(doc);
     let result = conn.query_row(
         "SELECT id FROM memories
          WHERE project = ?1
            AND topic_key = ?2
            AND COALESCE(scope, 'project') = ?3
+           AND memory_type = ?4
+           AND COALESCE(owner_scope, ?5) = ?5
+           AND COALESCE(owner_key, ?6) = ?6
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -101,7 +101,14 @@ pub(super) fn runtime_memory_id(
            updated_at_epoch DESC,
            id DESC
          LIMIT 1",
-        rusqlite::params![doc.metadata.project, topic_key, doc.metadata.scope],
+        rusqlite::params![
+            doc.metadata.project,
+            topic_key,
+            doc.metadata.scope,
+            doc.metadata.memory_type,
+            ownership.owner_scope,
+            ownership.owner_key,
+        ],
         |row| row.get::<_, i64>(0),
     );
     match result {
@@ -121,8 +128,9 @@ fn runtime_global_memory_id(
         "SELECT id FROM memories
          WHERE topic_key = ?1
            AND COALESCE(scope, 'project') = 'global'
-           AND COALESCE(owner_scope, ?2) = ?2
-           AND COALESCE(owner_key, ?3) = ?3
+           AND memory_type = ?2
+           AND COALESCE(owner_scope, ?3) = ?3
+           AND COALESCE(owner_key, ?4) = ?4
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -132,7 +140,12 @@ fn runtime_global_memory_id(
            updated_at_epoch DESC,
            id DESC
          LIMIT 1",
-        rusqlite::params![topic_key, ownership.owner_scope, ownership.owner_key],
+        rusqlite::params![
+            topic_key,
+            doc.metadata.memory_type,
+            ownership.owner_scope,
+            ownership.owner_key,
+        ],
         |row| row.get::<_, i64>(0),
     );
     match result {

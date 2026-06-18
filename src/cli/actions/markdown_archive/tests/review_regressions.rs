@@ -94,6 +94,73 @@ fn markdown_import_source_id_requires_matching_fingerprint() -> Result<()> {
 }
 
 #[test]
+fn markdown_import_source_id_survives_project_and_scope_edits() -> Result<()> {
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    target.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES (7, 'target-session', '/old-repo', 'scope-topic', 'Scoped preference',
+                 'Stable source content.',
+                 'preference', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project')",
+        [],
+    )?;
+
+    let export_dir = unique_temp_dir("markdown-export-scope-edit");
+    std::fs::create_dir_all(&export_dir)?;
+    let doc = MarkdownMemoryDocument {
+        metadata: MarkdownMemoryMetadata {
+            source_id: Some(7),
+            project: "/new-repo".to_string(),
+            topic_key: Some("scope-topic".to_string()),
+            title: "Scoped preference".to_string(),
+            memory_type: "preference".to_string(),
+            created_at_epoch: 100,
+            updated_at_epoch: 200,
+            reference_time_epoch: Some(150),
+            scope: "global".to_string(),
+            source_content_hash: Some(import_lookup::markdown_source_content_hash(
+                "Scoped preference",
+                "Stable source content.",
+                "preference",
+                Some("scope-topic"),
+            )),
+            ..sample_metadata("active", "global")
+        },
+        content: "Stable source content.".to_string(),
+    };
+    std::fs::write(
+        export_dir.join("scope-edit.md"),
+        render_markdown_memory(&doc),
+    )?;
+
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 0);
+    assert_eq!(stats.updated, 1);
+    let row: (i64, String, String, String) = target.query_row(
+        "SELECT COUNT(*), MAX(project), MAX(scope), MAX(owner_scope)
+         FROM memories WHERE topic_key = 'scope-topic'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        row,
+        (
+            1,
+            "/new-repo".to_string(),
+            "global".to_string(),
+            "user".to_string()
+        )
+    );
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
 fn markdown_export_uses_context_visibility_and_current_filter() -> Result<()> {
     let project = "/tmp/remem-markdown-visible";
     let conn = Connection::open_in_memory()?;
@@ -300,6 +367,137 @@ fn markdown_round_trip_preserves_temporal_memory_facts() -> Result<()> {
 }
 
 #[test]
+fn markdown_round_trip_preserves_memory_edges_with_remapped_memory_ids() -> Result<()> {
+    let project = "/tmp/remem-markdown-edges";
+    let source = Connection::open_in_memory()?;
+    setup_memory_schema(&source);
+    create_memory_facts_schema(&source)?;
+    let decision = crate::memory::state_key::derive_state_key(
+        "decision",
+        Some("decision-11111111"),
+        "Optimize CJK search",
+        "Use FTS5 trigram tokenizer for CJK text search support.",
+    )
+    .expect("semantic state key should derive");
+    source.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, state_label, state_status,
+          current_memory_id, created_at_epoch, updated_at_epoch)
+         VALUES (10, 'repo', ?1, 'decision', ?2, 'edge topic', 'active',
+                 2, 100, 300)",
+        rusqlite::params![project, decision.state_key],
+    )?;
+    source.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
+          valid_from_epoch, valid_to_epoch, state_key_id)
+         VALUES (1, 'old-session', ?1, 'decision-11111111', 'Optimize CJK search',
+                 'Use FTS5 trigram tokenizer for CJK text search support.',
+                 'decision', NULL, 'old search context',
+                 100, 150, 120, 'stale', 'main', 'project', 100, 200, 10)",
+        [project],
+    )?;
+    source.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
+          valid_from_epoch, state_key_id)
+         VALUES (2, 'current-session', ?1, 'decision-22222222', 'Optimize CJK search',
+                 'Use FTS5 trigram tokenizer for CJK text search support.',
+                 'decision', NULL, 'current search context',
+                 200, 300, 220, 'active', 'main', 'project', 200, 10)",
+        [project],
+    )?;
+    source.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, evidence_event_ids,
+          confidence, reason, created_at_epoch)
+         VALUES ('supersedes', 1, 2, 10, '[31,32]', 0.82,
+                 'current replaces old edge decision', 310)",
+        [],
+    )?;
+
+    let export_dir = unique_temp_dir("markdown-export-edges");
+    export_markdown_archive(
+        &source,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: true,
+            limit: 100,
+        },
+    )?;
+
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    create_memory_facts_schema(&target)?;
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 2);
+    let edge: (
+        String,
+        i64,
+        i64,
+        Option<i64>,
+        Vec<i64>,
+        Option<i64>,
+        Option<i64>,
+        String,
+    ) = target.query_row(
+        "SELECT e.edge_type, e.from_memory_id, e.to_memory_id, e.state_key_id,
+                    e.evidence_event_ids, e.source_candidate_id, e.source_operation_id, e.reason
+             FROM memory_edges e",
+        [],
+        |row| {
+            let event_json: Option<String> = row.get(4)?;
+            let events = event_json
+                .map(|json| serde_json::from_str::<Vec<i64>>(&json).unwrap())
+                .unwrap_or_default();
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                events,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+            ))
+        },
+    )?;
+    assert_eq!(edge.0, "supersedes");
+    assert_eq!(edge.1, 1);
+    assert_eq!(edge.2, 2);
+    assert!(edge.3.is_some());
+    assert!(edge.4.is_empty());
+    assert!(edge.5.is_none());
+    assert!(edge.6.is_none());
+    assert_eq!(edge.7, "current replaces old edge decision");
+
+    let state = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: decision.state_key,
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            include_history: true,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(state.status, "current");
+    assert_eq!(state.history.len(), 1);
+    assert_eq!(state.history[0].relation.as_deref(), Some("supersedes"));
+    assert_eq!(
+        state.history[0].reason.as_deref(),
+        Some("current replaces old edge decision")
+    );
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
 fn markdown_import_topic_fallback_prefers_active_memory() -> Result<()> {
     let project = "/tmp/remem-markdown-active-first";
     let source = Connection::open_in_memory()?;
@@ -366,6 +564,74 @@ fn markdown_import_topic_fallback_prefers_active_memory() -> Result<()> {
     assert_eq!(rows.0, "Stale content should stay stale.");
     assert_eq!(rows.1, "Imported content should update the active row.");
     assert_eq!(rows.2, "active-session");
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_import_topic_fallback_requires_owner_and_type_match() -> Result<()> {
+    let project = "/tmp/remem-markdown-owner-type";
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    target.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
+          owner_scope, owner_key)
+         VALUES (1, 'workstream-session', ?1, 'shared-topic', 'Workstream decision',
+                 'Workstream-owned content must not be overwritten.',
+                 'decision', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project',
+                 'workstream', 'workstream:alpha')",
+        [project],
+    )?;
+    target.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES (2, 'procedure-session', ?1, 'shared-topic', 'Procedure memory',
+                 'Different-type content must not be overwritten.',
+                 'procedure', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project')",
+        [project],
+    )?;
+
+    let export_dir = unique_temp_dir("markdown-export-owner-type");
+    std::fs::create_dir_all(&export_dir)?;
+    let doc = MarkdownMemoryDocument {
+        metadata: MarkdownMemoryMetadata {
+            source_id: None,
+            project: project.to_string(),
+            topic_key: Some("shared-topic".to_string()),
+            title: "Repo decision".to_string(),
+            memory_type: "decision".to_string(),
+            scope: "project".to_string(),
+            ..sample_metadata("active", "project")
+        },
+        content: "Repo-owned import content.".to_string(),
+    };
+    std::fs::write(
+        export_dir.join("owner-type.md"),
+        render_markdown_memory(&doc),
+    )?;
+
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 1);
+    assert_eq!(stats.updated, 0);
+    let rows: (i64, String, String) = target.query_row(
+        "SELECT COUNT(*),
+                (SELECT content FROM memories WHERE id = 1),
+                (SELECT content FROM memories WHERE id = 2)
+         FROM memories
+         WHERE project = ?1 AND topic_key = 'shared-topic'",
+        [project],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(rows.0, 3);
+    assert_eq!(rows.1, "Workstream-owned content must not be overwritten.");
+    assert_eq!(rows.2, "Different-type content must not be overwritten.");
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;
@@ -646,6 +912,129 @@ fn markdown_import_treats_visible_h1_as_title_edit() -> Result<()> {
     )?;
     assert_eq!(row.0, "Edited visible title");
     assert_eq!(row.1, "Body content stays body content.");
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_import_treats_crlf_visible_h1_as_title_edit() -> Result<()> {
+    let project = "/tmp/remem-markdown-heading-crlf";
+    let source = Connection::open_in_memory()?;
+    setup_memory_schema(&source);
+    source.execute(
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES ('source-session', ?1, 'heading-crlf-topic', 'Original title',
+                 'Body content stays body content under CRLF.',
+                 'decision', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project')",
+        [project],
+    )?;
+    let export_dir = unique_temp_dir("markdown-export-heading-crlf");
+    export_markdown_archive(
+        &source,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: false,
+            limit: 100,
+        },
+    )?;
+    let path = only_markdown_file(&export_dir)?;
+    let raw = std::fs::read_to_string(&path)?;
+    let edited = raw
+        .replace("# Original title", "# Edited CRLF visible title")
+        .replace('\n', "\r\n");
+    std::fs::write(&path, edited)?;
+
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 1);
+    let row: (String, String) = target.query_row(
+        "SELECT title, content FROM memories
+         WHERE project = ?1 AND topic_key = 'heading-crlf-topic'",
+        [project],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(row.0, "Edited CRLF visible title");
+    assert_eq!(row.1, "Body content stays body content under CRLF.");
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_import_does_not_move_current_state_backwards_for_older_active_slot() -> Result<()> {
+    let project = "/tmp/remem-markdown-current-guard";
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    let decision = crate::memory::state_key::derive_state_key(
+        "decision",
+        Some("decision-aaaa1111"),
+        "Optimize CJK search",
+        "Use FTS5 trigram tokenizer for CJK text search support.",
+    )
+    .expect("semantic state key should derive");
+    target.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, state_label, state_status,
+          current_memory_id, created_at_epoch, updated_at_epoch)
+         VALUES (10, 'repo', ?1, 'decision', ?2, 'decision slot', 'active',
+                 1, 100, 500)",
+        rusqlite::params![project, decision.state_key],
+    )?;
+    target.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
+          valid_from_epoch, state_key_id)
+         VALUES (1, 'current-session', ?1, 'decision-aaaa1111', 'Optimize CJK search',
+                 'Use FTS5 trigram tokenizer for CJK text search support.',
+                 'decision', NULL, 'current search context',
+                 400, 500, 450, 'active', 'main', 'project', 400, 10)",
+        [project],
+    )?;
+
+    let export_dir = unique_temp_dir("markdown-current-guard");
+    std::fs::create_dir_all(&export_dir)?;
+    let doc = MarkdownMemoryDocument {
+        metadata: MarkdownMemoryMetadata {
+            source_id: None,
+            project: project.to_string(),
+            topic_key: Some("decision-bbbb2222".to_string()),
+            title: "Optimize CJK search".to_string(),
+            memory_type: "decision".to_string(),
+            created_at_epoch: 100,
+            updated_at_epoch: 200,
+            reference_time_epoch: Some(150),
+            ..sample_metadata("active", "project")
+        },
+        content: "Use FTS5 trigram tokenizer for CJK text search support.".to_string(),
+    };
+    std::fs::write(
+        export_dir.join("older-active.md"),
+        render_markdown_memory(&doc),
+    )?;
+
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 1);
+    let current_memory_id: i64 = target.query_row(
+        "SELECT current_memory_id FROM memory_state_keys WHERE id = 10",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(current_memory_id, 1);
+    let imported_state_key_id: Option<i64> = target.query_row(
+        "SELECT state_key_id FROM memories WHERE topic_key = 'decision-bbbb2222'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(imported_state_key_id, Some(10));
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;

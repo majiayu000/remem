@@ -52,6 +52,7 @@ fn sample_metadata(status: &str, scope: &str) -> MarkdownMemoryMetadata {
         source_candidate_id: None,
         lesson: None,
         facts: None,
+        edges: None,
     }
 }
 
@@ -590,8 +591,8 @@ fn markdown_round_trip_preserves_extended_memory_metadata() -> Result<()> {
     assert_eq!(row.8, Some(400));
     assert_eq!(row.9, Some(125));
     assert_eq!(row.10, Some(350));
-    assert_eq!(row.11.as_deref(), Some("[11,12]"));
-    assert_eq!(row.12, Some(42));
+    assert!(row.11.is_none());
+    assert!(row.12.is_none());
 
     let lesson = crate::memory::lesson::get_lesson_metadata(&target, 1)?
         .expect("lesson metadata should round-trip");

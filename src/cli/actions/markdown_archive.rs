@@ -1,4 +1,5 @@
 mod change_detection;
+mod edge_metadata;
 mod fact_metadata;
 mod format;
 mod import_lookup;
@@ -56,6 +57,8 @@ struct MarkdownMemoryMetadata {
     lesson: Option<MarkdownLessonMetadata>,
     #[serde(default)]
     facts: Option<Vec<MarkdownMemoryFactMetadata>>,
+    #[serde(default)]
+    edges: Option<Vec<MarkdownMemoryEdgeMetadata>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -111,10 +114,36 @@ struct MarkdownMemoryFactMetadata {
     invalidated_at_epoch: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct MarkdownMemoryEdgeMetadata {
+    source_edge_id: Option<i64>,
+    edge_type: String,
+    from_source_id: Option<i64>,
+    to_source_id: Option<i64>,
+    state_owner_scope: Option<String>,
+    state_owner_key: Option<String>,
+    state_memory_type: Option<String>,
+    state_key: Option<String>,
+    #[serde(default)]
+    evidence_event_ids: Vec<i64>,
+    source_candidate_id: Option<i64>,
+    source_operation_id: Option<i64>,
+    confidence: Option<f64>,
+    reason: Option<String>,
+    created_at_epoch: i64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct MarkdownMemoryDocument {
     metadata: MarkdownMemoryMetadata,
     content: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ImportedMarkdownMemory {
+    outcome: ImportFileOutcome,
+    memory_id: i64,
+    doc: MarkdownMemoryDocument,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,10 +272,16 @@ fn import_markdown_archive(
         skipped: 0,
         source: source.to_path_buf(),
     };
+    let mut imported = Vec::new();
     for file in files {
         match import_markdown_file(conn, &file) {
-            Ok(ImportFileOutcome::Imported) => stats.imported += 1,
-            Ok(ImportFileOutcome::Updated) => stats.updated += 1,
+            Ok(result) => {
+                match result.outcome {
+                    ImportFileOutcome::Imported => stats.imported += 1,
+                    ImportFileOutcome::Updated => stats.updated += 1,
+                }
+                imported.push(result);
+            }
             Err(error) if best_effort => {
                 crate::log::warn(
                     "import",
@@ -257,6 +292,8 @@ fn import_markdown_archive(
             Err(error) => return Err(error).with_context(|| format!("import {}", file.display())),
         }
     }
+    edge_metadata::replace_markdown_memory_edges(conn, &imported)
+        .with_context(|| format!("restore markdown memory edges from {}", source.display()))?;
     Ok(stats)
 }
 
@@ -266,7 +303,7 @@ enum ImportFileOutcome {
     Updated,
 }
 
-fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportFileOutcome> {
+fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportedMarkdownMemory> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("read markdown memory {}", path.display()))?;
     let doc = parse_markdown_memory(&raw)?;
@@ -274,16 +311,28 @@ fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportFileOutc
     let metadata_topic_key = normalized_topic_key(doc.metadata.topic_key.as_deref());
     if let Some(existing_id) = import_lookup::runtime_memory_id_by_source(conn, &doc)? {
         update_markdown_memory(conn, existing_id, &doc, metadata_topic_key.as_deref())?;
-        return Ok(ImportFileOutcome::Updated);
+        return Ok(ImportedMarkdownMemory {
+            outcome: ImportFileOutcome::Updated,
+            memory_id: existing_id,
+            doc,
+        });
     }
     let topic_key = metadata_topic_key
         .unwrap_or_else(|| synthesized_markdown_topic_key(path, &doc.metadata.title));
     if let Some(existing_id) = import_lookup::runtime_memory_id(conn, &doc, &topic_key)? {
         update_markdown_memory(conn, existing_id, &doc, Some(&topic_key))?;
-        return Ok(ImportFileOutcome::Updated);
+        return Ok(ImportedMarkdownMemory {
+            outcome: ImportFileOutcome::Updated,
+            memory_id: existing_id,
+            doc,
+        });
     }
-    insert_markdown_memory(conn, &doc, Some(&topic_key))?;
-    Ok(ImportFileOutcome::Imported)
+    let memory_id = insert_markdown_memory(conn, &doc, Some(&topic_key))?;
+    Ok(ImportedMarkdownMemory {
+        outcome: ImportFileOutcome::Imported,
+        memory_id,
+        doc,
+    })
 }
 
 fn load_export_memories(
@@ -372,6 +421,7 @@ fn load_export_memories(
                 source_candidate_id: row.get(25)?,
                 lesson: None,
                 facts: Some(Vec::new()),
+                edges: Some(Vec::new()),
             },
             content: row.get(4)?,
         })
@@ -386,6 +436,7 @@ fn load_export_memories(
         }
         if let Some(source_id) = doc.metadata.source_id {
             doc.metadata.facts = Some(fact_metadata::load_markdown_memory_facts(conn, source_id)?);
+            doc.metadata.edges = Some(edge_metadata::load_markdown_memory_edges(conn, source_id)?);
         }
     }
     Ok(docs)

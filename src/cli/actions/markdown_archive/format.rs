@@ -123,16 +123,21 @@ pub(super) fn synthesized_markdown_topic_key(path: &Path, title: &str) -> String
 }
 
 fn strip_visible_heading(raw: &str) -> (Option<String>, String) {
-    let content = raw.trim_start_matches('\n');
+    let content = trim_heading_breaks(raw);
     let Some(after_hash) = content.strip_prefix("# ") else {
         return (None, content.to_string());
     };
     let Some(line_end) = after_hash.find('\n') else {
-        return (Some(unescape_heading_title(after_hash)), String::new());
+        let heading = after_hash.trim_end_matches('\r');
+        return (Some(unescape_heading_title(heading)), String::new());
     };
     let heading = after_hash[..line_end].trim_end_matches('\r');
-    let content = after_hash[line_end + 1..].trim_start_matches('\n');
+    let content = trim_heading_breaks(&after_hash[line_end + 1..]);
     (Some(unescape_heading_title(heading)), content.to_string())
+}
+
+fn trim_heading_breaks(value: &str) -> &str {
+    value.trim_start_matches(['\r', '\n'])
 }
 
 fn heading_title(title: &str) -> String {

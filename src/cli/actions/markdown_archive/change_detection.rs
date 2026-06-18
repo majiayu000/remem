@@ -1,6 +1,4 @@
-use super::persist::{
-    default_markdown_lesson_metadata, markdown_source_candidate_id, MarkdownOwnership,
-};
+use super::persist::{default_markdown_lesson_metadata, MarkdownOwnership};
 use super::{
     column_exists, MarkdownLessonMetadata, MarkdownMemoryDocument, MarkdownMemoryMetadata,
 };
@@ -47,18 +45,12 @@ pub(super) fn markdown_update_epoch(
     ownership: &MarkdownOwnership<'_>,
 ) -> Result<i64> {
     let existing = load_existing_markdown_memory(conn, memory_id)?;
-    let source_candidate_id = if existing.has_source_candidate_id {
-        markdown_source_candidate_id(conn, doc)?
-    } else {
-        None
-    };
     Ok(effective_update_epoch(
         &existing,
         doc,
         topic_key,
         reference_time_epoch,
         ownership,
-        source_candidate_id,
     ))
 }
 
@@ -135,12 +127,11 @@ fn effective_update_epoch(
     topic_key: Option<&str>,
     reference_time_epoch: i64,
     ownership: &MarkdownOwnership<'_>,
-    source_candidate_id: Option<i64>,
 ) -> i64 {
     let changed = markdown_core_changed(existing, doc, topic_key, reference_time_epoch)
         || markdown_ownership_changed(existing, ownership)
         || markdown_routing_lifecycle_changed(existing, &doc.metadata)
-        || markdown_provenance_changed(existing, &doc.metadata, source_candidate_id)
+        || markdown_provenance_changed(existing)
         || markdown_lesson_changed(existing, doc);
     if changed {
         chrono::Utc::now()
@@ -194,13 +185,9 @@ fn markdown_routing_lifecycle_changed(
         || existing.valid_to_epoch != metadata.valid_to_epoch
 }
 
-fn markdown_provenance_changed(
-    existing: &ExistingMarkdownMemory,
-    metadata: &MarkdownMemoryMetadata,
-    source_candidate_id: Option<i64>,
-) -> bool {
-    (existing.has_evidence_event_ids && existing.evidence_event_ids != metadata.evidence_event_ids)
-        || (existing.has_source_candidate_id && existing.source_candidate_id != source_candidate_id)
+fn markdown_provenance_changed(existing: &ExistingMarkdownMemory) -> bool {
+    (existing.has_evidence_event_ids && existing.evidence_event_ids.is_some())
+        || (existing.has_source_candidate_id && existing.source_candidate_id.is_some())
 }
 
 fn markdown_lesson_changed(
