@@ -1,3 +1,4 @@
+mod change_detection;
 mod format;
 mod persist;
 
@@ -88,18 +89,6 @@ impl From<crate::memory::lesson::LessonMetadata> for MarkdownLessonMetadata {
 struct MarkdownMemoryDocument {
     metadata: MarkdownMemoryMetadata,
     content: String,
-}
-
-struct ExistingMarkdownMemory {
-    title: String,
-    content: String,
-    memory_type: String,
-    files: Option<String>,
-    reference_time_epoch: Option<i64>,
-    status: String,
-    branch: Option<String>,
-    scope: String,
-    updated_at_epoch: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -406,15 +395,21 @@ fn update_markdown_memory(
             .metadata
             .reference_time_epoch
             .unwrap_or(doc.metadata.created_at_epoch);
-        let existing = load_existing_markdown_memory(conn, memory_id)?;
-        let updated_at_epoch = effective_update_epoch(&existing, doc, reference_time_epoch);
+        let ownership = markdown_ownership(doc);
+        let updated_at_epoch = change_detection::markdown_update_epoch(
+            conn,
+            memory_id,
+            doc,
+            topic_key,
+            reference_time_epoch,
+            &ownership,
+        )?;
         let search_context = crate::memory::search_context::build_search_context(
             &doc.metadata.memory_type,
             topic_key,
             &doc.content,
             doc.metadata.files.as_deref(),
         );
-        let ownership = markdown_ownership(doc);
         conn.execute(
             "UPDATE memories
              SET session_id = NULL,
@@ -497,56 +492,6 @@ fn update_markdown_memory(
             }
             Err(error)
         }
-    }
-}
-
-fn load_existing_markdown_memory(
-    conn: &Connection,
-    memory_id: i64,
-) -> Result<ExistingMarkdownMemory> {
-    conn.query_row(
-        "SELECT title, content, memory_type, files, reference_time_epoch,
-                status, branch, scope, updated_at_epoch
-         FROM memories
-         WHERE id = ?1",
-        rusqlite::params![memory_id],
-        |row| {
-            Ok(ExistingMarkdownMemory {
-                title: row.get(0)?,
-                content: row.get(1)?,
-                memory_type: row.get(2)?,
-                files: row.get(3)?,
-                reference_time_epoch: row.get(4)?,
-                status: row.get(5)?,
-                branch: row.get(6)?,
-                scope: row.get(7)?,
-                updated_at_epoch: row.get(8)?,
-            })
-        },
-    )
-    .with_context(|| format!("load existing markdown memory id={memory_id}"))
-}
-
-fn effective_update_epoch(
-    existing: &ExistingMarkdownMemory,
-    doc: &MarkdownMemoryDocument,
-    reference_time_epoch: i64,
-) -> i64 {
-    let changed = existing.title != doc.metadata.title
-        || existing.content != doc.content
-        || existing.memory_type != doc.metadata.memory_type
-        || existing.files != doc.metadata.files
-        || existing.reference_time_epoch != Some(reference_time_epoch)
-        || existing.status != doc.metadata.status
-        || existing.branch != doc.metadata.branch
-        || existing.scope != doc.metadata.scope;
-    if changed {
-        chrono::Utc::now()
-            .timestamp()
-            .max(existing.updated_at_epoch.saturating_add(1))
-            .max(doc.metadata.updated_at_epoch)
-    } else {
-        existing.updated_at_epoch
     }
 }
 

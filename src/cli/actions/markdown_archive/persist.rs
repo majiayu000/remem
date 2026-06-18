@@ -54,11 +54,7 @@ pub(super) fn update_optional_memory_provenance(
         )?;
     }
     if column_exists(conn, "memories", "source_candidate_id")? {
-        let source_candidate_id = if let Some(candidate_id) = doc.metadata.source_candidate_id {
-            source_candidate_id_exists(conn, candidate_id)?.then_some(candidate_id)
-        } else {
-            None
-        };
+        let source_candidate_id = markdown_source_candidate_id(conn, doc)?;
         conn.execute(
             "UPDATE memories SET source_candidate_id = ?1 WHERE id = ?2",
             rusqlite::params![source_candidate_id, memory_id],
@@ -67,25 +63,24 @@ pub(super) fn update_optional_memory_provenance(
     Ok(())
 }
 
+pub(super) fn markdown_source_candidate_id(
+    conn: &Connection,
+    doc: &MarkdownMemoryDocument,
+) -> Result<Option<i64>> {
+    if let Some(candidate_id) = doc.metadata.source_candidate_id {
+        Ok(source_candidate_id_exists(conn, candidate_id)?.then_some(candidate_id))
+    } else {
+        Ok(None)
+    }
+}
+
 pub(super) fn upsert_markdown_lesson_metadata(
     conn: &Connection,
     memory_id: i64,
     doc: &MarkdownMemoryDocument,
     updated_at_epoch: i64,
 ) -> Result<()> {
-    let fallback = MarkdownLessonMetadata {
-        confidence: 0.7,
-        reinforcement_count: 1,
-        source_evidence: Some("markdown_import".to_string()),
-        last_reinforced_at_epoch: updated_at_epoch,
-        stale_after_epoch: None,
-        outcome_kind: "unknown".to_string(),
-        success_count: 0,
-        failure_count: 0,
-        recovery_count: 0,
-        correction_count: 0,
-        revert_count: 0,
-    };
+    let fallback = default_markdown_lesson_metadata(updated_at_epoch);
     let lesson = doc.metadata.lesson.as_ref().unwrap_or(&fallback);
     conn.execute(
         "INSERT INTO memory_lessons
@@ -121,6 +116,22 @@ pub(super) fn upsert_markdown_lesson_metadata(
         ],
     )?;
     Ok(())
+}
+
+pub(super) fn default_markdown_lesson_metadata(updated_at_epoch: i64) -> MarkdownLessonMetadata {
+    MarkdownLessonMetadata {
+        confidence: 0.7,
+        reinforcement_count: 1,
+        source_evidence: Some("markdown_import".to_string()),
+        last_reinforced_at_epoch: updated_at_epoch,
+        stale_after_epoch: None,
+        outcome_kind: "unknown".to_string(),
+        success_count: 0,
+        failure_count: 0,
+        recovery_count: 0,
+        correction_count: 0,
+        revert_count: 0,
+    }
 }
 
 fn source_candidate_id_exists(conn: &Connection, candidate_id: i64) -> Result<bool> {

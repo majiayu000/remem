@@ -246,6 +246,56 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
     assert_eq!(before_edit.status, "no_current");
     assert!(before_edit.current.is_none());
 
+    let mut doc = parse_markdown_memory(&std::fs::read_to_string(&path)?)?;
+    doc.metadata.topic_key = Some("renamed-topic".to_string());
+    std::fs::write(&path, render_markdown_memory(&doc))?;
+    let rename = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(rename.imported, 0);
+    assert_eq!(rename.updated, 1);
+
+    let renamed_updated_at: i64 = target.query_row(
+        "SELECT updated_at_epoch FROM memories WHERE project = ?1 AND topic_key = 'renamed-topic'",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert!(
+        renamed_updated_at > updated_at,
+        "{renamed_updated_at} <= {updated_at}"
+    );
+    let renamed_before = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "renamed-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            as_of_epoch: Some(renamed_updated_at - 1),
+            ..Default::default()
+        },
+    )?;
+    assert_ne!(renamed_before.status, "current");
+    assert!(renamed_before.current.is_none());
+    let renamed_current = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "renamed-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(renamed_current.status, "current");
+    let old_key = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "update-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(old_key.status, "no_current");
+    assert!(old_key.current.is_none());
+
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;
     Ok(())
