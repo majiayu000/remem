@@ -5,6 +5,8 @@ use crate::memory::service::{search_memories, SearchRequest};
 use crate::memory::types::tests_helper::setup_memory_schema;
 use std::path::{Path, PathBuf};
 
+mod review_regressions;
+
 fn unique_temp_dir(label: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

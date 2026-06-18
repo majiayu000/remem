@@ -351,9 +351,21 @@ fn runtime_memory_id_by_source(
     };
     let result = conn.query_row(
         "SELECT id FROM memories
-         WHERE id = ?1 AND project = ?2 AND scope = ?3
+         WHERE id = ?1
+           AND project = ?2
+           AND COALESCE(scope, 'project') = ?3
+           AND created_at_epoch = ?4
+           AND COALESCE(reference_time_epoch, created_at_epoch) = ?5
          LIMIT 1",
-        rusqlite::params![source_id, doc.metadata.project, doc.metadata.scope],
+        rusqlite::params![
+            source_id,
+            doc.metadata.project,
+            doc.metadata.scope,
+            doc.metadata.created_at_epoch,
+            doc.metadata
+                .reference_time_epoch
+                .unwrap_or(doc.metadata.created_at_epoch),
+        ],
         |row| row.get::<_, i64>(0),
     );
     match result {
@@ -371,7 +383,17 @@ fn runtime_memory_id(
 ) -> Result<Option<i64>> {
     let result = conn.query_row(
         "SELECT id FROM memories
-         WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+         WHERE project = ?1
+           AND topic_key = ?2
+           AND COALESCE(scope, 'project') = ?3
+         ORDER BY CASE status
+             WHEN 'active' THEN 0
+             WHEN 'stale' THEN 1
+             WHEN 'archived' THEN 2
+             ELSE 3
+           END,
+           updated_at_epoch DESC,
+           id DESC
          LIMIT 1",
         rusqlite::params![project, topic_key, scope],
         |row| row.get::<_, i64>(0),
@@ -412,8 +434,7 @@ fn update_markdown_memory(
         );
         conn.execute(
             "UPDATE memories
-             SET session_id = NULL,
-                 project = ?1,
+             SET project = ?1,
                  topic_key = ?2,
                  title = ?3,
                  content = ?4,
@@ -615,9 +636,33 @@ fn refresh_markdown_memory_indexes(
     } else {
         None
     };
-    crate::memory::store::clear_obsolete_state_key_links(
+    let row_state_key_id = if active_state_key_id.is_some() {
+        active_state_key_id
+    } else if let Some(decision) = crate::memory::state_key::derive_state_key(
+        &doc.metadata.memory_type,
+        topic_key,
+        &doc.metadata.title,
+        &doc.content,
+    ) {
+        let state_key_epoch = doc
+            .metadata
+            .valid_from_epoch
+            .unwrap_or(doc.metadata.created_at_epoch);
+        Some(crate::memory::state_key::ensure_state_key(
+            conn,
+            ownership.owner_scope,
+            ownership.owner_key,
+            &doc.metadata.memory_type,
+            &decision,
+            state_key_epoch,
+        )?)
+    } else {
+        None
+    };
+    crate::memory::store::update_state_key_links(
         conn,
         memory_id,
+        row_state_key_id,
         active_state_key_id,
         updated_at_epoch,
     )?;

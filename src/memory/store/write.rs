@@ -412,16 +412,26 @@ pub(crate) fn clear_obsolete_state_key_links(
     active_state_key_id: Option<i64>,
     now: i64,
 ) -> Result<()> {
+    update_state_key_links(conn, id, active_state_key_id, active_state_key_id, now)
+}
+
+pub(crate) fn update_state_key_links(
+    conn: &Connection,
+    id: i64,
+    row_state_key_id: Option<i64>,
+    current_state_key_id: Option<i64>,
+    now: i64,
+) -> Result<()> {
     conn.execute(
         "UPDATE memories SET state_key_id = ?1 WHERE id = ?2",
-        params![active_state_key_id, id],
+        params![row_state_key_id, id],
     )?;
     conn.execute(
         "UPDATE memory_state_keys
          SET current_memory_id = NULL, updated_at_epoch = ?3
          WHERE current_memory_id = ?1
            AND (?2 IS NULL OR id <> ?2)",
-        params![id, active_state_key_id, now],
+        params![id, current_state_key_id, now],
     )?;
     Ok(())
 }

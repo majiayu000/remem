@@ -21,10 +21,13 @@ pub(super) fn parse_markdown_memory(raw: &str) -> Result<MarkdownMemoryDocument>
     let end = body
         .find(&end_marker)
         .ok_or_else(|| anyhow!("missing remem markdown metadata end marker"))?;
-    let metadata: MarkdownMemoryMetadata =
+    let mut metadata: MarkdownMemoryMetadata =
         serde_json::from_str(body[..end].trim()).context("parse remem markdown metadata")?;
     let content_start = end + end_marker.len();
-    let content = strip_generated_heading(&body[content_start..], &metadata.title);
+    let (heading_title, content) = strip_visible_heading(&body[content_start..]);
+    if let Some(title) = heading_title {
+        metadata.title = title;
+    }
     Ok(MarkdownMemoryDocument { metadata, content })
 }
 
@@ -119,20 +122,17 @@ pub(super) fn synthesized_markdown_topic_key(path: &Path, title: &str) -> String
     format!("markdown-{}", slug_component(stem))
 }
 
-fn strip_generated_heading(raw: &str, title: &str) -> String {
-    let mut content = raw.trim_start_matches('\n');
+fn strip_visible_heading(raw: &str) -> (Option<String>, String) {
+    let content = raw.trim_start_matches('\n');
     let Some(after_hash) = content.strip_prefix("# ") else {
-        return content.to_string();
+        return (None, content.to_string());
     };
     let Some(line_end) = after_hash.find('\n') else {
-        return String::new();
+        return (Some(unescape_heading_title(after_hash)), String::new());
     };
-    let heading = &after_hash[..line_end];
-    if heading != heading_title(title) {
-        return content.to_string();
-    }
-    content = &after_hash[line_end + 1..];
-    content.trim_start_matches('\n').to_string()
+    let heading = after_hash[..line_end].trim_end_matches('\r');
+    let content = after_hash[line_end + 1..].trim_start_matches('\n');
+    (Some(unescape_heading_title(heading)), content.to_string())
 }
 
 fn heading_title(title: &str) -> String {
@@ -141,6 +141,10 @@ fn heading_title(title: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .replace('#', "\\#")
+}
+
+fn unescape_heading_title(title: &str) -> String {
+    title.replace("\\#", "#")
 }
 
 fn slug_component(value: &str) -> String {
