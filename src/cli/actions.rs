@@ -3,6 +3,7 @@ mod config_command;
 mod eval;
 mod import;
 mod maintenance;
+mod markdown_archive;
 mod model;
 mod pending;
 mod preferences;
@@ -22,6 +23,7 @@ pub(super) use import::run_import;
 pub(super) use maintenance::{
     run_cleanup, run_dream, run_encrypt, run_governance, GovernanceCliRequest,
 };
+pub(super) use markdown_archive::run_export_markdown;
 pub(super) use model::run_model;
 pub(super) use pending::run_pending;
 pub(super) use preferences::run_preferences;

@@ -11,6 +11,10 @@ pub(in crate::cli) fn run_import(action: ImportAction) -> Result<()> {
             source,
             best_effort,
         } => run_import_backup(source, best_effort),
+        ImportAction::Markdown {
+            source,
+            best_effort,
+        } => super::markdown_archive::run_import_markdown(&source, best_effort),
     }
 }
 
@@ -302,7 +306,12 @@ fn insert_imported_memory(
     }
 }
 
-fn refresh_imported_memory_entities(conn: &Connection, id: i64, title: &str, content: &str) {
+pub(super) fn refresh_imported_memory_entities(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    content: &str,
+) {
     let entities = crate::retrieval::entity::extract_entities(title, content);
     if let Err(error) = crate::retrieval::entity::refresh_memory_entities(conn, id, &entities) {
         crate::log::warn(

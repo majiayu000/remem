@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
 pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, WorkstreamAction, WorkstreamStatusArg,
@@ -501,6 +502,8 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ImportAction,
     },
+    /// Export curated memories to a human-editable mirror.
+    Export(ExportArgs),
 }
 #[derive(Subcommand)]
 pub(in crate::cli) enum ContextGateAction {
@@ -632,22 +635,6 @@ pub(in crate::cli) enum AdminAction {
         /// Output path. Defaults to <data_dir>/backups/remem-backup-<ts>.sqlite.
         #[arg(long)]
         output: Option<PathBuf>,
-    },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum ImportAction {
-    /// Import memories from an older backup sqlite file. Transcripts are not
-    /// replayed; only the old `memories` table is imported, with synthesized
-    /// provenance defaults.
-    Backup {
-        /// Backup sqlite path produced by `remem admin backup`.
-        #[arg(long)]
-        source: PathBuf,
-        /// Acknowledge that import is best-effort and skips constraint
-        /// violations rather than failing.
-        #[arg(long)]
-        best_effort: bool,
     },
 }
 

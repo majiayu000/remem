@@ -198,6 +198,7 @@ remem 解决的是不应该依赖手工维护的部分：
 
 - **自动捕获与召回**：hooks 会把会话总结进 SQLite 记忆库；`remem search`、`remem show`、`timeline` 和 MCP `get_observations` 可以按需取回详细内容。
 - **与原生 memory 的桥接**：当 Claude Code native memory 目录存在时，`remem sync-memory --cwd .` 会写入 compact 的 `remem_sessions.md`，并在 `MEMORY.md` 中追加指针和大小保护。完整细节仍保留在数据库里，用 `remem search` 查询。
+- **可人工编辑的 Markdown 镜像**：`remem export --markdown --output ./remem-memory --project "$PWD"` 会把每条 curated memory 写成一个 `.md` 文件，且目标目录必须为空。编辑这些文件后，`remem import markdown --source ./remem-memory` 会更新已有行，并重建 search、entity、embedding 和 current-state 索引。导出会拒绝非空目录，避免覆盖人工编辑。
 - **治理与可审计性**：`remem why <id>`、`remem govern --action stale --dry-run --json <id>`、`remem status --json`、`remem usage --days 14 --weeks 8` 分别用于查看记忆为什么可见、预览治理操作、检查存储健康，以及查看 memory-AI token/费用统计。
 - **声明前的确定性检查**：本地门禁包括 `cargo test -q context::claude_memory --lib`、`cargo test -q eval::golden --lib`、`cargo test -q eval::governance --lib` 和 `remem eval-e2e --json`。
 

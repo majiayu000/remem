@@ -317,15 +317,15 @@ pub fn insert_memory_full_with_operation_log(
     })
 }
 
-struct DefaultOwnership<'a> {
-    source_project: &'a str,
-    target_project: Option<&'a str>,
-    owner_scope: &'static str,
-    owner_key: &'a str,
-    context_class: &'static str,
+pub(crate) struct DefaultOwnership<'a> {
+    pub(crate) source_project: &'a str,
+    pub(crate) target_project: Option<&'a str>,
+    pub(crate) owner_scope: &'static str,
+    pub(crate) owner_key: &'a str,
+    pub(crate) context_class: &'static str,
 }
 
-fn default_ownership<'a>(project: &'a str, scope: &str) -> DefaultOwnership<'a> {
+pub(crate) fn default_ownership<'a>(project: &'a str, scope: &str) -> DefaultOwnership<'a> {
     if scope == "global" {
         DefaultOwnership {
             source_project: project,
