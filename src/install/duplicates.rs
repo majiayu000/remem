@@ -10,6 +10,7 @@ pub(crate) struct InstallPathCandidate {
     pub(crate) path: PathBuf,
     pub(crate) resolved_path: PathBuf,
     pub(crate) version: Option<String>,
+    pub(crate) schema_version: Option<i64>,
     pub(crate) first_on_path: bool,
     pub(crate) configured: bool,
 }
@@ -26,6 +27,7 @@ impl InstallPathReport {
         self.has_duplicates()
             || self.configured_paths_disagree()
             || self.first_path_differs_from_configured()
+            || self.version_or_schema_disagreement()
     }
 
     fn has_duplicates(&self) -> bool {
@@ -45,6 +47,23 @@ impl InstallPathReport {
 
     fn configured_paths_disagree(&self) -> bool {
         unique_paths(&self.configured_resolved_paths).len() > 1
+    }
+
+    fn version_or_schema_disagreement(&self) -> bool {
+        unique_options(
+            self.candidates
+                .iter()
+                .map(|candidate| candidate.version.as_ref()),
+        )
+        .len()
+            > 1
+            || unique_options(
+                self.candidates
+                    .iter()
+                    .map(|candidate| candidate.schema_version.as_ref()),
+            )
+            .len()
+                > 1
     }
 }
 
@@ -84,7 +103,7 @@ pub(crate) fn format_doctor_detail(report: &InstallPathReport) -> String {
 
     if report.has_warning() {
         return format!(
-            "{} remem executable(s) found; configured {}; candidates: {}; fix: remove or upgrade stale installs, or put the intended path first in PATH",
+            "{} remem executable(s) found; configured {}; candidates: {}; fix: remove or upgrade stale installs, reconcile hook/MCP commands to one binary, or put the intended path first in PATH",
             report.candidates.len(),
             configured,
             candidate_list
@@ -115,7 +134,7 @@ pub(crate) fn format_warning_lines(report: &InstallPathReport) -> Vec<String> {
         lines.push(format!("  {label} -> {}", format_candidate(candidate)));
     }
     lines.push(
-        "  fix    -> remove or upgrade stale package-manager/manual installs, or put the intended path first in PATH"
+        "  fix    -> remove or upgrade stale package-manager/manual installs, reconcile hook/MCP commands to one binary, or put the intended path first in PATH"
             .to_string(),
     );
     lines
@@ -166,14 +185,39 @@ where
             let configured = configured_resolved_paths.contains(&resolved_path);
             let first_on_path = candidates.is_empty();
             let version = version_probe(&candidate_path);
+            let schema_version = version.as_deref().and_then(parse_schema_version);
             candidates.push(InstallPathCandidate {
                 path: candidate_path,
                 resolved_path,
                 version,
+                schema_version,
                 first_on_path,
                 configured,
             });
         }
+    }
+    for (configured_path, resolved_path) in configured_paths
+        .iter()
+        .zip(configured_resolved_paths.iter())
+    {
+        if seen.contains(resolved_path)
+            || is_unresolved_bare_command(configured_path, resolved_path)
+            || !is_candidate_file(resolved_path)
+            || !path_matches_candidate_names(resolved_path, candidate_names)
+        {
+            continue;
+        }
+        seen.insert(resolved_path.clone());
+        let version = version_probe(resolved_path);
+        let schema_version = version.as_deref().and_then(parse_schema_version);
+        candidates.push(InstallPathCandidate {
+            path: configured_path.clone(),
+            resolved_path: resolved_path.clone(),
+            version,
+            schema_version,
+            first_on_path: false,
+            configured: true,
+        });
     }
 
     InstallPathReport {
@@ -197,6 +241,20 @@ fn unique_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
     unique
 }
 
+fn unique_options<'a, T, I>(values: I) -> Vec<&'a T>
+where
+    T: Eq,
+    I: IntoIterator<Item = Option<&'a T>>,
+{
+    let mut unique = Vec::new();
+    for value in values.into_iter().flatten() {
+        if !unique.contains(&value) {
+            unique.push(value);
+        }
+    }
+    unique
+}
+
 fn format_configured_paths(paths: &[PathBuf]) -> String {
     if paths.is_empty() {
         return "unknown".to_string();
@@ -209,8 +267,11 @@ fn format_configured_paths(paths: &[PathBuf]) -> String {
 }
 
 fn resolve_configured_path(path: &Path, dirs: &[PathBuf], candidate_names: &[&str]) -> PathBuf {
-    resolve_bare_command_path(path, dirs, candidate_names)
-        .unwrap_or_else(|| canonical_or_original(path))
+    if bare_command_name(path).is_some() {
+        return resolve_bare_command_path(path, dirs, candidate_names)
+            .unwrap_or_else(|| path.to_path_buf());
+    }
+    canonical_or_original(path)
 }
 
 fn resolve_bare_command_path(
@@ -251,6 +312,12 @@ fn bare_command_name(path: &Path) -> Option<&OsStr> {
     Some(name)
 }
 
+fn is_unresolved_bare_command(configured_path: &Path, resolved_path: &Path) -> bool {
+    bare_command_name(configured_path).is_some()
+        && configured_path == resolved_path
+        && !resolved_path.is_absolute()
+}
+
 fn default_candidate_names() -> &'static [&'static str] {
     candidate_names_for_platform(cfg!(windows))
 }
@@ -271,6 +338,15 @@ fn is_candidate_file(path: &Path) -> bool {
         return false;
     }
     is_executable(&metadata)
+}
+
+fn path_matches_candidate_names(path: &Path, candidate_names: &[&str]) -> bool {
+    let Some(file_name) = path.file_name() else {
+        return false;
+    };
+    candidate_names
+        .iter()
+        .any(|name| file_name == OsStr::new(name))
 }
 
 #[cfg(unix)]
@@ -328,6 +404,20 @@ fn parse_version_output(stdout: Vec<u8>, stderr: Vec<u8>) -> Option<String> {
         None
     } else {
         Some(first_line)
+    }
+}
+
+fn parse_schema_version(version: &str) -> Option<i64> {
+    let marker = "schema v";
+    let start = version.find(marker)? + marker.len();
+    let digits = version[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
     }
 }
 
@@ -430,6 +520,61 @@ mod tests {
     }
 
     #[test]
+    fn configured_absolute_path_not_on_path_is_probed() {
+        let configured_dir = temp_dir("configured-absolute");
+        let configured = write_candidate(&configured_dir, "remem", "remem 0.5.95 (schema v47)");
+
+        let report = collect_install_paths(
+            Vec::new(),
+            std::slice::from_ref(&configured),
+            &["remem"],
+            |path| std::fs::read_to_string(path).ok(),
+        );
+
+        assert!(!report.has_warning());
+        assert_eq!(report.candidates.len(), 1);
+        assert!(report.candidates[0].configured);
+        assert_eq!(report.candidates[0].schema_version, Some(47));
+    }
+
+    #[test]
+    fn warns_when_configured_and_path_schema_versions_disagree() {
+        let stale_dir = temp_dir("schema-stale");
+        let configured_dir = temp_dir("schema-configured");
+        write_candidate(&stale_dir, "remem", "remem 0.5.73 (schema v43)");
+        let configured = write_candidate(&configured_dir, "remem", "remem 0.5.95 (schema v47)");
+
+        let report = collect_install_paths(
+            vec![stale_dir],
+            std::slice::from_ref(&configured),
+            &["remem"],
+            |path| std::fs::read_to_string(path).ok(),
+        );
+
+        assert!(report.has_warning());
+        assert!(report.version_or_schema_disagreement());
+        let detail = format_doctor_detail(&report);
+        assert!(detail.contains("schema v43"), "{detail}");
+        assert!(detail.contains("schema v47"), "{detail}");
+    }
+
+    #[test]
+    fn configured_wrapper_path_is_not_probed_as_remem_binary() {
+        let wrapper_dir = temp_dir("wrapper-command");
+        let wrapper = write_candidate(&wrapper_dir, "node", "v24.0.0");
+
+        let report = collect_install_paths(
+            vec![wrapper_dir],
+            std::slice::from_ref(&wrapper),
+            &["remem"],
+            |path| std::fs::read_to_string(path).ok(),
+        );
+
+        assert!(report.candidates.is_empty());
+        assert!(!report.has_warning());
+    }
+
+    #[test]
     fn configured_command_name_resolves_through_path() {
         let bin_dir = temp_dir("command");
         let configured = PathBuf::from("remem");
@@ -452,6 +597,26 @@ mod tests {
             vec![canonical_or_original(&expected)]
         );
         assert!(report.candidates[0].configured);
+    }
+
+    #[test]
+    fn unresolved_configured_command_name_is_not_probed_from_cwd() {
+        let configured = PathBuf::from("remem");
+        let resolved = resolve_configured_path(&configured, &[], &["remem"]);
+
+        assert_eq!(resolved, configured);
+        assert!(is_unresolved_bare_command(&configured, &resolved));
+
+        let report = collect_install_paths(
+            Vec::new(),
+            std::slice::from_ref(&configured),
+            &["remem"],
+            |_| panic!("unresolved bare command should not be probed as a configured binary"),
+        );
+
+        assert_eq!(report.configured_resolved_paths, vec![configured]);
+        assert!(report.candidates.is_empty());
+        assert!(!report.has_warning());
     }
 
     #[test]
@@ -515,6 +680,12 @@ mod tests {
             Some("remem 0.4.6".to_string())
         );
         assert_eq!(parse_version_output(Vec::new(), Vec::new()), None);
+    }
+
+    #[test]
+    fn parses_schema_version_from_version_label() {
+        assert_eq!(parse_schema_version("remem 0.5.95 (schema v47)"), Some(47));
+        assert_eq!(parse_schema_version("remem 0.5.95"), None);
     }
 
     #[cfg(unix)]
