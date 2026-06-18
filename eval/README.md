@@ -33,7 +33,7 @@ Corpus memory fields:
 - `topic_key`: optional stable topic key.
 - `title`: memory title.
 - `content`: memory text to seed.
-- `memory_type`: memory type, for example `decision`, `discovery`, or `procedure`.
+- `memory_type`: memory type, for example `decision`, `discovery`, `procedure`, or `lesson`.
 - `branch`: optional branch filter value.
 - `scope`: optional memory scope. Defaults to `project`.
 - `status`: optional lifecycle status. Defaults to `active`.
@@ -45,7 +45,7 @@ Query fields:
 - `id`: stable case id.
 - `query`: user-facing search query.
 - `category`: bucket for per-category reporting, for example `single_session`, `multi_session`, `temporal`, `knowledge_update`, `project_scope`, `procedure`, or `abstention`.
-- `slice`: ability slice for per-slice reporting, for example `paraphrase`, `knowledge_update`, `temporal`, `abstention`, or `multi_hop`. Defaults to `category` for older datasets.
+- `slice`: ability slice for per-slice reporting, for example `paraphrase`, `knowledge_update`, `temporal`, `abstention`, `failure_lesson`, or `multi_hop`. Defaults to `category` for older datasets.
 - `project`: optional project filter.
 - `branch`: optional branch filter.
 - `memory_type`: optional memory type filter.

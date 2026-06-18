@@ -14,6 +14,12 @@ pub struct LessonMetadata {
     pub source_evidence: Option<String>,
     pub last_reinforced_at_epoch: i64,
     pub stale_after_epoch: Option<i64>,
+    pub outcome_kind: String,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub recovery_count: i64,
+    pub correction_count: i64,
+    pub revert_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -38,8 +44,102 @@ pub struct SaveLessonRequest<'a> {
     pub stale_after_epoch: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LessonOutcomeKind {
+    Unknown,
+    Success,
+    Failure,
+    Recovery,
+    Correction,
+    Revert,
+}
+
+impl LessonOutcomeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Recovery => "recovery",
+            Self::Correction => "correction",
+            Self::Revert => "revert",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LessonOutcomeUpdate {
+    kind: LessonOutcomeKind,
+    success_delta: i64,
+    failure_delta: i64,
+    recovery_delta: i64,
+    correction_delta: i64,
+    revert_delta: i64,
+}
+
+impl LessonOutcomeUpdate {
+    pub fn unknown() -> Self {
+        Self {
+            kind: LessonOutcomeKind::Unknown,
+            success_delta: 0,
+            failure_delta: 0,
+            recovery_delta: 0,
+            correction_delta: 0,
+            revert_delta: 0,
+        }
+    }
+
+    pub fn success() -> Self {
+        Self {
+            kind: LessonOutcomeKind::Success,
+            success_delta: 1,
+            ..Self::unknown()
+        }
+    }
+
+    pub fn failure() -> Self {
+        Self {
+            kind: LessonOutcomeKind::Failure,
+            failure_delta: 1,
+            ..Self::unknown()
+        }
+    }
+
+    pub fn recovery() -> Self {
+        Self {
+            kind: LessonOutcomeKind::Recovery,
+            recovery_delta: 1,
+            ..Self::unknown()
+        }
+    }
+
+    pub fn correction() -> Self {
+        Self {
+            kind: LessonOutcomeKind::Correction,
+            correction_delta: 1,
+            ..Self::unknown()
+        }
+    }
+
+    pub fn revert() -> Self {
+        Self {
+            kind: LessonOutcomeKind::Revert,
+            revert_delta: 1,
+            ..Self::unknown()
+        }
+    }
+}
+
 pub fn save_lesson(conn: &Connection, req: &SaveLessonRequest<'_>) -> Result<i64> {
     save_lesson_with_reference_time(conn, req, req.created_at_epoch)
+}
+
+pub fn save_lesson_with_outcome(
+    conn: &Connection,
+    req: &SaveLessonRequest<'_>,
+    outcome: LessonOutcomeUpdate,
+) -> Result<i64> {
+    save_lesson_with_reference_time_and_outcome(conn, req, req.created_at_epoch, outcome)
 }
 
 pub fn save_lesson_with_reference_time(
@@ -47,6 +147,21 @@ pub fn save_lesson_with_reference_time(
     req: &SaveLessonRequest<'_>,
     reference_time_epoch: Option<i64>,
 ) -> Result<i64> {
+    save_lesson_with_reference_time_and_outcome(
+        conn,
+        req,
+        reference_time_epoch,
+        LessonOutcomeUpdate::unknown(),
+    )
+}
+
+fn save_lesson_with_reference_time_and_outcome(
+    conn: &Connection,
+    req: &SaveLessonRequest<'_>,
+    reference_time_epoch: Option<i64>,
+    outcome: LessonOutcomeUpdate,
+) -> Result<i64> {
+    validate_outcome_update(outcome)?;
     let topic_key = req
         .topic_key
         .map(str::to_string)
@@ -72,8 +187,29 @@ pub fn save_lesson_with_reference_time(
         reference_time_epoch,
     )?;
     let metadata_exists = get_lesson_metadata(conn, id)?.is_some();
-    upsert_lesson_metadata(conn, id, req, existing_id.is_some() || metadata_exists)?;
+    upsert_lesson_metadata(
+        conn,
+        id,
+        req,
+        existing_id.is_some() || metadata_exists,
+        outcome,
+    )?;
     Ok(id)
+}
+
+fn validate_outcome_update(outcome: LessonOutcomeUpdate) -> Result<()> {
+    for (name, value) in [
+        ("success_delta", outcome.success_delta),
+        ("failure_delta", outcome.failure_delta),
+        ("recovery_delta", outcome.recovery_delta),
+        ("correction_delta", outcome.correction_delta),
+        ("revert_delta", outcome.revert_delta),
+    ] {
+        if value < 0 {
+            anyhow::bail!("lesson outcome {name} must be non-negative");
+        }
+    }
+    Ok(())
 }
 
 fn existing_lesson_id(
@@ -102,6 +238,7 @@ fn upsert_lesson_metadata(
     memory_id: i64,
     req: &SaveLessonRequest<'_>,
     existed: bool,
+    outcome: LessonOutcomeUpdate,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let confidence = req.confidence.clamp(0.0, 1.0);
@@ -109,20 +246,36 @@ fn upsert_lesson_metadata(
     conn.execute(
         "INSERT INTO memory_lessons
          (memory_id, confidence, reinforcement_count, source_evidence,
-          last_reinforced_at_epoch, stale_after_epoch)
-         VALUES (?1, ?2, 1, ?3, ?4, ?5)
+          last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
+          success_count, failure_count, recovery_count, correction_count, revert_count)
+         VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(memory_id) DO UPDATE SET
            confidence = MAX(memory_lessons.confidence, excluded.confidence),
-           reinforcement_count = memory_lessons.reinforcement_count + ?6,
+           reinforcement_count = memory_lessons.reinforcement_count + ?12,
            source_evidence = COALESCE(excluded.source_evidence, memory_lessons.source_evidence),
            last_reinforced_at_epoch = excluded.last_reinforced_at_epoch,
-           stale_after_epoch = excluded.stale_after_epoch",
+           stale_after_epoch = excluded.stale_after_epoch,
+           outcome_kind = CASE
+             WHEN excluded.outcome_kind != 'unknown' THEN excluded.outcome_kind
+             ELSE memory_lessons.outcome_kind
+           END,
+           success_count = memory_lessons.success_count + excluded.success_count,
+           failure_count = memory_lessons.failure_count + excluded.failure_count,
+           recovery_count = memory_lessons.recovery_count + excluded.recovery_count,
+           correction_count = memory_lessons.correction_count + excluded.correction_count,
+           revert_count = memory_lessons.revert_count + excluded.revert_count",
         params![
             memory_id,
             confidence,
             req.source_evidence,
             now,
             req.stale_after_epoch,
+            outcome.kind.as_str(),
+            outcome.success_delta,
+            outcome.failure_delta,
+            outcome.recovery_delta,
+            outcome.correction_delta,
+            outcome.revert_delta,
             reinforcement_delta
         ],
     )?;
@@ -132,7 +285,8 @@ fn upsert_lesson_metadata(
 pub fn get_lesson_metadata(conn: &Connection, memory_id: i64) -> Result<Option<LessonMetadata>> {
     conn.query_row(
         "SELECT memory_id, confidence, reinforcement_count, source_evidence,
-                last_reinforced_at_epoch, stale_after_epoch
+                last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
+                success_count, failure_count, recovery_count, correction_count, revert_count
          FROM memory_lessons WHERE memory_id = ?1",
         [memory_id],
         map_lesson_metadata_row,
@@ -154,7 +308,9 @@ pub fn list_lessons_for_context(
     let mut stmt = conn.prepare(&format!(
         "SELECT {cols},
                 l.memory_id, l.confidence, l.reinforcement_count, l.source_evidence,
-                l.last_reinforced_at_epoch, l.stale_after_epoch
+                l.last_reinforced_at_epoch, l.stale_after_epoch, l.outcome_kind,
+                l.success_count, l.failure_count, l.recovery_count, l.correction_count,
+                l.revert_count
          FROM memories m
          JOIN memory_lessons l ON l.memory_id = m.id
          WHERE m.memory_type = 'lesson'
@@ -239,6 +395,12 @@ fn map_lesson_metadata_from_offset(
         source_evidence: row.get(offset + 3)?,
         last_reinforced_at_epoch: row.get(offset + 4)?,
         stale_after_epoch: row.get(offset + 5)?,
+        outcome_kind: row.get(offset + 6)?,
+        success_count: row.get(offset + 7)?,
+        failure_count: row.get(offset + 8)?,
+        recovery_count: row.get(offset + 9)?,
+        correction_count: row.get(offset + 10)?,
+        revert_count: row.get(offset + 11)?,
     })
 }
 

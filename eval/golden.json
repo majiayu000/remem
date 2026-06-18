@@ -563,6 +563,22 @@
       "notes": "No stored answer should be returned; the correct result set is empty."
     },
     {
+      "id": "failure-lesson-01",
+      "query": "third identical cargo check failure stop editing challenge hypothesis lesson",
+      "category": "retrieval",
+      "slice": "failure_lesson",
+      "project": "synthetic/failureforge",
+      "memory_type": "lesson",
+      "evidence_refs": [
+        {
+          "topic_key": "failureforge-cargo-check-loop-lesson",
+          "memory_type": "lesson",
+          "text_contains": "After the third identical cargo check failure, stop editing and challenge the hypothesis"
+        }
+      ],
+      "notes": "Regression fixture for #383: failure lessons must surface in retrieval alongside ordinary success procedures."
+    },
+    {
       "id": "multi-hop-01",
       "query": "Which pager handles NebulaLatch through its owning team in Project kestrelnook?",
       "category": "multi_hop",
@@ -1121,6 +1137,20 @@
       "title": "Team Zenith Pager",
       "content": "Team Zenith uses pager zenith-88.",
       "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/failureforge",
+      "topic_key": "failureforge-cargo-check-success-procedure",
+      "title": "Failureforge Cargo Check Success Procedure",
+      "content": "Success pattern: run cargo check after each focused patch and commit only after all tests pass.",
+      "memory_type": "procedure"
+    },
+    {
+      "project": "synthetic/failureforge",
+      "topic_key": "failureforge-cargo-check-loop-lesson",
+      "title": "Failureforge Cargo Check Loop Lesson",
+      "content": "Lesson: After the third identical cargo check failure, stop editing and challenge the hypothesis before changing more code.",
+      "memory_type": "lesson"
     }
   ]
 }
