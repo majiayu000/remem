@@ -227,6 +227,34 @@ payloads out of prompt-sized rows, and `extraction_tasks` coalesces work by
 host/project/session instead of creating one LLM job per tool call. Curated
 memory remains the promoted output of this pipeline, not the raw event itself.
 
+## Remem vs Built-in `MEMORY.md`
+
+Built-in memory files are enough when the context is small, stable, and worth
+editing by hand: project rules, setup notes, and a short list of durable
+preferences. Keep using them for facts that should be obvious at first glance.
+
+Remem is meant for the parts that should not depend on manual upkeep:
+
+- **Automatic capture and recall**: hooks summarize sessions into a SQLite
+  memory store, while `remem search`, `remem show`, `timeline`, and MCP
+  `get_observations` retrieve details on demand.
+- **A bridge to native memory**: `remem sync-memory --cwd .` writes a compact
+  `remem_sessions.md` entry for Claude Code native memory when that directory
+  exists, with a `MEMORY.md` pointer and a size guard. Full detail stays in the
+  database and is fetched with `remem search`.
+- **Governance and auditability**: `remem why <id>`, `remem govern --action
+  stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
+  14 --weeks 8` show why a memory is visible, what would change, store health,
+  and memory-AI token/cost accounting.
+- **Deterministic checks before claims**: local gates include
+  `cargo test -q context::claude_memory --lib`, `cargo test -q eval::golden
+  --lib`, `cargo test -q eval::governance --lib`, and `remem eval-e2e --json`.
+
+Do not read this as a published claim that remem beats a carefully maintained
+`MEMORY.md` on coding tasks. The flagship no-memory / remem / curated-file A/B
+is still a separate benchmark requirement; until it is published, the honest
+claim is capability coverage and reproducible local checks.
+
 ## Search Architecture
 
 remem uses 4-channel Reciprocal Rank Fusion (RRF) inspired by [Hindsight](https://github.com/vectorize-io/hindsight):
