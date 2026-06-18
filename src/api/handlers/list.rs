@@ -49,6 +49,10 @@ pub(in crate::api) async fn handle_list_memories(
                 "({})",
                 crate::memory::memory_current_filter_sql("status", "expires_at_epoch", false)
             ));
+            conditions.push(format!(
+                "({})",
+                crate::memory::memory_not_superseded_filter_sql("memories")
+            ));
         } else {
             conditions.push(format!("status = ?{idx}"));
             binds.push(Box::new(s.to_string()));

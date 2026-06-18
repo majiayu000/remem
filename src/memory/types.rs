@@ -229,6 +229,22 @@ pub fn memory_state_key_current_filter_sql(table_alias: &str) -> String {
     )
 }
 
+pub fn memory_not_superseded_filter_sql(table_alias: &str) -> String {
+    let table_alias = table_alias.trim();
+    let qualifier = if table_alias.is_empty() {
+        String::new()
+    } else {
+        format!("{table_alias}.")
+    };
+    format!(
+        "NOT EXISTS (
+             SELECT 1 FROM memory_edges supersede_edge
+             WHERE supersede_edge.edge_type = 'supersedes'
+               AND supersede_edge.from_memory_id = {qualifier}id
+         )"
+    )
+}
+
 pub fn map_memory_row_pub(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
     map_memory_row(row)
 }
