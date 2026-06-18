@@ -53,8 +53,7 @@ pub(in crate::api) async fn handle_memory_detail(
         )?;
         let entities: Vec<String> = stmt
             .query_map(params![id], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
 
         let mut stmt = conn.prepare(
             "SELECT id, edge_type, from_memory_id, to_memory_id, confidence FROM memory_edges \
@@ -70,8 +69,7 @@ pub(in crate::api) async fn handle_memory_detail(
                     confidence: row.get(4)?,
                 })
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         Ok((entities, edges))
     })();
 

@@ -98,8 +98,18 @@ pub(in crate::api) async fn handle_graph(
                 .into_response()
             }
         };
-        for row in rows.flatten() {
-            let (eid, mid) = row;
+        for row in rows {
+            let (eid, mid) = match row {
+                Ok(row) => row,
+                Err(err) => {
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "mem_entity_failed",
+                        &err.to_string(),
+                    )
+                    .into_response()
+                }
+            };
             ent_mems.entry(eid).or_default().push(mid);
             mem_ents.entry(mid).or_default().push(eid);
         }

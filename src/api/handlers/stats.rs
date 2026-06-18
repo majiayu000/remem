@@ -55,8 +55,7 @@ pub(in crate::api) async fn handle_stats(State(_state): State<DbState>) -> impl 
                     count: row.get(1)?,
                 })
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, rusqlite::Error>>()?;
 
         Ok(StatsResponse {
             active_memories,
