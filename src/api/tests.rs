@@ -1,6 +1,6 @@
 use axum::{
     body::{to_bytes, Body},
-    extract::State,
+    extract::{Path, Query, State},
     http::{header, Method, Request, StatusCode},
     response::IntoResponse,
 };
@@ -12,10 +12,13 @@ use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
 use super::handlers::{
-    handle_get_memory, handle_search, handle_status, search_request_from_params,
+    handle_get_memory, handle_graph, handle_list_candidates, handle_list_memories,
+    handle_memory_detail, handle_search, handle_stats, handle_status, search_request_from_params,
 };
-use super::types::{SearchParams, ShowParams};
+use super::types::{CandidateParams, GraphParams, ListParams, SearchParams, ShowParams};
 use super::DbState;
+
+mod web_regressions;
 
 fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
     Request::builder()
@@ -315,6 +318,455 @@ async fn save_memory_response_reports_durable_feedback_shape() {
     assert!(payload["updated_at_epoch"]
         .as_i64()
         .is_some_and(|ts| ts > 0));
+}
+
+#[tokio::test]
+async fn router_serves_get_api_v1_memories() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-route");
+    let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-list-route"),
+        "proj-a",
+        None,
+        "route target",
+        "documented list route should serve this memory",
+        "decision",
+        None,
+    )?;
+    drop(conn);
+
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/memories?project=proj-a",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .expect("request should complete");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["meta"]["total"], 1);
+    assert_eq!(payload["data"][0]["title"], "route target");
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_memories_branch_filter_includes_null_branch() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-branch-null");
+    let conn = db::open_db()?;
+    let branchless = memory::insert_memory(
+        &conn,
+        Some("session-branchless"),
+        "proj-a",
+        None,
+        "branchless",
+        "branch-agnostic memory",
+        "decision",
+        None,
+    )?;
+    let main_branch = memory::insert_memory_with_branch(
+        &conn,
+        Some("session-main"),
+        "proj-a",
+        None,
+        "main branch",
+        "main branch memory",
+        "decision",
+        None,
+        Some("main"),
+    )?;
+    let other_branch = memory::insert_memory_with_branch(
+        &conn,
+        Some("session-other"),
+        "proj-a",
+        None,
+        "other branch",
+        "other branch memory",
+        "decision",
+        None,
+        Some("other"),
+    )?;
+    drop(conn);
+
+    let response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: None,
+            branch: Some("main".to_string()),
+            q: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let ids: Vec<i64> = payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .map(|item| item["id"].as_i64().expect("id should be i64"))
+        .collect();
+    assert!(ids.contains(&branchless));
+    assert!(ids.contains(&main_branch));
+    assert!(!ids.contains(&other_branch));
+    assert_eq!(payload["meta"]["total"], 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_memories_active_status_excludes_expired_rows() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-active-current");
+    let conn = db::open_db()?;
+    let current_id = memory::insert_memory(
+        &conn,
+        Some("session-current-list"),
+        "proj-a",
+        None,
+        "current list row",
+        "current active memory",
+        "decision",
+        None,
+    )?;
+    let expired_id = memory::insert_memory(
+        &conn,
+        Some("session-expired-list"),
+        "proj-a",
+        None,
+        "expired list row",
+        "expired active memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
+        params![expired_id],
+    )?;
+    drop(conn);
+
+    let response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: Some("active".to_string()),
+            branch: None,
+            q: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let ids: Vec<i64> = payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .map(|item| item["id"].as_i64().expect("id should be i64"))
+        .collect();
+    assert!(ids.contains(&current_id));
+    assert!(!ids.contains(&expired_id));
+    assert_eq!(payload["meta"]["total"], 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidates-pending-review");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+          (scope, memory_type, topic_key, text, evidence_event_ids, confidence,
+           risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES
+          ('project', 'decision', 'candidate-topic', 'needs review', '[]', 0.7,
+           'low', 'pending_review', 1, 1)",
+        [],
+    )?;
+    drop(conn);
+
+    let response = handle_list_candidates(
+        State(DbState),
+        Query(CandidateParams {
+            project: None,
+            status: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["meta"]["total"], 1);
+    assert_eq!(payload["data"][0]["review_status"], "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_detail_includes_incoming_and_outgoing_edges() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-memory-detail-edges");
+    let conn = db::open_db()?;
+    let old_id = memory::insert_memory(
+        &conn,
+        Some("session-old"),
+        "proj-a",
+        Some("edge-old"),
+        "old",
+        "old memory",
+        "decision",
+        None,
+    )?;
+    let new_id = memory::insert_memory(
+        &conn,
+        Some("session-new"),
+        "proj-a",
+        Some("edge-new"),
+        "new",
+        "new memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO memory_edges
+          (edge_type, from_memory_id, to_memory_id, confidence, created_at_epoch)
+         VALUES ('replaces', ?1, ?2, 0.9, 1)",
+        params![old_id, new_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_edges
+          (edge_type, from_memory_id, to_memory_id, confidence, created_at_epoch)
+         VALUES ('derived_from', ?1, ?2, 0.8, 2)",
+        params![new_id, old_id],
+    )?;
+    drop(conn);
+
+    let response = handle_memory_detail(State(DbState), Path(new_id))
+        .await
+        .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let edges = payload["edges"].as_array().expect("edges should be array");
+    assert_eq!(edges.len(), 2);
+    assert!(edges.iter().any(|edge| {
+        edge["edge_type"] == "replaces"
+            && edge["from_memory_id"] == old_id
+            && edge["to_memory_id"] == new_id
+    }));
+    assert!(edges.iter().any(|edge| {
+        edge["edge_type"] == "derived_from"
+            && edge["from_memory_id"] == new_id
+            && edge["to_memory_id"] == old_id
+    }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_limits_memory_fanout_per_entity() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-fanout");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES (1, 'high degree', 'topic', 999, 1)",
+        [],
+    )?;
+    for i in 1..=205 {
+        let memory_id = memory::insert_memory(
+            &conn,
+            Some("session-graph"),
+            "proj-a",
+            None,
+            &format!("graph memory {i}"),
+            "graph memory fanout fixture",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 1)",
+            params![memory_id],
+        )?;
+    }
+    drop(conn);
+
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(1),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["nodes"][0]["mems"].as_array().unwrap().len(), 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_uses_only_current_memories_for_links() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-current-memories");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES
+          (1, 'left', 'topic', 10, 1),
+          (2, 'right', 'topic', 9, 1)",
+        [],
+    )?;
+    let current_id = memory::insert_memory(
+        &conn,
+        Some("session-current-graph"),
+        "proj-a",
+        None,
+        "current graph row",
+        "current graph memory",
+        "decision",
+        None,
+    )?;
+    let expired_id = memory::insert_memory(
+        &conn,
+        Some("session-expired-graph"),
+        "proj-a",
+        None,
+        "expired graph row",
+        "expired graph memory",
+        "decision",
+        None,
+    )?;
+    let stale_id = memory::insert_memory(
+        &conn,
+        Some("session-stale-graph"),
+        "proj-a",
+        None,
+        "stale graph row",
+        "stale graph memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
+        params![expired_id],
+    )?;
+    conn.execute(
+        "UPDATE memories SET status = 'stale' WHERE id = ?1",
+        params![stale_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+         (?1, 1), (?1, 2),
+         (?2, 1), (?2, 2),
+         (?3, 1)",
+        params![current_id, expired_id, stale_id],
+    )?;
+    drop(conn);
+
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(2),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let left_node = payload["nodes"]
+        .as_array()
+        .expect("nodes should be array")
+        .iter()
+        .find(|node| node["id"] == 1)
+        .expect("left node should exist");
+    let left_mems: Vec<i64> = left_node["mems"]
+        .as_array()
+        .expect("mems should be array")
+        .iter()
+        .map(|id| id.as_i64().expect("memory id should be i64"))
+        .collect();
+    assert_eq!(left_mems, vec![current_id]);
+    assert!(!left_mems.contains(&expired_id));
+    assert!(!left_mems.contains(&stale_id));
+    assert_eq!(payload["edges"][0]["w"], 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stats_excludes_expired_active_memories_and_counts_pending_review() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-stats-current");
+    let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-current"),
+        "proj-a",
+        None,
+        "current",
+        "current memory",
+        "decision",
+        None,
+    )?;
+    let expired_id = memory::insert_memory(
+        &conn,
+        Some("session-expired"),
+        "proj-a",
+        None,
+        "expired",
+        "expired active memory",
+        "procedure",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
+        params![expired_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+          (scope, memory_type, topic_key, text, evidence_event_ids, confidence,
+           risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES
+          ('project', 'decision', 'stats-topic', 'needs review', '[]', 0.7,
+           'low', 'pending_review', 1, 1)",
+        [],
+    )?;
+    drop(conn);
+
+    let response = handle_stats(State(DbState)).await.into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["active_memories"], 1);
+    assert_eq!(payload["pending_candidates"], 1);
+    assert_eq!(payload["type_distribution"][0]["memory_type"], "decision");
+    assert_eq!(payload["type_distribution"][0]["count"], 1);
+    Ok(())
 }
 
 #[tokio::test]
