@@ -60,20 +60,43 @@ pub(in crate::cli) fn run_encrypt(rekey_raw: bool) -> Result<()> {
     println!("Key saved to {}", key_path.display());
 
     println!("Encrypting database (this may take a moment)...");
-    if db::db_path().exists() {
-        db::encrypt_database(&cipher_key)?;
+    let db_path = db::db_path();
+    let encrypted_path = db_path.with_extension("db.enc");
+    let backup_path = db_path.with_extension("db.bak");
+    let encrypted_existed = encrypted_path.exists();
+    let backup_existed = backup_path.exists();
+    if db_path.exists() {
+        if let Err(error) = db::encrypt_database(&cipher_key) {
+            db::rollback_generated_key_after_encrypt_failure(
+                &key_path,
+                &cipher_key,
+                &db_path,
+                encrypted_existed,
+                backup_existed,
+            )
+            .with_context(|| {
+                format!("rollback generated key after failed database encryption: {error:#}")
+            })?;
+            return Err(error);
+        }
     } else {
-        let _conn = db::open_db()?;
-        println!(
-            "Initialized encrypted database at {}",
-            db::db_path().display()
-        );
+        if let Err(error) = db::open_db() {
+            db::rollback_generated_key_after_encrypt_failure(
+                &key_path,
+                &cipher_key,
+                &db_path,
+                encrypted_existed,
+                backup_existed,
+            )
+            .with_context(|| {
+                format!("rollback generated key after failed database initialization: {error:#}")
+            })?;
+            return Err(error);
+        }
+        println!("Initialized encrypted database at {}", db_path.display());
     }
 
     println!("Done. Database is now encrypted with SQLCipher.");
-    if db::db_path().with_extension("db.bak").exists() {
-        println!("Backup saved as remem.db.bak");
-    }
     Ok(())
 }
 
@@ -542,6 +565,67 @@ mod tests {
     }
 
     #[test]
+    fn run_encrypt_removes_plaintext_backup_for_existing_database() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("encrypt-existing-no-plaintext-backup");
+        std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+        std::env::remove_var("REMEM_CIPHER_KEY");
+        std::fs::create_dir_all(&test_dir.path)?;
+        {
+            let conn = rusqlite::Connection::open(test_dir.db_path())?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])?;
+            conn.execute("INSERT INTO t (v) VALUES ('kept')", [])?;
+        }
+
+        run_encrypt(false)?;
+
+        assert!(test_dir.path.join(".key").exists());
+        assert!(
+            !test_dir.path.join("remem.db.bak").exists(),
+            "successful encryption must not leave a plaintext backup"
+        );
+        assert_no_plaintext_sqlite_files(&test_dir.path)?;
+        let conn = rusqlite::Connection::open(test_dir.db_path())?;
+        crate::db::apply_cipher_key_if_available(&conn)?;
+        let value: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |row| row.get(0))?;
+        assert_eq!(value, "kept");
+        Ok(())
+    }
+
+    #[test]
+    fn run_encrypt_rolls_back_generated_key_when_preflight_fails() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("encrypt-existing-preflight-fail");
+        std::env::remove_var("REMEM_ALLOW_PLAINTEXT_DB");
+        std::env::remove_var("REMEM_CIPHER_KEY");
+        std::fs::create_dir_all(&test_dir.path)?;
+        {
+            let conn = rusqlite::Connection::open(test_dir.db_path())?;
+            conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", [])?;
+            conn.execute("INSERT INTO t (v) VALUES ('plaintext')", [])?;
+        }
+        let backup_path = test_dir.path.join("remem.db.bak");
+        std::fs::write(&backup_path, b"pre-existing backup sentinel")?;
+
+        let error = run_encrypt(false).expect_err("pre-existing backup must block encryption");
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("temporary plaintext migration backup already exists"),
+            "got: {message}"
+        );
+        assert!(
+            !test_dir.path.join(".key").exists(),
+            "failed preflight must remove the generated key file"
+        );
+        assert!(
+            backup_path.exists(),
+            "rollback must not remove a pre-existing backup"
+        );
+        let header = std::fs::read(test_dir.db_path())?;
+        assert_eq!(&header[..16], b"SQLite format 3\0");
+        Ok(())
+    }
+
+    #[test]
     fn run_encrypt_rekey_raw_migrates_legacy_hex_key() -> Result<()> {
         let test_dir = ScopedTestDataDir::new("encrypt-rekey-raw");
         std::env::remove_var("REMEM_CIPHER_KEY");
@@ -580,6 +664,26 @@ mod tests {
             !crate::db::can_read_schema(&legacy_conn),
             "legacy passphrase path must no longer unlock the DB"
         );
+        Ok(())
+    }
+
+    fn assert_no_plaintext_sqlite_files(dir: &std::path::Path) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let bytes = std::fs::read(entry.path())?;
+            if bytes.len() < 16 {
+                continue;
+            }
+            assert_ne!(
+                &bytes[..16],
+                b"SQLite format 3\0",
+                "{} must not be a plaintext SQLite database",
+                entry.path().display()
+            );
+        }
         Ok(())
     }
 

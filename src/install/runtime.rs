@@ -189,7 +189,7 @@ pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreRea
                 "encrypt existing remem database {}; run `remem encrypt` manually and rerun `remem install`",
                 db_path.display()
             ));
-            if let Err(rollback_error) = rollback_generated_key_after_encrypt_failure(
+            if let Err(rollback_error) = crate::db::rollback_generated_key_after_encrypt_failure(
                 &key_path,
                 &cipher_key,
                 &db_path,
@@ -277,55 +277,6 @@ fn ensure_auto_encrypt_backup_path_available(db_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn rollback_generated_key_after_encrypt_failure(
-    key_path: &Path,
-    generated_key: &crate::db::CipherKey,
-    db_path: &Path,
-    encrypted_existed_before: bool,
-    backup_existed_before: bool,
-) -> Result<()> {
-    let mut errors = Vec::new();
-    let encrypted_path = db_path.with_extension("db.enc");
-    let backup_path = db_path.with_extension("db.bak");
-
-    if !db_path.exists() && !backup_existed_before && backup_path.exists() {
-        if let Err(error) = std::fs::rename(&backup_path, db_path) {
-            errors.push(format!(
-                "restore {} from {}: {}",
-                db_path.display(),
-                backup_path.display(),
-                error
-            ));
-        }
-    }
-
-    if !encrypted_existed_before && encrypted_path.exists() {
-        if let Err(error) = std::fs::remove_file(&encrypted_path) {
-            errors.push(format!("remove {}: {}", encrypted_path.display(), error));
-        }
-    }
-
-    match std::fs::read_to_string(key_path) {
-        Ok(contents) if contents == generated_key.stored_value() => {
-            if let Err(error) = std::fs::remove_file(key_path) {
-                errors.push(format!("remove {}: {}", key_path.display(), error));
-            }
-        }
-        Ok(_) => errors.push(format!(
-            "leave {} because its contents changed after generation",
-            key_path.display()
-        )),
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => errors.push(format!("read {}: {}", key_path.display(), error)),
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        bail!("{}", errors.join("; "))
-    }
-}
-
 fn ensure_existing_db_can_be_encrypted_without_key(db_path: &Path, key_path: &Path) -> Result<()> {
     let mut file = std::fs::File::open(db_path)
         .with_context(|| format!("open existing remem database {}", db_path.display()))?;
@@ -373,6 +324,36 @@ fn print_install_path_warnings(bin: &str) {
     eprintln!("Install path warning:");
     for line in lines {
         eprintln!("{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+
+    #[test]
+    fn rollback_keeps_generated_key_when_db_no_longer_looks_plaintext() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("install-runtime-keep-key-encrypted-db");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let key = crate::db::CipherKey::Raw("a".repeat(64));
+        let key_path = test_dir.path.join(".key");
+        std::fs::write(&key_path, key.stored_value())?;
+        std::fs::write(test_dir.db_path(), b"not a plaintext sqlite database")?;
+
+        crate::db::rollback_generated_key_after_encrypt_failure(
+            &key_path,
+            &key,
+            &test_dir.db_path(),
+            true,
+            true,
+        )?;
+
+        assert!(
+            key_path.exists(),
+            "rollback must retain the key when the DB may already be encrypted"
+        );
+        Ok(())
     }
 }
 
