@@ -359,12 +359,15 @@ fn slug_component(value: &str) -> String {
 
 fn markdown_files(source: &Path) -> Result<Vec<PathBuf>> {
     if source.is_file() {
-        return Ok(source
+        let is_markdown = source
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-            .then(|| vec![source.to_path_buf()])
-            .unwrap_or_default());
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+        return if is_markdown {
+            Ok(vec![source.to_path_buf()])
+        } else {
+            Ok(Vec::new())
+        };
     }
     if !source.exists() {
         anyhow::bail!("markdown source not found at {}", source.display());
