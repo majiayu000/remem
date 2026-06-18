@@ -57,15 +57,17 @@ pub(in crate::api) async fn handle_memory_detail(
             .collect();
 
         let mut stmt = conn.prepare(
-            "SELECT edge_type, to_memory_id, confidence FROM memory_edges \
-             WHERE from_memory_id = ?1 ORDER BY created_at_epoch DESC",
+            "SELECT id, edge_type, from_memory_id, to_memory_id, confidence FROM memory_edges \
+             WHERE from_memory_id = ?1 OR to_memory_id = ?1 ORDER BY created_at_epoch DESC, id DESC",
         )?;
         let edges: Vec<MemoryEdgeItem> = stmt
             .query_map(params![id], |row| {
                 Ok(MemoryEdgeItem {
-                    edge_type: row.get(0)?,
-                    to_memory_id: row.get(1)?,
-                    confidence: row.get(2)?,
+                    id: row.get(0)?,
+                    edge_type: row.get(1)?,
+                    from_memory_id: row.get(2)?,
+                    to_memory_id: row.get(3)?,
+                    confidence: row.get(4)?,
                 })
             })?
             .filter_map(|r| r.ok())

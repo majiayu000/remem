@@ -12,6 +12,7 @@ use super::super::helpers::{error_response, open_request_db};
 use super::super::types::{DbState, GraphEdgeItem, GraphNodeItem, GraphParams, GraphResponse};
 
 type NodeRow = (i64, String, Option<String>, i64);
+const GRAPH_MEMORIES_PER_NODE_LIMIT: i64 = 200;
 
 pub(in crate::api) async fn handle_graph(
     State(_state): State<DbState>,
@@ -36,7 +37,8 @@ pub(in crate::api) async fn handle_graph(
                 row.get::<_, i64>(3)?,
             ))
         })?;
-        rows.collect::<Result<Vec<_>, rusqlite::Error>>().map_err(anyhow::Error::from)
+        rows.collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(anyhow::Error::from)
     })() {
         Ok(v) => v,
         Err(err) => {
@@ -56,13 +58,20 @@ pub(in crate::api) async fn handle_graph(
     if !node_ids.is_empty() {
         let placeholders: Vec<String> = (1..=node_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT entity_id, memory_id FROM memory_entities WHERE entity_id IN ({})",
-            placeholders.join(",")
+            "SELECT entity_id, memory_id FROM (
+                 SELECT entity_id, memory_id,
+                        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY memory_id DESC) AS rn
+                 FROM memory_entities
+                 WHERE entity_id IN ({})
+             ) WHERE rn <= ?{}",
+            placeholders.join(","),
+            node_ids.len() + 1,
         );
-        let binds: Vec<Box<dyn ToSql>> = node_ids
+        let mut binds: Vec<Box<dyn ToSql>> = node_ids
             .iter()
             .map(|id| Box::new(*id) as Box<dyn ToSql>)
             .collect();
+        binds.push(Box::new(GRAPH_MEMORIES_PER_NODE_LIMIT));
         let mut stmt = match conn.prepare(&sql) {
             Ok(s) => s,
             Err(err) => {

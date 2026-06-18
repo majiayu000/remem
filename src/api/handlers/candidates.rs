@@ -22,7 +22,7 @@ pub(in crate::api) async fn handle_list_candidates(
         .status
         .as_deref()
         .filter(|s| !s.is_empty())
-        .unwrap_or("pending");
+        .unwrap_or("pending_review");
     let limit = params.limit.unwrap_or(50).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
 
@@ -67,7 +67,8 @@ pub(in crate::api) async fn handle_list_candidates(
                 created_at_epoch: row.get(8)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, rusqlite::Error>>().map_err(anyhow::Error::from)
+        rows.collect::<Result<Vec<_>, rusqlite::Error>>()
+            .map_err(anyhow::Error::from)
     })();
 
     let items = match result {

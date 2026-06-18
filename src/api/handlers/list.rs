@@ -46,7 +46,7 @@ pub(in crate::api) async fn handle_list_memories(
         idx += 1;
     }
     if let Some(b) = params.branch.as_deref().filter(|s| !s.is_empty()) {
-        conditions.push(format!("branch = ?{idx}"));
+        conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
         binds.push(Box::new(b.to_string()));
         idx += 1;
     }

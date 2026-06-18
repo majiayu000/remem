@@ -244,7 +244,9 @@ pub(super) struct GraphResponse {
 
 #[derive(Serialize)]
 pub(super) struct MemoryEdgeItem {
+    pub id: i64,
     pub edge_type: String,
+    pub from_memory_id: Option<i64>,
     pub to_memory_id: Option<i64>,
     pub confidence: Option<f64>,
 }

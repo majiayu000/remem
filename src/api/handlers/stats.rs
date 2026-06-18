@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
 use super::super::helpers::{error_response, open_request_db};
 use super::super::types::{DbState, StatsResponse, TypeCount};
@@ -15,15 +10,17 @@ pub(in crate::api) async fn handle_stats(State(_state): State<DbState>) -> impl 
     };
 
     let result = (|| -> anyhow::Result<StatsResponse> {
+        let current_filter =
+            crate::memory::memory_current_filter_sql("status", "expires_at_epoch", false);
         let total_memories: i64 =
             conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
         let active_memories: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+            &format!("SELECT COUNT(*) FROM memories WHERE {current_filter}"),
             [],
             |row| row.get(0),
         )?;
         let pending_candidates: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'pending'",
+            "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'pending_review'",
             [],
             |row| row.get(0),
         )?;
@@ -47,10 +44,10 @@ pub(in crate::api) async fn handle_stats(State(_state): State<DbState>) -> impl 
             |row| row.get(0),
         )?;
 
-        let mut stmt = conn.prepare(
-            "SELECT memory_type, COUNT(*) FROM memories WHERE status = 'active' \
-             GROUP BY memory_type ORDER BY COUNT(*) DESC",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT memory_type, COUNT(*) FROM memories WHERE {current_filter} \
+             GROUP BY memory_type ORDER BY COUNT(*) DESC"
+        ))?;
         let type_distribution: Vec<TypeCount> = stmt
             .query_map([], |row| {
                 Ok(TypeCount {
