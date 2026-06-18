@@ -545,8 +545,9 @@ fn insert_lesson_metadata(
     conn.execute(
         "INSERT INTO memory_lessons
          (memory_id, confidence, reinforcement_count, source_evidence,
-          last_reinforced_at_epoch, stale_after_epoch)
-         VALUES (?1, ?2, 1, ?3, ?4, NULL)",
+          last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
+          success_count, failure_count, recovery_count, correction_count, revert_count)
+         VALUES (?1, ?2, 1, ?3, ?4, NULL, 'unknown', 0, 0, 0, 0, 0)",
         params![memory_id, candidate.confidence, evidence_json, now],
     )?;
     Ok(())

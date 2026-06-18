@@ -39,6 +39,85 @@ fn save_lesson_creates_metadata() {
 }
 
 #[test]
+fn save_lesson_defaults_to_unknown_outcome() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+
+    let id = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s1"),
+            project: "/repo",
+            topic_key: Some("lesson-default-outcome"),
+            title: "Default outcome",
+            content: "Lesson: default lesson saves should not invent an outcome signal.",
+            confidence: 0.8,
+            source_evidence: Some("manual save"),
+            files: None,
+            branch: None,
+            scope: "project",
+            created_at_epoch: None,
+            stale_after_epoch: None,
+        },
+    )?;
+
+    let metadata = get_lesson_metadata(&conn, id)?
+        .ok_or_else(|| anyhow::anyhow!("lesson metadata missing"))?;
+    assert_eq!(metadata.outcome_kind, "unknown");
+    assert_eq!(metadata.success_count, 0);
+    assert_eq!(metadata.failure_count, 0);
+    assert_eq!(metadata.recovery_count, 0);
+    assert_eq!(metadata.correction_count, 0);
+    assert_eq!(metadata.revert_count, 0);
+    Ok(())
+}
+
+#[test]
+fn save_lesson_outcome_counts_accumulate_without_unknown_overwrite() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let req = SaveLessonRequest {
+        session_id: Some("s1"),
+        project: "/repo",
+        topic_key: Some("lesson-build-loop"),
+        title: "Break build loops",
+        content: "Lesson: after repeated cargo check failures, stop and challenge the hypothesis.",
+        confidence: 0.7,
+        source_evidence: Some("first failed attempt"),
+        files: None,
+        branch: None,
+        scope: "project",
+        created_at_epoch: None,
+        stale_after_epoch: None,
+    };
+
+    let id = save_lesson_with_outcome(&conn, &req, LessonOutcomeUpdate::failure())?;
+    let id_again = save_lesson_with_outcome(
+        &conn,
+        &SaveLessonRequest {
+            source_evidence: Some("verified recovery"),
+            confidence: 0.9,
+            ..req.clone()
+        },
+        LessonOutcomeUpdate::recovery(),
+    )?;
+    let id_unknown = save_lesson(&conn, &req)?;
+
+    assert_eq!(id, id_again);
+    assert_eq!(id, id_unknown);
+    let metadata = get_lesson_metadata(&conn, id)?
+        .ok_or_else(|| anyhow::anyhow!("lesson metadata missing"))?;
+    assert_eq!(metadata.reinforcement_count, 3);
+    assert_eq!(metadata.outcome_kind, "recovery");
+    assert_eq!(metadata.failure_count, 1);
+    assert_eq!(metadata.recovery_count, 1);
+    assert_eq!(metadata.success_count, 0);
+    assert_eq!(metadata.correction_count, 0);
+    assert_eq!(metadata.revert_count, 0);
+    Ok(())
+}
+
+#[test]
 fn save_lesson_reinforces_duplicate_topic() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);

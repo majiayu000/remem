@@ -568,7 +568,14 @@ pub mod tests_helper {
                 reinforcement_count INTEGER NOT NULL DEFAULT 1,
                 source_evidence TEXT,
                 last_reinforced_at_epoch INTEGER NOT NULL,
-                stale_after_epoch INTEGER
+                stale_after_epoch INTEGER,
+                outcome_kind TEXT NOT NULL DEFAULT 'unknown'
+                    CHECK (outcome_kind IN ('unknown', 'success', 'failure', 'recovery', 'correction', 'revert')),
+                success_count INTEGER NOT NULL DEFAULT 0 CHECK (success_count >= 0),
+                failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+                recovery_count INTEGER NOT NULL DEFAULT 0 CHECK (recovery_count >= 0),
+                correction_count INTEGER NOT NULL DEFAULT 0 CHECK (correction_count >= 0),
+                revert_count INTEGER NOT NULL DEFAULT 0 CHECK (revert_count >= 0)
             );",
         )
         .unwrap();

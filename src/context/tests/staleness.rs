@@ -241,6 +241,12 @@ fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64
             source_evidence: None,
             last_reinforced_at_epoch: 1_710_000_000,
             stale_after_epoch: None,
+            outcome_kind: "unknown".to_string(),
+            success_count: 0,
+            failure_count: 0,
+            recovery_count: 0,
+            correction_count: 0,
+            revert_count: 0,
         },
     }
 }
