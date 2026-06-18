@@ -600,6 +600,8 @@ fn golden_eval_rejects_fixture_corpus_missing_expected_ref() -> Result<()> {
             status: "active".to_string(),
             files: None,
             created_at_epoch: None,
+            access_count: None,
+            last_accessed_epoch: None,
         }],
         queries: vec![GoldenQuery {
             id: "missing-fixture-ref".to_string(),
@@ -625,6 +627,50 @@ fn golden_eval_rejects_fixture_corpus_missing_expected_ref() -> Result<()> {
         panic!("unseeded fixture evidence should fail validation");
     };
     assert!(error.to_string().contains("not backed by fixture corpus"));
+    Ok(())
+}
+
+#[test]
+fn fixture_corpus_seeds_usage_columns_for_replay() -> Result<()> {
+    let dataset = GoldenDataset {
+        version: Some("usage-fixture-test".to_string()),
+        description: None,
+        corpus: vec![GoldenMemory {
+            project: "/repo-a".to_string(),
+            topic_key: Some("used-topic".to_string()),
+            title: "Used topic".to_string(),
+            content: "SQLite timeout fix with usage replay.".to_string(),
+            memory_type: "decision".to_string(),
+            branch: Some("main".to_string()),
+            scope: "project".to_string(),
+            status: "active".to_string(),
+            files: None,
+            created_at_epoch: Some(10),
+            access_count: Some(7),
+            last_accessed_epoch: Some(20),
+        }],
+        queries: vec![query(
+            "usage-fixture",
+            "SQLite timeout",
+            "retrieval",
+            Some("/repo-a"),
+            Some("main"),
+            EvidenceRef {
+                topic_key: Some("used-topic".to_string()),
+                ..EvidenceRef::default()
+            },
+        )],
+    };
+
+    let fixture_conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&fixture_conn)?;
+    super::run::seed_fixture_corpus(&fixture_conn, &dataset.corpus)?;
+    let usage = fixture_conn.query_row(
+        "SELECT access_count, last_accessed_epoch FROM memories WHERE topic_key = 'used-topic'",
+        [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
+    )?;
+    assert_eq!(usage, (7, Some(20)));
     Ok(())
 }
 

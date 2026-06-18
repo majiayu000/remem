@@ -498,6 +498,26 @@ fn build_query_search_plan(
         }
     }
 
+    if weights.usage > 0.0 {
+        let usage_candidates = retrieved_candidate_ids(&channels);
+        let usage_hits = time_result(&mut timings, "usage", || {
+            super::usage_rank::usage_hits_for_retrieved_candidates(conn, &usage_candidates, weights)
+        })?;
+        if usage_hits.is_empty() {
+            channels.push(NamedChannel::disabled(
+                "usage",
+                weights.usage,
+                "no retrieved candidates with usage signals",
+            ));
+        } else {
+            channels.push(NamedChannel::enabled_with_hits(
+                "usage",
+                weights.usage,
+                usage_hits,
+            ));
+        }
+    }
+
     push_elapsed(&mut timings, "plan_total", total_start);
     Ok(QuerySearchPlan {
         expanded_terms: expanded,
@@ -667,6 +687,17 @@ fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChann
         .collect()
 }
 
+fn retrieved_candidate_ids(channels: &[NamedChannel]) -> Vec<i64> {
+    let mut ids = channels
+        .iter()
+        .filter(|channel| channel.has_hits())
+        .flat_map(|channel| channel.hits.iter().map(|hit| hit.id))
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 fn apply_confidence_gate(
     fused: &[(i64, f64)],
     plan: &QuerySearchPlan,
@@ -702,6 +733,7 @@ fn has_trusted_non_text_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool
         .iter()
         .filter(|channel| channel.hits.iter().any(|hit| hit.id == memory_id))
         .map(|channel| channel.name)
+        .filter(|name| *name != "usage")
         .collect();
     contributing.contains(&"fact")
         || (!contributing.is_empty() && contributing.iter().all(|channel| *channel == "vector"))

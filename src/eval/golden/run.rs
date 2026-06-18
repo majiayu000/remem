@@ -297,6 +297,16 @@ fn validate_fixture_corpus(corpus: &[GoldenMemory]) -> Result<()> {
                 ));
             }
         }
+        if memory.access_count.is_some_and(|count| count < 0) {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} access_count must be non-negative"
+            ));
+        }
+        if memory.last_accessed_epoch.is_some_and(|epoch| epoch < 0) {
+            return Err(anyhow!(
+                "golden eval corpus memory {label} last_accessed_epoch must be non-negative"
+            ));
+        }
     }
     Ok(())
 }
@@ -405,6 +415,21 @@ pub(in crate::eval) fn seed_fixture_corpus(
             .with_context(|| {
                 format!(
                     "set golden eval corpus memory {} status",
+                    corpus_memory_label(index, memory)
+                )
+            })?;
+        }
+        if memory.access_count.is_some() || memory.last_accessed_epoch.is_some() {
+            conn.execute(
+                "UPDATE memories
+                 SET access_count = COALESCE(?1, access_count),
+                     last_accessed_epoch = COALESCE(?2, last_accessed_epoch)
+                 WHERE id = ?3",
+                params![memory.access_count, memory.last_accessed_epoch, id],
+            )
+            .with_context(|| {
+                format!(
+                    "set golden eval corpus memory {} usage",
                     corpus_memory_label(index, memory)
                 )
             })?;

@@ -37,6 +37,10 @@ pub struct GoldenMemory {
     pub files: Option<String>,
     #[serde(default)]
     pub created_at_epoch: Option<i64>,
+    #[serde(default)]
+    pub access_count: Option<i64>,
+    #[serde(default)]
+    pub last_accessed_epoch: Option<i64>,
 }
 
 fn default_scope() -> String {
