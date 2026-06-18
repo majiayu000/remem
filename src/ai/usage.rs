@@ -33,6 +33,7 @@ pub(super) fn record_usage(
         crate::db::record_ai_usage(
             &conn,
             ctx.project,
+            ctx.session_id,
             operation,
             result.executor,
             Some(&result.model),

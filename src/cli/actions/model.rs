@@ -44,6 +44,7 @@ pub(in crate::cli) async fn run_model(action: ModelAction) -> Result<()> {
                     "Return exactly ok.",
                     crate::ai::UsageContext {
                         project: None,
+                        session_id: None,
                         operation: "model_test",
                         host: profile.is_none().then_some(host.as_deref()).flatten(),
                         profile: profile.as_deref(),

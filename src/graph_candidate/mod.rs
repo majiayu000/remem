@@ -96,6 +96,7 @@ pub(crate) async fn process_graph_candidate_task(
                 &prompt,
                 crate::ai::UsageContext {
                     project: Some(project.as_str()),
+                    session_id: task.session_id.as_deref(),
                     operation: "graph_candidate",
                     host: profile.is_none().then_some(task.host.as_str()),
                     profile,

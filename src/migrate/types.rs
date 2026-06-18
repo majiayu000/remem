@@ -230,6 +230,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_usage_columns",
         sql: include_str!("../migrations/v045_memory_usage_columns.sql"),
     },
+    Migration {
+        version: 46,
+        name: "ai_usage_session_id",
+        sql: include_str!("../migrations/v046_ai_usage_session_id.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
