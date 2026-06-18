@@ -1,10 +1,10 @@
-# Remem Memory
+# remem: Persistent Memory for Claude Code and OpenAI Codex
 
-> Automatic memory for Claude Code and Codex.
+> Open-source agent memory for Claude Code, OpenAI Codex, MCP, and long-running engineering work.
 
 Language: **English** | [简体中文](README.zh-CN.md)
 
-`remem` is a single Rust binary that automatically captures, distills, and injects project context across Claude Code and Codex sessions: decisions, patterns, preferences, and learnings. Stop re-explaining your project every new session.
+`remem` is a single Rust binary that automatically captures, distills, and injects project context across Claude Code and OpenAI Codex sessions: decisions, patterns, preferences, and learnings. Stop re-explaining your project every new coding-agent session.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
