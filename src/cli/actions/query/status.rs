@@ -35,6 +35,7 @@ fn load_status_report() -> Result<StatusReport> {
     let top_projects = db::query_top_projects(&conn, 5)?;
     let now = chrono::Utc::now().timestamp();
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
+    let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
 
     Ok(StatusReport {
         version,
@@ -129,6 +130,23 @@ fn load_status_report() -> Result<StatusReport> {
             heartbeat_age_secs: stats.worker_heartbeat_age_secs,
             owner: stats.worker_heartbeat_owner,
         },
+        latest_session_memory_spend: latest_session_memory_spend.map(|spend| {
+            LatestSessionMemorySpendStatus {
+                session_id: spend.session_id,
+                project: spend.project,
+                latest_context_epoch: spend.latest_context_epoch,
+                context_rows: spend.context_rows,
+                context_output_chars: spend.context_output_chars,
+                context_estimated_tokens: spend.context_estimated_tokens,
+                context_emit_count: spend.context_emit_count,
+                context_suppress_count: spend.context_suppress_count,
+                ai_usage_attribution: spend.ai_usage_attribution,
+                ai_calls: spend.ai_calls,
+                ai_total_tokens: spend.ai_total_tokens,
+                ai_estimated_cost_usd: spend.ai_estimated_cost_usd,
+                ai_unattributed_legacy_calls: spend.ai_unattributed_legacy_calls,
+            }
+        }),
         candidate_promotion: candidate_promotion
             .into_iter()
             .map(|stat| CandidatePromotionStatus {
@@ -311,6 +329,42 @@ fn print_status_report(report: &StatusReport) {
     println!("  New memories:      {:>4}", report.today.new_memories);
     println!("  New observations:  {:>4}", report.today.new_observations);
 
+    if let Some(spend) = &report.latest_session_memory_spend {
+        println!();
+        println!("Latest session memory footprint:");
+        println!("  Session:      {}", spend.session_id);
+        println!("  Project:      {}", spend.project);
+        println!(
+            "  Context now:  {:>6} chars (~{} tokens)",
+            spend.context_output_chars, spend.context_estimated_tokens
+        );
+        println!(
+            "  Context runs: {:>6} emitted, {:>6} suppressed",
+            spend.context_emit_count, spend.context_suppress_count
+        );
+        match spend.ai_usage_attribution.as_str() {
+            "attributed" => {
+                println!(
+                    "  AI usage:     {:>6} calls, {:>6} tokens, ${:.4}",
+                    spend.ai_calls, spend.ai_total_tokens, spend.ai_estimated_cost_usd
+                );
+            }
+            "partial" => {
+                println!(
+                    "  AI usage:     {:>6} attributed calls, {:>6} tokens, ${:.4}",
+                    spend.ai_calls, spend.ai_total_tokens, spend.ai_estimated_cost_usd
+                );
+                println!(
+                    "  AI legacy:    {:>6} unattributed calls not assigned to a session",
+                    spend.ai_unattributed_legacy_calls
+                );
+            }
+            _ => {
+                println!("  AI usage:     unavailable on legacy rows without session_id");
+            }
+        }
+    }
+
     if !report.top_projects.is_empty() {
         println!();
         println!("Top projects:");
@@ -369,6 +423,7 @@ pub(super) struct StatusReport {
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
     pub jobs: JobStatus,
     pub worker_daemon: WorkerDaemonStatus,
+    pub latest_session_memory_spend: Option<LatestSessionMemorySpendStatus>,
     pub today: DailyStatus,
     pub top_projects: Vec<TopProjectStatus>,
 }
@@ -471,6 +526,23 @@ pub(super) struct WorkerDaemonStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(super) struct LatestSessionMemorySpendStatus {
+    pub session_id: String,
+    pub project: String,
+    pub latest_context_epoch: i64,
+    pub context_rows: i64,
+    pub context_output_chars: i64,
+    pub context_estimated_tokens: i64,
+    pub context_emit_count: i64,
+    pub context_suppress_count: i64,
+    pub ai_usage_attribution: String,
+    pub ai_calls: i64,
+    pub ai_total_tokens: i64,
+    pub ai_estimated_cost_usd: f64,
+    pub ai_unattributed_legacy_calls: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct DailyStatus {
     pub new_memories: i64,
     pub new_observations: i64,
@@ -570,6 +642,21 @@ mod tests {
                 heartbeat_age_secs: Some(23),
                 owner: Some("worker-1".to_string()),
             },
+            latest_session_memory_spend: Some(LatestSessionMemorySpendStatus {
+                session_id: "sess-1".to_string(),
+                project: "/tmp/remem".to_string(),
+                latest_context_epoch: 1_800_000_000,
+                context_rows: 2,
+                context_output_chars: 3_201,
+                context_estimated_tokens: 801,
+                context_emit_count: 3,
+                context_suppress_count: 1,
+                ai_usage_attribution: "partial".to_string(),
+                ai_calls: 2,
+                ai_total_tokens: 1_234,
+                ai_estimated_cost_usd: 0.0123,
+                ai_unattributed_legacy_calls: 1,
+            }),
             today: DailyStatus {
                 new_memories: 24,
                 new_observations: 25,
@@ -628,6 +715,26 @@ mod tests {
         assert_eq!(parsed["candidate_promotion"][0]["total"], 41);
         assert_eq!(parsed["candidate_promotion"][0]["last_7_days"], 6);
         assert_eq!(parsed["worker_daemon"]["health"], "healthy");
+        assert_eq!(
+            parsed["latest_session_memory_spend"]["session_id"],
+            "sess-1"
+        );
+        assert_eq!(
+            parsed["latest_session_memory_spend"]["context_estimated_tokens"],
+            801
+        );
+        assert_eq!(
+            parsed["latest_session_memory_spend"]["ai_usage_attribution"],
+            "partial"
+        );
+        assert_eq!(
+            parsed["latest_session_memory_spend"]["ai_unattributed_legacy_calls"],
+            1
+        );
+        assert_eq!(
+            parsed["latest_session_memory_spend"]["ai_total_tokens"],
+            1234
+        );
         assert_eq!(parsed["top_projects"][0]["project"], "proj");
         Ok(())
     }

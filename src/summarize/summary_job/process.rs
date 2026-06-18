@@ -134,7 +134,14 @@ pub async fn process_summary_job_input(
     let payload_profile = profile_from_payload(input);
     let effective_profile = profile.or(payload_profile.as_deref());
     let ai_start = Instant::now();
-    let response_result = call_summary_ai(host, effective_profile, &project, &user_message).await;
+    let response_result = call_summary_ai(
+        host,
+        effective_profile,
+        &project,
+        &session_id,
+        &user_message,
+    )
+    .await;
     push_elapsed(&mut timings, "call_ai", ai_start);
     let response = match response_result {
         Ok(response) => response,
@@ -321,6 +328,7 @@ async fn call_summary_ai(
     host: &str,
     profile: Option<&str>,
     project: &str,
+    session_id: &str,
     user_message: &str,
 ) -> Result<String> {
     let ai_start = std::time::Instant::now();
@@ -329,6 +337,7 @@ async fn call_summary_ai(
         user_message,
         crate::ai::UsageContext {
             project: Some(project),
+            session_id: Some(session_id),
             operation: "summarize",
             host: profile.is_none().then_some(host),
             profile,

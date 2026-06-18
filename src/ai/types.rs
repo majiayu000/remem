@@ -4,6 +4,7 @@ pub(super) const AI_TIMEOUT_SECS: u64 = 90;
 #[derive(Clone, Copy)]
 pub struct UsageContext<'a> {
     pub project: Option<&'a str>,
+    pub session_id: Option<&'a str>,
     pub operation: &'a str,
     pub host: Option<&'a str>,
     pub profile: Option<&'a str>,

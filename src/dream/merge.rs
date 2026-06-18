@@ -44,6 +44,7 @@ pub(super) async fn merge_cluster(
         &user_message,
         crate::ai::UsageContext {
             project: Some(project),
+            session_id: None,
             operation: "dream",
             host: profile.is_none().then_some(host.as_deref()).flatten(),
             profile: profile.as_deref(),

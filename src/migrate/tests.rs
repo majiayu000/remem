@@ -142,6 +142,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_raw_ingest_failures_session",
         "idx_memory_embeddings_model",
         "idx_memory_embeddings_profile_memory_id",
+        "idx_ai_usage_session_created",
         "idx_graph_file_nodes_source",
         "idx_graph_edges_from",
         "idx_graph_edges_to",

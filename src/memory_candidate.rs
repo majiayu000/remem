@@ -164,6 +164,7 @@ pub(crate) async fn process(task: &db::ExtractionTask) -> Result<MemoryCandidate
                 &prompt,
                 crate::ai::UsageContext {
                     project: Some(project.as_str()),
+                    session_id: task.session_id.as_deref(),
                     operation: "memory_candidate",
                     host: profile.is_none().then_some(task.host.as_str()),
                     profile,

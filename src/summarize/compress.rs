@@ -39,6 +39,7 @@ async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Res
         &events,
         crate::ai::UsageContext {
             project: Some(project),
+            session_id: None,
             operation: "compress",
             host: profile.is_none().then_some(host),
             profile,

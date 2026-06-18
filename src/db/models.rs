@@ -110,6 +110,7 @@ pub struct Job {
 pub struct AiUsageEvent {
     pub created_at: String,
     pub project: Option<String>,
+    pub session_id: Option<String>,
     pub operation: String,
     pub executor: String,
     pub model: Option<String>,
