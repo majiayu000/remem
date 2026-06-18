@@ -1,9 +1,9 @@
 {
   "name": "@majiayu000/remem",
   "version": "0.5.95",
-  "description": "Persistent memory for Claude Code and Codex",
+  "description": "Persistent memory for Claude Code and OpenAI Codex coding agents",
   "license": "MIT",
-  "homepage": "https://github.com/majiayu000/remem#readme",
+  "homepage": "https://majiayu000.github.io/remem/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/majiayu000/remem.git",
@@ -32,9 +32,14 @@
   ],
   "keywords": [
     "claude-code",
+    "openai-codex",
     "codex",
     "memory",
+    "agent-memory",
+    "coding-agents",
     "mcp",
+    "mcp-server",
+    "rust-cli",
     "ai"
   ],
   "publishConfig": {

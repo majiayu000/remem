@@ -1,10 +1,10 @@
-# Remem Memory
+# remem：Claude Code 和 OpenAI Codex 的持久记忆
 
-> Claude Code 和 Codex 的自动记忆系统。
+> 面向 Claude Code、OpenAI Codex、MCP 和长期工程任务的开源 Agent 记忆系统。
 
 语言： [English](README.md) | **简体中文**
 
-`remem` 是 Claude Code 和 Codex 的持久记忆系统。它是一个 Rust 单二进制程序，会在 Claude Code 和 Codex 会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。你不用在每次新会话里重复解释项目。
+`remem` 是 Claude Code 和 OpenAI Codex 的持久记忆系统。它是一个 Rust 单二进制程序，会在 Claude Code 和 OpenAI Codex 会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。你不用在每次新的 coding-agent 会话里重复解释项目。
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

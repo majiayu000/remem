@@ -2,12 +2,12 @@
 name = "remem-ai"
 version = "0.5.95"
 edition = "2021"
-description = "Persistent memory for Claude Code and Codex — single binary, automatic context"
+description = "Persistent memory for Claude Code and OpenAI Codex coding agents"
 license = "MIT"
 repository = "https://github.com/majiayu000/remem"
 homepage = "https://github.com/majiayu000/remem"
 readme = "README.md"
-keywords = ["claude-code", "codex", "memory", "mcp", "ai"]
+keywords = ["claude-code", "openai-codex", "memory", "mcp", "coding-agents"]
 categories = ["command-line-utilities", "database"]
 exclude = [
   "eval/locomo/locomo10.json",
