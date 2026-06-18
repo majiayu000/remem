@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use rusqlite::Connection;
 
 pub(crate) const ALLOW_PLAINTEXT_ENV: &str = "REMEM_ALLOW_PLAINTEXT_DB";
@@ -233,6 +233,17 @@ pub fn encrypt_database(key: &CipherKey) -> Result<()> {
     }
 
     let encrypted_path = db_file.with_extension("db.enc");
+    let backup_path = db_file.with_extension("db.bak");
+    ensure!(
+        !encrypted_path.exists(),
+        "temporary encrypted database already exists at {}; move it aside before retrying encryption",
+        encrypted_path.display()
+    );
+    ensure!(
+        !backup_path.exists(),
+        "temporary plaintext migration backup already exists at {}; move it aside before retrying encryption",
+        backup_path.display()
+    );
     let encrypted_path_str = encrypted_path.to_str().ok_or_else(|| {
         anyhow::anyhow!(
             "encrypted database path is not valid UTF-8: {}",
@@ -249,7 +260,11 @@ pub fn encrypt_database(key: &CipherKey) -> Result<()> {
     // Enforce foreign keys so ON DELETE CASCADE / SET NULL behave during the
     // sqlcipher_export copy; foreign_keys defaults to OFF on every new
     // connection (#244).
-    conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         PRAGMA busy_timeout=5000;",
+    )?;
+    checkpoint_plaintext_wal_before_export(&conn)?;
     let attach_key = attach_key_sql(key)?;
     conn.execute(
         &format!(
@@ -263,15 +278,186 @@ pub fn encrypt_database(key: &CipherKey) -> Result<()> {
     conn.execute("DETACH DATABASE encrypted", [])?;
     drop(conn);
 
-    let backup_path = db_file.with_extension("db.bak");
-    std::fs::rename(&db_file, &backup_path)?;
-    std::fs::rename(&encrypted_path, &db_file)?;
+    remove_plaintext_sidecars_before_swap(&db_file)?;
+    std::fs::rename(&db_file, &backup_path).with_context(|| {
+        format!(
+            "move plaintext database {} to temporary migration backup {}",
+            db_file.display(),
+            backup_path.display()
+        )
+    })?;
+    if let Err(error) = std::fs::rename(&encrypted_path, &db_file) {
+        restore_plaintext_db_after_encrypt_failure(&backup_path, &db_file, error)?;
+    }
+    remove_plaintext_migration_backup(&backup_path)?;
 
     crate::log::info(
         "encrypt",
-        &format!("database encrypted, backup at {}", backup_path.display()),
+        "database encrypted; plaintext migration backup removed",
     );
     Ok(())
+}
+
+fn restore_plaintext_db_after_encrypt_failure(
+    backup_path: &Path,
+    db_file: &Path,
+    install_error: std::io::Error,
+) -> Result<()> {
+    std::fs::rename(backup_path, db_file).with_context(|| {
+        format!(
+            "install encrypted database failed ({install_error}); also failed to restore plaintext database {} from {}",
+            db_file.display(),
+            backup_path.display()
+        )
+    })?;
+    Err(install_error).with_context(|| {
+        format!(
+            "install encrypted database at {}; plaintext database was restored",
+            db_file.display()
+        )
+    })
+}
+
+pub(crate) fn rollback_generated_key_after_encrypt_failure(
+    key_path: &Path,
+    generated_key: &CipherKey,
+    db_path: &Path,
+    encrypted_existed_before: bool,
+    backup_existed_before: bool,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    let encrypted_path = db_path.with_extension("db.enc");
+    let backup_path = db_path.with_extension("db.bak");
+
+    if !db_path.exists() && !backup_existed_before && backup_path.exists() {
+        if let Err(error) = std::fs::rename(&backup_path, db_path) {
+            errors.push(format!(
+                "restore {} from {}: {}",
+                db_path.display(),
+                backup_path.display(),
+                error
+            ));
+        }
+    }
+    if !encrypted_existed_before && encrypted_path.exists() {
+        if let Err(error) = std::fs::remove_file(&encrypted_path) {
+            errors.push(format!("remove {}: {}", encrypted_path.display(), error));
+        }
+    }
+
+    match std::fs::read_to_string(key_path) {
+        Ok(contents) if contents == generated_key.stored_value() => {
+            if generated_key_should_be_kept_after_encrypt_failure(db_path)? {
+                return finish_generated_key_rollback(errors);
+            }
+            if let Err(error) = std::fs::remove_file(key_path) {
+                errors.push(format!("remove {}: {}", key_path.display(), error));
+            }
+        }
+        Ok(_) => errors.push(format!(
+            "leave {} because its contents changed after generation",
+            key_path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => errors.push(format!("read {}: {}", key_path.display(), error)),
+    }
+
+    finish_generated_key_rollback(errors)
+}
+
+fn generated_key_should_be_kept_after_encrypt_failure(db_path: &Path) -> Result<bool> {
+    let mut file = match std::fs::File::open(db_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect remem database {}", db_path.display()));
+        }
+    };
+    let mut header = [0_u8; 16];
+    match std::io::Read::read_exact(&mut file, &mut header) {
+        Ok(()) => Ok(&header != b"SQLite format 3\0"),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(true),
+        Err(error) => {
+            Err(error).with_context(|| format!("read remem database {}", db_path.display()))
+        }
+    }
+}
+
+fn finish_generated_key_rollback(errors: Vec<String>) -> Result<()> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("{}", errors.join("; "))
+    }
+}
+
+fn remove_plaintext_migration_backup(backup_path: &Path) -> Result<()> {
+    std::fs::remove_file(backup_path).with_context(|| {
+        format!(
+            "remove temporary plaintext migration backup {}",
+            backup_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn checkpoint_plaintext_wal_before_export(conn: &Connection) -> Result<()> {
+    let (busy, log_pages, checkpointed_pages) =
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+    ensure!(
+        busy == 0 && log_pages == checkpointed_pages,
+        "plaintext SQLite WAL checkpoint incomplete before encryption \
+         (busy={busy}, log_pages={log_pages}, checkpointed_pages={checkpointed_pages}); \
+         close other remem processes and retry"
+    );
+    Ok(())
+}
+
+fn remove_plaintext_sidecars_before_swap(db_file: &Path) -> Result<()> {
+    let mut removable_sidecars = Vec::new();
+    for sidecar in sqlite_sidecar_paths(db_file)? {
+        match std::fs::symlink_metadata(&sidecar) {
+            Ok(metadata) if metadata.is_file() => {
+                removable_sidecars.push(sidecar);
+            }
+            Ok(_) => {
+                anyhow::bail!(
+                    "refusing to remove non-file SQLite sidecar {}; move it aside before retrying encryption",
+                    sidecar.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("inspect plaintext SQLite sidecar {}", sidecar.display())
+                })
+            }
+        }
+    }
+    for sidecar in removable_sidecars {
+        std::fs::remove_file(&sidecar)
+            .with_context(|| format!("remove plaintext SQLite sidecar {}", sidecar.display()))?;
+    }
+    Ok(())
+}
+
+fn sqlite_sidecar_paths(db_file: &Path) -> Result<[PathBuf; 3]> {
+    let file_name = db_file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow::anyhow!("invalid database file path {}", db_file.display()))?;
+    Ok([
+        db_file.with_file_name(format!("{file_name}-wal")),
+        db_file.with_file_name(format!("{file_name}-shm")),
+        db_file.with_file_name(format!("{file_name}-journal")),
+    ])
 }
 
 fn attach_key_sql(key: &CipherKey) -> Result<String> {
@@ -486,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn encrypt_database_escapes_single_quote_in_path() -> Result<()> {
+    fn encrypt_database_removes_plaintext_migration_backup() -> Result<()> {
         let test_dir = ScopedTestDataDir::new("encrypt-quote'path");
         std::fs::create_dir_all(&test_dir.path)?;
 
@@ -501,14 +687,75 @@ mod tests {
         encrypt_database(&CipherKey::Raw(key.clone()))?;
 
         assert!(
-            test_dir.path.join("remem.db.bak").exists(),
-            "backup should exist after encrypt"
+            !test_dir.path.join("remem.db.bak").exists(),
+            "plaintext migration backup must be removed after encrypt"
         );
+        assert_no_plaintext_sqlite_files(&test_dir.path)?;
         assert!(db_path.exists(), "encrypted db should be at original path");
         let conn = Connection::open(db_path)?;
         configure_cipher(&conn, Some(&CipherKey::Raw(key)))?;
         let value: String = conn.query_row("SELECT v FROM t WHERE id = 1", [], |row| row.get(0))?;
         assert_eq!(value, "hello");
+        Ok(())
+    }
+
+    #[test]
+    fn plaintext_sidecar_cleanup_removes_sqlite_sidecar_files_before_swap() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("encrypt-sidecar-files");
+        std::fs::create_dir_all(&test_dir.path)?;
+        for suffix in ["wal", "shm", "journal"] {
+            std::fs::write(test_dir.path.join(format!("remem.db-{suffix}")), b"plain")?;
+        }
+
+        remove_plaintext_sidecars_before_swap(&test_dir.db_path())?;
+
+        for suffix in ["wal", "shm", "journal"] {
+            assert!(!test_dir.path.join(format!("remem.db-{suffix}")).exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn plaintext_sidecar_cleanup_rejects_non_file_sidecar_before_swap() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("encrypt-sidecar-non-file");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let wal_path = test_dir.path.join("remem.db-wal");
+        std::fs::write(&wal_path, b"plaintext wal sidecar sentinel")?;
+        let shm_path = test_dir.path.join("remem.db-shm");
+        std::fs::create_dir(&shm_path)?;
+
+        let error = remove_plaintext_sidecars_before_swap(&test_dir.db_path())
+            .expect_err("non-file sidecar must fail before DB swap");
+
+        assert!(
+            error.to_string().contains("non-file SQLite sidecar"),
+            "got: {error}"
+        );
+        assert!(
+            wal_path.exists(),
+            "sidecar cleanup must preflight every sidecar before removing any file"
+        );
+        assert!(shm_path.is_dir(), "non-file sidecar must not be removed");
+        Ok(())
+    }
+
+    fn assert_no_plaintext_sqlite_files(dir: &Path) -> Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let bytes = std::fs::read(entry.path())?;
+            if bytes.len() < 16 {
+                continue;
+            }
+            assert_ne!(
+                &bytes[..16],
+                b"SQLite format 3\0",
+                "{} must not be a plaintext SQLite database",
+                entry.path().display()
+            );
+        }
         Ok(())
     }
 
