@@ -128,9 +128,11 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
 
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  1. Restart the affected host(s) (Claude Code / Codex)");
+    eprintln!(
+        "  1. Restart the affected host(s) (Claude Code / Codex) so MCP reconnects to this binary"
+    );
     eprintln!("  2. remem will automatically capture your sessions (hosts with hook support)");
-    eprintln!("  3. Run 'remem status' to check system health");
+    eprintln!("  3. Run 'remem doctor' to check hook/MCP paths and stale MCP processes");
 
     Ok(())
 }
