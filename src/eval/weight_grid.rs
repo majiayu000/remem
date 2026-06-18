@@ -11,6 +11,7 @@ use crate::retrieval::search::SearchWeights;
 pub const DEFAULT_DATASET_PATH: &str = "eval/golden.json";
 pub const DEFAULT_REPORT_PATH: &str = "eval/weight-grid/report.json";
 const EPSILON: f64 = 0.000_001;
+const MIN_RECALL_AT_K_DEFAULT_FLIP_DELTA: f64 = 0.05;
 
 #[derive(Debug, Clone)]
 pub struct WeightGridOptions {
@@ -67,6 +68,7 @@ impl Default for WeightGridScoring {
 #[serde(rename_all = "snake_case")]
 pub enum WeightGridRecommendation {
     KeepShippedDefaults,
+    CandidateImprovesSecondaryMetricOnlyKeepDefaults,
     CandidateOutperformsDefaultsNeedsDecision,
 }
 
@@ -76,6 +78,7 @@ pub struct WeightGridChecks {
     pub default_weights_in_grid: bool,
     pub best_preserves_abstention: bool,
     pub best_preserves_scored_query_count: bool,
+    pub best_meets_recall_at_k_default_flip_gate: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -160,11 +163,15 @@ fn run_weight_grid_dataset(
         .first()
         .cloned()
         .context("weight grid produced no evaluated candidates")?;
+    let best_meets_recall_at_k_default_flip_gate =
+        candidate_meets_recall_at_k_default_flip_gate(&best);
     let recommendation = if best.weights == default_weights || best.score <= default_score + EPSILON
     {
         WeightGridRecommendation::KeepShippedDefaults
-    } else {
+    } else if best_meets_recall_at_k_default_flip_gate {
         WeightGridRecommendation::CandidateOutperformsDefaultsNeedsDecision
+    } else {
+        WeightGridRecommendation::CandidateImprovesSecondaryMetricOnlyKeepDefaults
     };
     let checks = WeightGridChecks {
         fixture_corpus_used: true,
@@ -173,6 +180,7 @@ fn run_weight_grid_dataset(
             >= default_overall.abstention_passed,
         best_preserves_scored_query_count: best.overall.scored_queries
             >= default_overall.scored_queries,
+        best_meets_recall_at_k_default_flip_gate,
     };
 
     Ok(WeightGridReport {
@@ -275,6 +283,9 @@ fn default_candidate_grid() -> Vec<SearchWeights> {
     for fact in [0.0, default.fact, 1.8] {
         push_unique(&mut candidates, SearchWeights { fact, ..default });
     }
+    for usage in [0.25, 0.75, 1.5] {
+        push_unique(&mut candidates, SearchWeights { usage, ..default });
+    }
     candidates
 }
 
@@ -305,6 +316,12 @@ fn compare_candidates(
                 .like_fallback
                 .total_cmp(&right.weights.like_fallback)
         })
+        .then_with(|| left.weights.usage.total_cmp(&right.weights.usage))
+        .then_with(|| {
+            left.weights
+                .usage_recency_half_life_days
+                .total_cmp(&right.weights.usage_recency_half_life_days)
+        })
         .then_with(|| {
             left.weights
                 .min_evidence_confidence
@@ -328,6 +345,11 @@ fn abstention_pass_rate(evaluation: &CategoryEvaluation) -> f64 {
     } else {
         evaluation.abstention_passed as f64 / evaluation.abstention_queries as f64
     }
+}
+
+fn candidate_meets_recall_at_k_default_flip_gate(candidate: &WeightGridCandidate) -> bool {
+    candidate.deltas_vs_default.recall_at_k >= MIN_RECALL_AT_K_DEFAULT_FLIP_DELTA
+        || candidate.deltas_vs_default.evidence_recall_at_k >= MIN_RECALL_AT_K_DEFAULT_FLIP_DELTA
 }
 
 fn build_candidate_deltas(
@@ -390,6 +412,8 @@ fn weight_distance(candidate: SearchWeights, default: SearchWeights) -> f64 {
         + (candidate.temporal - default.temporal).abs()
         + (candidate.fact - default.fact).abs()
         + (candidate.like_fallback - default.like_fallback).abs()
+        + (candidate.usage - default.usage).abs()
+        + (candidate.usage_recency_half_life_days - default.usage_recency_half_life_days).abs()
         + f64::from((candidate.max_vector_distance - default.max_vector_distance).abs())
         + (candidate.rrf_k - default.rrf_k).abs()
         + (candidate.min_evidence_confidence - default.min_evidence_confidence).abs()
@@ -416,7 +440,7 @@ impl Display for WeightGridReport {
         for candidate in self.candidates.iter().take(10) {
             writeln!(
                 f,
-                "  #{:02} score={:.4} dist={:.2} fts={:.2} vector={:.2} entity={:.2} temporal={:.2} fact={:.2} like={:.2} confidence={:.2}",
+                "  #{:02} score={:.4} dist={:.2} fts={:.2} vector={:.2} entity={:.2} temporal={:.2} fact={:.2} like={:.2} usage={:.2} confidence={:.2}",
                 candidate.rank,
                 candidate.score,
                 candidate.distance_from_defaults,
@@ -426,6 +450,7 @@ impl Display for WeightGridReport {
                 candidate.weights.temporal,
                 candidate.weights.fact,
                 candidate.weights.like_fallback,
+                candidate.weights.usage,
                 candidate.weights.min_evidence_confidence
             )?;
         }
@@ -455,6 +480,8 @@ mod tests {
                 status: "active".to_string(),
                 files: None,
                 created_at_epoch: Some(1),
+                access_count: None,
+                last_accessed_epoch: None,
             }],
             queries: vec![GoldenQuery {
                 id: "q1".to_string(),

@@ -979,28 +979,36 @@
       "topic_key": "kestrelnook-nebulalatch-owner",
       "title": "Kestrelnook Nebulalatch Owner",
       "content": "NebulaLatch is owned by Team Mica.",
-      "memory_type": "discovery"
+      "memory_type": "discovery",
+      "access_count": 18,
+      "last_accessed_epoch": 1781654400
     },
     {
       "project": "synthetic/kestrelnook",
       "topic_key": "team-mica-pager",
       "title": "Team Mica Pager",
       "content": "Team Mica uses pager mica-17.",
-      "memory_type": "procedure"
+      "memory_type": "procedure",
+      "access_count": 16,
+      "last_accessed_epoch": 1781654400
     },
     {
       "project": "synthetic/lumenquay",
       "topic_key": "lumenquay-harbormint-owner",
       "title": "Lumenquay Harbormint Owner",
       "content": "HarborMint is owned by Team Brine.",
-      "memory_type": "discovery"
+      "memory_type": "discovery",
+      "access_count": 14,
+      "last_accessed_epoch": 1781654400
     },
     {
       "project": "synthetic/lumenquay",
       "topic_key": "team-brine-pager",
       "title": "Team Brine Pager",
       "content": "Team Brine uses pager brine-22.",
-      "memory_type": "procedure"
+      "memory_type": "procedure",
+      "access_count": 12,
+      "last_accessed_epoch": 1781654400
     },
     {
       "project": "synthetic/cinderbloom",

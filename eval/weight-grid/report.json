@@ -14,27 +14,33 @@
     "vector": 3.0,
     "entity": 1.25,
     "temporal": 1.0,
+    "fact": 1.4,
     "like_fallback": 0.25,
+    "usage": 0.0,
+    "usage_recency_half_life_days": 30.0,
     "max_vector_distance": 0.51,
     "rrf_k": 60.0,
     "min_evidence_confidence": 0.62
   },
-  "default_rank": 73,
+  "default_rank": 76,
   "default_score": 8.49598603945741,
   "best": {
     "rank": 1,
     "weights": {
       "fts": 2.5,
-      "vector": 2.5,
+      "vector": 3.0,
       "entity": 1.25,
       "temporal": 1.0,
+      "fact": 1.4,
       "like_fallback": 0.25,
+      "usage": 0.25,
+      "usage_recency_half_life_days": 30.0,
       "max_vector_distance": 0.51,
       "rrf_k": 60.0,
       "min_evidence_confidence": 0.62
     },
     "score": 8.5,
-    "distance_from_defaults": 0.5,
+    "distance_from_defaults": 0.25,
     "deltas_vs_default": {
       "hit_at_k": 0.0,
       "mrr_at_10": 0.0,
@@ -147,28 +153,32 @@
       }
     }
   },
-  "recommendation": "candidate_outperforms_defaults_needs_decision",
+  "recommendation": "candidate_improves_secondary_metric_only_keep_defaults",
   "checks": {
     "fixture_corpus_used": true,
     "default_weights_in_grid": true,
     "best_preserves_abstention": true,
-    "best_preserves_scored_query_count": true
+    "best_preserves_scored_query_count": true,
+    "best_meets_recall_at_k_default_flip_gate": false
   },
   "candidates": [
     {
       "rank": 1,
       "weights": {
         "fts": 2.5,
-        "vector": 2.5,
+        "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.25,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 0.5,
+      "distance_from_defaults": 0.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -284,11 +294,14 @@
     {
       "rank": 2,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 2.5,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -410,17 +423,20 @@
     {
       "rank": 3,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
+        "fts": 3.0,
+        "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 0.65,
+      "distance_from_defaults": 0.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -536,11 +552,14 @@
     {
       "rank": 4,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 2.5,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -662,17 +681,20 @@
     {
       "rank": 5,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.0,
+        "fts": 3.0,
+        "vector": 3.0,
+        "entity": 1.25,
         "temporal": 1.0,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 0.75,
+      "distance_from_defaults": 0.65,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -790,9 +812,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 0.75,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -917,8 +942,11 @@
         "fts": 2.5,
         "vector": 2.5,
         "entity": 1.25,
-        "temporal": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -1042,9 +1070,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -1166,11 +1197,14 @@
     {
       "rank": 9,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.0,
+        "fts": 2.5,
+        "vector": 2.5,
+        "entity": 1.5,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -1292,11 +1326,14 @@
     {
       "rank": 10,
       "weights": {
-        "fts": 3.0,
+        "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
-        "temporal": 0.75,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.75,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -1420,9 +1457,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -1546,9 +1586,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -1670,17 +1713,20 @@
     {
       "rank": 13,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fts": 3.0,
+        "vector": 3.0,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 0.9,
+      "distance_from_defaults": 0.75,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -1796,17 +1842,20 @@
     {
       "rank": 14,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "fts": 3.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 0.9,
+      "distance_from_defaults": 0.75,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -1924,9 +1973,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -2050,9 +2102,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -2174,11 +2229,14 @@
     {
       "rank": 17,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 1.0,
+        "fts": 2.5,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -2300,11 +2358,14 @@
     {
       "rank": 18,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 0.75,
+        "fts": 2.5,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -2428,9 +2489,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -2554,9 +2618,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -2678,17 +2745,20 @@
     {
       "rank": 21,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "fts": 3.0,
+        "vector": 3.0,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.0,
+      "distance_from_defaults": 0.9,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -2804,17 +2874,20 @@
     {
       "rank": 22,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
+        "fts": 3.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.0,
+      "distance_from_defaults": 0.9,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -2932,9 +3005,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3058,9 +3134,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3182,11 +3261,14 @@
     {
       "rank": 25,
       "weights": {
-        "fts": 3.0,
+        "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3308,11 +3390,14 @@
     {
       "rank": 26,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 0.75,
+        "fts": 2.5,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3435,10 +3520,13 @@
       "rank": 27,
       "weights": {
         "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 1.25,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3562,9 +3650,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3688,9 +3779,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3813,10 +3907,13 @@
       "rank": 30,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -3938,17 +4035,20 @@
     {
       "rank": 31,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "fts": 3.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.15,
+      "distance_from_defaults": 1.0,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -4064,17 +4164,20 @@
     {
       "rank": 32,
       "weights": {
-        "fts": 2.5,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.1,
+        "fts": 3.0,
+        "vector": 3.5,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.15,
+      "distance_from_defaults": 1.0,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -4192,9 +4295,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -4318,9 +4424,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -4442,11 +4551,14 @@
     {
       "rank": 35,
       "weights": {
-        "fts": 3.0,
+        "fts": 2.5,
         "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -4568,11 +4680,14 @@
     {
       "rank": 36,
       "weights": {
-        "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 0.75,
+        "fts": 2.5,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -4695,10 +4810,13 @@
       "rank": 37,
       "weights": {
         "fts": 3.0,
-        "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 1.25,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -4822,9 +4940,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -4948,9 +5069,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.0,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -5073,10 +5197,13 @@
       "rank": 40,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -5199,16 +5326,19 @@
       "rank": 41,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.0,
-        "like_fallback": 0.25,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.25,
+      "distance_from_defaults": 1.15,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -5325,16 +5455,19 @@
       "rank": 42,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.25,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.25,
+      "distance_from_defaults": 1.15,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -5452,9 +5585,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -5578,9 +5714,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -5703,10 +5842,13 @@
       "rank": 45,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 1.0,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -5829,10 +5971,13 @@
       "rank": 46,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 0.75,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -5956,9 +6101,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -6082,9 +6230,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -6207,16 +6358,19 @@
       "rank": 49,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.0,
-        "like_fallback": 0.1,
+        "vector": 3.5,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.4,
+      "distance_from_defaults": 1.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -6333,16 +6487,19 @@
       "rank": 50,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.4,
+      "distance_from_defaults": 1.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -6460,9 +6617,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -6586,9 +6746,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -6711,10 +6874,13 @@
       "rank": 53,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 1.0,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -6837,10 +7003,13 @@
       "rank": 54,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 0.75,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -6964,9 +7133,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -7090,9 +7262,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 1.0,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -7215,16 +7390,19 @@
       "rank": 57,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "vector": 3.5,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -7341,16 +7519,19 @@
       "rank": 58,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -7466,11 +7647,14 @@
     {
       "rank": 59,
       "weights": {
-        "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 0.75,
+        "fts": 2.5,
+        "vector": 3.0,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 1.5,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -7594,9 +7778,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -7719,10 +7906,13 @@
       "rank": 61,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.0,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -7845,10 +8035,13 @@
       "rank": 62,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 1.25,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -7971,10 +8164,13 @@
       "rank": 63,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.5,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -8098,9 +8294,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -8223,16 +8422,19 @@
       "rank": 65,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -8349,16 +8551,19 @@
       "rank": 66,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.1,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -8475,16 +8680,19 @@
       "rank": 67,
       "weights": {
         "fts": 3.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.5,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -8602,9 +8810,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -8727,10 +8938,13 @@
       "rank": 69,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.0,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -8853,10 +9067,13 @@
       "rank": 70,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 1.25,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -8979,10 +9196,13 @@
       "rank": 71,
       "weights": {
         "fts": 3.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.5,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -9106,9 +9326,12 @@
       "weights": {
         "fts": 3.0,
         "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -9230,11 +9453,401 @@
     {
       "rank": 73,
       "weights": {
+        "fts": 3.0,
+        "vector": 3.5,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.5,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.002006980271295311,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.75,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 74,
+      "weights": {
+        "fts": 3.0,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.5,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.002006980271295311,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.75,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 75,
+      "weights": {
+        "fts": 3.0,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.5,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.002006980271295311,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.75,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 76,
+      "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -9354,13 +9967,16 @@
       }
     },
     {
-      "rank": 74,
+      "rank": 77,
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.5
@@ -9480,13 +10096,16 @@
       }
     },
     {
-      "rank": 75,
+      "rank": 78,
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -9606,391 +10225,16 @@
       }
     },
     {
-      "rank": 76,
+      "rank": 79,
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.0,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
-        "max_vector_distance": 0.51,
-        "rrf_k": 60.0,
-        "min_evidence_confidence": 0.62
-      },
-      "score": 8.49598603945741,
-      "distance_from_defaults": 0.25,
-      "deltas_vs_default": {
-        "hit_at_k": 0.0,
-        "mrr_at_10": 0.0,
-        "precision_at_k": 0.0,
-        "recall_at_k": 0.0,
-        "ndcg_at_10": 0.0,
-        "evidence_recall_at_k": 0.0,
-        "abstention_pass_rate": 0.0
-      },
-      "overall": {
-        "total_queries": 50,
-        "scored_queries": 40,
-        "abstention_queries": 10,
-        "abstention_passed": 10,
-        "query_tokens_per_query": 12.88,
-        "retrieval_latency_p50_ms": 0.0,
-        "retrieval_latency_p95_ms": 0.0,
-        "metrics": {
-          "count": 40,
-          "hit_at_k": 0.75,
-          "mrr_at_10": 0.75,
-          "precision_at_k": 0.6916666666666667,
-          "recall_at_k": 0.75,
-          "ndcg_at_10": 0.7479930197287047,
-          "evidence_recall_at_k": 0.75
-        }
-      },
-      "by_slice": {
-        "abstention": {
-          "total_queries": 10,
-          "scored_queries": 0,
-          "abstention_queries": 10,
-          "abstention_passed": 10,
-          "query_tokens_per_query": 12.0,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": null
-        },
-        "knowledge_update": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 12.8,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 0.8,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 1.0,
-            "evidence_recall_at_k": 1.0
-          }
-        },
-        "multi_hop": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 19.6,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 0.9666666666666666,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 0.9919720789148186,
-            "evidence_recall_at_k": 1.0
-          }
-        },
-        "paraphrase": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 7.4,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 0.0,
-            "mrr_at_10": 0.0,
-            "precision_at_k": 0.0,
-            "recall_at_k": 0.0,
-            "ndcg_at_10": 0.0,
-            "evidence_recall_at_k": 0.0
-          }
-        },
-        "temporal": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 12.6,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 1.0,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 1.0,
-            "evidence_recall_at_k": 1.0
-          }
-        }
-      }
-    },
-    {
-      "rank": 77,
-      "weights": {
-        "fts": 2.5,
-        "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
-        "max_vector_distance": 0.51,
-        "rrf_k": 60.0,
-        "min_evidence_confidence": 0.62
-      },
-      "score": 8.49598603945741,
-      "distance_from_defaults": 0.25,
-      "deltas_vs_default": {
-        "hit_at_k": 0.0,
-        "mrr_at_10": 0.0,
-        "precision_at_k": 0.0,
-        "recall_at_k": 0.0,
-        "ndcg_at_10": 0.0,
-        "evidence_recall_at_k": 0.0,
-        "abstention_pass_rate": 0.0
-      },
-      "overall": {
-        "total_queries": 50,
-        "scored_queries": 40,
-        "abstention_queries": 10,
-        "abstention_passed": 10,
-        "query_tokens_per_query": 12.88,
-        "retrieval_latency_p50_ms": 0.0,
-        "retrieval_latency_p95_ms": 0.0,
-        "metrics": {
-          "count": 40,
-          "hit_at_k": 0.75,
-          "mrr_at_10": 0.75,
-          "precision_at_k": 0.6916666666666667,
-          "recall_at_k": 0.75,
-          "ndcg_at_10": 0.7479930197287047,
-          "evidence_recall_at_k": 0.75
-        }
-      },
-      "by_slice": {
-        "abstention": {
-          "total_queries": 10,
-          "scored_queries": 0,
-          "abstention_queries": 10,
-          "abstention_passed": 10,
-          "query_tokens_per_query": 12.0,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": null
-        },
-        "knowledge_update": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 12.8,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 0.8,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 1.0,
-            "evidence_recall_at_k": 1.0
-          }
-        },
-        "multi_hop": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 19.6,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 0.9666666666666666,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 0.9919720789148186,
-            "evidence_recall_at_k": 1.0
-          }
-        },
-        "paraphrase": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 7.4,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 0.0,
-            "mrr_at_10": 0.0,
-            "precision_at_k": 0.0,
-            "recall_at_k": 0.0,
-            "ndcg_at_10": 0.0,
-            "evidence_recall_at_k": 0.0
-          }
-        },
-        "temporal": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 12.6,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 1.0,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 1.0,
-            "evidence_recall_at_k": 1.0
-          }
-        }
-      }
-    },
-    {
-      "rank": 78,
-      "weights": {
-        "fts": 2.5,
-        "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
-        "max_vector_distance": 0.51,
-        "rrf_k": 60.0,
-        "min_evidence_confidence": 0.62
-      },
-      "score": 8.49598603945741,
-      "distance_from_defaults": 0.25,
-      "deltas_vs_default": {
-        "hit_at_k": 0.0,
-        "mrr_at_10": 0.0,
-        "precision_at_k": 0.0,
-        "recall_at_k": 0.0,
-        "ndcg_at_10": 0.0,
-        "evidence_recall_at_k": 0.0,
-        "abstention_pass_rate": 0.0
-      },
-      "overall": {
-        "total_queries": 50,
-        "scored_queries": 40,
-        "abstention_queries": 10,
-        "abstention_passed": 10,
-        "query_tokens_per_query": 12.88,
-        "retrieval_latency_p50_ms": 0.0,
-        "retrieval_latency_p95_ms": 0.0,
-        "metrics": {
-          "count": 40,
-          "hit_at_k": 0.75,
-          "mrr_at_10": 0.75,
-          "precision_at_k": 0.6916666666666667,
-          "recall_at_k": 0.75,
-          "ndcg_at_10": 0.7479930197287047,
-          "evidence_recall_at_k": 0.75
-        }
-      },
-      "by_slice": {
-        "abstention": {
-          "total_queries": 10,
-          "scored_queries": 0,
-          "abstention_queries": 10,
-          "abstention_passed": 10,
-          "query_tokens_per_query": 12.0,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": null
-        },
-        "knowledge_update": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 12.8,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 0.8,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 1.0,
-            "evidence_recall_at_k": 1.0
-          }
-        },
-        "multi_hop": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 19.6,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 0.9666666666666666,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 0.9919720789148186,
-            "evidence_recall_at_k": 1.0
-          }
-        },
-        "paraphrase": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 7.4,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 0.0,
-            "mrr_at_10": 0.0,
-            "precision_at_k": 0.0,
-            "recall_at_k": 0.0,
-            "ndcg_at_10": 0.0,
-            "evidence_recall_at_k": 0.0
-          }
-        },
-        "temporal": {
-          "total_queries": 10,
-          "scored_queries": 10,
-          "abstention_queries": 0,
-          "abstention_passed": 0,
-          "query_tokens_per_query": 12.6,
-          "retrieval_latency_p50_ms": 0.0,
-          "retrieval_latency_p95_ms": 0.0,
-          "metrics": {
-            "count": 10,
-            "hit_at_k": 1.0,
-            "mrr_at_10": 1.0,
-            "precision_at_k": 1.0,
-            "recall_at_k": 1.0,
-            "ndcg_at_10": 1.0,
-            "evidence_recall_at_k": 1.0
-          }
-        }
-      }
-    },
-    {
-      "rank": 79,
-      "weights": {
-        "fts": 2.5,
-        "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.0,
-        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -10114,15 +10358,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 1.0,
-        "like_fallback": 0.1,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.4,
+      "distance_from_defaults": 0.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -10241,14 +10488,17 @@
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.4,
+      "distance_from_defaults": 0.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -10366,15 +10616,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 1.25,
-        "like_fallback": 0.1,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.4,
+      "distance_from_defaults": 0.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -10492,9 +10745,12 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.5,
+        "entity": 1.0,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -10616,17 +10872,20 @@
     {
       "rank": 84,
       "weights": {
-        "fts": 2.0,
+        "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
-        "temporal": 1.0,
-        "like_fallback": 0.25,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.5,
+      "distance_from_defaults": 0.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -10744,15 +11003,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.5,
+      "distance_from_defaults": 0.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -10870,15 +11132,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
+        "entity": 1.5,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.5,
+      "distance_from_defaults": 0.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -10996,15 +11261,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 0.75,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.8,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.5,
+      "distance_from_defaults": 0.40000000000000013,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -11120,11 +11388,14 @@
     {
       "rank": 88,
       "weights": {
-        "fts": 2.5,
+        "fts": 2.0,
         "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -11247,10 +11518,13 @@
       "rank": 89,
       "weights": {
         "fts": 2.5,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "vector": 3.0,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -11372,17 +11646,20 @@
     {
       "rank": 90,
       "weights": {
-        "fts": 2.0,
+        "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.25,
-        "temporal": 1.0,
-        "like_fallback": 0.1,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.65,
+      "distance_from_defaults": 0.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -11500,15 +11777,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.0,
+        "entity": 1.5,
         "temporal": 0.75,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.65,
+      "distance_from_defaults": 0.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -11626,15 +11906,18 @@
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.0,
+        "entity": 1.5,
         "temporal": 1.25,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.65,
+      "distance_from_defaults": 0.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -11751,16 +12034,19 @@
       "rank": 93,
       "weights": {
         "fts": 2.5,
-        "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "vector": 3.5,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.65,
+      "distance_from_defaults": 0.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -11876,11 +12162,14 @@
     {
       "rank": 94,
       "weights": {
-        "fts": 2.5,
+        "fts": 2.0,
         "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -12003,10 +12292,13 @@
       "rank": 95,
       "weights": {
         "fts": 2.5,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "vector": 3.0,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -12128,17 +12420,20 @@
     {
       "rank": 96,
       "weights": {
-        "fts": 2.0,
+        "fts": 2.5,
         "vector": 3.0,
         "entity": 1.0,
-        "temporal": 1.0,
-        "like_fallback": 0.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.75,
+      "distance_from_defaults": 0.65,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -12254,17 +12549,20 @@
     {
       "rank": 97,
       "weights": {
-        "fts": 2.0,
+        "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.25,
+        "entity": 1.5,
         "temporal": 0.75,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.75,
+      "distance_from_defaults": 0.65,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -12380,17 +12678,20 @@
     {
       "rank": 98,
       "weights": {
-        "fts": 2.0,
+        "fts": 2.5,
         "vector": 3.0,
-        "entity": 1.25,
+        "entity": 1.5,
         "temporal": 1.25,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.75,
+      "distance_from_defaults": 0.65,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -12506,17 +12807,20 @@
     {
       "rank": 99,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
-        "entity": 1.5,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.25,
         "temporal": 1.0,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.75,
+      "distance_from_defaults": 0.65,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -12632,11 +12936,14 @@
     {
       "rank": 100,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.0,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -12758,11 +13065,14 @@
     {
       "rank": 101,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.25,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -12884,11 +13194,14 @@
     {
       "rank": 102,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -13010,11 +13323,14 @@
     {
       "rank": 103,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.5,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -13136,17 +13452,20 @@
     {
       "rank": 104,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
         "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.9,
+      "distance_from_defaults": 0.75,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -13262,17 +13581,20 @@
     {
       "rank": 105,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.25,
         "temporal": 0.75,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.9,
+      "distance_from_defaults": 0.75,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -13388,17 +13710,20 @@
     {
       "rank": 106,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.25,
         "temporal": 1.25,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.9,
+      "distance_from_defaults": 0.75,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -13514,17 +13839,20 @@
     {
       "rank": 107,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
         "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 0.9,
+      "distance_from_defaults": 0.75,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -13640,11 +13968,14 @@
     {
       "rank": 108,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.0,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -13766,11 +14097,14 @@
     {
       "rank": 109,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.25,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -13892,11 +14226,14 @@
     {
       "rank": 110,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -14018,11 +14355,14 @@
     {
       "rank": 111,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.5,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -14144,17 +14484,20 @@
     {
       "rank": 112,
       "weights": {
-        "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.25,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.0,
         "temporal": 1.0,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.0,
+      "distance_from_defaults": 0.9,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -14270,17 +14613,20 @@
     {
       "rank": 113,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
-        "entity": 1.0,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.25,
         "temporal": 0.75,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.0,
+      "distance_from_defaults": 0.9,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -14396,17 +14742,20 @@
     {
       "rank": 114,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
-        "entity": 1.0,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.25,
         "temporal": 1.25,
-        "like_fallback": 0.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.0,
+      "distance_from_defaults": 0.9,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -14522,17 +14871,20 @@
     {
       "rank": 115,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.0,
+      "distance_from_defaults": 0.9,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -14649,10 +15001,13 @@
       "rank": 116,
       "weights": {
         "fts": 2.0,
-        "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -14775,10 +15130,13 @@
       "rank": 117,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "vector": 3.0,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -14900,11 +15258,14 @@
     {
       "rank": 118,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.0,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -15026,11 +15387,14 @@
     {
       "rank": 119,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 1.25,
+        "fts": 2.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -15152,11 +15516,14 @@
     {
       "rank": 120,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.5,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -15278,11 +15645,14 @@
     {
       "rank": 121,
       "weights": {
-        "fts": 2.5,
+        "fts": 2.0,
         "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -15404,17 +15774,20 @@
     {
       "rank": 122,
       "weights": {
-        "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.15,
+      "distance_from_defaults": 1.0,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -15530,17 +15903,20 @@
     {
       "rank": 123,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.15,
+      "distance_from_defaults": 1.0,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -15656,17 +16032,20 @@
     {
       "rank": 124,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.1,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.15,
+      "distance_from_defaults": 1.0,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -15782,17 +16161,20 @@
     {
       "rank": 125,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.0,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.15,
+      "distance_from_defaults": 1.0,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -15909,10 +16291,13 @@
       "rank": 126,
       "weights": {
         "fts": 2.0,
-        "vector": 3.0,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "vector": 2.5,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -16035,10 +16420,13 @@
       "rank": 127,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
-        "entity": 1.25,
-        "temporal": 1.0,
+        "vector": 3.0,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -16160,11 +16548,14 @@
     {
       "rank": 128,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.0,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -16286,11 +16677,14 @@
     {
       "rank": 129,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 1.25,
+        "fts": 2.0,
+        "vector": 3.0,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -16412,11 +16806,14 @@
     {
       "rank": 130,
       "weights": {
-        "fts": 2.5,
-        "vector": 3.5,
+        "fts": 2.0,
+        "vector": 3.0,
         "entity": 1.5,
-        "temporal": 0.75,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -16538,11 +16935,14 @@
     {
       "rank": 131,
       "weights": {
-        "fts": 2.5,
+        "fts": 2.0,
         "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 1.25,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -16664,17 +17064,20 @@
     {
       "rank": 132,
       "weights": {
-        "fts": 2.0,
-        "vector": 2.5,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
-        "temporal": 1.0,
-        "like_fallback": 0.25,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.25,
+      "distance_from_defaults": 1.15,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -16790,17 +17193,20 @@
     {
       "rank": 133,
       "weights": {
-        "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.25,
+      "distance_from_defaults": 1.15,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -16916,17 +17322,20 @@
     {
       "rank": 134,
       "weights": {
-        "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.25,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
+        "fts": 2.5,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.25,
+      "distance_from_defaults": 1.15,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -17042,17 +17451,20 @@
     {
       "rank": 135,
       "weights": {
-        "fts": 2.0,
-        "vector": 2.5,
+        "fts": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
-        "temporal": 1.0,
-        "like_fallback": 0.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.25,
+      "distance_from_defaults": 1.15,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -17169,10 +17581,13 @@
       "rank": 136,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.0,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -17295,10 +17710,13 @@
       "rank": 137,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.25,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -17421,10 +17839,13 @@
       "rank": 138,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.25,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -17547,10 +17968,13 @@
       "rank": 139,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.5,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -17673,16 +18097,19 @@
       "rank": 140,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
         "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.4,
+      "distance_from_defaults": 1.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -17799,16 +18226,19 @@
       "rank": 141,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.25,
         "temporal": 0.75,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.4,
+      "distance_from_defaults": 1.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -17925,16 +18355,19 @@
       "rank": 142,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.25,
         "temporal": 1.25,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.4,
+      "distance_from_defaults": 1.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -18051,16 +18484,19 @@
       "rank": 143,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
         "temporal": 1.0,
-        "like_fallback": 0.1,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.4,
+      "distance_from_defaults": 1.25,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -18177,10 +18613,13 @@
       "rank": 144,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.0,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -18303,10 +18742,13 @@
       "rank": 145,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.25,
         "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -18429,10 +18871,13 @@
       "rank": 146,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.25,
         "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -18555,10 +19000,13 @@
       "rank": 147,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.5,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -18681,16 +19129,19 @@
       "rank": 148,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -18807,16 +19258,19 @@
       "rank": 149,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
+        "vector": 3.5,
+        "entity": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -18933,16 +19387,19 @@
       "rank": 150,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 0.75,
-        "like_fallback": 0.25,
+        "vector": 3.5,
+        "entity": 1.25,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -19059,16 +19516,19 @@
       "rank": 151,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
-        "temporal": 1.25,
-        "like_fallback": 0.25,
+        "temporal": 1.0,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -19184,17 +19644,20 @@
     {
       "rank": 152,
       "weights": {
-        "fts": 2.0,
-        "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 0.75,
+        "fts": 2.5,
+        "vector": 3.0,
+        "entity": 1.25,
+        "temporal": 1.0,
+        "fact": 0.0,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.5,
+      "distance_from_defaults": 1.4,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -19311,10 +19774,13 @@
       "rank": 153,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.0,
-        "temporal": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -19437,10 +19903,13 @@
       "rank": 154,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 0.75,
+        "vector": 2.5,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -19563,10 +20032,13 @@
       "rank": 155,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.5,
-        "temporal": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -19690,15 +20162,18 @@
       "weights": {
         "fts": 2.0,
         "vector": 2.5,
-        "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -19815,16 +20290,19 @@
       "rank": 157,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.0,
-        "temporal": 1.25,
-        "like_fallback": 0.1,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -19941,16 +20419,19 @@
       "rank": 158,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
-        "entity": 1.5,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "vector": 3.5,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -20067,16 +20548,19 @@
       "rank": 159,
       "weights": {
         "fts": 2.0,
-        "vector": 2.5,
+        "vector": 3.5,
         "entity": 1.5,
-        "temporal": 1.25,
-        "like_fallback": 0.1,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -20194,15 +20678,18 @@
       "weights": {
         "fts": 2.0,
         "vector": 3.5,
-        "entity": 1.0,
-        "temporal": 0.75,
-        "like_fallback": 0.1,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
       },
       "score": 8.49598603945741,
-      "distance_from_defaults": 1.65,
+      "distance_from_defaults": 1.5,
       "deltas_vs_default": {
         "hit_at_k": 0.0,
         "mrr_at_10": 0.0,
@@ -20319,10 +20806,13 @@
       "rank": 161,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.0,
-        "temporal": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -20445,10 +20935,13 @@
       "rank": 162,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
-        "entity": 1.5,
-        "temporal": 0.75,
+        "vector": 2.5,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -20571,10 +21064,13 @@
       "rank": 163,
       "weights": {
         "fts": 2.0,
-        "vector": 3.5,
+        "vector": 2.5,
         "entity": 1.5,
-        "temporal": 1.25,
+        "temporal": 0.75,
+        "fact": 1.4,
         "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.62
@@ -20696,11 +21192,659 @@
     {
       "rank": 164,
       "weights": {
+        "fts": 2.0,
+        "vector": 2.5,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.49598603945741,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.0,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.7479930197287047,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 0.9919720789148186,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 165,
+      "weights": {
+        "fts": 2.0,
+        "vector": 3.5,
+        "entity": 1.0,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.49598603945741,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.0,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.7479930197287047,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 0.9919720789148186,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 166,
+      "weights": {
+        "fts": 2.0,
+        "vector": 3.5,
+        "entity": 1.0,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.49598603945741,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.0,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.7479930197287047,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 0.9919720789148186,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 167,
+      "weights": {
+        "fts": 2.0,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 0.75,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.49598603945741,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.0,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.7479930197287047,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 0.9919720789148186,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 168,
+      "weights": {
+        "fts": 2.0,
+        "vector": 3.5,
+        "entity": 1.5,
+        "temporal": 1.25,
+        "fact": 1.4,
+        "like_fallback": 0.1,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
+        "max_vector_distance": 0.51,
+        "rrf_k": 60.0,
+        "min_evidence_confidence": 0.62
+      },
+      "score": 8.49598603945741,
+      "distance_from_defaults": 1.65,
+      "deltas_vs_default": {
+        "hit_at_k": 0.0,
+        "mrr_at_10": 0.0,
+        "precision_at_k": 0.0,
+        "recall_at_k": 0.0,
+        "ndcg_at_10": 0.0,
+        "evidence_recall_at_k": 0.0,
+        "abstention_pass_rate": 0.0
+      },
+      "overall": {
+        "total_queries": 50,
+        "scored_queries": 40,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.88,
+        "retrieval_latency_p50_ms": 0.0,
+        "retrieval_latency_p95_ms": 0.0,
+        "metrics": {
+          "count": 40,
+          "hit_at_k": 0.75,
+          "mrr_at_10": 0.75,
+          "precision_at_k": 0.6916666666666667,
+          "recall_at_k": 0.75,
+          "ndcg_at_10": 0.7479930197287047,
+          "evidence_recall_at_k": 0.75
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": null
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 0.9919720789148186,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 0.0,
+          "retrieval_latency_p95_ms": 0.0,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      }
+    },
+    {
+      "rank": 169,
+      "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.0
@@ -20820,13 +21964,16 @@
       }
     },
     {
-      "rank": 165,
+      "rank": 170,
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 0.75
@@ -20946,13 +22093,16 @@
       }
     },
     {
-      "rank": 166,
+      "rank": 171,
       "weights": {
         "fts": 2.5,
         "vector": 3.0,
         "entity": 1.25,
         "temporal": 1.0,
+        "fact": 1.4,
         "like_fallback": 0.25,
+        "usage": 0.0,
+        "usage_recency_half_life_days": 30.0,
         "max_vector_distance": 0.51,
         "rrf_k": 60.0,
         "min_evidence_confidence": 1.0

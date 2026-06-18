@@ -6,6 +6,7 @@ mod source_anchor;
 #[cfg(test)]
 mod tests;
 mod text;
+mod usage_rank;
 mod weights;
 
 pub use explain::{

@@ -237,6 +237,49 @@ fn semantic_vector_channel_recalls_paraphrase_without_lexical_overlap() -> Resul
 }
 
 #[test]
+fn usage_weight_preserves_vector_only_confidence_gate() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    let id = crate::memory::insert_memory(
+        &conn,
+        Some("s1"),
+        "/repo",
+        Some("credential-storage"),
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET access_count = 8,
+             last_accessed_epoch = ?1
+         WHERE id = ?2",
+        params![chrono::Utc::now().timestamp(), id],
+    )?;
+
+    let memories = search_with_branch_weights(
+        &conn,
+        Some("How do we protect private persisted data?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+        SearchWeights {
+            usage: 1.0,
+            ..SearchWeights::default()
+        },
+    )?;
+
+    assert!(
+        memories.iter().any(|memory| memory.id == id),
+        "usage must not make vector-only evidence fail the confidence gate: {memories:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn search_abstains_when_entity_match_lacks_claim_evidence() -> Result<()> {
     let conn = setup_explain_conn()?;
     insert_explain_memory(
@@ -607,6 +650,71 @@ fn zero_fact_weight_disables_fact_only_results() -> Result<()> {
 
     assert!(disabled.is_empty());
     assert_eq!(enabled.first().map(|memory| memory.id), Some(1));
+    Ok(())
+}
+
+#[test]
+fn usage_weight_reranks_only_retrieved_candidates() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    for memory in [
+        ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "SQLite timeout old path",
+            content: "SQLite timeout fix should update busy_timeout.",
+            scope: "project",
+            updated_at_epoch: now - 100,
+        },
+        ExplainMemory {
+            id: 2,
+            project: "/repo",
+            title: "SQLite timeout proven path",
+            content: "SQLite timeout fix should update busy_timeout.",
+            scope: "project",
+            updated_at_epoch: now - 90,
+        },
+        ExplainMemory {
+            id: 3,
+            project: "/repo",
+            title: "Popular unrelated note",
+            content: "Unrelated launch checklist for release paperwork.",
+            scope: "project",
+            updated_at_epoch: now - 80,
+        },
+    ] {
+        insert_explain_memory(&conn, &memory)?;
+    }
+    conn.execute(
+        "UPDATE memories
+         SET access_count = CASE id WHEN 1 THEN 1 WHEN 2 THEN 25 WHEN 3 THEN 100 END,
+             last_accessed_epoch = CASE id WHEN 1 THEN ?1 WHEN 2 THEN ?2 WHEN 3 THEN ?2 END
+         WHERE id IN (1, 2, 3)",
+        params![now - 90 * 86_400, now],
+    )?;
+
+    let ranked = search_with_branch_weights(
+        &conn,
+        Some("SQLite timeout busy_timeout"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+        SearchWeights {
+            usage: 10.0,
+            max_vector_distance: 0.0,
+            min_evidence_confidence: 0.0,
+            ..SearchWeights::default()
+        },
+    )?;
+
+    assert_eq!(ranked.first().map(|memory| memory.id), Some(2));
+    assert!(
+        !ranked.iter().any(|memory| memory.id == 3),
+        "usage must not retrieve memories absent from text/vector/fact/entity candidates: {ranked:#?}"
+    );
     Ok(())
 }
 
