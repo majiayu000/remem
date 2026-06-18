@@ -73,7 +73,7 @@ fn is_remem_mcp_args(args: &str) -> bool {
         || normalized.ends_with("/remem")
         || normalized.ends_with("\\remem.exe")
         || normalized.ends_with("\\remem");
-    has_remem_binary && tokens.iter().any(|token| *token == "mcp")
+    has_remem_binary && tokens.contains(&"mcp")
 }
 
 #[cfg(test)]
