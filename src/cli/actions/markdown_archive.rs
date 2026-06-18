@@ -1,4 +1,16 @@
-use anyhow::{anyhow, Context, Result};
+mod format;
+mod persist;
+
+use anyhow::Context;
+use anyhow::Result;
+use format::{
+    markdown_file_name, markdown_files, normalized_topic_key, parse_markdown_memory,
+    render_markdown_memory, synthesized_markdown_topic_key, validate_markdown_metadata,
+};
+use persist::{
+    markdown_ownership, update_optional_memory_provenance, upsert_markdown_lesson_metadata,
+    MarkdownOwnership,
+};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -8,7 +20,7 @@ const EXPORT_VERSION: u32 = 1;
 const META_START: &str = "<!-- remem-metadata-start -->";
 const META_END: &str = "<!-- remem-metadata-end -->";
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct MarkdownMemoryMetadata {
     remem_export_version: u32,
     source_id: Option<i64>,
@@ -23,9 +35,56 @@ struct MarkdownMemoryMetadata {
     status: String,
     branch: Option<String>,
     scope: String,
+    source_project: Option<String>,
+    target_project: Option<String>,
+    owner_scope: Option<String>,
+    owner_key: Option<String>,
+    topic_domain: Option<String>,
+    routing_confidence: Option<f64>,
+    routing_reason: Option<String>,
+    context_class: Option<String>,
+    expires_at_epoch: Option<i64>,
+    valid_from_epoch: Option<i64>,
+    valid_to_epoch: Option<i64>,
+    evidence_event_ids: Option<String>,
+    source_candidate_id: Option<i64>,
+    lesson: Option<MarkdownLessonMetadata>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct MarkdownLessonMetadata {
+    confidence: f64,
+    reinforcement_count: i64,
+    source_evidence: Option<String>,
+    last_reinforced_at_epoch: i64,
+    stale_after_epoch: Option<i64>,
+    outcome_kind: String,
+    success_count: i64,
+    failure_count: i64,
+    recovery_count: i64,
+    correction_count: i64,
+    revert_count: i64,
+}
+
+impl From<crate::memory::lesson::LessonMetadata> for MarkdownLessonMetadata {
+    fn from(metadata: crate::memory::lesson::LessonMetadata) -> Self {
+        Self {
+            confidence: metadata.confidence,
+            reinforcement_count: metadata.reinforcement_count,
+            source_evidence: metadata.source_evidence,
+            last_reinforced_at_epoch: metadata.last_reinforced_at_epoch,
+            stale_after_epoch: metadata.stale_after_epoch,
+            outcome_kind: metadata.outcome_kind,
+            success_count: metadata.success_count,
+            failure_count: metadata.failure_count,
+            recovery_count: metadata.recovery_count,
+            correction_count: metadata.correction_count,
+            revert_count: metadata.revert_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct MarkdownMemoryDocument {
     metadata: MarkdownMemoryMetadata,
     content: String,
@@ -146,6 +205,17 @@ fn ensure_empty_export_directory(output: &Path) -> Result<()> {
     Ok(())
 }
 
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn import_markdown_archive(
     conn: &Connection,
     source: &Path,
@@ -186,18 +256,20 @@ fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportFileOutc
         .with_context(|| format!("read markdown memory {}", path.display()))?;
     let doc = parse_markdown_memory(&raw)?;
     validate_markdown_metadata(&doc)?;
-    let topic_key = doc
-        .metadata
-        .topic_key
-        .clone()
+    let metadata_topic_key = normalized_topic_key(doc.metadata.topic_key.as_deref());
+    if let Some(existing_id) = runtime_memory_id_by_source(conn, &doc)? {
+        update_markdown_memory(conn, existing_id, &doc, metadata_topic_key.as_deref())?;
+        return Ok(ImportFileOutcome::Updated);
+    }
+    let topic_key = metadata_topic_key
         .unwrap_or_else(|| synthesized_markdown_topic_key(path, &doc.metadata.title));
     if let Some(existing_id) =
         runtime_memory_id(conn, &doc.metadata.project, &topic_key, &doc.metadata.scope)?
     {
-        update_markdown_memory(conn, existing_id, &doc, &topic_key)?;
+        update_markdown_memory(conn, existing_id, &doc, Some(&topic_key))?;
         return Ok(ImportFileOutcome::Updated);
     }
-    insert_markdown_memory(conn, &doc, &topic_key)?;
+    insert_markdown_memory(conn, &doc, Some(&topic_key))?;
     Ok(ImportFileOutcome::Imported)
 }
 
@@ -209,10 +281,23 @@ fn load_export_memories(
 ) -> Result<Vec<MarkdownMemoryDocument>> {
     let status_filter =
         crate::memory::memory_current_filter_sql("status", "expires_at_epoch", include_inactive);
+    let evidence_expr = if column_exists(conn, "memories", "evidence_event_ids")? {
+        "evidence_event_ids"
+    } else {
+        "NULL AS evidence_event_ids"
+    };
+    let source_candidate_expr = if column_exists(conn, "memories", "source_candidate_id")? {
+        "source_candidate_id"
+    } else {
+        "NULL AS source_candidate_id"
+    };
     let sql = format!(
         "SELECT id, project, topic_key, title, content, memory_type, files,
                 created_at_epoch, updated_at_epoch, reference_time_epoch,
-                status, branch, scope
+                status, branch, scope, source_project, target_project,
+                owner_scope, owner_key, topic_domain, routing_confidence,
+                routing_reason, context_class, expires_at_epoch, valid_from_epoch,
+                valid_to_epoch, {evidence_expr}, {source_candidate_expr}
          FROM memories
          WHERE (project = ?1 OR scope = 'global')
            AND {status_filter}
@@ -238,192 +323,55 @@ fn load_export_memories(
                 scope: row
                     .get::<_, Option<String>>(12)?
                     .unwrap_or_else(|| "project".to_string()),
+                source_project: row.get(13)?,
+                target_project: row.get(14)?,
+                owner_scope: row.get(15)?,
+                owner_key: row.get(16)?,
+                topic_domain: row.get(17)?,
+                routing_confidence: row.get(18)?,
+                routing_reason: row.get(19)?,
+                context_class: row.get(20)?,
+                expires_at_epoch: row.get(21)?,
+                valid_from_epoch: row.get(22)?,
+                valid_to_epoch: row.get(23)?,
+                evidence_event_ids: row.get(24)?,
+                source_candidate_id: row.get(25)?,
+                lesson: None,
             },
             content: row.get(4)?,
         })
     })?;
-    crate::db::query::collect_rows(rows)
-}
-
-fn render_markdown_memory(doc: &MarkdownMemoryDocument) -> String {
-    let metadata = serde_json::to_string_pretty(&doc.metadata)
-        .expect("markdown export metadata should serialize");
-    format!(
-        "{META_START}\n{metadata}\n{META_END}\n\n# {}\n\n{}",
-        heading_title(&doc.metadata.title),
-        doc.content
-    )
-}
-
-fn parse_markdown_memory(raw: &str) -> Result<MarkdownMemoryDocument> {
-    let body = raw
-        .strip_prefix(META_START)
-        .ok_or_else(|| anyhow!("missing remem markdown metadata start marker"))?;
-    let end_marker = format!("\n{META_END}");
-    let end = body
-        .find(&end_marker)
-        .ok_or_else(|| anyhow!("missing remem markdown metadata end marker"))?;
-    let metadata: MarkdownMemoryMetadata =
-        serde_json::from_str(body[..end].trim()).context("parse remem markdown metadata")?;
-    let content_start = end + end_marker.len();
-    let content = strip_generated_heading(&body[content_start..], &metadata.title);
-    Ok(MarkdownMemoryDocument { metadata, content })
-}
-
-fn validate_markdown_metadata(doc: &MarkdownMemoryDocument) -> Result<()> {
-    if doc.metadata.remem_export_version != EXPORT_VERSION {
-        anyhow::bail!(
-            "unsupported remem markdown export version {}",
-            doc.metadata.remem_export_version
-        );
-    }
-    if crate::memory::MemoryType::parse(&doc.metadata.memory_type).is_none() {
-        anyhow::bail!("unsupported memory_type {}", doc.metadata.memory_type);
-    }
-    if doc.metadata.project.trim().is_empty() {
-        anyhow::bail!("markdown memory project must not be empty");
-    }
-    if doc.metadata.title.trim().is_empty() {
-        anyhow::bail!("markdown memory title must not be empty");
-    }
-    if doc.content.trim().is_empty() {
-        anyhow::bail!("markdown memory content must not be empty");
-    }
-    if !matches!(
-        doc.metadata.status.as_str(),
-        "active" | "stale" | "archived"
-    ) {
-        anyhow::bail!("unsupported markdown memory status {}", doc.metadata.status);
-    }
-    if !matches!(doc.metadata.scope.as_str(), "project" | "global") {
-        anyhow::bail!("unsupported markdown memory scope {}", doc.metadata.scope);
-    }
-    let reference_time = doc
-        .metadata
-        .reference_time_epoch
-        .or(Some(doc.metadata.created_at_epoch));
-    validate_reference_time(
-        doc.metadata.source_id,
-        &doc.metadata.title,
-        &doc.content,
-        reference_time,
-    )
-}
-
-fn strip_generated_heading(raw: &str, title: &str) -> String {
-    let mut content = raw.trim_start_matches('\n');
-    let Some(after_hash) = content.strip_prefix("# ") else {
-        return content.to_string();
-    };
-    let Some(line_end) = after_hash.find('\n') else {
-        return String::new();
-    };
-    let heading = &after_hash[..line_end];
-    if heading != heading_title(title) {
-        return content.to_string();
-    }
-    content = &after_hash[line_end + 1..];
-    content.trim_start_matches('\n').to_string()
-}
-
-fn heading_title(title: &str) -> String {
-    title
-        .lines()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace('#', "\\#")
-}
-
-fn markdown_file_name(doc: &MarkdownMemoryDocument) -> String {
-    let source_id = doc.metadata.source_id.unwrap_or_default();
-    let label = doc
-        .metadata
-        .topic_key
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&doc.metadata.title);
-    format!(
-        "{source_id:06}-{}-{}.md",
-        slug_component(&doc.metadata.memory_type),
-        slug_component(label)
-    )
-}
-
-fn slug_component(value: &str) -> String {
-    let mut slug = String::new();
-    let mut last_dash = false;
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            slug.push('-');
-            last_dash = true;
+    let mut docs = crate::db::query::collect_rows(rows)?;
+    for doc in &mut docs {
+        if doc.metadata.memory_type == crate::memory::MemoryType::Lesson.as_str() {
+            if let Some(source_id) = doc.metadata.source_id {
+                doc.metadata.lesson = crate::memory::lesson::get_lesson_metadata(conn, source_id)?
+                    .map(MarkdownLessonMetadata::from);
+            }
         }
     }
-    let slug = slug.trim_matches('-').to_string();
-    if slug.is_empty() {
-        "memory".to_string()
-    } else {
-        slug.chars().take(80).collect()
-    }
+    Ok(docs)
 }
 
-fn markdown_files(source: &Path) -> Result<Vec<PathBuf>> {
-    if source.is_file() {
-        let is_markdown = source
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
-        return if is_markdown {
-            Ok(vec![source.to_path_buf()])
-        } else {
-            Ok(Vec::new())
-        };
+fn runtime_memory_id_by_source(
+    conn: &Connection,
+    doc: &MarkdownMemoryDocument,
+) -> Result<Option<i64>> {
+    let Some(source_id) = doc.metadata.source_id else {
+        return Ok(None);
+    };
+    let result = conn.query_row(
+        "SELECT id FROM memories
+         WHERE id = ?1 AND project = ?2 AND scope = ?3
+         LIMIT 1",
+        rusqlite::params![source_id, doc.metadata.project, doc.metadata.scope],
+        |row| row.get::<_, i64>(0),
+    );
+    match result {
+        Ok(id) => Ok(Some(id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(error) => Err(error.into()),
     }
-    if !source.exists() {
-        anyhow::bail!("markdown source not found at {}", source.display());
-    }
-    let mut files = Vec::new();
-    collect_markdown_files(source, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            collect_markdown_files(&path, files)?;
-        } else if file_type.is_file()
-            && path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn validate_reference_time(
-    source_id: Option<i64>,
-    title: &str,
-    content: &str,
-    reference_time_epoch: Option<i64>,
-) -> Result<()> {
-    let has_relative_time = crate::memory::reference_time::contains_relative_time_reference(title)
-        || crate::memory::reference_time::contains_relative_time_reference(content);
-    if has_relative_time && reference_time_epoch.is_none_or(|epoch| epoch <= 0) {
-        let source = source_id
-            .map(|id| format!("source memory id={id}"))
-            .unwrap_or_else(|| "markdown memory".to_string());
-        anyhow::bail!("{source}: relative dates require a positive reference_time_epoch");
-    }
-    Ok(())
 }
 
 fn runtime_memory_id(
@@ -450,7 +398,7 @@ fn update_markdown_memory(
     conn: &Connection,
     memory_id: i64,
     doc: &MarkdownMemoryDocument,
-    topic_key: &str,
+    topic_key: Option<&str>,
 ) -> Result<()> {
     conn.execute_batch("SAVEPOINT remem_update_markdown_memory")?;
     let result = (|| -> Result<()> {
@@ -462,12 +410,11 @@ fn update_markdown_memory(
         let updated_at_epoch = effective_update_epoch(&existing, doc, reference_time_epoch);
         let search_context = crate::memory::search_context::build_search_context(
             &doc.metadata.memory_type,
-            Some(topic_key),
+            topic_key,
             &doc.content,
             doc.metadata.files.as_deref(),
         );
-        let ownership =
-            crate::memory::store::default_ownership(&doc.metadata.project, &doc.metadata.scope);
+        let ownership = markdown_ownership(doc);
         conn.execute(
             "UPDATE memories
              SET session_id = NULL,
@@ -488,8 +435,14 @@ fn update_markdown_memory(
                  target_project = ?15,
                  owner_scope = ?16,
                  owner_key = ?17,
-                 context_class = ?18
-             WHERE id = ?19",
+                 topic_domain = ?18,
+                 routing_confidence = ?19,
+                 routing_reason = ?20,
+                 context_class = ?21,
+                 expires_at_epoch = ?22,
+                 valid_from_epoch = ?23,
+                 valid_to_epoch = ?24
+             WHERE id = ?25",
             rusqlite::params![
                 doc.metadata.project,
                 topic_key,
@@ -508,10 +461,17 @@ fn update_markdown_memory(
                 ownership.target_project,
                 ownership.owner_scope,
                 ownership.owner_key,
+                doc.metadata.topic_domain,
+                doc.metadata.routing_confidence,
+                doc.metadata.routing_reason,
                 ownership.context_class,
+                doc.metadata.expires_at_epoch,
+                doc.metadata.valid_from_epoch,
+                doc.metadata.valid_to_epoch,
                 memory_id,
             ],
         )?;
+        update_optional_memory_provenance(conn, memory_id, doc)?;
         refresh_markdown_memory_indexes(
             conn,
             memory_id,
@@ -593,7 +553,7 @@ fn effective_update_epoch(
 fn insert_markdown_memory(
     conn: &Connection,
     doc: &MarkdownMemoryDocument,
-    topic_key: &str,
+    topic_key: Option<&str>,
 ) -> Result<i64> {
     conn.execute_batch("SAVEPOINT remem_import_markdown_memory")?;
     let result = (|| -> Result<i64> {
@@ -603,19 +563,20 @@ fn insert_markdown_memory(
             .unwrap_or(doc.metadata.created_at_epoch);
         let search_context = crate::memory::search_context::build_search_context(
             &doc.metadata.memory_type,
-            Some(topic_key),
+            topic_key,
             &doc.content,
             doc.metadata.files.as_deref(),
         );
-        let ownership =
-            crate::memory::store::default_ownership(&doc.metadata.project, &doc.metadata.scope);
+        let ownership = markdown_ownership(doc);
         conn.execute(
             "INSERT INTO memories
              (session_id, project, topic_key, title, content, memory_type, files, search_context,
               created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
-              source_project, target_project, owner_scope, owner_key, context_class)
+              source_project, target_project, owner_scope, owner_key, topic_domain,
+              routing_confidence, routing_reason, context_class, expires_at_epoch,
+              valid_from_epoch, valid_to_epoch)
              VALUES (NULL, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                     ?14, ?15, ?16, ?17, ?18)",
+                     ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             rusqlite::params![
                 doc.metadata.project,
                 topic_key,
@@ -634,10 +595,17 @@ fn insert_markdown_memory(
                 ownership.target_project,
                 ownership.owner_scope,
                 ownership.owner_key,
+                doc.metadata.topic_domain,
+                doc.metadata.routing_confidence,
+                doc.metadata.routing_reason,
                 ownership.context_class,
+                doc.metadata.expires_at_epoch,
+                doc.metadata.valid_from_epoch,
+                doc.metadata.valid_to_epoch,
             ],
         )?;
         let memory_id = conn.last_insert_rowid();
+        update_optional_memory_provenance(conn, memory_id, doc)?;
         refresh_markdown_memory_indexes(
             conn,
             memory_id,
@@ -670,8 +638,8 @@ fn refresh_markdown_memory_indexes(
     conn: &Connection,
     memory_id: i64,
     doc: &MarkdownMemoryDocument,
-    topic_key: &str,
-    ownership: &crate::memory::store::DefaultOwnership<'_>,
+    topic_key: Option<&str>,
+    ownership: &MarkdownOwnership<'_>,
     updated_at_epoch: i64,
 ) -> Result<()> {
     super::import::refresh_imported_memory_entities(
@@ -683,7 +651,7 @@ fn refresh_markdown_memory_indexes(
     let active_state_key_id = if doc.metadata.status == "active" {
         if let Some(decision) = crate::memory::state_key::derive_state_key(
             &doc.metadata.memory_type,
-            Some(topic_key),
+            topic_key,
             &doc.metadata.title,
             &doc.content,
         ) {
@@ -709,34 +677,10 @@ fn refresh_markdown_memory_indexes(
         updated_at_epoch,
     )?;
     if doc.metadata.memory_type == crate::memory::MemoryType::Lesson.as_str() {
-        insert_default_lesson_metadata(conn, memory_id, updated_at_epoch)?;
+        upsert_markdown_lesson_metadata(conn, memory_id, doc, updated_at_epoch)?;
     }
     crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
     Ok(())
-}
-
-fn insert_default_lesson_metadata(
-    conn: &Connection,
-    memory_id: i64,
-    updated_at_epoch: i64,
-) -> Result<()> {
-    conn.execute(
-        "INSERT OR IGNORE INTO memory_lessons
-         (memory_id, confidence, reinforcement_count, source_evidence,
-          last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
-          success_count, failure_count, recovery_count, correction_count, revert_count)
-         VALUES (?1, 0.7, 1, 'markdown_import', ?2, NULL, 'unknown', 0, 0, 0, 0, 0)",
-        rusqlite::params![memory_id, updated_at_epoch],
-    )?;
-    Ok(())
-}
-
-fn synthesized_markdown_topic_key(path: &Path, title: &str) -> String {
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or(title);
-    format!("markdown-{}", slug_component(stem))
 }
 
 #[cfg(test)]

@@ -413,6 +413,10 @@ pub(crate) fn clear_obsolete_state_key_links(
     now: i64,
 ) -> Result<()> {
     conn.execute(
+        "UPDATE memories SET state_key_id = ?1 WHERE id = ?2",
+        params![active_state_key_id, id],
+    )?;
+    conn.execute(
         "UPDATE memory_state_keys
          SET current_memory_id = NULL, updated_at_epoch = ?3
          WHERE current_memory_id = ?1

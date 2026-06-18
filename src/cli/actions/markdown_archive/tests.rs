@@ -34,6 +34,20 @@ fn sample_metadata(status: &str, scope: &str) -> MarkdownMemoryMetadata {
         status: status.to_string(),
         branch: None,
         scope: scope.to_string(),
+        source_project: None,
+        target_project: None,
+        owner_scope: None,
+        owner_key: None,
+        topic_domain: None,
+        routing_confidence: None,
+        routing_reason: None,
+        context_class: None,
+        expires_at_epoch: None,
+        valid_from_epoch: None,
+        valid_to_epoch: None,
+        evidence_event_ids: None,
+        source_candidate_id: None,
+        lesson: None,
     }
 }
 
@@ -308,6 +322,31 @@ fn markdown_import_update_clears_obsolete_current_state_links() -> Result<()> {
         Some("bugfix")
     );
 
+    doc.metadata.topic_key = None;
+    doc.metadata.memory_type = "session_activity".to_string();
+    doc.metadata.title = "Brief activity".to_string();
+    doc.metadata.updated_at_epoch = 275;
+    doc.content = "Brief.".to_string();
+    std::fs::write(&path, render_markdown_memory(&doc))?;
+    let no_key_update = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(no_key_update.updated, 1);
+    let old_bugfix = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "same-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("bugfix".to_string()),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(old_bugfix.status, "no_current");
+    let stored_state_key_id: Option<i64> = target.query_row(
+        "SELECT state_key_id FROM memories WHERE project = ?1 AND title = 'Brief activity'",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert!(stored_state_key_id.is_none());
+
     doc.metadata.status = "stale".to_string();
     doc.metadata.updated_at_epoch = 300;
     std::fs::write(&path, render_markdown_memory(&doc))?;
@@ -325,6 +364,188 @@ fn markdown_import_update_clears_obsolete_current_state_links() -> Result<()> {
     )?;
     assert_eq!(inactive.status, "no_current");
     assert!(inactive.current.is_none());
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_import_updates_exported_null_topic_memory_by_source_id() -> Result<()> {
+    let project = "/tmp/remem-markdown-null-topic";
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES ('s1', ?1, NULL, 'Null topic decision',
+                 'Original null-topic markdown content.',
+                 'decision', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project')",
+        [project],
+    )?;
+    let export_dir = unique_temp_dir("markdown-export-null-topic");
+    export_markdown_archive(
+        &conn,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: false,
+            limit: 100,
+        },
+    )?;
+    let path = only_markdown_file(&export_dir)?;
+    let raw = std::fs::read_to_string(&path)?;
+    std::fs::write(
+        &path,
+        raw.replace(
+            "Original null-topic markdown content.",
+            "Edited null-topic markdown content.",
+        ),
+    )?;
+
+    let stats = import_markdown_archive(&conn, &export_dir, false)?;
+    assert_eq!(stats.imported, 0);
+    assert_eq!(stats.updated, 1);
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE project = ?1",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    let row: (Option<String>, String) = conn.query_row(
+        "SELECT topic_key, content FROM memories WHERE project = ?1",
+        [project],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert!(row.0.is_none());
+    assert!(row.1.contains("Edited null-topic markdown content"));
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_round_trip_preserves_extended_memory_metadata() -> Result<()> {
+    let project = "/tmp/remem-markdown-metadata";
+    let source = Connection::open_in_memory()?;
+    setup_memory_schema(&source);
+    source.execute_batch(
+        "ALTER TABLE memories ADD COLUMN evidence_event_ids TEXT;
+         ALTER TABLE memories ADD COLUMN source_candidate_id INTEGER;",
+    )?;
+    source.execute("INSERT INTO memory_candidates(id) VALUES (42)", [])?;
+    source.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
+          source_project, target_project, owner_scope, owner_key, topic_domain,
+          routing_confidence, routing_reason, context_class, expires_at_epoch, valid_from_epoch,
+          valid_to_epoch, evidence_event_ids, source_candidate_id)
+         VALUES (7, 's1', ?1, 'lesson-topic', 'Lesson metadata',
+                 'Lesson: preserve extended markdown metadata.',
+                 'lesson', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project',
+                 '/source', '/target', 'workstream', 'ws:1', 'imports',
+                 0.91, 'manual routing', 'task_context', 400, 125, 350, '[11,12]', 42)",
+        [project],
+    )?;
+    source.execute(
+        "INSERT INTO memory_lessons
+         (memory_id, confidence, reinforcement_count, source_evidence,
+          last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
+          success_count, failure_count, recovery_count, correction_count, revert_count)
+         VALUES (7, 0.93, 5, 'reviewed', 210, 500, 'recovery', 1, 2, 3, 4, 5)",
+        [],
+    )?;
+    let export_dir = unique_temp_dir("markdown-export-metadata");
+    export_markdown_archive(
+        &source,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: true,
+            limit: 100,
+        },
+    )?;
+
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    target.execute_batch(
+        "ALTER TABLE memories ADD COLUMN evidence_event_ids TEXT;
+         ALTER TABLE memories ADD COLUMN source_candidate_id INTEGER;",
+    )?;
+    target.execute("INSERT INTO memory_candidates(id) VALUES (42)", [])?;
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 1);
+
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<f64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    ) = target.query_row(
+        "SELECT source_project, target_project, owner_scope, owner_key, topic_domain,
+                routing_confidence, routing_reason, context_class, expires_at_epoch,
+                valid_from_epoch, valid_to_epoch, evidence_event_ids, source_candidate_id
+         FROM memories WHERE topic_key = 'lesson-topic'",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
+                row.get(12)?,
+            ))
+        },
+    )?;
+    assert_eq!(row.0.as_deref(), Some("/source"));
+    assert_eq!(row.1.as_deref(), Some("/target"));
+    assert_eq!(row.2.as_deref(), Some("workstream"));
+    assert_eq!(row.3.as_deref(), Some("ws:1"));
+    assert_eq!(row.4.as_deref(), Some("imports"));
+    assert_eq!(row.5, Some(0.91));
+    assert_eq!(row.6.as_deref(), Some("manual routing"));
+    assert_eq!(row.7.as_deref(), Some("task_context"));
+    assert_eq!(row.8, Some(400));
+    assert_eq!(row.9, Some(125));
+    assert_eq!(row.10, Some(350));
+    assert_eq!(row.11.as_deref(), Some("[11,12]"));
+    assert_eq!(row.12, Some(42));
+
+    let lesson = crate::memory::lesson::get_lesson_metadata(&target, 1)?
+        .expect("lesson metadata should round-trip");
+    assert_eq!(lesson.confidence, 0.93);
+    assert_eq!(lesson.reinforcement_count, 5);
+    assert_eq!(lesson.source_evidence.as_deref(), Some("reviewed"));
+    assert_eq!(lesson.last_reinforced_at_epoch, 210);
+    assert_eq!(lesson.stale_after_epoch, Some(500));
+    assert_eq!(lesson.outcome_kind, "recovery");
+    assert_eq!(lesson.success_count, 1);
+    assert_eq!(lesson.failure_count, 2);
+    assert_eq!(lesson.recovery_count, 3);
+    assert_eq!(lesson.correction_count, 4);
+    assert_eq!(lesson.revert_count, 5);
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;
