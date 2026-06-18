@@ -32,6 +32,7 @@ fn sample_metadata(status: &str, scope: &str) -> MarkdownMemoryMetadata {
         files: None,
         created_at_epoch: 100,
         updated_at_epoch: 200,
+        source_content_hash: None,
         reference_time_epoch: Some(100),
         status: status.to_string(),
         branch: None,
@@ -50,6 +51,7 @@ fn sample_metadata(status: &str, scope: &str) -> MarkdownMemoryMetadata {
         evidence_event_ids: None,
         source_candidate_id: None,
         lesson: None,
+        facts: None,
     }
 }
 
@@ -374,6 +376,12 @@ fn markdown_import_update_clears_obsolete_current_state_links() -> Result<()> {
         Some("bugfix")
     );
 
+    doc.metadata.source_content_hash = Some(super::import_lookup::markdown_source_content_hash(
+        &doc.metadata.title,
+        &doc.content,
+        &doc.metadata.memory_type,
+        doc.metadata.topic_key.as_deref(),
+    ));
     doc.metadata.topic_key = None;
     doc.metadata.memory_type = "session_activity".to_string();
     doc.metadata.title = "Brief activity".to_string();
@@ -500,7 +508,7 @@ fn markdown_round_trip_preserves_extended_memory_metadata() -> Result<()> {
                  'Lesson: preserve extended markdown metadata.',
                  'lesson', NULL, 'old search context',
                  100, 200, 150, 'active', 'main', 'project',
-                 '/source', '/target', 'workstream', 'ws:1', 'imports',
+                 '/source', ?1, 'repo', '/source-owner', 'imports',
                  0.91, 'manual routing', 'task_context', 400, 125, 350, '[11,12]', 42)",
         [project],
     )?;
@@ -572,9 +580,9 @@ fn markdown_round_trip_preserves_extended_memory_metadata() -> Result<()> {
         },
     )?;
     assert_eq!(row.0.as_deref(), Some("/source"));
-    assert_eq!(row.1.as_deref(), Some("/target"));
-    assert_eq!(row.2.as_deref(), Some("workstream"));
-    assert_eq!(row.3.as_deref(), Some("ws:1"));
+    assert_eq!(row.1.as_deref(), Some(project));
+    assert_eq!(row.2.as_deref(), Some("repo"));
+    assert_eq!(row.3.as_deref(), Some("/source-owner"));
     assert_eq!(row.4.as_deref(), Some("imports"));
     assert_eq!(row.5, Some(0.91));
     assert_eq!(row.6.as_deref(), Some("manual routing"));
