@@ -406,7 +406,7 @@ fn update_existing_memory(
     Ok(())
 }
 
-fn clear_obsolete_state_key_links(
+pub(crate) fn clear_obsolete_state_key_links(
     conn: &Connection,
     id: i64,
     active_state_key_id: Option<i64>,

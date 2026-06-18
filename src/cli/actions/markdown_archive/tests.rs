@@ -161,6 +161,17 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
     let first = import_markdown_archive(&target, &export_dir, false)?;
     assert_eq!(first.imported, 1);
     assert_eq!(first.updated, 0);
+    let original_as_of = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "update-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            as_of_epoch: Some(225),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(original_as_of.status, "current");
 
     let path = only_markdown_file(&export_dir)?;
     let raw = std::fs::read_to_string(&path)?;
@@ -187,6 +198,12 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
         |row| row.get(0),
     )?;
     assert!(edited.contains("Edited markdown mirror content"));
+    let updated_at: i64 = target.query_row(
+        "SELECT updated_at_epoch FROM memories WHERE project = ?1 AND topic_key = 'update-topic'",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert!(updated_at > 200, "{updated_at}");
 
     let state = current_state(
         &target,
@@ -202,6 +219,112 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
         .current
         .as_ref()
         .is_some_and(|memory| memory.text.contains("Edited markdown mirror content")));
+    let before_edit = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "update-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            as_of_epoch: Some(225),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(before_edit.status, "no_current");
+    assert!(before_edit.current.is_none());
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_import_update_clears_obsolete_current_state_links() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("markdown-archive-current-state-clear");
+    let project = "/tmp/remem-markdown-current-state-clear";
+    let source = Connection::open_in_memory()?;
+    setup_memory_schema(&source);
+    source.execute(
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES ('s1', ?1, 'same-topic', 'Same topic decision',
+                 'Decision: same-topic starts as a decision memory.',
+                 'decision', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project')",
+        [project],
+    )?;
+    let export_dir = unique_temp_dir("markdown-export-state-clear");
+    export_markdown_archive(
+        &source,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: false,
+            limit: 100,
+        },
+    )?;
+
+    let target = crate::db::open_db()?;
+    let first = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(first.imported, 1);
+
+    let path = only_markdown_file(&export_dir)?;
+    let mut doc = parse_markdown_memory(&std::fs::read_to_string(&path)?)?;
+    doc.metadata.memory_type = "bugfix".to_string();
+    doc.metadata.title = "Same topic bugfix".to_string();
+    doc.metadata.updated_at_epoch = 250;
+    doc.content = "Bugfix: same-topic now describes a bugfix memory.".to_string();
+    std::fs::write(&path, render_markdown_memory(&doc))?;
+    let second = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(second.updated, 1);
+
+    let old_type = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "same-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("decision".to_string()),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(old_type.status, "no_current");
+    assert!(old_type.current.is_none());
+
+    let new_type = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "same-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("bugfix".to_string()),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(new_type.status, "current");
+    assert_eq!(
+        new_type
+            .current
+            .as_ref()
+            .map(|memory| memory.memory_type.as_str()),
+        Some("bugfix")
+    );
+
+    doc.metadata.status = "stale".to_string();
+    doc.metadata.updated_at_epoch = 300;
+    std::fs::write(&path, render_markdown_memory(&doc))?;
+    let third = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(third.updated, 1);
+
+    let inactive = current_state(
+        &target,
+        &CurrentStateRequest {
+            state_key: "same-topic".to_string(),
+            project: Some(project.to_string()),
+            memory_type: Some("bugfix".to_string()),
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(inactive.status, "no_current");
+    assert!(inactive.current.is_none());
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;

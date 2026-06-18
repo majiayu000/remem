@@ -31,6 +31,18 @@ struct MarkdownMemoryDocument {
     content: String,
 }
 
+struct ExistingMarkdownMemory {
+    title: String,
+    content: String,
+    memory_type: String,
+    files: Option<String>,
+    reference_time_epoch: Option<i64>,
+    status: String,
+    branch: Option<String>,
+    scope: String,
+    updated_at_epoch: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::cli) struct MarkdownExportStats {
     pub exported: usize,
@@ -446,6 +458,8 @@ fn update_markdown_memory(
             .metadata
             .reference_time_epoch
             .unwrap_or(doc.metadata.created_at_epoch);
+        let existing = load_existing_markdown_memory(conn, memory_id)?;
+        let updated_at_epoch = effective_update_epoch(&existing, doc, reference_time_epoch);
         let search_context = crate::memory::search_context::build_search_context(
             &doc.metadata.memory_type,
             Some(topic_key),
@@ -485,7 +499,7 @@ fn update_markdown_memory(
                 doc.metadata.files,
                 search_context,
                 doc.metadata.created_at_epoch,
-                doc.metadata.updated_at_epoch,
+                updated_at_epoch,
                 reference_time_epoch,
                 doc.metadata.status,
                 doc.metadata.branch,
@@ -498,7 +512,14 @@ fn update_markdown_memory(
                 memory_id,
             ],
         )?;
-        refresh_markdown_memory_indexes(conn, memory_id, doc, topic_key, &ownership)?;
+        refresh_markdown_memory_indexes(
+            conn,
+            memory_id,
+            doc,
+            topic_key,
+            &ownership,
+            updated_at_epoch,
+        )?;
         Ok(())
     })();
 
@@ -516,6 +537,56 @@ fn update_markdown_memory(
             }
             Err(error)
         }
+    }
+}
+
+fn load_existing_markdown_memory(
+    conn: &Connection,
+    memory_id: i64,
+) -> Result<ExistingMarkdownMemory> {
+    conn.query_row(
+        "SELECT title, content, memory_type, files, reference_time_epoch,
+                status, branch, scope, updated_at_epoch
+         FROM memories
+         WHERE id = ?1",
+        rusqlite::params![memory_id],
+        |row| {
+            Ok(ExistingMarkdownMemory {
+                title: row.get(0)?,
+                content: row.get(1)?,
+                memory_type: row.get(2)?,
+                files: row.get(3)?,
+                reference_time_epoch: row.get(4)?,
+                status: row.get(5)?,
+                branch: row.get(6)?,
+                scope: row.get(7)?,
+                updated_at_epoch: row.get(8)?,
+            })
+        },
+    )
+    .with_context(|| format!("load existing markdown memory id={memory_id}"))
+}
+
+fn effective_update_epoch(
+    existing: &ExistingMarkdownMemory,
+    doc: &MarkdownMemoryDocument,
+    reference_time_epoch: i64,
+) -> i64 {
+    let changed = existing.title != doc.metadata.title
+        || existing.content != doc.content
+        || existing.memory_type != doc.metadata.memory_type
+        || existing.files != doc.metadata.files
+        || existing.reference_time_epoch != Some(reference_time_epoch)
+        || existing.status != doc.metadata.status
+        || existing.branch != doc.metadata.branch
+        || existing.scope != doc.metadata.scope;
+    if changed {
+        chrono::Utc::now()
+            .timestamp()
+            .max(existing.updated_at_epoch.saturating_add(1))
+            .max(doc.metadata.updated_at_epoch)
+    } else {
+        existing.updated_at_epoch
     }
 }
 
@@ -567,7 +638,14 @@ fn insert_markdown_memory(
             ],
         )?;
         let memory_id = conn.last_insert_rowid();
-        refresh_markdown_memory_indexes(conn, memory_id, doc, topic_key, &ownership)?;
+        refresh_markdown_memory_indexes(
+            conn,
+            memory_id,
+            doc,
+            topic_key,
+            &ownership,
+            doc.metadata.updated_at_epoch,
+        )?;
         Ok(memory_id)
     })();
 
@@ -594,6 +672,7 @@ fn refresh_markdown_memory_indexes(
     doc: &MarkdownMemoryDocument,
     topic_key: &str,
     ownership: &crate::memory::store::DefaultOwnership<'_>,
+    updated_at_epoch: i64,
 ) -> Result<()> {
     super::import::refresh_imported_memory_entities(
         conn,
@@ -601,26 +680,36 @@ fn refresh_markdown_memory_indexes(
         &doc.metadata.title,
         &doc.content,
     );
-    if doc.metadata.status == "active" {
+    let active_state_key_id = if doc.metadata.status == "active" {
         if let Some(decision) = crate::memory::state_key::derive_state_key(
             &doc.metadata.memory_type,
             Some(topic_key),
             &doc.metadata.title,
             &doc.content,
         ) {
-            crate::memory::state_key::attach_current_memory(
+            Some(crate::memory::state_key::attach_current_memory(
                 conn,
                 memory_id,
                 ownership.owner_scope,
                 ownership.owner_key,
                 &doc.metadata.memory_type,
                 &decision,
-                doc.metadata.updated_at_epoch,
-            )?;
+                updated_at_epoch,
+            )?)
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
+    crate::memory::store::clear_obsolete_state_key_links(
+        conn,
+        memory_id,
+        active_state_key_id,
+        updated_at_epoch,
+    )?;
     if doc.metadata.memory_type == crate::memory::MemoryType::Lesson.as_str() {
-        insert_default_lesson_metadata(conn, memory_id, doc.metadata.updated_at_epoch)?;
+        insert_default_lesson_metadata(conn, memory_id, updated_at_epoch)?;
     }
     crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
     Ok(())
