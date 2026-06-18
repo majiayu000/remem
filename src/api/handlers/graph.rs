@@ -58,12 +58,15 @@ pub(in crate::api) async fn handle_graph(
     let mut mem_ents: HashMap<i64, Vec<i64>> = HashMap::new();
     if !node_ids.is_empty() {
         let placeholders: Vec<String> = (1..=node_ids.len()).map(|i| format!("?{i}")).collect();
+        let current_filter =
+            crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
         let sql = format!(
             "SELECT entity_id, memory_id FROM (
-                 SELECT entity_id, memory_id,
-                        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY memory_id DESC) AS rn
-                 FROM memory_entities
-                 WHERE entity_id IN ({})
+                 SELECT me.entity_id, me.memory_id,
+                        ROW_NUMBER() OVER (PARTITION BY me.entity_id ORDER BY me.memory_id DESC) AS rn
+                 FROM memory_entities me
+                 JOIN memories m ON m.id = me.memory_id
+                 WHERE me.entity_id IN ({}) AND {current_filter}
              ) WHERE rn <= ?{}",
             placeholders.join(","),
             node_ids.len() + 1,

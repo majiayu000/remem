@@ -427,6 +427,67 @@ async fn list_memories_branch_filter_includes_null_branch() -> anyhow::Result<()
 }
 
 #[tokio::test]
+async fn list_memories_active_status_excludes_expired_rows() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-active-current");
+    let conn = db::open_db()?;
+    let current_id = memory::insert_memory(
+        &conn,
+        Some("session-current-list"),
+        "proj-a",
+        None,
+        "current list row",
+        "current active memory",
+        "decision",
+        None,
+    )?;
+    let expired_id = memory::insert_memory(
+        &conn,
+        Some("session-expired-list"),
+        "proj-a",
+        None,
+        "expired list row",
+        "expired active memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
+        params![expired_id],
+    )?;
+    drop(conn);
+
+    let response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: Some("active".to_string()),
+            branch: None,
+            q: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let ids: Vec<i64> = payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .map(|item| item["id"].as_i64().expect("id should be i64"))
+        .collect();
+    assert!(ids.contains(&current_id));
+    assert!(!ids.contains(&expired_id));
+    assert_eq!(payload["meta"]["total"], 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-candidates-pending-review");
     let conn = db::open_db()?;
@@ -555,6 +616,90 @@ async fn graph_limits_memory_fanout_per_entity() -> anyhow::Result<()> {
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["nodes"][0]["mems"].as_array().unwrap().len(), 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_uses_only_current_memories_for_links() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-current-memories");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES
+          (1, 'left', 'topic', 10, 1),
+          (2, 'right', 'topic', 9, 1)",
+        [],
+    )?;
+    let current_id = memory::insert_memory(
+        &conn,
+        Some("session-current-graph"),
+        "proj-a",
+        None,
+        "current graph row",
+        "current graph memory",
+        "decision",
+        None,
+    )?;
+    let expired_id = memory::insert_memory(
+        &conn,
+        Some("session-expired-graph"),
+        "proj-a",
+        None,
+        "expired graph row",
+        "expired graph memory",
+        "decision",
+        None,
+    )?;
+    let stale_id = memory::insert_memory(
+        &conn,
+        Some("session-stale-graph"),
+        "proj-a",
+        None,
+        "stale graph row",
+        "stale graph memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
+        params![expired_id],
+    )?;
+    conn.execute(
+        "UPDATE memories SET status = 'stale' WHERE id = ?1",
+        params![stale_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+         (?1, 1), (?1, 2),
+         (?2, 1), (?2, 2),
+         (?3, 1)",
+        params![current_id, expired_id, stale_id],
+    )?;
+    drop(conn);
+
+    let response = handle_graph(State(DbState), Query(GraphParams { limit: Some(2) }))
+        .await
+        .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let left_node = payload["nodes"]
+        .as_array()
+        .expect("nodes should be array")
+        .iter()
+        .find(|node| node["id"] == 1)
+        .expect("left node should exist");
+    let left_mems: Vec<i64> = left_node["mems"]
+        .as_array()
+        .expect("mems should be array")
+        .iter()
+        .map(|id| id.as_i64().expect("memory id should be i64"))
+        .collect();
+    assert_eq!(left_mems, vec![current_id]);
+    assert!(!left_mems.contains(&expired_id));
+    assert!(!left_mems.contains(&stale_id));
+    assert_eq!(payload["edges"][0]["w"], 1);
     Ok(())
 }
 

@@ -41,9 +41,16 @@ pub(in crate::api) async fn handle_list_memories(
         idx += 1;
     }
     if let Some(s) = params.status.as_deref().filter(|s| !s.is_empty()) {
-        conditions.push(format!("status = ?{idx}"));
-        binds.push(Box::new(s.to_string()));
-        idx += 1;
+        if s == "active" {
+            conditions.push(format!(
+                "({})",
+                crate::memory::memory_current_filter_sql("status", "expires_at_epoch", false)
+            ));
+        } else {
+            conditions.push(format!("status = ?{idx}"));
+            binds.push(Box::new(s.to_string()));
+            idx += 1;
+        }
     }
     if let Some(b) = params.branch.as_deref().filter(|s| !s.is_empty()) {
         conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
