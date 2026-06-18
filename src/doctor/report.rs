@@ -14,6 +14,7 @@ use super::database::{
     check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
 };
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
+use super::mcp_processes::check_mcp_processes;
 use super::native_memory::check_native_memory_sync;
 use super::runtime_config_check::check_runtime_config;
 use super::schema::{check_key_format, check_schema_migration};
@@ -86,6 +87,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_checks(&mut checks, &mut on_check, check_hooks)?;
     push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;
+    push_check(&mut checks, &mut on_check, check_mcp_processes)?;
     let started = Instant::now();
     let check = check_capture_liveness(shared_db.conn(), &checks)
         .with_duration_ms(duration_ms(started.elapsed()));
