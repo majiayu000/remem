@@ -5,6 +5,8 @@
 ### Added
 - Added current-state queries over `memory_state_keys` for CLI and MCP callers,
   including compact history, conflict, edge-evidence, and as-of-time output.
+- Added human-editable markdown memory export and reindex import, including
+  archived state, temporal facts, and current-state edge metadata.
 
 ### Fixed
 - Fixed current-state as-of history so mutable historical memory rows updated
@@ -12,6 +14,9 @@
 - Fixed graph-candidate review follow-ups so graph extraction only prompts for
   promotable edge types, deferred graph candidates stay visible in status, and
   graph tasks do not wait on memory tasks that already covered their range.
+- Fixed markdown reindex restores so stale source hashes, cross-store
+  provenance ids, older current-state slots, cross-memory fact supersession,
+  and memory-edge remapping do not corrupt restored memory state.
 
 ### Changed
 - Added phase-0 extraction cursor integrity checks, model-provided confidence
