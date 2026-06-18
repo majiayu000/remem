@@ -92,7 +92,79 @@ async fn list_memories_project_filter_uses_repo_ownership_fields() -> anyhow::Re
     assert!(ids.contains(&routed_id));
     assert!(ids.contains(&legacy_id));
     assert!(!ids.contains(&other_id));
+    let routed_item = payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .find(|item| item["id"] == routed_id)
+        .expect("routed item should be returned");
+    assert_eq!(routed_item["project"], "proj-a");
     assert_eq!(payload["meta"]["total"], 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_memories_scope_filter_treats_null_as_project() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-null-scope-project");
+    let conn = db::open_db()?;
+    let legacy_null_scope_id = memory::insert_memory(
+        &conn,
+        Some("session-null-scope"),
+        "proj-a",
+        None,
+        "null scope",
+        "legacy null scope memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET scope = NULL WHERE id = ?1",
+        params![legacy_null_scope_id],
+    )?;
+    let other_id = memory::insert_memory(
+        &conn,
+        Some("session-other-scope"),
+        "proj-a",
+        None,
+        "global scope",
+        "global scope memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET scope = 'global' WHERE id = ?1",
+        params![other_id],
+    )?;
+    drop(conn);
+
+    let response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: Some("project".to_string()),
+            status: None,
+            branch: None,
+            q: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let ids: Vec<i64> = payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .map(|item| item["id"].as_i64().expect("id should be i64"))
+        .collect();
+    assert!(ids.contains(&legacy_null_scope_id));
+    assert!(!ids.contains(&other_id));
+    assert_eq!(payload["meta"]["total"], 1);
     Ok(())
 }
 
@@ -236,14 +308,105 @@ async fn graph_nodes_are_ranked_from_current_memory_links() -> anyhow::Result<()
     )?;
     drop(conn);
 
-    let response = handle_graph(State(DbState), Query(GraphParams { limit: Some(1) }))
-        .await
-        .into_response();
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(1),
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["nodes"][0]["id"], 2);
     assert_eq!(payload["nodes"][0]["mems"], serde_json::json!([current_id]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_project_filter_scopes_nodes_and_memory_links() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-project-scope");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES
+          (1, 'shared', 'topic', 100, 1),
+          (2, 'other-only', 'topic', 99, 1)",
+        [],
+    )?;
+    let project_memory_id = memory::insert_memory(
+        &conn,
+        Some("session-project-graph"),
+        "proj-a",
+        None,
+        "project graph row",
+        "project graph memory",
+        "decision",
+        None,
+    )?;
+    let routed_memory_id = memory::insert_memory(
+        &conn,
+        Some("session-routed-graph"),
+        "source-proj",
+        None,
+        "routed graph row",
+        "routed graph memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET owner_scope = 'repo', owner_key = 'proj-a', target_project = 'proj-a'
+         WHERE id = ?1",
+        params![routed_memory_id],
+    )?;
+    let other_memory_id = memory::insert_memory(
+        &conn,
+        Some("session-other-graph"),
+        "proj-b",
+        None,
+        "other graph row",
+        "other graph memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+         (?1, 1),
+         (?2, 1),
+         (?3, 1),
+         (?3, 2)",
+        params![project_memory_id, routed_memory_id, other_memory_id],
+    )?;
+    drop(conn);
+
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: Some("proj-a".to_string()),
+            limit: Some(10),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let nodes = payload["nodes"].as_array().expect("nodes should be array");
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["id"], 1);
+    let mems: Vec<i64> = nodes[0]["mems"]
+        .as_array()
+        .expect("mems should be array")
+        .iter()
+        .map(|id| id.as_i64().expect("memory id should be i64"))
+        .collect();
+    assert!(mems.contains(&project_memory_id));
+    assert!(mems.contains(&routed_memory_id));
+    assert!(!mems.contains(&other_memory_id));
     Ok(())
 }

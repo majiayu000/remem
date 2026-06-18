@@ -220,6 +220,7 @@ pub(super) struct CandidateItem {
 
 #[derive(Deserialize)]
 pub(super) struct GraphParams {
+    pub project: Option<String>,
     pub limit: Option<i64>,
 }
 

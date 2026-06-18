@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use axum::{
     extract::{Query, State},
@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use rusqlite::{params, types::ToSql};
+use rusqlite::types::ToSql;
 
 use super::super::helpers::{error_response, open_request_db};
 use super::super::types::{DbState, GraphEdgeItem, GraphNodeItem, GraphParams, GraphResponse};
@@ -24,21 +24,37 @@ pub(in crate::api) async fn handle_graph(
         Err(response) => return response,
     };
     let limit = params.limit.unwrap_or(60).clamp(1, 200);
+    let requested_project = params
+        .project
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let nodes: Vec<NodeRow> = match (|| -> anyhow::Result<Vec<NodeRow>> {
-        let current_filter =
-            crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
+        let mut conditions = vec![crate::memory::memory_current_filter_sql(
+            "m.status",
+            "m.expires_at_epoch",
+            false,
+        )];
+        let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+        let mut idx = 1usize;
+        if let Some(project) = requested_project.as_deref() {
+            push_graph_project_filter(project, &mut idx, &mut conditions, &mut binds);
+        }
+        let where_sql = conditions.join(" AND ");
         let sql = format!(
             "SELECT e.id, e.canonical_name, e.entity_type, COUNT(DISTINCT me.memory_id) AS mention_count \
              FROM memory_entities me \
              JOIN memories m ON m.id = me.memory_id \
              JOIN entities e ON e.id = me.entity_id \
-             WHERE {current_filter} \
+             WHERE {where_sql} \
              GROUP BY e.id, e.canonical_name, e.entity_type \
-             ORDER BY mention_count DESC, e.id ASC LIMIT ?1"
+             ORDER BY mention_count DESC, e.id ASC LIMIT ?{idx}"
         );
+        binds.push(Box::new(limit));
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![limit], |row| {
+        let refs = crate::db::to_sql_refs(&binds);
+        let rows = stmt.query_map(refs.as_slice(), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -60,29 +76,40 @@ pub(in crate::api) async fn handle_graph(
         }
     };
 
-    let node_ids: HashSet<i64> = nodes.iter().map(|(id, _, _, _)| *id).collect();
+    let mut node_ids: Vec<i64> = nodes.iter().map(|(id, _, _, _)| *id).collect();
+    node_ids.sort_unstable();
 
     let mut ent_mems: HashMap<i64, Vec<i64>> = HashMap::new();
     let mut mem_ents: HashMap<i64, Vec<i64>> = HashMap::new();
     if !node_ids.is_empty() {
-        let placeholders: Vec<String> = (1..=node_ids.len()).map(|i| format!("?{i}")).collect();
-        let current_filter =
-            crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
+        let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
+        let mut idx = 1usize;
+        let placeholders: Vec<String> = node_ids
+            .iter()
+            .map(|id| {
+                let placeholder = format!("?{idx}");
+                binds.push(Box::new(*id) as Box<dyn ToSql>);
+                idx += 1;
+                placeholder
+            })
+            .collect();
+        let mut conditions = vec![
+            format!("me.entity_id IN ({})", placeholders.join(",")),
+            crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false),
+        ];
+        if let Some(project) = requested_project.as_deref() {
+            push_graph_project_filter(project, &mut idx, &mut conditions, &mut binds);
+        }
+        let where_sql = conditions.join(" AND ");
         let sql = format!(
             "SELECT entity_id, memory_id FROM (
                  SELECT me.entity_id, me.memory_id,
                         ROW_NUMBER() OVER (PARTITION BY me.entity_id ORDER BY me.memory_id DESC) AS rn
                  FROM memory_entities me
                  JOIN memories m ON m.id = me.memory_id
-                 WHERE me.entity_id IN ({}) AND {current_filter}
-             ) WHERE rn <= ?{}",
-            placeholders.join(","),
-            node_ids.len() + 1,
+                 WHERE {where_sql}
+             ) WHERE rn <= ?{idx}",
         );
-        let mut binds: Vec<Box<dyn ToSql>> = node_ids
-            .iter()
-            .map(|id| Box::new(*id) as Box<dyn ToSql>)
-            .collect();
         binds.push(Box::new(GRAPH_MEMORIES_PER_NODE_LIMIT));
         let mut stmt = match conn.prepare(&sql) {
             Ok(s) => s,
@@ -159,4 +186,28 @@ pub(in crate::api) async fn handle_graph(
         edges,
     })
     .into_response()
+}
+
+fn push_graph_project_filter(
+    project: &str,
+    idx: &mut usize,
+    conditions: &mut Vec<String>,
+    binds: &mut Vec<Box<dyn ToSql>>,
+) {
+    let owner_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let target_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    let legacy_idx = *idx;
+    binds.push(Box::new(project.to_string()));
+    *idx += 1;
+    conditions.push(format!(
+        "((m.owner_scope = 'repo' AND m.owner_key = ?{owner_idx}) \
+          OR (m.owner_scope = 'repo' AND m.target_project = ?{target_idx}) \
+          OR (m.owner_scope IS NULL AND m.project = ?{legacy_idx}) \
+          OR m.scope = 'global' \
+          OR (m.owner_scope = 'user' AND m.owner_key = 'user:default'))"
+    ));
 }

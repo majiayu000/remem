@@ -611,9 +611,15 @@ async fn graph_limits_memory_fanout_per_entity() -> anyhow::Result<()> {
     }
     drop(conn);
 
-    let response = handle_graph(State(DbState), Query(GraphParams { limit: Some(1) }))
-        .await
-        .into_response();
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(1),
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
@@ -680,9 +686,15 @@ async fn graph_uses_only_current_memories_for_links() -> anyhow::Result<()> {
     )?;
     drop(conn);
 
-    let response = handle_graph(State(DbState), Query(GraphParams { limit: Some(2) }))
-        .await
-        .into_response();
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(2),
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
