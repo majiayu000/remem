@@ -292,6 +292,8 @@ fn import_markdown_archive(
             Err(error) => return Err(error).with_context(|| format!("import {}", file.display())),
         }
     }
+    fact_metadata::replace_markdown_memory_facts(conn, &imported)
+        .with_context(|| format!("restore markdown memory facts from {}", source.display()))?;
     edge_metadata::replace_markdown_memory_edges(conn, &imported)
         .with_context(|| format!("restore markdown memory edges from {}", source.display()))?;
     Ok(stats)
@@ -311,6 +313,7 @@ fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportedMarkdo
     let metadata_topic_key = normalized_topic_key(doc.metadata.topic_key.as_deref());
     if let Some(existing_id) = import_lookup::runtime_memory_id_by_source(conn, &doc)? {
         update_markdown_memory(conn, existing_id, &doc, metadata_topic_key.as_deref())?;
+        let doc = refresh_markdown_source_hash(path, doc, metadata_topic_key.as_deref())?;
         return Ok(ImportedMarkdownMemory {
             outcome: ImportFileOutcome::Updated,
             memory_id: existing_id,
@@ -321,6 +324,7 @@ fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportedMarkdo
         .unwrap_or_else(|| synthesized_markdown_topic_key(path, &doc.metadata.title));
     if let Some(existing_id) = import_lookup::runtime_memory_id(conn, &doc, &topic_key)? {
         update_markdown_memory(conn, existing_id, &doc, Some(&topic_key))?;
+        let doc = refresh_markdown_source_hash(path, doc, Some(&topic_key))?;
         return Ok(ImportedMarkdownMemory {
             outcome: ImportFileOutcome::Updated,
             memory_id: existing_id,
@@ -328,11 +332,28 @@ fn import_markdown_file(conn: &Connection, path: &Path) -> Result<ImportedMarkdo
         });
     }
     let memory_id = insert_markdown_memory(conn, &doc, Some(&topic_key))?;
+    let doc = refresh_markdown_source_hash(path, doc, Some(&topic_key))?;
     Ok(ImportedMarkdownMemory {
         outcome: ImportFileOutcome::Imported,
         memory_id,
         doc,
     })
+}
+
+fn refresh_markdown_source_hash(
+    path: &Path,
+    mut doc: MarkdownMemoryDocument,
+    topic_key: Option<&str>,
+) -> Result<MarkdownMemoryDocument> {
+    doc.metadata.source_content_hash = Some(import_lookup::markdown_source_content_hash(
+        &doc.metadata.title,
+        &doc.content,
+        &doc.metadata.memory_type,
+        topic_key,
+    ));
+    fs::write(path, render_markdown_memory(&doc))
+        .with_context(|| format!("refresh markdown source hash {}", path.display()))?;
+    Ok(doc)
 }
 
 fn load_export_memories(
@@ -706,7 +727,6 @@ fn refresh_markdown_memory_indexes(
     if doc.metadata.memory_type == crate::memory::MemoryType::Lesson.as_str() {
         upsert_markdown_lesson_metadata(conn, memory_id, doc, updated_at_epoch)?;
     }
-    fact_metadata::replace_markdown_memory_facts(conn, memory_id, doc)?;
     crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
     Ok(())
 }

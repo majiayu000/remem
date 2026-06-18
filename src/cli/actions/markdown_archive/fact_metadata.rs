@@ -1,7 +1,7 @@
-use super::{column_exists, MarkdownMemoryDocument, MarkdownMemoryFactMetadata};
+use super::{column_exists, ImportedMarkdownMemory, MarkdownMemoryFactMetadata};
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension};
-use std::collections::BTreeMap;
+use rusqlite::Connection;
+use std::collections::{BTreeMap, HashSet};
 
 pub(super) fn load_markdown_memory_facts(
     conn: &Connection,
@@ -60,54 +60,98 @@ pub(super) fn load_markdown_memory_facts(
 
 pub(super) fn replace_markdown_memory_facts(
     conn: &Connection,
-    memory_id: i64,
-    doc: &MarkdownMemoryDocument,
+    imported: &[ImportedMarkdownMemory],
 ) -> Result<()> {
-    let Some(facts) = doc.metadata.facts.as_ref() else {
+    let has_fact_metadata = imported
+        .iter()
+        .any(|memory| memory.doc.metadata.facts.is_some());
+    if !has_fact_metadata {
         return Ok(());
-    };
+    }
+    let has_nonempty_facts = imported.iter().any(|memory| {
+        memory
+            .doc
+            .metadata
+            .facts
+            .as_ref()
+            .is_some_and(|facts| !facts.is_empty())
+    });
     if !column_exists(conn, "memory_facts", "source_memory_id")? {
-        if facts.is_empty() {
+        if !has_nonempty_facts {
             return Ok(());
         }
         anyhow::bail!(
             "markdown archive contains memory_facts but target database lacks memory_facts table"
         );
     }
-    conn.execute(
-        "DELETE FROM memory_facts WHERE source_memory_id = ?1",
-        [memory_id],
-    )?;
-    let has_invalidated_at_epoch = column_exists(conn, "memory_facts", "invalidated_at_epoch")?;
-    let mut remapped_ids = BTreeMap::new();
-    for fact in facts {
-        let new_id = insert_markdown_fact(
-            conn,
-            memory_id,
-            fact,
-            has_invalidated_at_epoch,
-            source_observation_id(conn, fact.source_observation_id)?,
-        )?;
-        if let Some(source_id) = fact.source_id {
-            remapped_ids.insert(source_id, new_id);
+
+    conn.execute_batch("SAVEPOINT remem_restore_markdown_facts")?;
+    let result = (|| -> Result<()> {
+        let mut replaced_memory_ids = HashSet::new();
+        for memory in imported
+            .iter()
+            .filter(|memory| memory.doc.metadata.facts.is_some())
+        {
+            if replaced_memory_ids.insert(memory.memory_id) {
+                conn.execute(
+                    "DELETE FROM memory_facts WHERE source_memory_id = ?1",
+                    [memory.memory_id],
+                )?;
+            }
+        }
+
+        let has_invalidated_at_epoch = column_exists(conn, "memory_facts", "invalidated_at_epoch")?;
+        let mut remapped_ids = BTreeMap::new();
+        for memory in imported {
+            let Some(facts) = memory.doc.metadata.facts.as_ref() else {
+                continue;
+            };
+            for fact in facts {
+                let new_id =
+                    insert_markdown_fact(conn, memory.memory_id, fact, has_invalidated_at_epoch)?;
+                if let Some(source_id) = fact.source_id {
+                    remapped_ids.insert(source_id, new_id);
+                }
+            }
+        }
+        for memory in imported {
+            let Some(facts) = memory.doc.metadata.facts.as_ref() else {
+                continue;
+            };
+            for fact in facts {
+                let Some(source_id) = fact.source_id else {
+                    continue;
+                };
+                let Some(new_id) = remapped_ids.get(&source_id).copied() else {
+                    continue;
+                };
+                let supersedes_fact_id = fact
+                    .supersedes_fact_id
+                    .and_then(|old_id| remapped_ids.get(&old_id).copied());
+                conn.execute(
+                    "UPDATE memory_facts SET supersedes_fact_id = ?1 WHERE id = ?2",
+                    rusqlite::params![supersedes_fact_id, new_id],
+                )?;
+            }
+        }
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_restore_markdown_facts")?;
+            Ok(())
+        }
+        Err(error) => {
+            if let Err(rollback_error) = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_restore_markdown_facts; RELEASE SAVEPOINT remem_restore_markdown_facts",
+            ) {
+                return Err(rollback_error)
+                    .context(format!("rollback markdown fact restore after failure: {error}"));
+            }
+            Err(error)
         }
     }
-    for fact in facts {
-        let Some(source_id) = fact.source_id else {
-            continue;
-        };
-        let Some(new_id) = remapped_ids.get(&source_id).copied() else {
-            continue;
-        };
-        let supersedes_fact_id = fact
-            .supersedes_fact_id
-            .and_then(|old_id| remapped_ids.get(&old_id).copied());
-        conn.execute(
-            "UPDATE memory_facts SET supersedes_fact_id = ?1 WHERE id = ?2",
-            rusqlite::params![supersedes_fact_id, new_id],
-        )?;
-    }
-    Ok(())
 }
 
 fn insert_markdown_fact(
@@ -115,10 +159,9 @@ fn insert_markdown_fact(
     memory_id: i64,
     fact: &MarkdownMemoryFactMetadata,
     has_invalidated_at_epoch: bool,
-    source_observation_id: Option<i64>,
 ) -> Result<i64> {
     validate_fact(fact)?;
-    let source_event_ids = serde_json::to_string(&fact.source_event_ids)?;
+    let source_event_ids = serde_json::to_string(&Vec::<i64>::new())?;
     if has_invalidated_at_epoch {
         conn.execute(
             "INSERT INTO memory_facts
@@ -136,7 +179,7 @@ fn insert_markdown_fact(
                 fact.valid_to_epoch,
                 fact.learned_at_epoch,
                 memory_id,
-                source_observation_id,
+                Option::<i64>::None,
                 source_event_ids,
                 fact.confidence,
                 fact.status,
@@ -161,7 +204,7 @@ fn insert_markdown_fact(
                 fact.valid_to_epoch,
                 fact.learned_at_epoch,
                 memory_id,
-                source_observation_id,
+                Option::<i64>::None,
                 source_event_ids,
                 fact.confidence,
                 fact.status,
@@ -214,23 +257,4 @@ fn is_supported_fact_predicate(value: &str) -> bool {
             | "uses_command"
             | "affects_project"
     )
-}
-
-fn source_observation_id(
-    conn: &Connection,
-    source_observation_id: Option<i64>,
-) -> Result<Option<i64>> {
-    let Some(id) = source_observation_id else {
-        return Ok(None);
-    };
-    if !column_exists(conn, "observations", "id")? {
-        return Ok(None);
-    }
-    let exists = conn
-        .query_row("SELECT id FROM observations WHERE id = ?1", [id], |row| {
-            row.get::<_, i64>(0)
-        })
-        .optional()?
-        .is_some();
-    Ok(exists.then_some(id))
 }

@@ -161,6 +161,71 @@ fn markdown_import_source_id_survives_project_and_scope_edits() -> Result<()> {
 }
 
 #[test]
+fn markdown_import_refreshes_source_hash_after_reindex_edits() -> Result<()> {
+    let project = "/tmp/remem-markdown-source-refresh";
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES (7, 'target-session', ?1, 'first-topic', 'First title',
+                 'First source content.',
+                 'decision', NULL, 'old search context',
+                 100, 200, 150, 'active', 'main', 'project')",
+        [project],
+    )?;
+    let export_dir = unique_temp_dir("markdown-source-refresh");
+    export_markdown_archive(
+        &conn,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: false,
+            limit: 100,
+        },
+    )?;
+    let path = only_markdown_file(&export_dir)?;
+
+    let mut first_edit = parse_markdown_memory(&std::fs::read_to_string(&path)?)?;
+    first_edit.metadata.topic_key = Some("second-topic".to_string());
+    first_edit.metadata.title = "Second title".to_string();
+    first_edit.content = "Second source content.".to_string();
+    std::fs::write(&path, render_markdown_memory(&first_edit))?;
+    let first = import_markdown_archive(&conn, &export_dir, false)?;
+    assert_eq!(first.imported, 0);
+    assert_eq!(first.updated, 1);
+
+    let mut second_edit = parse_markdown_memory(&std::fs::read_to_string(&path)?)?;
+    second_edit.metadata.topic_key = Some("third-topic".to_string());
+    second_edit.metadata.title = "Third title".to_string();
+    second_edit.content = "Third source content.".to_string();
+    std::fs::write(&path, render_markdown_memory(&second_edit))?;
+    let second = import_markdown_archive(&conn, &export_dir, false)?;
+    assert_eq!(second.imported, 0);
+    assert_eq!(second.updated, 1);
+    let row: (i64, String, String, String) = conn.query_row(
+        "SELECT COUNT(*), MAX(topic_key), MAX(title), MAX(content)
+         FROM memories WHERE id = 7 OR topic_key IN ('second-topic', 'third-topic')",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        row,
+        (
+            1,
+            "third-topic".to_string(),
+            "Third title".to_string(),
+            "Third source content.".to_string()
+        )
+    );
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
 fn markdown_export_uses_context_visibility_and_current_filter() -> Result<()> {
     let project = "/tmp/remem-markdown-visible";
     let conn = Connection::open_in_memory()?;
@@ -355,11 +420,103 @@ fn markdown_round_trip_preserves_temporal_memory_facts() -> Result<()> {
         .expect("replacement fact");
     assert_eq!(base.1, "fixed_by");
     assert_eq!(base.4, Some(160));
-    assert_eq!(base.5, "[1,2]");
+    assert_eq!(base.5, "[]");
     assert_eq!(replacement.1, "verified_by");
     assert_eq!(replacement.3, Some(base.0));
     assert_ne!(replacement.3, Some(11));
-    assert_eq!(replacement.5, "[3]");
+    assert_eq!(replacement.5, "[]");
+
+    std::fs::remove_dir_all(&export_dir)
+        .with_context(|| format!("remove {}", export_dir.display()))?;
+    Ok(())
+}
+
+#[test]
+fn markdown_round_trip_preserves_cross_memory_fact_supersession() -> Result<()> {
+    let project = "/tmp/remem-markdown-cross-facts";
+    let source = Connection::open_in_memory()?;
+    setup_memory_schema(&source);
+    create_memory_facts_schema(&source)?;
+    for (id, topic, title, content) in [
+        (
+            7_i64,
+            "base-fact-topic",
+            "Base fact memory",
+            "Base fact content.",
+        ),
+        (
+            8_i64,
+            "replacement-fact-topic",
+            "Replacement fact memory",
+            "Replacement fact content.",
+        ),
+    ] {
+        source.execute(
+            "INSERT INTO memories
+             (id, session_id, project, topic_key, title, content, memory_type, files,
+              search_context, created_at_epoch, updated_at_epoch, reference_time_epoch,
+              status, branch, scope)
+             VALUES (?1, 'source-session', ?2, ?3, ?4, ?5, 'decision', NULL,
+                     'old search context', 100, 200, 150, 'active', 'main', 'project')",
+            rusqlite::params![id, project, topic, title, content],
+        )?;
+    }
+    source.execute(
+        "INSERT INTO memory_facts
+         (id, project, subject, predicate, object, learned_at_epoch, source_memory_id,
+          source_event_ids, confidence, supersedes_fact_id, status, created_at_epoch, updated_at_epoch)
+         VALUES (11, ?1, 'deploy', 'fixed_by', 'base-fix', 120, 7,
+                 '[1,2]', 0.8, NULL, 'stale', 120, 140)",
+        [project],
+    )?;
+    source.execute(
+        "INSERT INTO memory_facts
+         (id, project, subject, predicate, object, learned_at_epoch, source_memory_id,
+          source_event_ids, confidence, supersedes_fact_id, status, created_at_epoch, updated_at_epoch)
+         VALUES (12, ?1, 'deploy', 'verified_by', 'replacement-check', 180, 8,
+                 '[3]', 0.9, 11, 'active', 180, 190)",
+        [project],
+    )?;
+
+    let export_dir = unique_temp_dir("markdown-export-cross-facts");
+    export_markdown_archive(
+        &source,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: false,
+            limit: 100,
+        },
+    )?;
+
+    let target = Connection::open_in_memory()?;
+    setup_memory_schema(&target);
+    create_memory_facts_schema(&target)?;
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!(stats.imported, 2);
+    let facts: Vec<(i64, String, Option<i64>, String)> = {
+        let mut stmt = target.prepare(
+            "SELECT id, object, supersedes_fact_id, source_event_ids
+             FROM memory_facts
+             ORDER BY object",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        crate::db::query::collect_rows(rows)?
+    };
+    let base = facts
+        .iter()
+        .find(|fact| fact.1 == "base-fix")
+        .expect("base fact");
+    let replacement = facts
+        .iter()
+        .find(|fact| fact.1 == "replacement-check")
+        .expect("replacement fact");
+    assert_eq!(replacement.2, Some(base.0));
+    assert_ne!(replacement.2, Some(11));
+    assert_eq!(base.3, "[]");
+    assert_eq!(replacement.3, "[]");
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;
