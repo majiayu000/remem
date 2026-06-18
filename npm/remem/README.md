@@ -2,9 +2,9 @@
 
 npm wrapper for the `remem` native binary.
 
-`remem` provides persistent project memory for Claude Code and Codex. The npm
-package downloads the matching prebuilt binary from the GitHub Release during
-installation.
+`remem` provides persistent project memory for Claude Code and OpenAI Codex
+coding-agent sessions. The npm package downloads the matching prebuilt binary
+from the GitHub Release during installation.
 
 ## Install
 
@@ -23,5 +23,5 @@ Environment variables:
 - `REMEM_NPM_SKIP_DOWNLOAD=1`: skip binary download during npm install
 - `REMEM_NPM_BINARY=/path/to/remem`: run an explicit existing binary
 
-See the main project README for Claude Code and Codex setup details:
+See the main project README for Claude Code and OpenAI Codex setup details:
 https://github.com/majiayu000/remem

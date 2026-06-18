@@ -3,20 +3,54 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>remem - Persistent memory for Claude Code and Codex</title>
+    <title>remem - Persistent memory for Claude Code and OpenAI Codex agents</title>
     <meta
       name="description"
-      content="remem is a single Rust binary that captures, distills, and injects persistent project memory across Claude Code and Codex sessions."
+      content="remem is an open-source Rust CLI that captures, distills, and injects persistent project memory for Claude Code and OpenAI Codex coding-agent sessions."
     >
+    <meta name="robots" content="index,follow">
     <meta name="theme-color" content="#111111">
-    <meta property="og:title" content="remem - Persistent memory for Claude Code and Codex">
-    <meta property="og:description" content="Stop re-explaining your project every new coding-agent session.">
+    <link rel="canonical" href="https://majiayu000.github.io/remem/">
+    <meta property="og:title" content="remem - Persistent memory for Claude Code and OpenAI Codex">
+    <meta property="og:description" content="Open-source agent memory for Claude Code, OpenAI Codex, MCP, and long-running engineering work.">
     <meta property="og:type" content="website">
+    <meta property="og:url" content="https://majiayu000.github.io/remem/">
     <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="720">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="remem - Persistent memory for Claude Code and OpenAI Codex">
+    <meta name="twitter:description" content="Open-source Rust CLI memory for coding agents, MCP, Claude Code, and OpenAI Codex.">
+    <meta name="twitter:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="assets/styles.css">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareSourceCode",
+        "name": "remem",
+        "alternateName": "remem-ai",
+        "description": "Persistent project memory for Claude Code and OpenAI Codex coding-agent sessions.",
+        "url": "https://majiayu000.github.io/remem/",
+        "codeRepository": "https://github.com/majiayu000/remem",
+        "programmingLanguage": "Rust",
+        "runtimePlatform": ["macOS", "Linux"],
+        "applicationCategory": "DeveloperApplication",
+        "license": "https://github.com/majiayu000/remem/blob/main/LICENSE",
+        "keywords": [
+          "Claude Code memory",
+          "OpenAI Codex memory",
+          "coding agent memory",
+          "MCP memory",
+          "persistent AI memory"
+        ],
+        "sameAs": [
+          "https://github.com/majiayu000/remem",
+          "https://crates.io/crates/remem-ai",
+          "https://lib.rs/crates/remem-ai"
+        ]
+      }
+    </script>
     <script src="assets/app.js" defer></script>
   </head>
   <body>
@@ -61,12 +95,12 @@
       <section class="hero" id="top">
         <div class="shell hero-grid">
           <div class="hero-copy reveal">
-            <p class="eyebrow" data-i18n="hero_eyebrow">Persistent memory for Claude Code and Codex</p>
+            <p class="eyebrow" data-i18n="hero_eyebrow">Persistent memory for Claude Code and OpenAI Codex</p>
             <h1 data-i18n-html="hero_title">
               Stop re-explaining your project every new session.
             </h1>
             <p class="lead" data-i18n="hero_lead">
-              A single Rust binary that automatically captures, distills, and injects project context across sessions: decisions, patterns, preferences, and learnings.
+              An open-source Rust CLI that automatically captures, distills, and injects project context across Claude Code and OpenAI Codex sessions: decisions, patterns, preferences, and learnings.
             </p>
             <div class="hero-actions">
               <a class="button primary" href="#install">
@@ -171,7 +205,7 @@
               <p data-i18n="flow_3">Queue tool observations without blocking the workflow.</p>
             </div>
             <div class="flow-row">
-              <span>Claude Code / Codex</span>
+              <span>Claude Code / OpenAI Codex</span>
               <strong>Stop</strong>
               <p data-i18n="flow_4">Summarize and promote durable memories in the background.</p>
             </div>
@@ -340,7 +374,7 @@
 
       <section class="section final-cta">
         <div class="shell cta-inner reveal">
-          <h2 data-i18n="cta_title">Give Claude Code and Codex a memory.</h2>
+          <h2 data-i18n="cta_title">Give Claude Code and OpenAI Codex a memory.</h2>
           <p data-i18n="cta_lead">Single binary. Local store. Durable context for long-running engineering work.</p>
           <div class="cta-actions">
             <a class="button primary invert" href="#install" data-i18n="cta_primary">Install remem</a>
@@ -365,7 +399,7 @@
             </span>
             <span>remem</span>
           </a>
-          <p data-i18n="footer_tagline">Persistent memory for Claude Code and Codex.</p>
+          <p data-i18n="footer_tagline">Persistent memory for Claude Code and OpenAI Codex.</p>
         </div>
         <div>
           <h3 data-i18n="footer_product">Product</h3>
