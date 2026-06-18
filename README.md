@@ -242,6 +242,12 @@ Remem is meant for the parts that should not depend on manual upkeep:
   `remem_sessions.md` entry for Claude Code native memory when that directory
   exists, with a `MEMORY.md` pointer and a size guard. Full detail stays in the
   database and is fetched with `remem search`.
+- **A human-editable mirror**: `remem export --markdown --output
+  ./remem-memory --project "$PWD"` writes one `.md` file per curated memory to
+  an empty directory. After editing those files, `remem import markdown --source
+  ./remem-memory` updates existing rows and rebuilds search, entity, embedding,
+  and current-state indexes. Export refuses non-empty directories to avoid
+  overwriting manual edits.
 - **Governance and auditability**: `remem why <id>`, `remem govern --action
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,

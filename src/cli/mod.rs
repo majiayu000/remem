@@ -1,4 +1,5 @@
 mod actions;
+mod archive_types;
 mod config_types;
 mod cwd;
 mod dispatch;

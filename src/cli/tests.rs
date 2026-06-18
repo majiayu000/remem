@@ -1,6 +1,6 @@
 use super::cwd::resolve_cwd_arg;
 use super::types::{
-    Cli, Commands, CommitAction, ContextGateAction, MemoryAction, MemoryCleanupType,
+    Cli, Commands, CommitAction, ContextGateAction, ImportAction, MemoryAction, MemoryCleanupType,
     MemoryGovernanceCliAction, PendingAction, RawAction, RawRole, ReviewAction,
 };
 use clap::{CommandFactory, Parser};
@@ -711,6 +711,54 @@ fn cli_parses_pending_short_aliases() {
             },
         } => assert_eq!(older_than_days, 14),
         _ => panic!("expected pending purge alias"),
+    }
+}
+
+#[test]
+fn cli_parses_markdown_export_and_import_commands() {
+    let export = Cli::parse_from([
+        "remem",
+        "export",
+        "--markdown",
+        "--output",
+        "/tmp/remem-md",
+        "--project",
+        "/repo",
+        "--include-inactive",
+        "--limit",
+        "25",
+    ]);
+    match export.command {
+        Commands::Export(args) => {
+            assert!(args.markdown);
+            assert_eq!(args.output, std::path::PathBuf::from("/tmp/remem-md"));
+            assert_eq!(args.project.as_deref(), Some("/repo"));
+            assert!(args.include_inactive);
+            assert_eq!(args.limit, 25);
+        }
+        _ => panic!("expected export command"),
+    }
+
+    let import = Cli::parse_from([
+        "remem",
+        "import",
+        "markdown",
+        "--source",
+        "/tmp/remem-md",
+        "--best-effort",
+    ]);
+    match import.command {
+        Commands::Import {
+            action:
+                ImportAction::Markdown {
+                    source,
+                    best_effort,
+                },
+        } => {
+            assert_eq!(source, std::path::PathBuf::from("/tmp/remem-md"));
+            assert!(best_effort);
+        }
+        _ => panic!("expected import markdown command"),
     }
 }
 

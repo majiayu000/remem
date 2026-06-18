@@ -317,15 +317,15 @@ pub fn insert_memory_full_with_operation_log(
     })
 }
 
-struct DefaultOwnership<'a> {
-    source_project: &'a str,
-    target_project: Option<&'a str>,
-    owner_scope: &'static str,
-    owner_key: &'a str,
-    context_class: &'static str,
+pub(crate) struct DefaultOwnership<'a> {
+    pub(crate) source_project: &'a str,
+    pub(crate) target_project: Option<&'a str>,
+    pub(crate) owner_scope: &'static str,
+    pub(crate) owner_key: &'a str,
+    pub(crate) context_class: &'static str,
 }
 
-fn default_ownership<'a>(project: &'a str, scope: &str) -> DefaultOwnership<'a> {
+pub(crate) fn default_ownership<'a>(project: &'a str, scope: &str) -> DefaultOwnership<'a> {
     if scope == "global" {
         DefaultOwnership {
             source_project: project,
@@ -406,18 +406,32 @@ fn update_existing_memory(
     Ok(())
 }
 
-fn clear_obsolete_state_key_links(
+pub(crate) fn clear_obsolete_state_key_links(
     conn: &Connection,
     id: i64,
     active_state_key_id: Option<i64>,
     now: i64,
 ) -> Result<()> {
+    update_state_key_links(conn, id, active_state_key_id, active_state_key_id, now)
+}
+
+pub(crate) fn update_state_key_links(
+    conn: &Connection,
+    id: i64,
+    row_state_key_id: Option<i64>,
+    current_state_key_id: Option<i64>,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE memories SET state_key_id = ?1 WHERE id = ?2",
+        params![row_state_key_id, id],
+    )?;
     conn.execute(
         "UPDATE memory_state_keys
          SET current_memory_id = NULL, updated_at_epoch = ?3
          WHERE current_memory_id = ?1
            AND (?2 IS NULL OR id <> ?2)",
-        params![id, active_state_key_id, now],
+        params![id, current_state_key_id, now],
     )?;
     Ok(())
 }
