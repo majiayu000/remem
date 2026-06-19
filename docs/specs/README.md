@@ -22,6 +22,12 @@ For new substantial work, prefer `docs/specs/<id>/PRODUCT.md` and `docs/specs/<i
 3. This index to decide whether an old spec is current, historical, or superseded.
 4. The specific spec only if it matches the files you are changing.
 
+## Current Spec Directories
+
+| Directory | Status | Notes |
+|---|---|---|
+| `issue385-coding-agent-ab/` | Current contract | Product and technical contract for the flagship coding-agent A/B benchmark comparing no-memory, remem, and curated-file conditions. Refs #385. |
+
 ## Top-Level Specs
 
 | File | Status | Notes |
