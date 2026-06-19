@@ -1,6 +1,6 @@
 {
   "name": "@remem-ai/remem",
-  "version": "0.5.98",
+  "version": "0.5.99",
   "description": "Local-first persistent memory for Claude Code and Codex CLI",
   "license": "MIT",
   "homepage": "https://majiayu000.github.io/remem/",
