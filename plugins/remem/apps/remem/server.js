@@ -16,13 +16,17 @@ const {
   pluginRoot
 } = require("../../scripts/remem-runtime");
 const { governancePreviewArgs } = require("./governance");
+const {
+  assertLocalHostAllowed,
+  assertLocalPostAllowed,
+  isLoopbackHost
+} = require("./request-security");
 const { toolDescriptors, UI_RESOURCE } = require("./tools");
 const { callTraceTool, createTraceBackend } = require("./trace");
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5577;
 const JSON_LIMIT_BYTES = 1_000_000;
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 function dataDir(env = process.env) {
   return path.resolve(env.REMEM_DATA_DIR || path.join(os.homedir(), ".remem"));
@@ -87,26 +91,6 @@ function notFound(res) {
 
 function parseUrl(req) {
   return new URL(req.url, "http://remem.local");
-}
-
-function isLoopbackHost(host) {
-  return LOOPBACK_HOSTS.has(String(host || "").toLowerCase());
-}
-
-function assertLocalPostAllowed(req) {
-  const contentType = String(req.headers["content-type"] || "").toLowerCase().split(";")[0].trim();
-  if (contentType !== "application/json") {
-    throw Object.assign(new Error("Local app POST routes require application/json"), { statusCode: 415 });
-  }
-  const site = String(req.headers["sec-fetch-site"] || "").toLowerCase();
-  if (site && site !== "same-origin" && site !== "none") {
-    throw Object.assign(new Error("Cross-site browser requests are not allowed"), { statusCode: 403 });
-  }
-  const origin = String(req.headers.origin || "").toLowerCase();
-  const expected = req.headers.host && `http://${String(req.headers.host).toLowerCase()}`;
-  if (origin && origin !== expected) {
-    throw Object.assign(new Error("Cross-origin browser requests are not allowed"), { statusCode: 403 });
-  }
 }
 
 async function readBody(req) {
@@ -611,9 +595,11 @@ function jsonRpcError(id, error) {
 
 function createServer(options = {}) {
   const backend = options.backend || createBackend(options);
-  const server = http.createServer(async (req, res) => {
+  let server;
+  server = http.createServer(async (req, res) => {
     try {
       const url = parseUrl(req);
+      assertLocalHostAllowed(req, server);
       if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/widget.html")) {
         return textResponse(res, 200, readWidgetHtml(), "text/html; charset=utf-8");
       }
