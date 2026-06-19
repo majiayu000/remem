@@ -28,7 +28,7 @@ pub(super) fn inspect_existing_key_database(
     let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("open existing remem database {}", db_path.display()))?;
     match db::configure_cipher(&conn, Some(&key)) {
-        Ok(true) => return Ok(ExistingKeyDatabaseState::Encrypted),
+        Ok(true) => Ok(ExistingKeyDatabaseState::Encrypted),
         Ok(false) => bail!(
             "SQLCipher key was not applied while validating {}",
             db_path.display()
