@@ -70,14 +70,79 @@ pub(in crate::api) async fn handle_save_memory(
             }),
         )
             .into_response(),
-        Err(err) => {
-            let msg = err.to_string();
-            let status = if msg.contains("outside the allowed directory") {
-                StatusCode::BAD_REQUEST
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
+        Err(err) => map_save_memory_error(err).into_response(),
+    }
+}
+
+fn map_save_memory_error(err: anyhow::Error) -> impl IntoResponse {
+    let msg = err.to_string();
+    if err.is::<service::SaveMemoryValidationError>() {
+        return error_response(StatusCode::BAD_REQUEST, "save_validation_failed", &msg);
+    }
+    if err.is::<service::LocalCopyError>() {
+        return error_response(StatusCode::BAD_REQUEST, "save_local_copy_failed", &msg);
+    }
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, "save_failed", &msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::to_bytes, extract::State, http::StatusCode, response::IntoResponse, Json};
+    use serde_json::Value;
+
+    use crate::api::types::SaveMemoryRequest;
+    use crate::db::test_support::ScopedTestDataDir;
+
+    use super::{handle_save_memory, DbState};
+
+    fn request_with_invalid_shape(
+        memory_type: Option<&str>,
+        scope: Option<&str>,
+    ) -> SaveMemoryRequest {
+        SaveMemoryRequest {
+            text: "valid body".to_string(),
+            title: Some("Invalid shape".to_string()),
+            project: Some("proj".to_string()),
+            session_id: None,
+            host: None,
+            topic_key: None,
+            memory_type: memory_type.map(str::to_string),
+            files: None,
+            scope: scope.map(str::to_string),
+            reference_time_epoch: None,
+            created_at_epoch: None,
+            branch: None,
+            local_path: None,
+            local_copy_enabled: Some(false),
+            claim_enabled: None,
+            claim_source: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn save_memory_validation_errors_return_stable_bad_request() {
+        let _dir = ScopedTestDataDir::new("api-save-validation");
+        for req in [
+            SaveMemoryRequest {
+                text: "   ".to_string(),
+                ..request_with_invalid_shape(Some("decision"), Some("project"))
+            },
+            request_with_invalid_shape(Some("decison"), Some("project")),
+            request_with_invalid_shape(Some("decision"), Some("globla")),
+        ] {
+            let response = handle_save_memory(State(DbState), Json(req))
+                .await
+                .into_response();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = match to_bytes(response.into_body(), usize::MAX).await {
+                Ok(body) => body,
+                Err(err) => panic!("response body should read: {err}"),
             };
-            error_response(status, "save_failed", &msg).into_response()
+            let payload: Value = match serde_json::from_slice(&body) {
+                Ok(payload) => payload,
+                Err(err) => panic!("save response should be valid json: {err}"),
+            };
+            assert_eq!(payload["error"]["code"], "save_validation_failed");
         }
     }
 }

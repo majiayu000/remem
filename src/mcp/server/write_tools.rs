@@ -14,7 +14,7 @@ fn detect_branch_from_cwd() -> Option<String> {
 }
 
 fn map_save_memory_error(tool: &'static str, err: anyhow::Error) -> McpToolError {
-    if err.is::<service::LocalCopyError>() {
+    if err.is::<service::SaveMemoryValidationError>() || err.is::<service::LocalCopyError>() {
         McpToolError::invalid_request(tool, err.to_string())
     } else {
         McpToolError::db_query(tool, err)
@@ -241,5 +241,31 @@ impl MemoryServer {
             crate::timeline::generate_timeline_report(conn, &params.project, full)
                 .map_err(|e| McpToolError::db_query(TOOL, e))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{errors::McpErrorCode, map_save_memory_error, service};
+
+    #[test]
+    fn save_memory_validation_errors_are_invalid_request() {
+        let err = map_save_memory_error(
+            "save_memory",
+            service::SaveMemoryValidationError::new("save_memory text must not be blank").into(),
+        );
+        assert_eq!(err.code(), McpErrorCode::InvalidRequest);
+        let json: Value = match serde_json::from_str(&err.to_string()) {
+            Ok(json) => json,
+            Err(parse_err) => panic!("error should be JSON: {parse_err}"),
+        };
+        assert_eq!(
+            json["error"]["code"],
+            McpErrorCode::InvalidRequest.wire_code()
+        );
+        assert_eq!(json["error"]["tool"], "save_memory");
+        assert_eq!(json["error"]["retryable"], false);
     }
 }
