@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 use super::super::host::HostKind;
 use super::super::invocation::ContextInvocation;
@@ -75,7 +75,7 @@ fn strict_context_pipeline_does_not_retain_context_load_errors() -> anyhow::Resu
 
     generate_context_for_test(invocation, true)?;
 
-    let conn = crate::db::test_support::runtime_connection()?;
+    let conn = Connection::open(data_dir.db_path())?;
     let retained_rows: i64 = conn.query_row(
         "SELECT COUNT(*)
          FROM context_injections
@@ -103,7 +103,7 @@ fn strict_context_pipeline_load_errors_do_not_suppress_existing_gate_row() -> an
 
     generate_context_for_test(invocation.clone(), true)?;
 
-    let conn = crate::db::test_support::runtime_connection()?;
+    let conn = Connection::open(data_dir.db_path())?;
     let (first_suppress_count, first_data_version) =
         gate_row(&conn, "sess-gate-existing-load-error")?;
     assert_eq!(first_suppress_count, 0);
@@ -116,7 +116,7 @@ fn strict_context_pipeline_load_errors_do_not_suppress_existing_gate_row() -> an
 
     generate_context_for_test(invocation, true)?;
 
-    let conn = crate::db::test_support::runtime_connection()?;
+    let conn = Connection::open(data_dir.db_path())?;
     let (second_suppress_count, second_data_version) =
         gate_row(&conn, "sess-gate-existing-load-error")?;
     assert_eq!(
@@ -148,7 +148,7 @@ fn strict_context_pipeline_hybrid_fts_failure_does_not_suppress_existing_gate_ro
     let invocation = strict_invocation(&cwd, &transcript_path, "sess-gate-fts-load-error");
     generate_context_for_test(invocation.clone(), true)?;
 
-    let conn = crate::db::test_support::runtime_connection()?;
+    let conn = Connection::open(data_dir.db_path())?;
     let (first_suppress_count, first_data_version) = gate_row(&conn, "sess-gate-fts-load-error")?;
     assert_eq!(first_suppress_count, 0);
     assert!(first_data_version
@@ -160,7 +160,7 @@ fn strict_context_pipeline_hybrid_fts_failure_does_not_suppress_existing_gate_ro
 
     generate_context_for_test(invocation, true)?;
 
-    let conn = crate::db::test_support::runtime_connection()?;
+    let conn = Connection::open(data_dir.db_path())?;
     let (second_suppress_count, second_data_version) = gate_row(&conn, "sess-gate-fts-load-error")?;
     assert_eq!(
         second_suppress_count, 0,

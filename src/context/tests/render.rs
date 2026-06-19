@@ -576,7 +576,7 @@ fn codex_colored_header_aligns_rows_under_hook_context_value() {
 }
 
 #[test]
-fn render_context_output_exposes_lesson_query_failures() {
+fn render_context_output_exposes_lesson_schema_drift_failures() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-lesson-error");
     let conn = crate::db::test_support::runtime_connection().unwrap();
     conn.execute("DROP TABLE memory_lessons", []).unwrap();
@@ -599,12 +599,16 @@ fn render_context_output_exposes_lesson_query_failures() {
     assert!(rendered.output.contains("## Context Load Errors"));
     assert!(rendered
         .output
-        .contains("- lessons: failed to load lessons for /tmp/remem"));
+        .contains("- database: failed to open remem database"));
+    assert!(rendered
+        .output
+        .contains("database schema drift requires foreground migration"));
+    assert!(rendered.output.contains("v047_lesson_outcome_metadata"));
     assert!(!rendered.output.contains("No previous sessions found."));
 }
 
 #[test]
-fn render_context_output_exposes_primary_memory_query_failures() {
+fn render_context_output_exposes_memory_schema_drift_failures() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-memory-error");
     let conn = crate::db::test_support::runtime_connection().unwrap();
     conn.execute("DROP TABLE memories", []).unwrap();
@@ -627,10 +631,11 @@ fn render_context_output_exposes_primary_memory_query_failures() {
     assert!(rendered.output.contains("## Context Load Errors"));
     assert!(rendered
         .output
-        .contains("- memories: failed to load recent context memories for /tmp/remem"));
+        .contains("- database: failed to open remem database"));
     assert!(rendered
         .output
-        .contains("- memories: failed to retrieve hybrid context memories for /tmp/remem"));
+        .contains("database schema drift requires foreground migration"));
+    assert!(rendered.output.contains("v020_memory_fts_all_status"));
     assert!(!rendered.output.contains("No previous sessions found."));
 }
 

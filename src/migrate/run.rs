@@ -70,6 +70,13 @@ pub(crate) fn ensure_schema_current(conn: &Connection) -> Result<()> {
             missing.name
         ));
     }
+    let invariant_errors = super::validate_schema_invariants(conn)?;
+    if !invariant_errors.is_empty() {
+        return Err(anyhow!(
+            "database schema drift requires foreground migration: {}",
+            invariant_errors.join("; ")
+        ));
+    }
     Ok(())
 }
 
