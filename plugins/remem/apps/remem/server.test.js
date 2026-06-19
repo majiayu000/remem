@@ -2,6 +2,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const http = require("node:http");
 const test = require("node:test");
 
 const {
@@ -226,6 +227,32 @@ async function withServer(fn, backend = fakeBackend()) {
   }
 }
 
+function rawHttpRequest(base, options = {}) {
+  const url = new URL(options.path || "/", base);
+  const body = options.body || "";
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: `${url.pathname}${url.search}`,
+        method: options.method || "GET",
+        headers: options.headers || {}
+      },
+      (res) => {
+        let text = "";
+        res.on("data", (chunk) => {
+          text += chunk.toString();
+        });
+        res.on("end", () => resolve({ status: res.statusCode, body: text }));
+      }
+    );
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
 test("tool descriptors expose the dashboard UI resource", () => {
   const dashboard = toolDescriptors().find((tool) => tool.name === "remem_dashboard");
 
@@ -441,6 +468,58 @@ test("HTTP write routes reject cross-site browser requests", async () => {
   assert.equal(saves, 0);
   assert.equal(previews, 0);
   assert.equal(workstreamUpdates, 0);
+});
+
+test("HTTP API rejects spoofed Host headers before read or write handlers", async () => {
+  const backend = fakeBackend();
+  const originalStatus = backend.status.bind(backend);
+  let statusCalls = 0;
+  backend.status = async () => {
+    statusCalls += 1;
+    return originalStatus();
+  };
+  let saves = 0;
+  backend.save = async () => {
+    saves += 1;
+    return { id: 9 };
+  };
+
+  await withServer(async (base) => {
+    const port = new URL(base).port;
+    const spoofedHost = `attacker.example:${port}`;
+    const read = await rawHttpRequest(base, {
+      path: "/api/status",
+      headers: { host: spoofedHost }
+    });
+    assert.equal(read.status, 403);
+
+    const write = await rawHttpRequest(base, {
+      path: "/api/save",
+      method: "POST",
+      headers: {
+        host: spoofedHost,
+        origin: `http://${spoofedHost}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ text: "poison" })
+    });
+    assert.equal(write.status, 403);
+
+    const wrongPort = await rawHttpRequest(base, {
+      path: "/api/save",
+      method: "POST",
+      headers: {
+        host: `127.0.0.1:${Number(port) + 1}`,
+        origin: `http://127.0.0.1:${Number(port) + 1}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({ text: "poison" })
+    });
+    assert.equal(wrongPort.status, 403);
+  }, backend);
+
+  assert.equal(statusCalls, 0);
+  assert.equal(saves, 0);
 });
 
 test("widget renders raw archive fallback results", async () => {
