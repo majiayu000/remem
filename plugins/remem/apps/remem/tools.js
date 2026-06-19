@@ -60,14 +60,15 @@ function toolDescriptors() {
     {
       name: "remem_get_memory",
       title: "Get Remem Memory",
-      description: "Fetch full details for a selected Remem memory by ID.",
+      description:
+        "Fetch full details for a selected Remem memory by ID and record local access telemetry.",
       inputSchema: {
         type: "object",
         properties: { id: { type: "number" } },
         required: ["id"],
         additionalProperties: false
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
         "openai/widgetAccessible": true

@@ -21,7 +21,7 @@ This app surface provides:
 | --- | --- | --- | --- |
 | Dashboard | `remem_dashboard` | `GET /api/status` | `remem status --json`, `remem doctor --json`, runtime inspection |
 | Search | `remem_search` | `GET /api/search` | local Remem API `GET /api/v1/search`, raw fallback filtered unless explicitly requested |
-| Detail | `remem_get_memory` | `GET /api/memory` | local Remem API `GET /api/v1/memory` |
+| Detail | `remem_get_memory` | `GET /api/memory` | local Remem API `GET /api/v1/memory`; records local access telemetry |
 | Save | `remem_save_memory` | `POST /api/save` | local Remem API `POST /api/v1/memories` |
 | Governance preview | `remem_governance_preview` | `POST /api/governance-preview` | `remem govern --dry-run --json` |
 | Current state | `remem_current_state` | `GET /api/current-state` | `remem current --json` |

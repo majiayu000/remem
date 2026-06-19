@@ -450,6 +450,13 @@ async fn list_memories_fails_when_source_anchor_label_fails() -> anyhow::Result<
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["error"]["code"], "staleness_source_anchor_failed");
+    let conn = db::open_db()?;
+    let access_count: i64 = conn.query_row(
+        "SELECT access_count FROM memories WHERE id = ?1",
+        params![memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(access_count, 0);
     Ok(())
 }
 
