@@ -5,7 +5,9 @@ use std::io::Read;
 use std::path::Path;
 
 use super::admin::{backup_db, default_backup_path};
-use super::encrypt_state::{inspect_existing_key_database, ExistingKeyDatabaseState};
+use super::encrypt_state::{
+    initialize_missing_database_with_key, inspect_existing_key_database, ExistingKeyDatabaseState,
+};
 use crate::cli::types::MemoryGovernanceCliAction;
 use crate::{db, memory};
 
@@ -55,8 +57,8 @@ pub(in crate::cli) fn run_encrypt(rekey_raw: bool) -> Result<()> {
                     key_path.display()
                 );
             }
-            ExistingKeyDatabaseState::Missing => {
-                db::open_db().with_context(|| {
+            ExistingKeyDatabaseState::Missing(key) => {
+                initialize_missing_database_with_key(&db::db_path(), &key).with_context(|| {
                     format!(
                         "initialize encrypted database with existing SQLCipher key {}",
                         key_path.display()
