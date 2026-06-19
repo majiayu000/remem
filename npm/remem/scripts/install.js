@@ -94,12 +94,28 @@ function sha256(file) {
   return hash.digest("hex");
 }
 
+function expectedAssetFile(key) {
+  if (!/^(darwin|linux)-(arm64|x64)$/.test(key)) {
+    throw new Error(`Unsupported release asset platform key: ${key}`);
+  }
+  return `remem-${key}.tar.gz`;
+}
+
+function validateAssetFile(file, key) {
+  const expected = expectedAssetFile(key);
+  if (file !== expected) {
+    throw new Error(`Release manifest asset ${key} has unsafe file name: ${file}`);
+  }
+  return file;
+}
+
 function resolveAsset(manifest, version, key) {
   const release = manifest?.versions?.[version];
   const asset = release?.assets?.[key];
   if (!asset || typeof asset.file !== "string") {
     throw new Error(`Release manifest for remem ${version} is missing asset ${key}`);
   }
+  const file = validateAssetFile(asset.file, key);
   if (!/^[0-9a-f]{64}$/i.test(asset.sha256 || "")) {
     throw new Error(`Release manifest asset ${key} is missing a valid sha256`);
   }
@@ -107,9 +123,9 @@ function resolveAsset(manifest, version, key) {
     ? release.base_url.replace(/\/$/, "")
     : BASE_URL;
   return {
-    file: asset.file,
+    file,
     sha256: asset.sha256.toLowerCase(),
-    url: `${baseUrl}/${asset.file}`,
+    url: `${baseUrl}/${file}`,
   };
 }
 
@@ -135,7 +151,7 @@ async function main() {
     const manifestUrl = `${BASE_URL}/remem-releases.json`;
     const manifest = await fetchJson(manifestUrl);
     const asset = resolveAsset(manifest, VERSION, key);
-    const archive = path.join(tmpDir, asset.file);
+    const archive = path.join(tmpDir, "remem-release.tar.gz");
 
     console.log(`Downloading remem ${VERSION} for ${key}`);
     await download(asset.url, archive);

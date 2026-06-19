@@ -93,6 +93,14 @@ function fixture(options = {}) {
   };
 }
 
+function currentPlatformKey() {
+  if (process.platform === "darwin" && process.arch === "arm64") return "darwin-arm64";
+  if (process.platform === "darwin" && process.arch === "x64") return "darwin-x64";
+  if (process.platform === "linux" && process.arch === "arm64") return "linux-arm64";
+  if (process.platform === "linux" && process.arch === "x64") return "linux-x64";
+  throw new Error(`Unsupported platform: ${process.platform}/${process.arch}`);
+}
+
 test("plugin data prefers explicit override", () => {
   const data = tempDir("remem-plugin-data-");
   assert.equal(pluginDataDir({ pluginData: data }), data);
@@ -189,6 +197,60 @@ test("release asset resolver uses release-hosted manifest when local assets are 
   assert.match(asset.file, /^remem-(darwin|linux)-/);
   assert.equal(asset.sha256, sha);
   assert.match(asset.url, /^https:\/\/example\.test\/remem\/releases\/download\/v0\.5\.17\/remem-/);
+});
+
+test("release asset resolver rejects unsafe manifest file names", async () => {
+  const key = currentPlatformKey();
+  for (const file of [
+    "../remem-linux-x64.tar.gz",
+    "/tmp/remem-linux-x64.tar.gz",
+    "nested/remem-linux-x64.tar.gz",
+    "https://example.test/remem-linux-x64.tar.gz",
+    "remem-windows-x64.tar.gz"
+  ]) {
+    const fx = fixture();
+    writeJson(path.join(fx.pluginRoot, "runtimes", "remem-releases.json"), {
+      versions: {
+        "0.5.17": {
+          assets: {
+            [key]: { file, sha256: "a".repeat(64) }
+          }
+        }
+      }
+    });
+
+    await assert.rejects(() => releaseAssetForCurrentPlatform(fx), /unsafe file name/);
+  }
+});
+
+test("release asset resolver rejects unsafe remote manifest file names", async () => {
+  const key = currentPlatformKey();
+  const fx = fixture();
+  writeJson(path.join(fx.pluginRoot, "runtimes", "remem-releases.json"), {
+    versions: {
+      "0.5.17": {
+        base_url: "https://example.test/remem/releases/download/v0.5.17",
+        assets: {}
+      }
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      releaseAssetForCurrentPlatform({
+        ...fx,
+        fetchJson: async () => ({
+          versions: {
+            "0.5.17": {
+              assets: {
+                [key]: { file: "../remem-linux-x64.tar.gz", sha256: "a".repeat(64) }
+              }
+            }
+          }
+        })
+      }),
+    /unsafe file name/
+  );
 });
 
 test("release download rejects remote manifest assets without valid checksums", async () => {

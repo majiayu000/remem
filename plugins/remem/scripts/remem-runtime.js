@@ -250,6 +250,21 @@ function defaultReleaseBaseUrl(expected) {
   return `https://github.com/majiayu000/remem/releases/download/v${expected}`;
 }
 
+function expectedAssetFile(key) {
+  if (!/^(darwin|linux)-(arm64|x64)$/.test(key)) {
+    throw new Error(`Unsupported release asset platform key: ${key}`);
+  }
+  return `remem-${key}.tar.gz`;
+}
+
+function validateAssetFile(file, key) {
+  const expected = expectedAssetFile(key);
+  if (file !== expected) {
+    throw new Error(`Release manifest asset ${key} has unsafe file name: ${file}`);
+  }
+  return file;
+}
+
 function platformKey() {
   const platform = os.platform();
   const arch = os.arch();
@@ -324,10 +339,12 @@ function releaseAssetFromManifest(manifest, expected, key, fallbackBaseUrl) {
   if (!release) return null;
   const asset = release.assets && release.assets[key];
   if (!asset) return null;
+  const file = validateAssetFile(asset.file, key);
   const baseUrl = release.base_url || fallbackBaseUrl || defaultReleaseBaseUrl(expected);
   return {
     ...asset,
-    url: asset.url || `${baseUrl.replace(/\/$/, "")}/${asset.file}`
+    file,
+    url: asset.url || `${baseUrl.replace(/\/$/, "")}/${file}`
   };
 }
 
@@ -397,7 +414,7 @@ async function downloadRuntime(options = {}) {
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "remem-plugin-"));
-  const archive = path.join(tmpDir, asset.file || "remem.tar.gz");
+  const archive = path.join(tmpDir, "remem-release.tar.gz");
   const extractDir = path.join(tmpDir, "extract");
   try {
     await download(asset.url, archive);

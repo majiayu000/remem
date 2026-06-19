@@ -36,6 +36,50 @@ test("resolveAsset reads checksummed release manifest asset", () => {
   });
 });
 
+test("resolveAsset accepts only platform release archive basenames", () => {
+  for (const key of ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]) {
+    const manifest = {
+      versions: {
+        [VERSION]: {
+          assets: {
+            [key]: {
+              file: `remem-${key}.tar.gz`,
+              sha256: "a".repeat(64),
+            },
+          },
+        },
+      },
+    };
+
+    assert.equal(resolveAsset(manifest, VERSION, key).file, `remem-${key}.tar.gz`);
+  }
+});
+
+test("resolveAsset rejects unsafe manifest file names", () => {
+  for (const file of [
+    "../remem-linux-x64.tar.gz",
+    "/tmp/remem-linux-x64.tar.gz",
+    "nested/remem-linux-x64.tar.gz",
+    "https://example.test/remem-linux-x64.tar.gz",
+    "remem-darwin-x64.tar.gz",
+  ]) {
+    const manifest = {
+      versions: {
+        [VERSION]: {
+          assets: {
+            "linux-x64": {
+              file,
+              sha256: "a".repeat(64),
+            },
+          },
+        },
+      },
+    };
+
+    assert.throws(() => resolveAsset(manifest, VERSION, "linux-x64"), /unsafe file name/);
+  }
+});
+
 test("resolveAsset rejects missing checksums", () => {
   const manifest = {
     versions: {
