@@ -46,7 +46,7 @@ Use specs as contracts only after checking their status in `docs/specs/README.md
   - `Cargo.lock`
   - `plugins/remem/.codex-plugin/plugin.json`
   - `plugins/remem/runtimes/remem-releases.json`
-  - `npm/remem/package.json` when npm wrapper behavior changes
+  - `npm/remem/package.json`
 
 ## Commands
 

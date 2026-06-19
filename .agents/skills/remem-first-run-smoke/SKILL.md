@@ -27,16 +27,20 @@ tmp_data="$(mktemp -d)"
 
 HOME="$tmp_home" REMEM_DATA_DIR="$tmp_data" target/release/remem install --target codex --dry-run
 HOME="$tmp_home" REMEM_DATA_DIR="$tmp_data" target/release/remem install --target codex
-HOME="$tmp_home" REMEM_DATA_DIR="$tmp_data" target/release/remem doctor
 HOME="$tmp_home" REMEM_DATA_DIR="$tmp_data" target/release/remem status
 HOME="$tmp_home" REMEM_DATA_DIR="$tmp_data" target/release/remem context --host codex-cli >/tmp/remem-context.txt
+HOME="$tmp_home" REMEM_DATA_DIR="$tmp_data" target/release/remem doctor || doctor_status=$?
 ```
 
 Expected result:
 
 - install writes only inside the temporary home/data directories
-- doctor and status complete without requiring manual repair
+- status completes without requiring manual repair
 - context exits successfully and writes deterministic, bounded output
+- doctor may exit non-zero before any real SessionStart/Stop heartbeat exists;
+  treat that as expected only when the diagnostic output is limited to the fresh
+  capture-liveness warning. After a synthetic or real hook heartbeat, doctor
+  should pass without that warning.
 
 Remove the temporary directories after inspecting failures.
 
@@ -69,7 +73,7 @@ Run the existing install/runtime tests after smoke commands:
 
 ```bash
 node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js
-cargo test install_status
+cargo test --test install_status
 cargo test install::tests
 ```
 

@@ -17,7 +17,12 @@ Keep these synchronized when the binary version changes:
 - `Cargo.lock`
 - `plugins/remem/.codex-plugin/plugin.json`
 - `plugins/remem/runtimes/remem-releases.json`
-- `npm/remem/package.json` when npm wrapper behavior or package metadata changes
+- `npm/remem/package.json`
+
+`scripts/ci/check_plugin_version_sync.py` requires the Rust package, plugin
+manifest, release manifest, and npm wrapper package versions to match. A binary
+version bump must update the npm package version even when npm wrapper behavior
+is unchanged.
 
 Read these before editing plugin runtime behavior:
 
@@ -37,8 +42,9 @@ Read these before editing plugin runtime behavior:
 4. Update `plugins/remem/.codex-plugin/plugin.json` to the same version.
 5. Update `plugins/remem/runtimes/remem-releases.json` so it contains exactly the
    same version key and a `base_url` ending in `/releases/download/v<version>`.
-6. Update `npm/remem/package.json` only when npm wrapper behavior or package
-   metadata changes.
+6. Update `npm/remem/package.json` to the same version. For npm-only metadata or
+   wrapper behavior changes, update this file without bumping the binary only
+   when `check_plugin_version_sync.py` still passes.
 7. Keep runtime resolution explicit: `REMEM_BINARY` and plugin-managed runtime
    paths are valid; do not silently adopt `remem` from `PATH`.
 
