@@ -33,6 +33,8 @@ pub struct SearchResultSet {
     pub explain: Option<crate::retrieval::search::SearchExplain>,
     /// Raw archive hits attached as fallback when curated memories are sparse.
     pub raw_hits: Vec<crate::memory::raw_archive::RawMessage>,
+    /// Error from the raw archive fallback path. Curated results remain usable.
+    pub raw_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

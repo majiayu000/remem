@@ -99,6 +99,7 @@ pub(in crate::api) async fn handle_search(
                     entities_discovered: meta.entities_discovered,
                 }),
                 raw_hits,
+                raw_hits_error: results.raw_error,
                 explain: results.explain,
             })
             .into_response()
@@ -212,6 +213,28 @@ mod tests {
             explain_json["explain"]["results"][0]["staleness"]["status"],
             "active"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handle_search_exposes_raw_fallback_failure() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("api-search-raw-fallback-error");
+        let conn = crate::db::open_db()?;
+        conn.execute("DROP TABLE raw_messages_fts", [])?;
+        drop(conn);
+
+        let response = handle_search(State(DbState), Query(base_search_params(None)))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let json: Value = serde_json::from_slice(&body)?;
+
+        assert_eq!(json["data"].as_array().map(Vec::len), Some(0));
+        assert_eq!(json.get("raw_hits"), None);
+        assert!(json["raw_hits_error"]
+            .as_str()
+            .is_some_and(|error| error.contains("raw archive fallback failed")));
         Ok(())
     }
 

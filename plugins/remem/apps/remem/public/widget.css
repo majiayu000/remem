@@ -231,6 +231,10 @@ h3 { font-size: 14px; font-weight: 700; }
 }
 .result.raw-result:hover { background: #fff5df; }
 .result.raw-result.active { background: #fff1d1; border-left-color: var(--amber); }
+.result.raw-error {
+  background: #fff7e8;
+  cursor: default;
+}
 .result-title {
   display: flex;
   justify-content: space-between;

@@ -1,4 +1,4 @@
-const state = { snapshot: null, results: [], selected: null };
+const state = { snapshot: null, results: [], rawError: "", selected: null };
 const $ = (id) => document.getElementById(id);
 function cls(value, truthy) {
   value.classList.toggle("hidden", !truthy);
@@ -180,6 +180,7 @@ async function runSearch() {
   $("detail").innerHTML = "";
   const payload = await request(`/api/search?${params.toString()}`);
   state.results = searchResults(payload);
+  state.rawError = payload.raw_hits_error || "";
   $("result-count").textContent = `${state.results.length}`;
   renderResults();
 }
@@ -206,11 +207,20 @@ function searchResults(payload) {
 }
 function renderResults() {
   const results = $("results");
+  const warning = state.rawError ? `
+    <li class="result raw-error">
+      <div class="result-title">
+        <span>Raw archive fallback failed</span>
+        <span class="pill warn">warning</span>
+      </div>
+      <div class="preview">${escapeHtml(state.rawError)}</div>
+    </li>
+  ` : "";
   if (!state.results.length) {
-    results.innerHTML = `<li class="result"><span class="subtle">No memories found</span></li>`;
+    results.innerHTML = warning || `<li class="result"><span class="subtle">No memories found</span></li>`;
     return;
   }
-  results.innerHTML = state.results.map((item) => `
+  results.innerHTML = warning + state.results.map((item) => `
     <li class="result ${item.result_kind === "raw_archive" ? "raw-result" : ""}" data-id="${escapeHtml(item.result_id || item.id)}">
       <div class="result-title">
         <span>${escapeHtml(item.title || `Memory ${item.id}`)}</span>
