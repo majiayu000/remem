@@ -82,7 +82,7 @@ pub(super) fn build_search_request(
 
 pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limit: i64) -> String {
     let mut output = String::new();
-    if results.memories.is_empty() && results.raw_hits.is_empty() {
+    if results.memories.is_empty() && results.raw_hits.is_empty() && results.raw_error.is_none() {
         output.push_str("No curated memories found.\n");
         append_empty_search_guidance(&mut output);
         append_search_explain(&mut output, results.explain.as_ref());
@@ -120,6 +120,7 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
         }
         append_raw_fallback_next_step(&mut output);
     }
+    append_raw_fallback_error(&mut output, results.raw_error.as_deref());
     append_search_explain(&mut output, results.explain.as_ref());
 
     output
@@ -168,6 +169,7 @@ pub(super) fn build_search_json(
                 created_at_epoch: raw.created_at_epoch,
             })
             .collect(),
+        raw_hits_error: results.raw_error.clone(),
         multi_hop: results.multi_hop.as_ref().map(|meta| MultiHopJson {
             hops: meta.hops,
             entities_discovered: meta.entities_discovered.clone(),
@@ -192,6 +194,7 @@ pub(super) struct SearchJson {
     pub next_offset: Option<i64>,
     pub results: Vec<Memory>,
     pub raw_hits: Vec<RawHitJson>,
+    pub raw_hits_error: Option<String>,
     pub multi_hop: Option<MultiHopJson>,
     pub explain_details: Option<SearchExplain>,
 }
@@ -252,6 +255,20 @@ fn append_raw_fallback_next_step(output: &mut String) {
     output.push_str(
         "  use raw hits for recall only; promote durable conclusions with review/save_memory.\n",
     );
+}
+
+fn append_raw_fallback_error(output: &mut String, error: Option<&str>) {
+    let Some(error) = error else {
+        return;
+    };
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output.push('\n');
+    output.push_str("Raw archive fallback error:\n");
+    output.push_str("  ");
+    output.push_str(error);
+    output.push('\n');
 }
 
 fn append_search_explain(output: &mut String, explain: Option<&SearchExplain>) {

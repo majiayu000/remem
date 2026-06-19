@@ -162,6 +162,7 @@ fn cli_search_render_shows_multi_hop_has_more_and_raw_fallback() {
         has_more: true,
         explain: None,
         raw_hits: vec![sample_raw()],
+        raw_error: None,
     };
 
     let output = render_search_results(&result, 10, 5);
@@ -186,6 +187,7 @@ fn cli_search_render_uses_raw_fallback_when_curated_is_empty() {
         has_more: false,
         explain: None,
         raw_hits: vec![sample_raw()],
+        raw_error: None,
     };
 
     let output = render_search_results(&result, 0, 10);
@@ -203,6 +205,7 @@ fn cli_search_render_includes_explain_without_memory_content_dump() {
         has_more: false,
         explain: Some(sample_explain()),
         raw_hits: vec![],
+        raw_error: None,
     };
 
     let output = render_search_results(&result, 0, 10);
@@ -223,6 +226,7 @@ fn cli_search_render_includes_explain_for_empty_results() {
         has_more: false,
         explain: Some(sample_explain()),
         raw_hits: vec![],
+        raw_error: None,
     };
 
     let output = render_search_results(&result, 0, 10);
@@ -301,6 +305,24 @@ fn cli_current_state_render_is_compact_and_shows_conflict_evidence() {
 }
 
 #[test]
+fn cli_search_render_exposes_raw_fallback_error() {
+    let result = SearchResultSet {
+        memories: vec![sample_memory()],
+        multi_hop: None,
+        has_more: false,
+        explain: None,
+        raw_hits: vec![],
+        raw_error: Some("raw archive fallback failed: no such table".to_string()),
+    };
+
+    let output = render_search_results(&result, 0, 10);
+
+    assert!(output.contains("Found 1 result(s):"));
+    assert!(output.contains("Raw archive fallback error:"));
+    assert!(output.contains("no such table"));
+}
+
+#[test]
 fn cli_query_raw_preview_uses_first_line_and_truncates() {
     let raw = sample_raw();
 
@@ -321,6 +343,7 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
         has_more: true,
         explain: Some(sample_explain()),
         raw_hits: vec![sample_raw()],
+        raw_error: Some("raw archive fallback failed: no such table".to_string()),
     };
     let output = build_search_json(
         "needle",
@@ -343,6 +366,10 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["next_offset"], 9);
     assert_eq!(parsed["results"][0]["id"], 1);
     assert_eq!(parsed["raw_hits"][0]["id"], 9);
+    assert_eq!(
+        parsed["raw_hits_error"],
+        "raw archive fallback failed: no such table"
+    );
     assert_eq!(parsed["multi_hop"]["entities_discovered"][0], "Mem0");
     assert_eq!(parsed["explain_details"]["query"], "needle");
     Ok(())

@@ -45,7 +45,7 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
     };
     let has_more = memories.len() as i64 > limit;
     memories.truncate(limit as usize);
-    let raw_hits = maybe_fallback_raw(conn, req, memories.len());
+    let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, memories.len());
     if let Some(explain) = explain.as_mut() {
         let result_ids: Vec<i64> = memories.iter().map(|memory| memory.id).collect();
         explain.retain_result_ids(&result_ids, has_more, limit);
@@ -57,6 +57,7 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
         has_more,
         explain,
         raw_hits,
+        raw_error,
     })
 }
 
@@ -80,7 +81,7 @@ fn multi_hop_search(
         )?;
         let has_more = result.memories.len() as i64 > limit;
         result.memories.truncate(limit as usize);
-        let raw_hits = maybe_fallback_raw(conn, req, result.memories.len());
+        let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, result.memories.len());
         Ok(SearchResultSet {
             memories: result.memories,
             multi_hop: Some(MultiHopMeta {
@@ -90,6 +91,7 @@ fn multi_hop_search(
             has_more,
             explain: None,
             raw_hits,
+            raw_error,
         })
     } else {
         Ok(SearchResultSet {
@@ -101,6 +103,7 @@ fn multi_hop_search(
             has_more: false,
             explain: None,
             raw_hits: vec![],
+            raw_error: None,
         })
     }
 }
@@ -109,9 +112,9 @@ fn maybe_fallback_raw(
     conn: &Connection,
     req: &SearchRequest,
     curated_len: usize,
-) -> Vec<crate::memory::raw_archive::RawMessage> {
+) -> (Vec<crate::memory::raw_archive::RawMessage>, Option<String>) {
     if curated_len >= RAW_FALLBACK_THRESHOLD {
-        return vec![];
+        return (vec![], None);
     }
     let Some(query) = req
         .query
@@ -119,7 +122,7 @@ fn maybe_fallback_raw(
         .map(str::trim)
         .filter(|q| !q.is_empty())
     else {
-        return vec![];
+        return (vec![], None);
     };
     let raw_req = crate::memory::raw_archive::RawSearchRequest {
         query: query.to_string(),
@@ -130,10 +133,11 @@ fn maybe_fallback_raw(
         offset: 0,
     };
     match crate::memory::raw_archive::search_raw_messages(conn, &raw_req) {
-        Ok(hits) => hits,
+        Ok(hits) => (hits, None),
         Err(error) => {
-            crate::log::warn("search", &format!("raw archive fallback failed: {}", error));
-            vec![]
+            let message = format!("raw archive fallback failed: {error}");
+            crate::log::warn("search", &message);
+            (vec![], Some(message))
         }
     }
 }
@@ -144,9 +148,9 @@ mod tests {
     use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
 
     #[test]
-    fn raw_fallback_respects_branch_filter() {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::migrate::run_migrations(&conn).unwrap();
+    fn raw_fallback_respects_branch_filter() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
         insert_raw_message(
             &conn,
             "s-main",
@@ -156,8 +160,7 @@ mod tests {
             SOURCE_HOOK,
             Some("main"),
             None,
-        )
-        .unwrap();
+        )?;
         insert_raw_message(
             &conn,
             "s-feature",
@@ -167,8 +170,7 @@ mod tests {
             SOURCE_HOOK,
             Some("feature"),
             None,
-        )
-        .unwrap();
+        )?;
         insert_raw_message(
             &conn,
             "s-branchless",
@@ -178,8 +180,7 @@ mod tests {
             SOURCE_HOOK,
             None,
             None,
-        )
-        .unwrap();
+        )?;
 
         let result = search_memories(
             &conn,
@@ -190,16 +191,42 @@ mod tests {
                 branch: Some("main".to_string()),
                 ..SearchRequest::default()
             },
-        )
-        .unwrap();
+        )?;
         let branches: Vec<Option<String>> =
             result.raw_hits.into_iter().map(|hit| hit.branch).collect();
 
+        assert!(result.raw_error.is_none());
         assert!(branches.contains(&Some("main".to_string())));
         assert!(branches.contains(&None));
         assert!(
             !branches.contains(&Some("feature".to_string())),
             "{branches:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn raw_fallback_error_is_reported_without_failing_curated_search() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute("DROP TABLE raw_messages_fts", [])?;
+
+        let result = search_memories(
+            &conn,
+            &SearchRequest {
+                query: Some("needle".to_string()),
+                project: Some("/repo".to_string()),
+                limit: 10,
+                ..SearchRequest::default()
+            },
+        )?;
+
+        assert!(result.memories.is_empty());
+        assert!(result.raw_hits.is_empty());
+        assert!(result
+            .raw_error
+            .as_deref()
+            .is_some_and(|error| error.contains("raw archive fallback failed")));
+        Ok(())
     }
 }

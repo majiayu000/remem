@@ -106,6 +106,7 @@ impl MemoryServer {
                 has_more,
                 explain,
                 raw_hits,
+                raw_error,
             } = search_set;
             let staleness_labels = if requested_explain {
                 let now_epoch = chrono::Utc::now().timestamp();
@@ -238,6 +239,9 @@ impl MemoryServer {
                         .to_string(),
                 );
             }
+            if let Some(error) = raw_error {
+                response["raw_hits_error"] = serde_json::Value::String(error);
+            }
             if has_more {
                 response["has_more"] = serde_json::Value::Bool(true);
                 response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
@@ -348,6 +352,27 @@ mod tests {
             explain_json["explain"]["results"][0]["staleness"]["status"],
             "active"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn search_exposes_raw_fallback_failure() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("mcp-search-raw-fallback-error");
+        let conn = crate::db::open_db()?;
+        conn.execute("DROP TABLE raw_messages_fts", [])?;
+        drop(conn);
+
+        let server = MemoryServer::new()?;
+        let response = server
+            .search(Parameters(base_search_params(None)))
+            .map_err(anyhow::Error::msg)?;
+        let json: Value = serde_json::from_str(&response)?;
+
+        assert_eq!(json["results"].as_array().map(Vec::len), Some(0));
+        assert!(json.get("raw_hits").is_none());
+        assert!(json["raw_hits_error"]
+            .as_str()
+            .is_some_and(|error| error.contains("raw archive fallback failed")));
         Ok(())
     }
 

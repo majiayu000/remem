@@ -405,11 +405,14 @@ test("app backend hides raw archive fallback unless explicitly requested", async
         data: [],
         meta: { count: 0 },
         raw_hits: rawHits,
+        raw_hits_error: "raw archive fallback failed",
         raw_hits_note: "raw archive rows"
       })
     }
   });
-  assert.equal((await backend.search({ query: "runtime" })).raw_hits, undefined);
+  const defaultSearch = await backend.search({ query: "runtime" });
+  assert.equal(defaultSearch.raw_hits, undefined);
+  assert.equal(defaultSearch.raw_hits_error, "raw archive fallback failed");
   const rawSearch = await backend.search({ query: "runtime", include_raw_archive: true });
   assert.equal(rawSearch.raw_hits[0].preview, "sensitive raw archive preview");
   assert.ok(calls.every((route) => !route.includes("include_raw_archive")));
@@ -534,10 +537,11 @@ test("widget gates raw archive fallback behind explicit control", async () => {
       fetch(`${base}/widget.html`).then((response) => response.text()),
       fetch(`${base}/widget.js`).then((response) => response.text())
     ]);
-
     assert.match(html, /id="include-raw"/);
     assert.match(widget, /include_raw_archive/);
     assert.match(widget, /\$\("include-raw"\)\.checked/);
+    assert.match(widget, /raw_hits_error/);
+    assert.match(widget, /Raw archive fallback failed/);
     assert.match(widget, /payload\.raw_hits/);
     assert.match(widget, /raw_archive/);
     assert.match(widget, /raw archive/);
@@ -751,7 +755,6 @@ test("buildSnapshot keeps setup details available when status commands fail", as
   backend.doctor = async () => {
     throw new Error("database not found");
   };
-
   const snapshot = await buildSnapshot(backend);
 
   assert.equal(snapshot.status.status, "setup_required");
