@@ -358,11 +358,14 @@ function createBackend(options = {}) {
       }
     },
     async search(params) {
+      const includeRawArchive = rawArchiveRequested(params);
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(params)) {
+        if (key === "include_raw_archive") continue;
         if (value !== undefined && value !== null && value !== "") query.set(key, String(value));
       }
-      return api.request(`/api/v1/search?${query.toString()}`);
+      const result = await api.request(`/api/v1/search?${query.toString()}`);
+      return includeRawArchive ? result : withoutRawArchive(result);
     },
     async memory(id) {
       return api.request(`/api/v1/memory?id=${encodeURIComponent(String(id))}`);
@@ -496,7 +499,8 @@ async function callTool(backend, name, args = {}) {
       limit: args.limit || 10,
       offset: args.offset || 0,
       include_stale: args.include_stale,
-      multi_hop: args.multi_hop
+      multi_hop: args.multi_hop,
+      include_raw_archive: args.include_raw_archive
     });
     return toolResult(`Found ${result.meta?.count ?? 0} memory result(s).`, result);
   }
@@ -530,6 +534,17 @@ function toolResult(text, structuredContent, meta = {}) {
     structuredContent,
     _meta: meta
   };
+}
+
+function rawArchiveRequested(params = {}) {
+  const value = params.include_raw_archive;
+  return value === true || value === "true" || value === "1";
+}
+
+function withoutRawArchive(result) {
+  if (!result || typeof result !== "object") return result;
+  const { raw_hits: _rawHits, raw_hits_note: _rawHitsNote, ...safeResult } = result;
+  return safeResult;
 }
 
 async function handleJsonRpc(backend, message) {

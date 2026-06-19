@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 "use strict";
-
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const test = require("node:test");
-
 const {
   RememApiProxy,
   activationSummary,
   buildSnapshot,
+  createBackend,
   createServer,
   handleJsonRpc,
   packagedHooksSummary,
@@ -19,7 +18,6 @@ const {
 const { governancePreviewArgs } = require("./governance");
 const { createTraceBackend } = require("./trace");
 const pluginManifest = require("../../.codex-plugin/plugin.json");
-
 function fakeBackend() {
   return {
     async runtime() {
@@ -212,7 +210,6 @@ function fakeBackend() {
     stop() {}
   };
 }
-
 async function withServer(fn, backend = fakeBackend()) {
   const server = createServer({ backend });
   await new Promise((resolve, reject) => {
@@ -226,7 +223,6 @@ async function withServer(fn, backend = fakeBackend()) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
-
 function rawHttpRequest(base, options = {}) {
   const url = new URL(options.path || "/", base);
   const body = options.body || "";
@@ -252,17 +248,14 @@ function rawHttpRequest(base, options = {}) {
     req.end();
   });
 }
-
 test("tool descriptors expose the dashboard UI resource", () => {
   const dashboard = toolDescriptors().find((tool) => tool.name === "remem_dashboard");
-
   assert.equal(dashboard._meta.ui.resourceUri, UI_RESOURCE);
   assert.deepEqual(dashboard._meta.ui.visibility, ["model", "app"]);
   assert.equal(dashboard._meta["openai/outputTemplate"], UI_RESOURCE);
   assert.equal(dashboard._meta["openai/widgetAccessible"], true);
   assert.equal(dashboard.annotations.readOnlyHint, true);
 });
-
 test("widget-callable tools are exposed to the app surface", () => {
   for (const name of [
     "remem_dashboard",
@@ -288,6 +281,9 @@ test("widget-callable tools are exposed to the app surface", () => {
     { required: ["anchor"] },
     { required: ["query"] }
   ]);
+  const search = toolDescriptors().find((tool) => tool.name === "remem_search");
+  assert.match(search.description, /include_raw_archive=true/);
+  assert.equal(search.inputSchema.properties.include_raw_archive.type, "boolean");
   const workstreamUpdate = toolDescriptors().find((tool) => tool.name === "remem_workstream_update");
   assert.deepEqual(workstreamUpdate.inputSchema.anyOf, [
     { required: ["status"] },
@@ -295,7 +291,6 @@ test("widget-callable tools are exposed to the app surface", () => {
     { required: ["blockers"] }
   ]);
 });
-
 test("JSON-RPC tools/list and dashboard call return structured content", async () => {
   const tools = await handleJsonRpc(fakeBackend(), {
     id: 1,
@@ -306,17 +301,14 @@ test("JSON-RPC tools/list and dashboard call return structured content", async (
   assert.ok(tools.tools.some((tool) => tool.name === "remem_governance_preview"));
   assert.ok(tools.tools.some((tool) => tool.name === "remem_current_state"));
   assert.ok(tools.tools.some((tool) => tool.name === "remem_commit_lookup"));
-
   const result = await handleJsonRpc(fakeBackend(), {
     id: 2,
     method: "tools/call",
     params: { name: "remem_dashboard", arguments: {} }
   });
-
   assert.equal(result.structuredContent.expected_version, pluginManifest.version);
   assert.equal(result.structuredContent.status.totals.memories, 3);
 });
-
 test("HTTP API serves widget, status, search, memory detail, and save", async () => {
   await withServer(async (base) => {
     const widget = await fetch(`${base}/widget.html`);
@@ -325,7 +317,6 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
     assert.match(widgetHtml, /Remem Dashboard/);
     assert.match(widgetHtml, /href="\/widget\.css"/);
     assert.match(widgetHtml, /src="\/widget\.js"/);
-
     const widgetCss = await fetch(`${base}/widget.css`);
     assert.equal(widgetCss.status, 200);
     assert.match(widgetCss.headers.get("content-type"), /^text\/css/);
@@ -405,7 +396,24 @@ test("HTTP API serves widget, status, search, memory detail, and save", async ()
     assert.equal(workstreamUpdate.updated, true);
   });
 });
-
+test("app backend hides raw archive fallback unless explicitly requested", async () => {
+  const rawHits = [{ id: 41, role: "user", preview: "sensitive raw archive preview" }];
+  const calls = [];
+  const backend = createBackend({
+    api: {
+      request: async (route) => (calls.push(route), {
+        data: [],
+        meta: { count: 0 },
+        raw_hits: rawHits,
+        raw_hits_note: "raw archive rows"
+      })
+    }
+  });
+  assert.equal((await backend.search({ query: "runtime" })).raw_hits, undefined);
+  const rawSearch = await backend.search({ query: "runtime", include_raw_archive: true });
+  assert.equal(rawSearch.raw_hits[0].preview, "sensitive raw archive preview");
+  assert.ok(calls.every((route) => !route.includes("include_raw_archive")));
+});
 test("HTTP write routes reject cross-site browser requests", async () => {
   const backend = fakeBackend();
   let saves = 0;
@@ -469,7 +477,6 @@ test("HTTP write routes reject cross-site browser requests", async () => {
   assert.equal(previews, 0);
   assert.equal(workstreamUpdates, 0);
 });
-
 test("HTTP API rejects spoofed Host headers before read or write handlers", async () => {
   const backend = fakeBackend();
   const originalStatus = backend.status.bind(backend);
@@ -521,17 +528,21 @@ test("HTTP API rejects spoofed Host headers before read or write handlers", asyn
   assert.equal(statusCalls, 0);
   assert.equal(saves, 0);
 });
-
-test("widget renders raw archive fallback results", async () => {
+test("widget gates raw archive fallback behind explicit control", async () => {
   await withServer(async (base) => {
-    const widget = await fetch(`${base}/widget.js`).then((response) => response.text());
+    const [html, widget] = await Promise.all([
+      fetch(`${base}/widget.html`).then((response) => response.text()),
+      fetch(`${base}/widget.js`).then((response) => response.text())
+    ]);
 
+    assert.match(html, /id="include-raw"/);
+    assert.match(widget, /include_raw_archive/);
+    assert.match(widget, /\$\("include-raw"\)\.checked/);
     assert.match(widget, /payload\.raw_hits/);
     assert.match(widget, /raw_archive/);
     assert.match(widget, /raw archive/);
   });
 });
-
 test("widget routes embedded app actions through host tool calls", async () => {
   await withServer(async (base) => {
     const html = await fetch(`${base}/widget.html`).then((response) => response.text());
@@ -556,7 +567,6 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /\/api\/workstream-update/);
   });
 });
-
 test("JSON-RPC trace tools return structured content", async () => {
   const current = await handleJsonRpc(fakeBackend(), {
     id: 1,
@@ -610,7 +620,6 @@ test("JSON-RPC trace tools return structured content", async () => {
   });
   assert.equal(update.structuredContent.updated, true);
 });
-
 test("trace backend builds guarded timeline and workstream CLI args", async () => {
   const calls = [];
   const backend = createTraceBackend(async (args) => {
@@ -669,7 +678,6 @@ test("trace backend builds guarded timeline and workstream CLI args", async () =
     /confirm/
   );
 });
-
 test("governance preview args are always dry-run JSON CLI calls", () => {
   const { args, requested } = governancePreviewArgs({
     action: "delete",
@@ -708,13 +716,11 @@ test("governance preview args are always dry-run JSON CLI calls", () => {
   assert.equal(requested.action, "delete");
   assert.deepEqual(requested.ids, [7, 8]);
 });
-
 test("governance preview rejects unsafe or empty requests before CLI execution", () => {
   assert.throws(() => governancePreviewArgs({ action: "archive", ids: [7] }), /delete, reject, or stale/);
   assert.throws(() => governancePreviewArgs({ action: "stale" }), /requires memory IDs or a selector/);
   assert.throws(() => governancePreviewArgs({ action: "stale", ids: [null] }), /Expected integer/);
 });
-
 test("API proxy clears failed readiness so later requests can retry", async () => {
   const proxy = new RememApiProxy();
   let attempts = 0;
@@ -737,7 +743,6 @@ test("API proxy clears failed readiness so later requests can retry", async () =
   assert.equal(proxy.ready, null);
   assert.equal(proxy.child, null);
 });
-
 test("buildSnapshot keeps setup details available when status commands fail", async () => {
   const backend = fakeBackend();
   backend.status = async () => {
@@ -755,7 +760,6 @@ test("buildSnapshot keeps setup details available when status commands fail", as
   assert.equal(snapshot.doctor.warns, 1);
   assert.equal(snapshot.runtime.selected.version, pluginManifest.version);
 });
-
 test("CLI host binding is restricted to loopback addresses", () => {
   assert.equal(parseArgs(["--host", "127.0.0.1"]).host, "127.0.0.1");
   assert.equal(parseArgs(["--host", "localhost"]).host, "localhost");
@@ -765,7 +769,6 @@ test("CLI host binding is restricted to loopback addresses", () => {
     /loopback address/
   );
 });
-
 test("activation summary is explicit about dry-run content", () => {
   const summary = activationSummary("Would write hooks\nMCP server remem configured\n");
 
@@ -783,7 +786,6 @@ test("activation summary is explicit about dry-run content", () => {
     ]
   );
 });
-
 test("packaged hooks summary reads reviewable plugin hook definitions", () => {
   const summary = packagedHooksSummary();
 

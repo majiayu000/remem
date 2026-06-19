@@ -35,7 +35,7 @@ function toolDescriptors() {
     {
       name: "remem_search",
       title: "Search Remem",
-      description: "Search curated Remem memories and raw archive fallback rows.",
+      description: "Search curated Remem memories. Set include_raw_archive=true to attach raw archive fallback rows.",
       inputSchema: {
         type: "object",
         properties: {
@@ -45,7 +45,8 @@ function toolDescriptors() {
           limit: { type: "number" },
           offset: { type: "number" },
           include_stale: { type: "boolean" },
-          multi_hop: { type: "boolean" }
+          multi_hop: { type: "boolean" },
+          include_raw_archive: { type: "boolean" }
         },
         required: ["query"],
         additionalProperties: false

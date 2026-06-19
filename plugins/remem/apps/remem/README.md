@@ -6,7 +6,7 @@ This app surface provides:
 
 - runtime status: expected version, schema version, selected binary, plugin data path
 - project memory dashboard: memory, observation, raw archive, and queue counts
-- search: compact results with detail drill-down
+- search: compact results with detail drill-down, with raw archive fallback only after explicit opt-in
 - save memory: explicit decision, bugfix, architecture, discovery, or preference save
 - governance: stale, reject, or delete dry-run preview with affected IDs and status transitions
 - current-state resolution: stable state keys with current/conflict/history metadata
@@ -20,7 +20,7 @@ This app surface provides:
 | Surface | App tool | HTTP route | Remem backend |
 | --- | --- | --- | --- |
 | Dashboard | `remem_dashboard` | `GET /api/status` | `remem status --json`, `remem doctor --json`, runtime inspection |
-| Search | `remem_search` | `GET /api/search` | local Remem API `GET /api/v1/search` |
+| Search | `remem_search` | `GET /api/search` | local Remem API `GET /api/v1/search`, raw fallback filtered unless explicitly requested |
 | Detail | `remem_get_memory` | `GET /api/memory` | local Remem API `GET /api/v1/memory` |
 | Save | `remem_save_memory` | `POST /api/save` | local Remem API `POST /api/v1/memories` |
 | Governance preview | `remem_governance_preview` | `POST /api/governance-preview` | `remem govern --dry-run --json` |
