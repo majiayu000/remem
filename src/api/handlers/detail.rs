@@ -8,7 +8,9 @@ use rusqlite::params;
 
 use crate::memory;
 
-use super::super::helpers::{error_response, memory_to_item_with_conn, open_request_db};
+use super::super::helpers::{
+    error_response, memory_to_item_with_conn, open_request_db, staleness_error_response,
+};
 use super::super::types::{DbState, MemoryDetailResponse, MemoryEdgeItem};
 
 pub(in crate::api) async fn handle_memory_detail(
@@ -96,8 +98,13 @@ pub(in crate::api) async fn handle_memory_detail(
         }
     };
 
+    let memory = match memory_to_item_with_conn(&conn, &mem) {
+        Ok(item) => item,
+        Err(err) => return staleness_error_response(&err).into_response(),
+    };
+
     Json(MemoryDetailResponse {
-        memory: memory_to_item_with_conn(&conn, &mem),
+        memory,
         entities,
         edges,
     })

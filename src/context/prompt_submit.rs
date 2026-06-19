@@ -198,23 +198,23 @@ fn prompt_submit_staleness_labels(
         memories,
         now_epoch,
         |id, error| {
-            crate::log::warn(
+            crate::log::error(
                 "context",
-                &format!("prompt-submit source-anchor label fallback for memory {id}: {error}"),
+                &format!("prompt-submit source-anchor label failed for memory {id}: {error}"),
             );
         },
     )
     .unwrap_or_else(|error| {
-        crate::log::warn(
+        crate::log::error(
             "context",
-            &format!("prompt-submit staleness batch fallback: {error}"),
+            &format!("prompt-submit staleness batch failed: {error}"),
         );
         memories
             .iter()
             .map(|memory| {
                 (
                     memory.id,
-                    crate::memory::memory_staleness_label(memory, now_epoch),
+                    crate::memory::memory_staleness_error_label(memory, now_epoch, &error),
                 )
             })
             .collect()
@@ -399,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_submit_falls_back_when_source_anchor_label_fails() -> Result<()> {
+    fn prompt_submit_marks_source_anchor_label_failures_as_errors() -> Result<()> {
         let conn = setup_prompt_submit_conn()?;
         let project = "/tmp/remem-prompt-submit-staleness-fallback";
         let memory_id = insert_prompt_submit_memory(
@@ -424,7 +424,7 @@ mod tests {
         .ok_or_else(|| anyhow::anyhow!("prompt should still inject context"))?;
 
         assert!(output.contains("SQLCipher storage decision"), "{output}");
-        assert!(output.contains("source_anchor=untracked"), "{output}");
+        assert!(output.contains("source_anchor=error"), "{output}");
         Ok(())
     }
 

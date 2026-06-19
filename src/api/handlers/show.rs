@@ -7,7 +7,9 @@ use axum::{
 
 use crate::memory;
 
-use super::super::helpers::{error_response, memory_to_item_with_conn, open_request_db};
+use super::super::helpers::{
+    error_response, memory_to_item_with_conn, open_request_db, staleness_error_response,
+};
 use super::super::types::{DbState, ShowParams};
 
 pub(in crate::api) async fn handle_get_memory(
@@ -21,7 +23,10 @@ pub(in crate::api) async fn handle_get_memory(
 
     match memory::get_memories_by_ids(&conn, &[params.id], None) {
         Ok(results) if !results.is_empty() => {
-            let item = memory_to_item_with_conn(&conn, &results[0]);
+            let item = match memory_to_item_with_conn(&conn, &results[0]) {
+                Ok(item) => item,
+                Err(err) => return staleness_error_response(&err).into_response(),
+            };
             if let Err(err) = memory::mark_memories_accessed(&conn, &[params.id]) {
                 return error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,

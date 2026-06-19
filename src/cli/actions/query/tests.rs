@@ -99,6 +99,7 @@ fn sample_explain() -> SearchExplain {
                 age: "fresh",
                 source_anchor: "untracked".to_string(),
                 label: "status=active; staleness=fresh; source_anchor=untracked".to_string(),
+                error: None,
             },
             contributions: vec![ChannelContribution {
                 channel: "fts".to_string(),

@@ -10,6 +10,11 @@ use path::{file_path_overlaps, parse_file_list, parse_json_file_array};
 
 mod capabilities;
 mod path;
+mod util;
+
+use util::{
+    non_empty_trimmed, parse_evidence_event_ids, placeholders, push_unique, push_unique_i64,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MemoryStalenessLabel {
@@ -17,6 +22,8 @@ pub struct MemoryStalenessLabel {
     pub age: &'static str,
     pub source_anchor: String,
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +68,18 @@ pub fn memory_staleness_label_for_anchor(
             "status={}; staleness={age}; source_anchor={source_anchor}",
             memory.status
         ),
+        error: None,
     }
+}
+
+pub fn memory_staleness_error_label(
+    memory: &Memory,
+    now_epoch: i64,
+    error: impl std::fmt::Display,
+) -> MemoryStalenessLabel {
+    let mut label = memory_staleness_label_for_anchor(memory, now_epoch, "error");
+    label.error = Some(error.to_string());
+    label
 }
 
 pub fn memory_staleness_label_with_conn(
@@ -108,7 +126,19 @@ pub(crate) fn memory_staleness_labels_for_memories_lossy(
         return Ok(HashMap::new());
     }
     let mut labels = HashMap::new();
-    let capabilities = StalenessCapabilities::load(conn)?;
+    let capabilities = match StalenessCapabilities::load(conn) {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            for memory in memories {
+                on_error(memory.id, &error);
+                labels.insert(
+                    memory.id,
+                    memory_staleness_error_label(memory, now_epoch, &error),
+                );
+            }
+            return Ok(labels);
+        }
+    };
     for memory in memories {
         let label = match source_anchor_for_memory(conn, memory, &capabilities) {
             Ok(source_anchor) => {
@@ -116,7 +146,7 @@ pub(crate) fn memory_staleness_labels_for_memories_lossy(
             }
             Err(error) => {
                 on_error(memory.id, &error);
-                memory_staleness_label(memory, now_epoch)
+                memory_staleness_error_label(memory, now_epoch, &error)
             }
         };
         labels.insert(memory.id, label);
@@ -757,41 +787,6 @@ fn merge_file_epochs_max(target: &mut HashMap<String, i64>, source: HashMap<Stri
             .entry(file)
             .and_modify(|existing| *existing = (*existing).max(epoch))
             .or_insert(epoch);
-    }
-}
-
-fn parse_evidence_event_ids(raw: Option<&str>, context: &str) -> Result<Vec<i64>> {
-    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(Vec::new());
-    };
-    let mut ids = serde_json::from_str::<Vec<i64>>(raw)
-        .with_context(|| format!("parse {context} for source-anchor staleness"))?;
-    ids.retain(|id| *id > 0);
-    ids.sort_unstable();
-    ids.dedup();
-    Ok(ids)
-}
-
-fn placeholders(start: usize, count: usize) -> String {
-    (start..start + count)
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn push_unique(values: &mut Vec<String>, value: String) {
-    if !values.iter().any(|existing| existing == &value) {
-        values.push(value);
-    }
-}
-
-fn push_unique_i64(values: &mut Vec<i64>, value: i64) {
-    if !values.contains(&value) {
-        values.push(value);
     }
 }
 

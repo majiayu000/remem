@@ -292,7 +292,7 @@ pub(super) fn search_with_query_explain(
         &gated_fused,
         fused.len().saturating_sub(gated_fused.len()),
         &paged,
-    );
+    )?;
     push_elapsed(&mut plan.timings, "build_explain", explain_start);
     log_search_timing(query_text, project, limit, offset, &plan);
     Ok(QuerySearchWithExplain {
@@ -546,7 +546,7 @@ fn build_explain(
     fused: &[(i64, f64)],
     filtered_result_count: usize,
     paged: &[Memory],
-) -> SearchExplain {
+) -> Result<SearchExplain> {
     let channels = plan
         .channels
         .iter()
@@ -568,27 +568,8 @@ fn build_explain(
         .collect();
     let id_to_score: HashMap<i64, f64> = fused.iter().copied().collect();
     let now_epoch = chrono::Utc::now().timestamp();
-    let staleness_labels = memory::staleness::memory_staleness_labels_for_memories_lossy(
-        conn,
-        paged,
-        now_epoch,
-        |id, error| {
-            crate::log::warn(
-                "retrieval",
-                &format!("search explain source-anchor label fallback for memory {id}: {error}"),
-            );
-        },
-    )
-    .unwrap_or_else(|error| {
-        crate::log::warn(
-            "retrieval",
-            &format!("search explain source-anchor batch fallback: {error}"),
-        );
-        paged
-            .iter()
-            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
-            .collect()
-    });
+    let staleness_labels =
+        memory::staleness::memory_staleness_labels_for_memories(conn, paged, now_epoch)?;
     let results = paged
         .iter()
         .enumerate()
@@ -607,7 +588,7 @@ fn build_explain(
             contributions: contributions_for(memory.id, plan),
         })
         .collect();
-    SearchExplain {
+    Ok(SearchExplain {
         query: query_text.to_string(),
         project: project.map(str::to_string),
         memory_type: memory_type.map(str::to_string),
@@ -630,7 +611,7 @@ fn build_explain(
         results,
         has_more: false,
         raw_fallback_count: 0,
-    }
+    })
 }
 
 fn log_search_timing(

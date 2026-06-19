@@ -104,7 +104,7 @@ pub(super) fn load_context_data_with_policy(
         .chain(lessons.iter().map(|lesson| &lesson.memory))
         .cloned()
         .collect::<Vec<_>>();
-    let staleness_labels = load_staleness_labels(conn, &staleness_memories);
+    let staleness_labels = load_staleness_labels(conn, &staleness_memories, &mut errors);
 
     LoadedContext {
         memories,
@@ -123,6 +123,7 @@ pub(super) fn load_context_data_with_policy(
 fn load_staleness_labels(
     conn: &Connection,
     memories: &[Memory],
+    errors: &mut Vec<ContextLoadError>,
 ) -> std::collections::HashMap<i64, memory::MemoryStalenessLabel> {
     let now_epoch = chrono::Utc::now().timestamp();
     memory::staleness::memory_staleness_labels_for_memories_lossy(
@@ -130,20 +131,23 @@ fn load_staleness_labels(
         memories,
         now_epoch,
         |id, error| {
-            crate::log::warn(
-                "context",
-                &format!("source-anchor staleness label fallback for memory {id}: {error}"),
-            );
+            let message = format!("source-anchor staleness label failed for memory {id}: {error}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("staleness", message));
         },
     )
     .unwrap_or_else(|error| {
-        crate::log::warn(
-            "context",
-            &format!("source-anchor staleness batch fallback: {error}"),
-        );
+        let message = format!("source-anchor staleness batch failed: {error}");
+        crate::log::error("context", &message);
+        errors.push(ContextLoadError::new("staleness", message));
         memories
             .iter()
-            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
+            .map(|memory| {
+                (
+                    memory.id,
+                    memory::memory_staleness_error_label(memory, now_epoch, &error),
+                )
+            })
             .collect()
     })
 }

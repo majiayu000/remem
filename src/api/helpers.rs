@@ -11,48 +11,20 @@ use super::types::{ErrorDetail, ErrorResponse, MemoryItem};
 pub(super) fn memory_to_item_with_conn(
     conn: &rusqlite::Connection,
     memory: &memory::Memory,
-) -> MemoryItem {
+) -> anyhow::Result<MemoryItem> {
     let now_epoch = chrono::Utc::now().timestamp();
-    let staleness = match memory::memory_staleness_label_with_conn(conn, memory, now_epoch) {
-        Ok(label) => label,
-        Err(err) => {
-            crate::log::warn(
-                "api",
-                &format!(
-                    "memory {} staleness source-anchor lookup failed: {}",
-                    memory.id, err
-                ),
-            );
-            memory::memory_staleness_label(memory, now_epoch)
-        }
-    };
-    memory_to_item_with_staleness(memory, staleness)
+    let staleness = memory::memory_staleness_label_with_conn(conn, memory, now_epoch)?;
+    Ok(memory_to_item_with_staleness(memory, staleness))
 }
 
 pub(super) fn memories_to_items_with_conn(
     conn: &rusqlite::Connection,
     memories: &[memory::Memory],
-) -> Vec<MemoryItem> {
+) -> anyhow::Result<Vec<MemoryItem>> {
     let now_epoch = chrono::Utc::now().timestamp();
-    let staleness_labels = memory::staleness::memory_staleness_labels_for_memories_lossy(
-        conn,
-        memories,
-        now_epoch,
-        |id, error| {
-            crate::log::warn(
-                "api",
-                &format!("memory {id} staleness source-anchor lookup failed: {error}"),
-            );
-        },
-    )
-    .unwrap_or_else(|error| {
-        crate::log::warn("api", &format!("staleness batch fallback: {error}"));
-        memories
-            .iter()
-            .map(|memory| (memory.id, memory::memory_staleness_label(memory, now_epoch)))
-            .collect()
-    });
-    memories
+    let staleness_labels =
+        memory::staleness::memory_staleness_labels_for_memories(conn, memories, now_epoch)?;
+    Ok(memories
         .iter()
         .map(|memory| {
             let staleness = staleness_labels
@@ -61,7 +33,7 @@ pub(super) fn memories_to_items_with_conn(
                 .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch));
             memory_to_item_with_staleness(memory, staleness)
         })
-        .collect()
+        .collect())
 }
 
 fn memory_to_item_with_staleness(
@@ -93,6 +65,14 @@ pub(super) fn error_response(status: StatusCode, code: &str, message: &str) -> i
                 message: message.to_string(),
             },
         }),
+    )
+}
+
+pub(super) fn staleness_error_response(err: &anyhow::Error) -> impl IntoResponse {
+    error_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "staleness_source_anchor_failed",
+        &err.to_string(),
     )
 }
 

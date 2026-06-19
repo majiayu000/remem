@@ -110,34 +110,18 @@ impl MemoryServer {
             } = search_set;
             let staleness_labels = if requested_explain {
                 let now_epoch = chrono::Utc::now().timestamp();
-                crate::memory::staleness::memory_staleness_labels_for_memories_lossy(
+                crate::memory::staleness::memory_staleness_labels_for_memories(
                     conn,
                     &memories,
                     now_epoch,
-                    |id, error| {
-                        crate::log::warn(
-                            "mcp",
-                            &format!(
-                                "memory {id} staleness source-anchor lookup failed: {error}"
-                            ),
-                        );
-                    },
                 )
-                .unwrap_or_else(|error| {
-                    crate::log::warn(
+                .map_err(|error| {
+                    crate::log::error(
                         "mcp",
-                        &format!("search staleness batch fallback: {error}"),
+                        &format!("search staleness source-anchor lookup failed: {error}"),
                     );
-                    memories
-                        .iter()
-                        .map(|memory| {
-                            (
-                                memory.id,
-                                crate::memory::memory_staleness_label(memory, now_epoch),
-                            )
-                        })
-                        .collect()
-                })
+                    McpToolError::db_query(TOOL, error)
+                })?
             } else {
                 std::collections::HashMap::new()
             };
@@ -351,6 +335,38 @@ mod tests {
         assert_eq!(
             explain_json["explain"]["results"][0]["staleness"]["status"],
             "active"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn search_explain_fails_when_source_anchor_label_fails() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("mcp-search-staleness-source-error");
+        let conn = crate::db::open_db()?;
+        let memory_id = memory::insert_memory(
+            &conn,
+            Some("session-bad-staleness"),
+            "/repo",
+            None,
+            "Aurora bad staleness",
+            "The aurora bad source-anchor fixture should fail explain.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET files = '[not-json' WHERE id = ?1",
+            [memory_id],
+        )?;
+        drop(conn);
+
+        let server = MemoryServer::new()?;
+        let error = server
+            .search(Parameters(base_search_params(Some(true))))
+            .expect_err("source-anchor failure should reject explain search");
+
+        assert!(
+            format!("{error:?}").contains("source-anchor staleness"),
+            "{error:?}"
         );
         Ok(())
     }
