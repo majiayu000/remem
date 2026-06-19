@@ -284,6 +284,9 @@ test("widget-callable tools are exposed to the app surface", () => {
   const search = toolDescriptors().find((tool) => tool.name === "remem_search");
   assert.match(search.description, /include_raw_archive=true/);
   assert.equal(search.inputSchema.properties.include_raw_archive.type, "boolean");
+  const getMemory = toolDescriptors().find((tool) => tool.name === "remem_get_memory");
+  assert.equal(getMemory.annotations.readOnlyHint, false);
+  assert.equal(getMemory.annotations.destructiveHint, false);
   const workstreamUpdate = toolDescriptors().find((tool) => tool.name === "remem_workstream_update");
   assert.deepEqual(workstreamUpdate.inputSchema.anyOf, [
     { required: ["status"] },
