@@ -142,15 +142,8 @@ pub fn open_db_no_migrate() -> Result<Connection> {
 
 pub fn open_db_for_hook() -> Result<Connection> {
     let conn = open_db_no_migrate().context(
-        "hook database open requires an existing current schema; run `remem install` outside the hook path",
+        "hook database open requires an existing current schema without drift; run `remem install` outside the hook path",
     )?;
-    let invariant_errors = crate::migrate::validate_schema_invariants(&conn)?;
-    if !invariant_errors.is_empty() {
-        anyhow::bail!(
-            "hook database schema drift requires foreground migration: {}",
-            invariant_errors.join("; ")
-        );
-    }
     Ok(conn)
 }
 
@@ -366,12 +359,12 @@ mod tests {
     #[test]
     fn open_db_for_hook_rejects_schema_drift_without_repairing() -> Result<()> {
         let test_dir = ScopedTestDataDir::new("hook-open-schema-drift");
-        create_current_schema_with_v022_missing_objects(&test_dir.db_path())?;
+        create_current_schema_missing_migration(&test_dir.db_path(), 22)?;
 
         let err = crate::db::open_db_for_hook().expect_err("schema drift should fail closed");
 
         assert!(
-            err.to_string().contains("hook database schema drift"),
+            format!("{err:#}").contains("schema drift requires foreground migration"),
             "unexpected error: {err:#}"
         );
         assert!(
@@ -385,6 +378,33 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(state_keys_exists, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_no_migrate_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("no-migrate-post-v022-schema-drift");
+        create_current_schema_missing_migration(&test_dir.db_path(), 45)?;
+
+        let err = crate::db::open_db_no_migrate().expect_err("schema drift should fail closed");
+
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("schema drift requires foreground migration"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("v045_memory_usage_columns"),
+            "unexpected error: {message}"
+        );
+        let check = Connection::open(test_dir.db_path())?;
+        let usage_table_exists: i64 = check.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'memory_citation_events'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(usage_table_exists, 0);
         Ok(())
     }
 
@@ -670,7 +690,7 @@ mod tests {
         Ok(())
     }
 
-    fn create_current_schema_with_v022_missing_objects(path: &Path) -> Result<()> {
+    fn create_current_schema_missing_migration(path: &Path, missing_version: i64) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -678,7 +698,7 @@ mod tests {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
         for migration in crate::migrate::MIGRATIONS
             .iter()
-            .filter(|migration| migration.version != 22)
+            .filter(|migration| migration.version != missing_version)
         {
             conn.execute_batch(migration.sql)?;
         }

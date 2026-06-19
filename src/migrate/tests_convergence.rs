@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::run_migrations;
+use super::schema_drift::{SchemaObject, SCHEMA_INVARIANTS};
 
 /// The minimal v10 schema used to simulate an old database for upgrade tests.
 /// Includes FTS virtual tables and triggers (present in all real v10+ databases).
@@ -28,6 +29,17 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "pending_observations",
     "sdk_sessions",
     "events",
+    "raw_messages",
+    "worker_heartbeats",
+    "hosts",
+    "workspaces",
+    "projects",
+    "sessions",
+    "event_blobs",
+    "captured_events",
+    "extraction_tasks",
+    "memory_candidates",
+    "rule_candidates",
     "entities",
     "memory_entities",
     "memory_lessons",
@@ -37,17 +49,48 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "workstream_sessions",
     "git_commits",
     "git_commit_sessions",
+    "memory_facts",
+    "procedure_verifications",
+    "context_injections",
     "memory_state_keys",
     "topic_segments",
     "memory_operation_log",
     "memory_edges",
+    "memory_claims",
+    "memory_candidate_noops",
     "compressed_observation_sources",
     "raw_ingest_failures",
     "memory_embeddings",
     "dream_cluster_decisions",
+    "graph_candidates",
     "graph_file_nodes",
     "graph_edges",
+    "capture_drop_events",
+    "extraction_replay_ranges",
+    "context_injection_items",
+    "memory_citation_events",
+    "memory_usage_events",
 ];
+
+#[test]
+fn convergence_tables_cover_schema_invariant_tables() {
+    use std::collections::BTreeSet;
+
+    let convergence: BTreeSet<&str> = CONVERGENCE_TABLES.iter().copied().collect();
+    let missing: Vec<_> = SCHEMA_INVARIANTS
+        .iter()
+        .filter_map(|invariant| match invariant.object {
+            SchemaObject::Table(table) if !table.ends_with("_fts") => Some(table),
+            _ => None,
+        })
+        .filter(|table| !convergence.contains(table))
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "schema invariant tables must be included in CONVERGENCE_TABLES: {missing:?}"
+    );
+}
 
 fn make_upgraded_v10_db() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
