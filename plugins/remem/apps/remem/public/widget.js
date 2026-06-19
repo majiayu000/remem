@@ -52,7 +52,8 @@ function apiToolArgs(url, method, options) {
       limit: numericParam(url.searchParams, "limit", 12),
       offset: numericParam(url.searchParams, "offset", 0),
       include_stale: booleanParam(url.searchParams, "include_stale"),
-      multi_hop: booleanParam(url.searchParams, "multi_hop")
+      multi_hop: booleanParam(url.searchParams, "multi_hop"),
+      include_raw_archive: booleanParam(url.searchParams, "include_raw_archive")
     };
   }
   if (method === "GET" && url.pathname === "/api/memory") {
@@ -174,6 +175,7 @@ async function runSearch() {
   });
   const type = $("search-type").value;
   if (type) params.set("type", type);
+  if ($("include-raw").checked) params.set("include_raw_archive", "true");
   $("results").innerHTML = `<li class="result"><span class="subtle">Searching...</span></li>`;
   $("detail").innerHTML = "";
   const payload = await request(`/api/search?${params.toString()}`);
@@ -209,7 +211,7 @@ function renderResults() {
     return;
   }
   results.innerHTML = state.results.map((item) => `
-    <li class="result" data-id="${escapeHtml(item.result_id || item.id)}">
+    <li class="result ${item.result_kind === "raw_archive" ? "raw-result" : ""}" data-id="${escapeHtml(item.result_id || item.id)}">
       <div class="result-title">
         <span>${escapeHtml(item.title || `Memory ${item.id}`)}</span>
         <span class="pill">${escapeHtml(item.memory_type || item.type || "memory")}</span>

@@ -162,9 +162,24 @@ h3 { font-size: 14px; font-weight: 700; }
 }
 .toolbar {
   display: grid;
-  grid-template-columns: 1fr 160px auto;
+  grid-template-columns: 1fr 160px auto auto;
   gap: 8px;
   align-items: center;
+}
+.check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  min-height: 34px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.raw-toggle {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: #fff;
 }
 .content-grid {
   display: grid;
@@ -209,6 +224,13 @@ h3 { font-size: 14px; font-weight: 700; }
 }
 .result:hover { background: #f7faf8; }
 .result.active { border-left: 3px solid var(--green); padding-left: 9px; background: #f1f7f4; }
+.result.raw-result {
+  background: #fffaf1;
+  border-left: 3px solid var(--amber);
+  padding-left: 9px;
+}
+.result.raw-result:hover { background: #fff5df; }
+.result.raw-result.active { background: #fff1d1; border-left-color: var(--amber); }
 .result-title {
   display: flex;
   justify-content: space-between;
