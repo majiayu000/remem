@@ -1,7 +1,7 @@
 {
   "name": "@remem-ai/remem",
   "version": "0.5.103",
-  "description": "Local-first persistent memory for Claude Code and Codex CLI",
+  "description": "Local-first coding agent memory for Claude Code and OpenAI Codex",
   "license": "MIT",
   "homepage": "https://majiayu000.github.io/remem/",
   "repository": {
@@ -34,9 +34,12 @@
     "claude-code",
     "codex",
     "codex-cli",
+    "claude-code-memory",
+    "codex-memory",
+    "openai-codex",
     "memory",
     "agent-memory",
-    "ai-memory",
+    "coding-agent-memory",
     "persistent-memory",
     "mcp",
     "mcp-server",

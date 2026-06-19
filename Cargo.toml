@@ -2,10 +2,10 @@
 name = "remem-ai"
 version = "0.5.103"
 edition = "2021"
-description = "Local-first persistent memory for Claude Code and Codex CLI"
+description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
 license = "MIT"
 repository = "https://github.com/majiayu000/remem"
-homepage = "https://github.com/majiayu000/remem"
+homepage = "https://majiayu000.github.io/remem/"
 readme = "README.md"
 keywords = ["claude-code", "codex", "memory", "mcp", "agent-memory"]
 categories = ["command-line-utilities", "development-tools"]
