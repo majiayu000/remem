@@ -18,7 +18,7 @@ function binaryPath() {
 const bin = binaryPath();
 if (!fs.existsSync(bin)) {
   console.error(`remem binary not found at ${bin}`);
-  console.error("Run `npm rebuild @majiayu000/remem` or set REMEM_NPM_BINARY.");
+  console.error("Run `npm rebuild @remem-ai/remem` or set REMEM_NPM_BINARY.");
   process.exit(1);
 }
 

@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 remem install --target codex
 
 # npm wrapper
-npm install -g @majiayu000/remem
+npm install -g @remem-ai/remem
 remem install --target codex
 
 # Cargo
@@ -189,7 +189,7 @@ Currently published:
 - Homebrew: `brew install majiayu000/tap/remem`
 - GitHub Releases: prebuilt binaries for macOS and Linux on x64/arm64
 - crates.io: `cargo install remem-ai --bin remem`
-- npm: `npm install -g @majiayu000/remem`
+- npm: `npm install -g @remem-ai/remem`
 - Source build: `cargo build --release`
 
 Good next channels:
