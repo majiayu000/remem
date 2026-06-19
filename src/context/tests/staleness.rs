@@ -10,7 +10,7 @@ use super::super::types::ContextDiagnostics;
 use super::{insert_memory, setup_context_schema};
 
 #[test]
-fn load_context_data_preserves_good_staleness_labels_when_one_memory_fails() {
+fn load_context_data_marks_source_anchor_failures_as_errors() {
     let conn = Connection::open_in_memory().unwrap();
     setup_context_schema(&conn);
     setup_context_git_trace_schema(&conn);
@@ -77,7 +77,7 @@ fn load_context_data_preserves_good_staleness_labels_when_one_memory_fails() {
             .staleness_labels
             .get(&101)
             .map(|label| label.source_anchor.as_str()),
-        Some("untracked")
+        Some("error")
     );
     assert_eq!(
         loaded
@@ -86,10 +86,9 @@ fn load_context_data_preserves_good_staleness_labels_when_one_memory_fails() {
             .map(|label| label.source_anchor.as_str()),
         Some("verify-before-trust")
     );
-    assert!(loaded
-        .errors
-        .iter()
-        .all(|error| !error.message.contains("source-anchor staleness labels")));
+    assert!(loaded.errors.iter().any(|error| {
+        error.section == "staleness" && error.message.contains("source-anchor staleness")
+    }));
 }
 
 #[test]

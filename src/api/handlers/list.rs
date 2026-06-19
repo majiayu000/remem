@@ -6,7 +6,9 @@ use axum::{
 };
 use rusqlite::types::ToSql;
 
-use super::super::helpers::{error_response, memory_to_item_with_conn, open_request_db};
+use super::super::helpers::{
+    error_response, memory_to_item_with_conn, open_request_db, staleness_error_response,
+};
 use super::super::types::{DbState, ListMeta, ListParams, ListResponse, MemoryItem};
 
 pub(in crate::api) async fn handle_list_memories(
@@ -135,7 +137,7 @@ pub(in crate::api) async fn handle_list_memories(
         let mut out = Vec::new();
         for row in rows {
             let (memory, effective_project) = row?;
-            let mut item = memory_to_item_with_conn(&conn, &memory);
+            let mut item = memory_to_item_with_conn(&conn, &memory)?;
             item.project = effective_project;
             out.push(item);
         }
@@ -144,6 +146,9 @@ pub(in crate::api) async fn handle_list_memories(
 
     let items = match result {
         Ok(v) => v,
+        Err(err) if err.to_string().contains("source-anchor staleness") => {
+            return staleness_error_response(&err).into_response()
+        }
         Err(err) => {
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,

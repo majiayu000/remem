@@ -7,7 +7,9 @@ use axum::{
 
 use crate::memory::service;
 
-use super::super::helpers::{error_response, memories_to_items_with_conn, open_request_db};
+use super::super::helpers::{
+    error_response, memories_to_items_with_conn, open_request_db, staleness_error_response,
+};
 use super::super::types::{
     DbState, MemoryItem, Meta, MultiHopInfo, RawHitItem, SearchParams, SearchResponse,
 };
@@ -71,7 +73,11 @@ pub(in crate::api) async fn handle_search(
     match service::search_memories(&conn, &req) {
         Ok(results) => {
             let count = results.memories.len();
-            let items: Vec<MemoryItem> = memories_to_items_with_conn(&conn, &results.memories);
+            let items: Vec<MemoryItem> = match memories_to_items_with_conn(&conn, &results.memories)
+            {
+                Ok(items) => items,
+                Err(err) => return staleness_error_response(&err).into_response(),
+            };
             let raw_hits: Vec<RawHitItem> = results
                 .raw_hits
                 .into_iter()
@@ -103,6 +109,9 @@ pub(in crate::api) async fn handle_search(
                 explain: results.explain,
             })
             .into_response()
+        }
+        Err(err) if err.to_string().contains("source-anchor staleness") => {
+            staleness_error_response(&err).into_response()
         }
         Err(err) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -235,6 +244,48 @@ mod tests {
         assert!(json["raw_hits_error"]
             .as_str()
             .is_some_and(|error| error.contains("raw archive fallback failed")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handle_search_fails_when_source_anchor_label_fails() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("api-search-staleness-source-error");
+        let conn = crate::db::open_db()?;
+        let memory_id = memory::insert_memory(
+            &conn,
+            Some("session-search-bad-staleness"),
+            "/repo",
+            None,
+            "aurora bad staleness",
+            "aurora bad source-anchor fixture",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET files = '[not-json' WHERE id = ?1",
+            [memory_id],
+        )?;
+        drop(conn);
+
+        let response = handle_search(State(DbState), Query(base_search_params(None)))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let json: Value = serde_json::from_slice(&body)?;
+
+        assert_eq!(json["error"]["code"], "staleness_source_anchor_failed");
+
+        let explain_response = handle_search(State(DbState), Query(base_search_params(Some(true))))
+            .await
+            .into_response();
+        assert_eq!(explain_response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let explain_body = to_bytes(explain_response.into_body(), usize::MAX).await?;
+        let explain_json: Value = serde_json::from_slice(&explain_body)?;
+        assert_eq!(
+            explain_json["error"]["code"],
+            "staleness_source_anchor_failed"
+        );
         Ok(())
     }
 

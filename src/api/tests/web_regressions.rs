@@ -412,6 +412,78 @@ async fn memory_detail_marks_memory_accessed() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn list_memories_fails_when_source_anchor_label_fails() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-staleness-source-error");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-bad-staleness"),
+        "proj-a",
+        None,
+        "bad staleness",
+        "bad source-anchor fixture",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET files = '[not-json' WHERE id = ?1",
+        params![memory_id],
+    )?;
+    drop(conn);
+
+    let response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: None,
+            branch: None,
+            q: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "staleness_source_anchor_failed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_detail_fails_when_source_anchor_label_fails() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-detail-staleness-source-error");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-detail-bad-staleness"),
+        "proj-a",
+        None,
+        "bad detail staleness",
+        "bad detail source-anchor fixture",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET files = '[not-json' WHERE id = ?1",
+        params![memory_id],
+    )?;
+    drop(conn);
+
+    let response = handle_memory_detail(State(DbState), Path(memory_id))
+        .await
+        .into_response();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "staleness_source_anchor_failed");
+    Ok(())
+}
+
+#[tokio::test]
 async fn graph_nodes_are_ranked_from_current_memory_links() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-graph-current-nodes");
     let conn = db::open_db()?;
