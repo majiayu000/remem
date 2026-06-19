@@ -11,6 +11,7 @@ use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveM
 use crate::memory::claims::{claims_enabled, insert_memory_claim, ClaimWriteRequest};
 use crate::memory::lesson::{save_lesson_with_reference_time, SaveLessonRequest};
 use crate::memory::lifecycle::MemoryLifecycleOp;
+use crate::memory::{MemoryType, MEMORY_TYPES};
 
 #[derive(Debug)]
 pub struct LocalCopyError {
@@ -32,6 +33,27 @@ impl std::fmt::Display for LocalCopyError {
 }
 
 impl std::error::Error for LocalCopyError {}
+
+#[derive(Debug)]
+pub struct SaveMemoryValidationError {
+    message: String,
+}
+
+impl SaveMemoryValidationError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SaveMemoryValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SaveMemoryValidationError {}
 
 pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMemoryResult> {
     save_memory_with_reference_time(conn, req, req.created_at_epoch)
@@ -59,15 +81,16 @@ fn save_memory_inner(
     req: &SaveMemoryRequest,
     reference_time_epoch: Option<i64>,
 ) -> Result<SaveMemoryResult> {
+    let validated = validate_save_memory_request(req)?;
     let project = req.project.as_deref().unwrap_or("manual");
     let title = req.title.as_deref().unwrap_or("Memory");
-    let memory_type = req.memory_type.as_deref().unwrap_or("discovery");
+    let memory_type = validated.memory_type.as_str();
     let files_json = req
         .files
         .as_ref()
         .and_then(|files| serde_json::to_string(files).ok());
 
-    let scope = req.scope.as_deref().unwrap_or("project");
+    let scope = validated.scope.as_str();
     let effective_topic_key = effective_topic_key(req, memory_type);
 
     let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
@@ -218,6 +241,47 @@ fn save_memory_inner(
             ),
         },
     })
+}
+
+struct ValidatedSaveMemoryRequest {
+    memory_type: String,
+    scope: String,
+}
+
+fn validate_save_memory_request(req: &SaveMemoryRequest) -> Result<ValidatedSaveMemoryRequest> {
+    if req.text.trim().is_empty() {
+        return Err(SaveMemoryValidationError::new("save_memory text must not be blank").into());
+    }
+
+    let memory_type = match req.memory_type.as_deref() {
+        Some(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            let parsed = MemoryType::parse(&normalized).ok_or_else(|| {
+                SaveMemoryValidationError::new(format!(
+                    "save_memory memory_type must be one of: {}",
+                    MEMORY_TYPES.join(", ")
+                ))
+            })?;
+            parsed.as_str().to_string()
+        }
+        None => MemoryType::Discovery.as_str().to_string(),
+    };
+
+    let scope = match req.scope.as_deref() {
+        Some(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "project" => "project".to_string(),
+            "global" => "global".to_string(),
+            _ => {
+                return Err(SaveMemoryValidationError::new(
+                    "save_memory scope must be one of: project, global",
+                )
+                .into());
+            }
+        },
+        None => "project".to_string(),
+    };
+
+    Ok(ValidatedSaveMemoryRequest { memory_type, scope })
 }
 
 struct ClaimSaveResult {

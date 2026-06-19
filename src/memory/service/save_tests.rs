@@ -1,5 +1,59 @@
-use super::{save_memory, save_memory_with_reference_time, SaveMemoryRequest};
+use super::{
+    save_memory, save_memory_with_reference_time, SaveMemoryRequest, SaveMemoryValidationError,
+};
 use crate::db::{self, test_support::ScopedTestDataDir};
+
+#[test]
+fn save_memory_rejects_invalid_shape_before_local_copy_or_durable_write() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-invalid-shape");
+    let conn = db::open_db()?;
+    let local_path = crate::db::data_dir()
+        .join("manual-notes")
+        .join("proj")
+        .join("invalid.md");
+
+    for req in [
+        SaveMemoryRequest {
+            text: "   ".to_string(),
+            title: Some("Blank".to_string()),
+            project: Some("proj".to_string()),
+            memory_type: Some("decision".to_string()),
+            local_path: Some(local_path.display().to_string()),
+            ..SaveMemoryRequest::default()
+        },
+        SaveMemoryRequest {
+            text: "Valid body".to_string(),
+            title: Some("Bad type".to_string()),
+            project: Some("proj".to_string()),
+            memory_type: Some("decison".to_string()),
+            local_path: Some(local_path.display().to_string()),
+            ..SaveMemoryRequest::default()
+        },
+        SaveMemoryRequest {
+            text: "Valid body".to_string(),
+            title: Some("Bad scope".to_string()),
+            project: Some("proj".to_string()),
+            memory_type: Some("decision".to_string()),
+            scope: Some("globla".to_string()),
+            local_path: Some(local_path.display().to_string()),
+            ..SaveMemoryRequest::default()
+        },
+    ] {
+        let err = match save_memory(&conn, &req) {
+            Ok(saved) => panic!("invalid save shape should fail, got {saved:?}"),
+            Err(err) => err,
+        };
+        assert!(err.is::<SaveMemoryValidationError>());
+    }
+
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+    assert_eq!(count, 0);
+    assert!(
+        !local_path.exists(),
+        "validation must fail before writing a local copy"
+    );
+    Ok(())
+}
 
 #[test]
 fn repeated_lesson_save_reinforces_metadata_and_logs_update() -> anyhow::Result<()> {
