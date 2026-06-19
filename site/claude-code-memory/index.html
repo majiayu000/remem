@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Claude Code Memory - Persistent local memory for coding work</title>
+    <meta name="description" content="Claude Code memory with local SQLite/SQLCipher storage, hooks, MCP tools, and searchable project decisions across coding sessions.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://majiayu000.github.io/remem/claude-code-memory/">
+    <meta property="og:title" content="Claude Code Memory - Local project memory with remem">
+    <meta property="og:description" content="Stop re-explaining your repository to Claude Code. remem captures, searches, audits, and injects local project memory.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://majiayu000.github.io/remem/claude-code-memory/">
+    <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Claude Code Memory with remem">
+    <meta name="twitter:description" content="Local-first persistent memory for Claude Code sessions. Hooks, MCP, SQLite/SQLCipher, and auditable recall.">
+    <meta name="twitter:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "remem",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Linux",
+        "description": "Local-first Claude Code memory that captures, searches, audits, and injects project memory through hooks, MCP, CLI, and REST APIs.",
+        "codeRepository": "https://github.com/majiayu000/remem",
+        "programmingLanguage": "Rust"
+      }
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary">
+        <a class="brand" href="../" aria-label="remem home"><span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8"></rect><path d="M10 11.5 21 13.7 15.3 22 10 11.5Z"></path><circle cx="10" cy="11.5" r="2.4"></circle><circle cx="21" cy="13.7" r="2.2"></circle><circle cx="15.3" cy="22" r="2.2"></circle></svg></span><span>remem</span></a>
+        <div class="nav-links">
+          <a href="../codex-memory/">Codex CLI memory</a>
+          <a href="../mcp-memory-server/">MCP memory server</a>
+          <a href="../compare/built-in-memory/">Compare</a>
+        </div>
+        <div class="nav-actions"><a class="button ghost small" href="https://github.com/majiayu000/remem" rel="noreferrer">GitHub</a></div>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Claude Code memory</p>
+            <h1>Claude Code Memory: persistent local memory for long-running coding work.</h1>
+            <p class="lead">remem gives Claude Code a searchable, auditable project memory layer for decisions, bug-fix rationale, preferences, and repo patterns that should survive fresh sessions.</p>
+            <div class="hero-actions">
+              <a class="button primary" href="#install">Install for Claude Code</a>
+              <a class="button ghost" href="https://github.com/majiayu000/remem#readme" rel="noreferrer">Read README</a>
+            </div>
+            <ul class="trust-list">
+              <li>SessionStart hooks</li>
+              <li>Stop summaries</li>
+              <li>SQLite/SQLCipher</li>
+              <li>MCP tools</li>
+            </ul>
+          </div>
+          <div class="terminal-panel" aria-label="Claude Code memory example">
+            <div class="terminal-bar"><span></span><span></span><span></span><strong>claude - remem</strong></div>
+            <div class="terminal-body">
+              <p><b>$</b> remem install --target claude</p>
+              <p class="ok">ok Claude Code hooks configured</p>
+              <p><b>$</b> claude</p>
+              <p class="muted">SessionStart</p>
+              <p><em>decision</em> release PRs need reviewThreads checked</p>
+              <p><em>bugfix</em> doctor warnings can be non-install backlog</p>
+              <p class="ok">context restored before the first prompt</p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">What remem adds</p>
+            <h2>Claude Code remembers the engineering trail, not just preferences.</h2>
+            <p>Use remem when the useful context is larger than a short instruction and needs search, auditability, and project scoping.</p>
+          </div>
+          <div class="card-grid four">
+            <article class="info-card"><span class="card-icon">01</span><h3>Captures sessions</h3><p>Hooks record useful session evidence without hand-written notes.</p></article>
+            <article class="info-card"><span class="card-icon">02</span><h3>Distills rationale</h3><p>Background summaries preserve decisions, fixes, and lessons.</p></article>
+            <article class="info-card"><span class="card-icon">03</span><h3>Searches locally</h3><p>`remem search` finds project-scoped memories in the local store.</p></article>
+            <article class="info-card"><span class="card-icon">04</span><h3>Injects context</h3><p>Relevant memories appear at session start before work begins.</p></article>
+          </div>
+        </div>
+      </section>
+      <section class="section" id="install">
+        <div class="shell install-grid">
+          <div class="section-head">
+            <p class="eyebrow">Install</p>
+            <h2>Connect remem to Claude Code.</h2>
+            <p>Install the binary, configure Claude Code hooks, then restart Claude Code and run a new session.</p>
+          </div>
+          <div class="code-card"><pre><code>brew install majiayu000/tap/remem
+remem install --target claude
+remem doctor
+remem search "last decision"</code></pre></div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell two-col">
+          <div class="section-head">
+            <p class="eyebrow">FAQ</p>
+            <h2>Common Claude Code memory questions.</h2>
+          </div>
+          <div class="flow">
+            <div class="flow-row"><span>Where</span><strong>Local</strong><p>Memory is stored under `~/.remem` with SQLite and SQLCipher support.</p></div>
+            <div class="flow-row"><span>When</span><strong>SessionStart</strong><p>Claude Code receives relevant project memory when a new session starts.</p></div>
+            <div class="flow-row"><span>How</span><strong>MCP + CLI</strong><p>Agents can search and save memory through MCP tools or direct CLI commands.</p></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
