@@ -1,4 +1,4 @@
-# @majiayu000/remem
+# @remem-ai/remem
 
 npm wrapper for the `remem` native binary.
 
@@ -9,7 +9,7 @@ from the GitHub Release during installation.
 ## Install
 
 ```bash
-npm install -g @majiayu000/remem
+npm install -g @remem-ai/remem
 remem install --target codex
 ```
 

@@ -19,6 +19,8 @@
   and memory-edge remapping do not corrupt restored memory state.
 
 ### Changed
+- Changed the npm wrapper package scope to `@remem-ai/remem` for the branded
+  remem npm distribution.
 - Added phase-0 extraction cursor integrity checks, model-provided confidence
   handling, and promotion metrics for extraction review workflows.
 - Reframed project metadata and README docs around Claude Code and Codex as

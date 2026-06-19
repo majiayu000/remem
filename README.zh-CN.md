@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 remem install --target codex
 
 # npm wrapper
-npm install -g @majiayu000/remem
+npm install -g @remem-ai/remem
 remem install --target codex
 
 # Cargo
@@ -161,7 +161,7 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 - Homebrew：`brew install majiayu000/tap/remem`
 - GitHub Releases：macOS/Linux 的 x64/arm64 预编译二进制
 - crates.io：`cargo install remem-ai --bin remem`
-- npm：`npm install -g @majiayu000/remem`
+- npm：`npm install -g @remem-ai/remem`
 - 源码构建：`cargo build --release`
 
 适合继续扩展的渠道：
