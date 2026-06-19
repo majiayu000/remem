@@ -113,6 +113,31 @@ jobs:
         run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
       - name: Test npm wrapper
         run: node --test npm/remem/scripts/install.test.js
+      - name: Smoke packed npm wrapper
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          pack_dir="$(mktemp -d)"
+          install_prefix="$(mktemp -d)"
+          unset REMEM_NPM_BINARY REMEM_NPM_SKIP_DOWNLOAD
+
+          npm pack ./npm/remem --pack-destination "$pack_dir"
+          tarball="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          if [ -z "$tarball" ]; then
+            echo "::error::npm pack did not produce a tarball"
+            exit 1
+          fi
+
+          npm install --global --prefix "$install_prefix" "$tarball"
+          actual="$("$install_prefix/bin/remem" --version)"
+          echo "installed remem --version: $actual"
+          installed_version="$(printf '%s\n' "$actual" | awk 'NR == 1 { print $2 }')"
+          if [ "$installed_version" != "$version" ]; then
+            echo "::error::installed remem version $installed_version does not match release tag $RELEASE_TAG"
+            exit 1
+          fi
       - name: Publish npm wrapper
         working-directory: npm/remem
         env:
