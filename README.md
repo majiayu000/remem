@@ -1,13 +1,14 @@
-# remem: Local-first Memory for Claude Code and Codex CLI
+# remem: Local-first Coding Agent Memory for Claude Code and OpenAI Codex
 
 > Stop re-explaining your project every new coding-agent session.
 
 Language: **English** | [简体中文](README.zh-CN.md)
 
 `remem` is a single Rust binary that automatically captures, distills, searches,
-and injects project memory across Claude Code and Codex CLI sessions. It keeps
-decisions, bug-fix rationale, project patterns, and preferences available
-through hooks, MCP, CLI, and REST without requiring an external database.
+and injects project memory across Claude Code, OpenAI Codex, and Codex CLI
+sessions. It keeps decisions, bug-fix rationale, project patterns, and
+preferences available through hooks, MCP, CLI, and REST without requiring an
+external database.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -16,7 +17,7 @@ through hooks, MCP, CLI, and REST without requiring an external database.
 
 ## What You Get
 
-- Claude Code and Codex CLI remember project decisions across sessions.
+- Claude Code, OpenAI Codex, and Codex CLI remember project decisions across sessions.
 - Bug-fix rationale, preferences, and project patterns are searchable.
 - Memory stays local by default with SQLite and SQLCipher.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.

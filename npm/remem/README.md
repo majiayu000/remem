@@ -23,5 +23,8 @@ Environment variables:
 - `REMEM_NPM_SKIP_DOWNLOAD=1`: skip binary download during npm install
 - `REMEM_NPM_BINARY=/path/to/remem`: run an explicit existing binary
 
-See the main project README for Claude Code and OpenAI Codex setup details:
-https://github.com/majiayu000/remem
+See the product site and main project README for Claude Code, OpenAI Codex,
+Codex CLI, and MCP setup details:
+
+- https://majiayu000.github.io/remem/
+- https://github.com/majiayu000/remem
