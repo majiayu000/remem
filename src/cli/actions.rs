@@ -1,5 +1,6 @@
 mod admin;
 mod config_command;
+mod encrypt_state;
 mod eval;
 mod import;
 mod maintenance;
