@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>remem vs built-in Claude Code and Codex memory</title>
+    <meta name="description" content="Compare remem with built-in Claude Code and Codex memory. Use remem for searchable, auditable, project-scoped local engineering memory.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://majiayu000.github.io/remem/compare/built-in-memory/">
+    <meta property="og:title" content="remem vs built-in Claude Code and Codex memory">
+    <meta property="og:description" content="Built-in memory is useful for concise preferences. remem is for searchable, auditable, project-scoped engineering memory.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://majiayu000.github.io/remem/compare/built-in-memory/">
+    <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="remem vs built-in coding-agent memory">
+    <meta name="twitter:description" content="When local searchable memory is better than hand-maintained memory files or concise built-in preferences.">
+    <meta name="twitter:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary">
+        <a class="brand" href="../../" aria-label="remem home"><span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8"></rect><path d="M10 11.5 21 13.7 15.3 22 10 11.5Z"></path><circle cx="10" cy="11.5" r="2.4"></circle><circle cx="21" cy="13.7" r="2.2"></circle><circle cx="15.3" cy="22" r="2.2"></circle></svg></span><span>remem</span></a>
+        <div class="nav-links">
+          <a href="../../claude-code-memory/">Claude Code memory</a>
+          <a href="../../codex-memory/">Codex CLI memory</a>
+          <a href="../../mcp-memory-server/">MCP memory server</a>
+        </div>
+        <div class="nav-actions"><a class="button ghost small" href="https://github.com/majiayu000/remem" rel="noreferrer">GitHub</a></div>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Comparison</p>
+            <h1>remem vs built-in Claude Code and Codex memory.</h1>
+            <p class="lead">Built-in memory is useful for concise preferences and stable project guidance. remem is for engineering memory that must be searchable, auditable, project-scoped, and recoverable.</p>
+            <div class="hero-actions">
+              <a class="button primary" href="#install">Install remem</a>
+              <a class="button ghost" href="https://github.com/majiayu000/remem#why-remem-if-claude-code-and-codex-already-have-memory" rel="noreferrer">README section</a>
+            </div>
+          </div>
+          <div class="diagram" aria-label="Built-in memory comparison">
+            <div class="query">Preference: "use pnpm"</div>
+            <div class="channels">
+              <span>Built-in memory works well</span>
+              <span>CLAUDE.md works well</span>
+              <span>Searchable bug rationale</span>
+              <span>remem is stronger</span>
+            </div>
+            <div class="formula">Use both for different memory shapes</div>
+            <div class="result">Less re-explaining, better audit trail</div>
+          </div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Use cases</p>
+            <h2>Choose the right memory surface.</h2>
+            <p>Keep required team guidance in checked-in docs. Use built-in memory for stable preferences. Use remem when the evidence trail matters.</p>
+          </div>
+          <div class="card-grid four">
+            <article class="info-card"><span class="card-icon">01</span><h3>Built-in memory</h3><p>Best for concise user preferences and recurring workflow hints.</p></article>
+            <article class="info-card"><span class="card-icon">02</span><h3>CLAUDE.md / AGENTS.md</h3><p>Best for mandatory repository instructions that every agent must read.</p></article>
+            <article class="info-card"><span class="card-icon">03</span><h3>remem search</h3><p>Best for decisions, bug-fix rationale, timelines, and project history.</p></article>
+            <article class="info-card"><span class="card-icon">04</span><h3>remem why</h3><p>Best when you need to inspect why a memory was injected.</p></article>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="shell two-col">
+          <div class="section-head">
+            <p class="eyebrow">What remem adds</p>
+            <h2>Search, audit, project scope, and APIs.</h2>
+            <p>remem complements built-in memory by keeping a structured local memory store that agents and tools can query.</p>
+          </div>
+          <div class="flow">
+            <div class="flow-row"><span>Search</span><strong>remem search</strong><p>Find historical decisions and root causes by query.</p></div>
+            <div class="flow-row"><span>Audit</span><strong>remem why</strong><p>Inspect why memory was visible or injected.</p></div>
+            <div class="flow-row"><span>Local</span><strong>SQLCipher</strong><p>Keep project memory in a local SQLite/SQLCipher store.</p></div>
+            <div class="flow-row"><span>API</span><strong>MCP + REST</strong><p>Expose memory to coding agents and local tooling.</p></div>
+          </div>
+        </div>
+      </section>
+      <section class="section band" id="install">
+        <div class="shell install-grid">
+          <div class="section-head">
+            <p class="eyebrow">Install</p>
+            <h2>Add remem where built-in memory is too small.</h2>
+            <p>Start with the host you use most, then add the other host later with `remem install --target all`.</p>
+          </div>
+          <div class="code-card"><pre><code>brew install majiayu000/tap/remem
+remem install --target codex
+remem doctor
+remem search "root cause"</code></pre></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

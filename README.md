@@ -1,38 +1,43 @@
-# remem: Persistent Memory for Claude Code and OpenAI Codex
+# remem: Local-first Memory for Claude Code and Codex CLI
 
-> Open-source agent memory for Claude Code, OpenAI Codex, MCP, and long-running engineering work.
+> Stop re-explaining your project every new coding-agent session.
 
 Language: **English** | [简体中文](README.zh-CN.md)
 
-`remem` is a single Rust binary that automatically captures, distills, and injects project context across Claude Code and OpenAI Codex sessions: decisions, patterns, preferences, and learnings. Stop re-explaining your project every new coding-agent session.
+`remem` is a single Rust binary that automatically captures, distills, searches,
+and injects project memory across Claude Code and Codex CLI sessions. It keeps
+decisions, bug-fix rationale, project patterns, and preferences available
+through hooks, MCP, CLI, and REST without requiring an external database.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ![Remem Memory terminal demo](assets/remem-demo.gif)
 
-## The Problem
+## What You Get
 
-- **Session amnesia**: every new Claude Code or Codex session starts from zero.
-- **Lost context**: bug-fix rationale and design decisions disappear after the session ends.
-- **Preference fatigue**: the same preferences must be repeated every session.
-- **No continuity**: long-running work is hard to resume with confidence.
+- Claude Code and Codex CLI remember project decisions across sessions.
+- Bug-fix rationale, preferences, and project patterns are searchable.
+- Memory stays local by default with SQLite and SQLCipher.
+- Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
+- One Rust binary; no hosted database or separate memory service.
 
-## How remem Solves This
+## Install
 
-| Without remem | With remem |
-|---|---|
-| "We use FTS5 trigram tokenizer..." (every session) | Injected automatically from memory |
-| "Do not use `expect()` in non-test code" (again) | Preference surfaced before you ask |
-| "Last session we decided to..." (reconstruct manually) | Decision history with rationale |
-| Bug context lost after session ends | Root cause + fix preserved |
-
-## Quickstart
+For Codex CLI:
 
 ```bash
 brew install majiayu000/tap/remem
 remem install --target codex
-remem status
+remem doctor
+```
+
+For Claude Code:
+
+```bash
+brew install majiayu000/tap/remem
+remem install --target claude
+remem doctor
 ```
 
 If you do not use Homebrew:
@@ -40,7 +45,18 @@ If you do not use Homebrew:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
 ~/.local/bin/remem install --target codex
-~/.local/bin/remem status
+~/.local/bin/remem doctor
+```
+
+## Success Check
+
+Start a new Claude Code or Codex CLI session after installation. remem should
+inject relevant project memory at session start and summarize durable memory
+after the session stops. Then run:
+
+```bash
+remem status
+remem search "last decision"
 ```
 
 `remem install --target codex` creates or updates:
@@ -50,21 +66,42 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 - Codex MCP registration in `~/.codex/config.toml`
 - Codex SessionStart/Stop hooks in `~/.codex/hooks.json`
 
-Success looks like:
-
-- `remem install` prints `key`, `db`, `config`, `MCP`, `hooks`, and `binary`
-  lines.
-- `remem status` prints database counts instead of an error.
-
-Restart Codex after installation and finish one session. Then run `remem doctor`.
-For a Codex-only setup, it reports Schema, Key format, Database, and the Codex
-Hooks/MCP rows as ok. If Claude Code config directories already exist, Claude
-rows can warn until you also run `remem install --target claude` or
-`remem install --target all`. If it warns about multiple `remem` binaries,
+For a Codex-only setup, `remem doctor` reports Schema, Key format, Database,
+and the Codex Hooks/MCP rows as ok. If Claude Code config directories already
+exist, Claude rows can warn until you also run `remem install --target claude`
+or `remem install --target all`. If it warns about multiple `remem` binaries,
 follow the printed install-path fix so hooks keep using the intended binary.
 
-For Claude Code, use `remem install --target claude`; to configure both hosts,
-use `remem install --target all`.
+## Install With Your Coding Agent
+
+Paste this into Claude Code or Codex CLI:
+
+> Install remem for this repository. Use the official README. Configure it for
+> this agent, run `remem doctor`, verify that session memory is working, and
+> summarize what was installed.
+
+## Why remem if Claude Code and Codex already have memory?
+
+Built-in memory is useful for concise preferences and stable project guidance.
+
+remem is for engineering memory that needs to be searchable, auditable,
+project-scoped, and recoverable:
+
+- Search past decisions, bug fixes, and rationale with `remem search`
+- Inspect why a memory was injected with `remem why`
+- Keep memory local with SQLite and SQLCipher
+- Use MCP and REST APIs from coding agents and local tools
+- Track usage and background memory cost
+- Avoid hand-maintaining large `MEMORY.md` or `CLAUDE.md` files
+
+## How remem Solves Session Amnesia
+
+| Without remem | With remem |
+|---|---|
+| "We use FTS5 trigram tokenizer..." (every session) | Injected automatically from memory |
+| "Do not use `expect()` in non-test code" (again) | Preference surfaced before you ask |
+| "Last session we decided to..." (reconstruct manually) | Decision history with rationale |
+| Bug context lost after session ends | Root cause + fix preserved |
 
 ## Other Install Channels
 

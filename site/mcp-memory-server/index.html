@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MCP Memory Server for AI Coding Agents - remem</title>
+    <meta name="description" content="remem is a local MCP memory server for AI coding agents, with searchable project memory, SQLite/SQLCipher storage, and auditable recall.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://majiayu000.github.io/remem/mcp-memory-server/">
+    <meta property="og:title" content="MCP memory server for AI coding agents">
+    <meta property="og:description" content="Use remem as a local MCP memory server for searchable, auditable project memory.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://majiayu000.github.io/remem/mcp-memory-server/">
+    <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="MCP memory server for coding agents">
+    <meta name="twitter:description" content="Local-first agent memory through MCP, hooks, CLI, REST, SQLite, and SQLCipher.">
+    <meta name="twitter:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary">
+        <a class="brand" href="../" aria-label="remem home"><span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8"></rect><path d="M10 11.5 21 13.7 15.3 22 10 11.5Z"></path><circle cx="10" cy="11.5" r="2.4"></circle><circle cx="21" cy="13.7" r="2.2"></circle><circle cx="15.3" cy="22" r="2.2"></circle></svg></span><span>remem</span></a>
+        <div class="nav-links">
+          <a href="../claude-code-memory/">Claude Code memory</a>
+          <a href="../codex-memory/">Codex CLI memory</a>
+          <a href="../compare/built-in-memory/">Compare</a>
+        </div>
+        <div class="nav-actions"><a class="button ghost small" href="https://github.com/majiayu000/remem" rel="noreferrer">GitHub</a></div>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">MCP memory server</p>
+            <h1>MCP memory server for AI coding agents.</h1>
+            <p class="lead">remem exposes local project memory through MCP tools so coding agents can search, save, inspect, and timeline durable engineering context.</p>
+            <div class="hero-actions">
+              <a class="button primary" href="#install">Start MCP server</a>
+              <a class="button ghost" href="https://github.com/majiayu000/remem#use-with-codex" rel="noreferrer">MCP docs</a>
+            </div>
+            <ul class="trust-list">
+              <li>search</li>
+              <li>save_memory</li>
+              <li>timeline</li>
+              <li>workstreams</li>
+            </ul>
+          </div>
+          <div class="diagram" aria-label="MCP memory flow">
+            <div class="query">Agent asks: "what did we decide?"</div>
+            <div class="channels">
+              <span>MCP search</span>
+              <span>Project scope</span>
+              <span>FTS/entity retrieval</span>
+              <span>Auditable memory</span>
+            </div>
+            <div class="formula">SQLite/SQLCipher local store</div>
+            <div class="result">Relevant memory returned to agent</div>
+          </div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">Tools</p>
+            <h2>Memory operations for agents and local tools.</h2>
+            <p>The MCP server exposes the same durable memory system used by the hooks and CLI.</p>
+          </div>
+          <div class="card-grid four">
+            <article class="info-card"><span class="card-icon">01</span><h3>Search</h3><p>Retrieve project-scoped memories by query, branch, type, and pagination.</p></article>
+            <article class="info-card"><span class="card-icon">02</span><h3>Save</h3><p>Store explicit decisions, preferences, discoveries, and bug fixes.</p></article>
+            <article class="info-card"><span class="card-icon">03</span><h3>Timeline</h3><p>Review what happened before and after a change or decision.</p></article>
+            <article class="info-card"><span class="card-icon">04</span><h3>Workstreams</h3><p>Track active long-running work across sessions.</p></article>
+          </div>
+        </div>
+      </section>
+      <section class="section" id="install">
+        <div class="shell install-grid">
+          <div class="section-head">
+            <p class="eyebrow">Install</p>
+            <h2>Register remem as your memory MCP server.</h2>
+            <p>Use host-specific install commands to register MCP and hooks for the agent you use.</p>
+          </div>
+          <div class="code-card"><pre><code>brew install majiayu000/tap/remem
+remem install --target codex
+remem mcp</code></pre></div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell two-col">
+          <div class="section-head">
+            <p class="eyebrow">FAQ</p>
+            <h2>Common MCP memory server questions.</h2>
+          </div>
+          <div class="flow">
+            <div class="flow-row"><span>Transport</span><strong>stdio</strong><p>`remem mcp` runs as a local stdio MCP server.</p></div>
+            <div class="flow-row"><span>Store</span><strong>SQLite</strong><p>The MCP server reads and writes the same local remem database.</p></div>
+            <div class="flow-row"><span>Audit</span><strong>why</strong><p>CLI commands such as `remem why` explain why memory is visible or injected.</p></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Codex CLI Memory - Local project memory through hooks and MCP</title>
+    <meta name="description" content="Codex CLI memory with remem: local project memory through SessionStart/Stop hooks, MCP tools, SQLite/SQLCipher, and auditable search.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://majiayu000.github.io/remem/codex-memory/">
+    <meta property="og:title" content="Codex CLI Memory - Local project memory with remem">
+    <meta property="og:description" content="Give Codex CLI searchable local memory for long-running engineering work through hooks and MCP.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://majiayu000.github.io/remem/codex-memory/">
+    <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Codex CLI Memory with remem">
+    <meta name="twitter:description" content="Local-first persistent memory for Codex CLI sessions. Hooks, MCP, SQLite/SQLCipher, and auditable recall.">
+    <meta name="twitter:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="../assets/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav shell" aria-label="Primary">
+        <a class="brand" href="../" aria-label="remem home"><span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8"></rect><path d="M10 11.5 21 13.7 15.3 22 10 11.5Z"></path><circle cx="10" cy="11.5" r="2.4"></circle><circle cx="21" cy="13.7" r="2.2"></circle><circle cx="15.3" cy="22" r="2.2"></circle></svg></span><span>remem</span></a>
+        <div class="nav-links">
+          <a href="../claude-code-memory/">Claude Code memory</a>
+          <a href="../mcp-memory-server/">MCP memory server</a>
+          <a href="../compare/built-in-memory/">Compare</a>
+        </div>
+        <div class="nav-actions"><a class="button ghost small" href="https://github.com/majiayu000/remem" rel="noreferrer">GitHub</a></div>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div class="shell hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Codex CLI memory</p>
+            <h1>Codex CLI Memory: local project memory through hooks and MCP.</h1>
+            <p class="lead">remem connects to Codex CLI with SessionStart and Stop hooks, then exposes project memory through MCP tools and CLI search.</p>
+            <div class="hero-actions">
+              <a class="button primary" href="#install">Install for Codex CLI</a>
+              <a class="button ghost" href="https://github.com/majiayu000/remem#use-with-codex" rel="noreferrer">Codex setup</a>
+            </div>
+            <ul class="trust-list">
+              <li>Codex hooks</li>
+              <li>MCP registration</li>
+              <li>Strict duplicate gating</li>
+              <li>Local database</li>
+            </ul>
+          </div>
+          <div class="terminal-panel" aria-label="Codex CLI memory example">
+            <div class="terminal-bar"><span></span><span></span><span></span><strong>codex - remem</strong></div>
+            <div class="terminal-body">
+              <p><b>$</b> remem install --target codex</p>
+              <p class="ok">ok Codex MCP server registered</p>
+              <p class="ok">ok Codex hooks configured</p>
+              <p><b>$</b> remem search "review threads"</p>
+              <p><em>decision</em> green CI alone is not enough</p>
+              <p><em>preference</em> separate remote truth from local state</p>
+              <p class="ok">auditable recall available mid-session</p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell">
+          <div class="section-head">
+            <p class="eyebrow">How it helps Codex</p>
+            <h2>Codex gets continuity without a hosted memory service.</h2>
+            <p>The same local store powers automatic session injection, MCP search, manual saves, workstreams, and timelines.</p>
+          </div>
+          <div class="card-grid four">
+            <article class="info-card"><span class="card-icon">01</span><h3>Session context</h3><p>SessionStart injects compact memories and preferences.</p></article>
+            <article class="info-card"><span class="card-icon">02</span><h3>Stop summaries</h3><p>Stop hooks summarize durable lessons in the background.</p></article>
+            <article class="info-card"><span class="card-icon">03</span><h3>MCP tools</h3><p>Codex can call `search`, `save_memory`, `timeline`, and workstream tools.</p></article>
+            <article class="info-card"><span class="card-icon">04</span><h3>Local audit</h3><p>`remem why`, status, and usage commands make recall inspectable.</p></article>
+          </div>
+        </div>
+      </section>
+      <section class="section" id="install">
+        <div class="shell install-grid">
+          <div class="section-head">
+            <p class="eyebrow">Install</p>
+            <h2>Connect remem to Codex CLI.</h2>
+            <p>Install the binary, configure Codex hooks and MCP, then restart Codex.</p>
+          </div>
+          <div class="code-card"><pre><code>brew install majiayu000/tap/remem
+remem install --target codex
+remem doctor
+remem search "last decision"</code></pre></div>
+        </div>
+      </section>
+      <section class="section band">
+        <div class="shell two-col">
+          <div class="section-head">
+            <p class="eyebrow">FAQ</p>
+            <h2>Common Codex CLI memory questions.</h2>
+          </div>
+          <div class="flow">
+            <div class="flow-row"><span>Scope</span><strong>Project</strong><p>Memory is project-scoped so unrelated repositories do not leak into recall.</p></div>
+            <div class="flow-row"><span>Tools</span><strong>MCP</strong><p>Codex can retrieve memories mid-session through remem MCP tools.</p></div>
+            <div class="flow-row"><span>Noise</span><strong>Gated</strong><p>Codex uses strict duplicate-injection gating to avoid repeated startup output.</p></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

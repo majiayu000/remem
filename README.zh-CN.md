@@ -1,38 +1,42 @@
-# remem：Claude Code 和 OpenAI Codex 的持久记忆
+# remem：Claude Code 和 Codex CLI 的本地优先记忆层
 
-> 面向 Claude Code、OpenAI Codex、MCP 和长期工程任务的开源 Agent 记忆系统。
+> 别再在每个新的 coding-agent 会话里重新解释你的项目。
 
 语言： [English](README.md) | **简体中文**
 
-`remem` 是 Claude Code 和 OpenAI Codex 的持久记忆系统。它是一个 Rust 单二进制程序，会在 Claude Code 和 OpenAI Codex 会话间自动捕获、提炼并注入项目上下文，包括决策、模式、偏好和经验。你不用在每次新的 coding-agent 会话里重复解释项目。
+`remem` 是一个 Rust 单二进制程序，会在 Claude Code 和 Codex CLI
+会话间自动捕获、提炼、搜索并注入项目记忆。它把决策、Bug 修复原因、
+项目模式和偏好通过 hooks、MCP、CLI 和 REST 持续带回会话，不需要外部数据库。
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ![Remem Memory terminal demo](assets/remem-demo.gif)
 
-## 核心问题
+## 你会得到什么
 
-- **会话失忆**：每次新开 Claude Code 或 Codex 会话都要从零解释。
-- **上下文丢失**：Bug 修复原因、设计取舍会在会话结束后消失。
-- **偏好重复**：同样的编码偏好要反复强调。
-- **缺少连续性**：跨会话推进功能时恢复成本高。
+- Claude Code 和 Codex CLI 能跨会话记住项目决策。
+- Bug 修复原因、偏好和项目模式可以搜索。
+- 记忆默认留在本地：SQLite + SQLCipher。
+- hooks、MCP tools、CLI 命令和 localhost REST API 共用同一份记忆库。
+- 一个 Rust 二进制程序，不需要托管数据库或额外记忆服务。
 
-## remem 的解决方式
+## 安装
 
-| 没有 remem | 使用 remem |
-|---|---|
-| “我们用 FTS5 trigram tokenizer...” 每次都说 | 自动从记忆注入 |
-| “非测试代码不要 `expect()`” 反复提醒 | 偏好会优先展示 |
-| “上次我们决定了什么...” 需要手动回溯 | 决策历史可追踪 |
-| 会话结束就丢失修复背景 | 根因与修复被持续保留 |
-
-## 快速开始
+Codex CLI：
 
 ```bash
 brew install majiayu000/tap/remem
 remem install --target codex
-remem status
+remem doctor
+```
+
+Claude Code：
+
+```bash
+brew install majiayu000/tap/remem
+remem install --target claude
+remem doctor
 ```
 
 如果不用 Homebrew：
@@ -40,7 +44,17 @@ remem status
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
 ~/.local/bin/remem install --target codex
-~/.local/bin/remem status
+~/.local/bin/remem doctor
+```
+
+## 成功检查
+
+安装后启动一个新的 Claude Code 或 Codex CLI 会话。remem 应该在
+SessionStart 时注入相关项目记忆，并在会话结束后总结耐久记忆。然后运行：
+
+```bash
+remem status
+remem search "last decision"
 ```
 
 `remem install --target codex` 会创建或更新：
@@ -50,21 +64,41 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 - `~/.codex/config.toml` 中的 Codex MCP 注册
 - `~/.codex/hooks.json` 中的 Codex SessionStart/Stop hooks
 
-成功状态应该是：
+Codex-only setup 下，`remem doctor` 会把 Schema、Key format、Database 和
+Codex Hooks/MCP 行报告为 ok。如果本机已经有 Claude Code 配置目录，Claude 行
+可能会 warning；需要时再运行 `remem install --target claude` 或
+`remem install --target all`。如果出现多个 `remem` 二进制的 install-path 警告，
+按输出里的 fix 提示处理，确保 hooks 使用预期的二进制。
 
-- `remem install` 输出 `key`、`db`、`config`、`MCP`、`hooks`、`binary`
-  等摘要行。
-- `remem status` 能输出数据库计数，而不是报错。
+## 让你的 coding agent 安装
 
-安装后重启 Codex 并完成一次会话，然后运行 `remem doctor`。Codex-only setup
-下，Schema、Key format、Database，以及 Codex 的 Hooks/MCP 行应为 ok。如果本机
-已经有 Claude Code 配置目录，Claude 行可能会 warning；需要时再运行
-`remem install --target claude` 或 `remem install --target all`。如果出现多个
-`remem` 二进制的 install-path 警告，按输出里的 fix 提示处理，确保 hooks 使用
-预期的二进制。
+把这段发给 Claude Code 或 Codex CLI：
 
-Claude Code 使用 `remem install --target claude`；两个 host 都配置则使用
-`remem install --target all`。
+> Install remem for this repository. Use the official README. Configure it for
+> this agent, run `remem doctor`, verify that session memory is working, and
+> summarize what was installed.
+
+## Claude Code 和 Codex 已经有 memory，为什么还要 remem？
+
+内置 memory 适合简短偏好和稳定项目指引。
+
+remem 面向需要可搜索、可审计、项目级隔离、可恢复的工程记忆：
+
+- 用 `remem search` 搜索过去的决策、Bug 修复和原因
+- 用 `remem why` 检查某条记忆为什么被注入
+- 用 SQLite 和 SQLCipher 把记忆留在本地
+- 通过 MCP 和 REST API 接入 coding agents 与本地工具
+- 追踪后台记忆任务的用量和成本
+- 避免手工维护很长的 `MEMORY.md` 或 `CLAUDE.md`
+
+## remem 如何解决会话失忆
+
+| 没有 remem | 使用 remem |
+|---|---|
+| “我们用 FTS5 trigram tokenizer...” 每次都说 | 自动从记忆注入 |
+| “非测试代码不要 `expect()`” 反复提醒 | 偏好会优先展示 |
+| “上次我们决定了什么...” 需要手动回溯 | 决策历史可追踪 |
+| 会话结束就丢失修复背景 | 根因与修复被持续保留 |
 
 ## 其他安装渠道
 
