@@ -23,6 +23,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
+      - name: Run native web API smoke
+        run: scripts/smoke_native_web_api.sh
       - name: Run extraction baseline gate
         run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
       - name: Run eval regression gates

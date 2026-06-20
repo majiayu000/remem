@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.109] - 2026-06-20
+
+### Added
+- Documented the full native web API surface for remem-web, including
+  capabilities, canonical memory browse/detail, stats, graph, candidate list,
+  and candidate review endpoints.
+- Added a local native API smoke test for the `remem api` read-model endpoints
+  under bearer-token auth. This is the release-note entry for the planned
+  `remem 0.5.109` web API surface; installed-binary docs should point users at
+  it only after the `v0.5.109` tag and GitHub Release exist.
+- After `v0.5.109` is published, remem-web should require `remem >= 0.5.109` for
+  `/api/v1/capabilities.features.stats`, `memory_list`, `memory_detail`,
+  `candidate_rows`, `candidate_review`, and `graph`; older clients can keep
+  using `/api/v1/memory?id=` and `/api/v1/memories/list` compatibility paths.
+
 ## [0.5.104] - 2026-06-20
 
 ### Added
