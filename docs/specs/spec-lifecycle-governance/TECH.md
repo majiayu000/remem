@@ -55,8 +55,8 @@ Fixes #123
 Resolves #123
 ```
 
-GitHub auto-close keywords are forbidden only for checked spec-only PRs. They
-remain valid for implementation and bugfix PRs.
+GitHub auto-close keywords are forbidden for checked spec-only PRs. They remain
+valid for runtime and bugfix PRs.
 
 ## Checks
 
@@ -78,12 +78,13 @@ If a PR adds `docs/specs/<id>/PRODUCT.md` or `docs/specs/<id>/TECH.md`, where
 This keeps new current specs indexed and prevents orphan TECH-only or
 PRODUCT-only specs.
 
-### Implementation Traceability Guard
+### Runtime Traceability Guard
 
-If `Implementation` is checked and the PR changes `src/**`, then:
+If a PR changes `src/**`, then:
 
 - the PR body must contain an auto-close issue link, or
 - the PR body must include `No issue: ...`.
+- the PR must not be checked as `Spec only`.
 
 This keeps runtime changes traceable while allowing small urgent fixes with an
 explicit explanation.
@@ -149,6 +150,9 @@ python3 scripts/ci/check_spec_lifecycle.py origin/main HEAD
 - spec-only PR with `Closes #123` fails;
 - checked implementation with `src/**` and `Closes #123` passes;
 - checked implementation with `src/**` and no issue link fails;
+- checked bugfix with `src/**` and no issue link fails;
+- checked release/docs/process with `src/**` and no issue link fails;
+- checked spec-only with `src/**` fails;
 - new current spec missing `docs/specs/README.md` fails;
 - new current spec with PRODUCT, TECH, and README update passes;
 - API source change without docs update or explicit marker fails;

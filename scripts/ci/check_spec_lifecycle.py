@@ -105,9 +105,9 @@ def check_lifecycle(
 
     checked_types = [label for label in PR_TYPES if checked(label, body)]
     is_spec_only = "Spec only" in checked_types
-    is_implementation = "Implementation" in checked_types
     spec_dirs = spec_dirs_added_or_changed(changes)
-    lifecycle_relevant = bool(spec_dirs) or has_prefix(changes, "src/")
+    touches_src = has_prefix(changes, "src/")
+    lifecycle_relevant = bool(spec_dirs) or touches_src
 
     if lifecycle_relevant and len(checked_types) != 1:
         failures.append(
@@ -138,10 +138,12 @@ def check_lifecycle(
         if is_new_spec and not spec_id_indexed(spec_id, head):
             failures.append(f"New current spec `{spec_id}` must be indexed in docs/specs/README.md.")
 
-    if is_implementation and has_prefix(changes, "src/"):
+    if touches_src:
+        if is_spec_only:
+            failures.append("PRs that touch src/** cannot be marked Spec only.")
         if not AUTO_CLOSE_RE.search(body) and not NO_ISSUE_RE.search(body):
             failures.append(
-                "Implementation PRs that touch src/** must include `Closes #...` "
+                "PRs that touch src/** must include `Closes #...` "
                 "or an explicit `No issue: ...` explanation."
             )
 
@@ -197,13 +199,37 @@ def self_test() -> int:
             "implementation src missing issue fails",
             ["src/lib.rs"],
             "- [x] Implementation",
-            {"Implementation PRs that touch src/**"},
+            {"PRs that touch src/**"},
         ),
         (
             "implementation title-only close fails",
             ["src/lib.rs"],
             "- [x] Implementation",
-            {"Implementation PRs that touch src/**"},
+            {"PRs that touch src/**"},
+        ),
+        (
+            "bugfix src missing issue fails",
+            ["src/lib.rs"],
+            "- [x] Bugfix",
+            {"PRs that touch src/**"},
+        ),
+        (
+            "bugfix src no issue passes",
+            ["src/lib.rs"],
+            "- [x] Bugfix\n\nNo issue: emergency local-only diagnostic repair",
+            set(),
+        ),
+        (
+            "release docs process src missing issue fails",
+            ["src/lib.rs"],
+            "- [x] Release/docs/process",
+            {"PRs that touch src/**"},
+        ),
+        (
+            "spec only src fails",
+            ["src/lib.rs"],
+            "- [x] Spec only\n\nRefs #123",
+            {"cannot be marked Spec only", "PRs that touch src/**"},
         ),
         (
             "api docs marker passes",
