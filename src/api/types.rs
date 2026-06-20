@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 #[derive(Clone, Copy, Default)]
 pub struct DbState;
@@ -208,12 +208,32 @@ pub(super) struct ListParams {
     pub offset: Option<i64>,
 }
 
-#[derive(Serialize)]
 pub(super) struct ListMeta {
     pub count: usize,
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
+}
+
+impl Serialize for ListMeta {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let count = i64::try_from(self.count).unwrap_or(i64::MAX);
+        let consumed = self.offset.saturating_add(count);
+        let has_more = consumed < self.total;
+        let next_offset = has_more.then_some(consumed);
+
+        let mut state = serializer.serialize_struct("ListMeta", 6)?;
+        state.serialize_field("count", &self.count)?;
+        state.serialize_field("total", &self.total)?;
+        state.serialize_field("limit", &self.limit)?;
+        state.serialize_field("offset", &self.offset)?;
+        state.serialize_field("has_more", &has_more)?;
+        state.serialize_field("next_offset", &next_offset)?;
+        state.end()
+    }
 }
 
 #[derive(Serialize)]

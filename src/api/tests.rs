@@ -421,7 +421,140 @@ async fn router_serves_get_api_v1_memories() -> anyhow::Result<()> {
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["meta"]["total"], 1);
+    assert_eq!(payload["meta"]["count"], 1);
+    assert_eq!(payload["meta"]["limit"], 50);
+    assert_eq!(payload["meta"]["offset"], 0);
+    assert_eq!(payload["meta"]["has_more"], false);
+    assert!(payload["meta"]["next_offset"].is_null());
     assert_eq!(payload["data"][0]["title"], "route target");
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_memories_and_list_alias_return_same_pagination_meta() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-alias-meta");
+    let conn = db::open_db()?;
+    for i in 0..3 {
+        memory::insert_memory(
+            &conn,
+            Some("session-list-alias"),
+            "proj-a",
+            None,
+            &format!("page target {i}"),
+            "canonical and alias routes should page the same way",
+            "decision",
+            None,
+        )?;
+    }
+    drop(conn);
+
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let canonical = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/memories?project=proj-a&limit=2&offset=0",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .expect("request should complete");
+    assert_eq!(canonical.status(), StatusCode::OK);
+
+    let alias = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/memories/list?project=proj-a&limit=2&offset=0",
+            &token,
+            Body::empty(),
+        ))
+        .await
+        .expect("request should complete");
+    assert_eq!(alias.status(), StatusCode::OK);
+
+    let canonical_body = to_bytes(canonical.into_body(), usize::MAX).await?;
+    let alias_body = to_bytes(alias.into_body(), usize::MAX).await?;
+    let canonical_payload: Value = serde_json::from_slice(&canonical_body)?;
+    let alias_payload: Value = serde_json::from_slice(&alias_body)?;
+
+    assert_eq!(canonical_payload["meta"], alias_payload["meta"]);
+    assert_eq!(canonical_payload["meta"]["count"], 2);
+    assert_eq!(canonical_payload["meta"]["total"], 3);
+    assert_eq!(canonical_payload["meta"]["limit"], 2);
+    assert_eq!(canonical_payload["meta"]["offset"], 0);
+    assert_eq!(canonical_payload["meta"]["has_more"], true);
+    assert_eq!(canonical_payload["meta"]["next_offset"], 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_memories_q_filter_matches_title_or_content() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-q-filter");
+    let conn = db::open_db()?;
+    let title_match = memory::insert_memory(
+        &conn,
+        Some("session-q-title"),
+        "proj-a",
+        None,
+        "needle title",
+        "ordinary body",
+        "decision",
+        None,
+    )?;
+    let content_match = memory::insert_memory(
+        &conn,
+        Some("session-q-content"),
+        "proj-a",
+        None,
+        "ordinary title",
+        "body has needle",
+        "decision",
+        None,
+    )?;
+    let other = memory::insert_memory(
+        &conn,
+        Some("session-q-other"),
+        "proj-a",
+        None,
+        "unrelated",
+        "ordinary body",
+        "decision",
+        None,
+    )?;
+    drop(conn);
+
+    let response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: None,
+            branch: None,
+            q: Some("needle".to_string()),
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    let ids: Vec<i64> = payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .map(|item| item["id"].as_i64().expect("id should be i64"))
+        .collect();
+    assert!(ids.contains(&title_match));
+    assert!(ids.contains(&content_match));
+    assert!(!ids.contains(&other));
+    assert_eq!(payload["meta"]["total"], 2);
     Ok(())
 }
 
@@ -588,6 +721,71 @@ async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["meta"]["total"], 1);
     assert_eq!(payload["data"][0]["review_status"], "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_detail_returns_rich_memory_with_entities() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-memory-detail-rich");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-detail"),
+        "proj-a",
+        Some("detail-topic"),
+        "detail title",
+        "detail body",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES (1, 'api', 'topic', 5, 1), (2, 'sqlcipher', 'topic', 9, 1)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 1), (?1, 2)",
+        params![memory_id],
+    )?;
+    drop(conn);
+
+    let response = handle_memory_detail(State(DbState), Path(memory_id))
+        .await
+        .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["id"], memory_id);
+    assert_eq!(payload["title"], "detail title");
+    assert_eq!(payload["content"], "detail body");
+    assert_eq!(payload["memory_type"], "decision");
+    assert_eq!(payload["project"], "proj-a");
+    assert_eq!(payload["topic_key"], "detail-topic");
+    assert_eq!(payload["entities"], serde_json::json!(["sqlcipher", "api"]));
+    assert_eq!(
+        payload["edges"]
+            .as_array()
+            .expect("edges should be array")
+            .len(),
+        0
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_detail_returns_structured_not_found() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-memory-detail-not-found");
+
+    let response = handle_memory_detail(State(DbState), Path(404))
+        .await
+        .into_response();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "not_found");
+    assert_eq!(payload["error"]["message"], "memory 404 not found");
     Ok(())
 }
 
