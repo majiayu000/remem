@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use super::{
     normalize_memory_type, normalize_scope, normalize_topic_key,
@@ -117,11 +117,11 @@ pub(crate) fn list_pending(
 }
 
 pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option<i64>> {
-    let Some(row) = load_candidate(conn, id)? else {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let Some(row) = load_candidate(&tx, id)? else {
         return Ok(None);
     };
     ensure_pending(&row)?;
-    let tx = conn.transaction()?;
     let memory_id = promote_row(&tx, &row, "approved", None)?;
     tx.commit()?;
     Ok(Some(memory_id))
@@ -150,12 +150,12 @@ pub(crate) fn edit_candidate(
     {
         bail!("edit requires at least one changed field");
     }
-    let Some(row) = load_candidate(conn, id)? else {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let Some(row) = load_candidate(&tx, id)? else {
         return Ok(None);
     };
     ensure_pending(&row)?;
     let edited = row.apply_edit(edit)?;
-    let tx = conn.transaction()?;
     let memory_id = promote_row(&tx, &row, "edited", Some(&edited))?;
     tx.commit()?;
     Ok(Some(memory_id))
@@ -634,6 +634,36 @@ mod tests {
             },
         )?
         .is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn review_approve_rejects_already_promoted_candidate_without_duplicate_memory() -> Result<()> {
+        let mut conn = setup_conn();
+        let id = insert_pending_candidate(&mut conn, "review-no-duplicate", "Approve once")?;
+
+        let memory_id = approve_candidate(&mut conn, id)?
+            .ok_or_else(|| anyhow::anyhow!("candidate should approve"))?;
+        let err = match approve_candidate(&mut conn, id) {
+            Ok(_) => anyhow::bail!("second approve should fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains(&format!(
+            "candidate {id} is approved, expected pending_review"
+        )));
+        let memory_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE source_candidate_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        let source_candidate_id: i64 = conn.query_row(
+            "SELECT source_candidate_id FROM memories WHERE id = ?1",
+            params![memory_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(memory_count, 1);
+        assert_eq!(source_candidate_id, id);
         Ok(())
     }
 

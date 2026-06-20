@@ -1,3 +1,4 @@
+mod candidate_review;
 mod candidates;
 mod capabilities;
 mod detail;
@@ -9,6 +10,9 @@ mod show;
 mod stats;
 mod status;
 
+pub(super) use candidate_review::{
+    handle_approve_candidate, handle_edit_candidate, handle_reject_candidate,
+};
 pub(super) use candidates::handle_list_candidates;
 pub(super) use capabilities::handle_capabilities;
 pub(super) use detail::handle_memory_detail;

@@ -18,7 +18,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             memory_detail: true,
             save_memory: true,
             candidate_rows: true,
-            candidate_review: false,
+            candidate_review: true,
             graph: true,
         },
         endpoints: BTreeMap::from([
@@ -30,6 +30,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             ("memory_detail", "/api/v1/memories/{id}"),
             ("save_memory", "/api/v1/memories"),
             ("candidate_rows", "/api/v1/candidates"),
+            ("candidate_review", "/api/v1/candidates/{id}/approve"),
             ("graph", "/api/v1/graph"),
         ]),
     })
