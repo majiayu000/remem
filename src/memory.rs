@@ -5,6 +5,7 @@ pub mod dedup;
 pub mod edge;
 pub mod events;
 pub mod facts;
+pub(crate) mod failure_lesson;
 pub mod format;
 pub mod governance;
 pub mod graph_contract;

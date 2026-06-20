@@ -286,6 +286,10 @@ Remem is meant for the parts that should not depend on manual upkeep:
   ./remem-memory` updates existing rows and rebuilds search, entity, embedding,
   and current-state indexes. Export refuses non-empty directories to avoid
   overwriting manual edits.
+- **Failure-loop learning**: raw transcripts that contain both concrete
+  build/test failure evidence and an explicit "stop and challenge the
+  hypothesis" style lesson feed an idempotent `failure` lesson before summary
+  cooldown, duplicate, or skip exits.
 - **Governance and auditability**: `remem why <id>`, `remem govern --action
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,

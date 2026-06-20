@@ -70,6 +70,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "context_injection_items",
     "memory_citation_events",
     "memory_usage_events",
+    "memory_lesson_feed_events",
 ];
 
 #[test]
