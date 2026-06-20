@@ -48,6 +48,9 @@ pub fn get_recent_memories_excluding_types(
         "expires_at_epoch",
         false,
     ));
+    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+        "memories",
+    ));
 
     if !excluded_types.is_empty() {
         let placeholders: Vec<String> = excluded_types
@@ -94,6 +97,9 @@ pub fn get_recent_project_memories_excluding_types(
         "status",
         "expires_at_epoch",
         false,
+    ));
+    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+        "memories",
     ));
 
     if !excluded_types.is_empty() {
@@ -147,6 +153,9 @@ pub fn search_project_memories_excluding_types(
         "expires_at_epoch",
         false,
     ));
+    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+        "memories",
+    ));
 
     let like_pattern = format!("%{query}%");
     conditions.push(format!("(title LIKE ?{idx} OR content LIKE ?{idx})"));
@@ -199,6 +208,29 @@ pub fn list_memories(
     include_inactive: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
+    list_memories_with_suppressed_policy(
+        conn,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_inactive,
+        branch,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_memories_with_suppressed_policy(
+    conn: &Connection,
+    project: &str,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_inactive: bool,
+    branch: Option<&str>,
+    include_suppressed: bool,
+) -> Result<Vec<Memory>> {
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
@@ -209,6 +241,11 @@ pub fn list_memories(
         "expires_at_epoch",
         include_inactive,
     ));
+    if !include_suppressed {
+        conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+            "memories",
+        ));
+    }
     if let Some(memory_type) = memory_type {
         conditions.push(format!("memory_type = ?{idx}"));
         params.push(Box::new(memory_type.to_string()));
@@ -242,6 +279,15 @@ pub fn get_memories_by_ids(
     ids: &[i64],
     project: Option<&str>,
 ) -> Result<Vec<Memory>> {
+    get_memories_by_ids_with_suppressed_policy(conn, ids, project, false)
+}
+
+pub fn get_memories_by_ids_with_suppressed_policy(
+    conn: &Connection,
+    ids: &[i64],
+    project: Option<&str>,
+    include_suppressed: bool,
+) -> Result<Vec<Memory>> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
@@ -257,6 +303,11 @@ pub fn get_memories_by_ids(
         let idx = ids.len() + 1;
         conditions.push(format!("(project = ?{idx} OR scope = 'global')"));
         params.push(Box::new(project.to_string()));
+    }
+    if !include_suppressed {
+        conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+            "memories",
+        ));
     }
 
     let sql = format!(

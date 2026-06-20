@@ -14,6 +14,6 @@ pub use save::{
 };
 pub use search::search_memories;
 pub use types::{
-    default_include_stale, MultiHopMeta, SaveMemoryRequest, SaveMemoryResult, SearchRequest,
-    SearchResultSet,
+    default_include_stale, default_include_suppressed, MultiHopMeta, SaveMemoryRequest,
+    SaveMemoryResult, SearchRequest, SearchResultSet,
 };

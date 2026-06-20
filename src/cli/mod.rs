@@ -4,6 +4,7 @@ mod config_types;
 mod cwd;
 mod dispatch;
 mod eval_types;
+mod memory_types;
 mod query_types;
 #[cfg(test)]
 mod tests;

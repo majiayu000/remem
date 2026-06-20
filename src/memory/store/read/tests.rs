@@ -79,6 +79,55 @@ fn mark_memories_accessed_updates_usage_columns_once_per_call() {
 }
 
 #[test]
+fn get_memories_by_ids_hides_policy_suppressed_rows_by_default() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+
+    let visible = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        None,
+        "Visible target",
+        "Visible direct-read result.",
+        "decision",
+        None,
+    )
+    .unwrap();
+    let hidden = insert_memory(
+        &conn,
+        Some("s2"),
+        "proj",
+        None,
+        "Hidden target",
+        "Hidden direct-read result.",
+        "decision",
+        None,
+    )
+    .unwrap();
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{hidden}")).unwrap(),
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )
+    .unwrap();
+
+    let default = get_memories_by_ids(&conn, &[visible, hidden], Some("proj")).unwrap();
+    let default_ids = default.iter().map(|memory| memory.id).collect::<Vec<_>>();
+    assert_eq!(default_ids, vec![visible]);
+
+    let audit =
+        get_memories_by_ids_with_suppressed_policy(&conn, &[visible, hidden], Some("proj"), true)
+            .unwrap();
+    let audit_ids = audit.iter().map(|memory| memory.id).collect::<Vec<_>>();
+    assert!(audit_ids.contains(&visible));
+    assert!(audit_ids.contains(&hidden));
+}
+
+#[test]
 fn test_memory_fts_search() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);

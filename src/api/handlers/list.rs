@@ -71,6 +71,11 @@ pub(in crate::api) async fn handle_list_memories(
         binds.push(Box::new(format!("%{q}%")));
         idx += 1;
     }
+    if !params.include_suppressed.unwrap_or(false) {
+        conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+            "memories",
+        ));
+    }
 
     let where_sql = if conditions.is_empty() {
         "1=1".to_string()

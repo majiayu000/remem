@@ -369,6 +369,9 @@ fn query_owner_included_memory_rows(
     conditions.push(crate::memory::memory_state_key_current_filter_sql(
         "memories",
     ));
+    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+        "memories",
+    ));
     if let Some(branch) = current_branch.filter(|branch| !branch.trim().is_empty()) {
         conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
         params.push(Box::new(branch.to_string()));
@@ -448,6 +451,9 @@ fn query_owner_exclusion_traces(
         "status",
         "expires_at_epoch",
         false,
+    ));
+    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+        "memories",
     ));
     push_excluded_type_filter(excluded_types, &mut idx, &mut conditions, &mut params);
     params.push(Box::new(limit));

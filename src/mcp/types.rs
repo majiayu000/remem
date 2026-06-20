@@ -15,6 +15,8 @@ pub(super) struct SearchParams {
     pub offset: Option<i64>,
     #[schemars(description = "Include stale or archived memories (default false)")]
     pub include_stale: Option<bool>,
+    #[schemars(description = "Include policy-suppressed memories (default false)")]
+    pub include_suppressed: Option<bool>,
     #[schemars(
         description = "Git branch filter (e.g. 'main', 'feat/auth'). Only returns memories from this branch. Old data without branch info is always included."
     )]
@@ -69,6 +71,8 @@ pub(super) struct GetObservationsParams {
     pub project: Option<String>,
     #[schemars(description = "Source type: 'memory' or 'observation' (default: 'memory')")]
     pub source: Option<String>,
+    #[schemars(description = "Include policy-suppressed memories (default false)")]
+    pub include_suppressed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

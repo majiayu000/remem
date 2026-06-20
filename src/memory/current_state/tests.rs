@@ -32,6 +32,114 @@ fn returns_current_answer_when_state_key_has_single_active_current() -> Result<(
 }
 
 #[test]
+fn current_state_scrubs_policy_suppressed_current_memory_id() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory(
+        &conn,
+        2,
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        None,
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target("memory:2")?,
+            reason: Some("do not show"),
+            actor: Some("test"),
+        },
+    )?;
+
+    let result = current_state(&conn, &request())?;
+
+    assert_eq!(result.status, "no_current");
+    assert!(result.current.is_none());
+    assert_eq!(
+        result
+            .state
+            .as_ref()
+            .and_then(|state| state.current_memory_id),
+        None
+    );
+    let json = serde_json::to_value(&result)?;
+    assert!(!json.to_string().contains("current_memory_id"));
+    Ok(())
+}
+
+#[test]
+fn ambiguous_current_state_scrubs_only_policy_suppressed_match_ids() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key_for(&conn, 10, "/repo", None)?;
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, state_label,
+          state_status, current_memory_id, created_at_epoch, updated_at_epoch)
+         VALUES (11, 'user', 'user:default', 'decision', 'deploy-target',
+                 'deploy target', 'active', NULL, 1, 10)",
+        [],
+    )?;
+    insert_current_state_memory(
+        &conn,
+        2,
+        "Repo deploy target",
+        "Use production.",
+        "active",
+        10,
+        None,
+        None,
+    )?;
+    insert_current_state_memory(
+        &conn,
+        3,
+        "User deploy target",
+        "Use staging.",
+        "active",
+        11,
+        None,
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memory_state_keys
+         SET current_memory_id = CASE id WHEN 10 THEN 2 WHEN 11 THEN 3 END
+         WHERE id IN (10, 11)",
+        [],
+    )?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target("memory:2")?,
+            reason: Some("do not show"),
+            actor: Some("test"),
+        },
+    )?;
+
+    let result = current_state(&conn, &request())?;
+
+    assert_eq!(result.status, "ambiguous");
+    assert_eq!(result.matches.len(), 2);
+    let repo_match = result
+        .matches
+        .iter()
+        .find(|item| item.owner_scope == "repo")
+        .expect("repo match should be present");
+    let user_match = result
+        .matches
+        .iter()
+        .find(|item| item.owner_scope == "user")
+        .expect("user match should be present");
+    assert_eq!(repo_match.current_memory_id, None);
+    assert_eq!(user_match.current_memory_id, Some(3));
+    let json = serde_json::to_value(&result)?;
+    assert!(!json.to_string().contains("\"current_memory_id\":2"));
+    Ok(())
+}
+
+#[test]
 fn shows_superseded_history_and_edge_evidence_for_current_answer() -> Result<()> {
     let conn = current_state_test_conn()?;
     insert_state_key(&conn)?;

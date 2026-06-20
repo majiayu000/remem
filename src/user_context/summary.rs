@@ -1,8 +1,13 @@
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
 
 use super::claims::{DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE, DEFAULT_USER_KEY};
+mod types;
+pub use types::{
+    ActivityRef, DroppedSource, SummaryClaimSource, SummaryEditRequest, SummaryMemorySource,
+    SummaryRequest, SummarySources, UserContextSummary,
+};
+use types::{ClaimCandidate, SourceBundle, SummaryRow};
 
 const SUMMARY_SCOPE: &str = "project";
 const SUMMARY_COMPILER_MODEL: &str = "deterministic-profile-v1";
@@ -11,112 +16,21 @@ const MAX_CLAIMS: usize = 8;
 const MAX_MEMORIES: usize = 6;
 const MAX_ACTIVITIES: usize = 6;
 
-#[derive(Debug, Clone)]
-pub struct SummaryRequest<'a> {
-    pub owner_scope: Option<&'a str>,
-    pub owner_key: Option<&'a str>,
-    pub project: &'a str,
-}
-
-#[derive(Debug, Clone)]
-pub struct SummaryEditRequest<'a> {
-    pub owner_scope: Option<&'a str>,
-    pub owner_key: Option<&'a str>,
-    pub project: &'a str,
-    pub text: &'a str,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UserContextSummary {
-    pub id: i64,
-    pub user_key: String,
-    pub owner_scope: String,
-    pub owner_key: String,
-    pub scope: String,
-    pub scope_key: Option<String>,
-    pub summary_text: String,
-    pub source_claim_ids: Vec<i64>,
-    pub source_memory_ids: Vec<i64>,
-    pub source_activity_refs: Vec<ActivityRef>,
-    pub status: String,
-    pub model: Option<String>,
-    pub version: i64,
-    pub created_at_epoch: i64,
-    pub updated_at_epoch: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SummarySources {
-    pub summary: Option<UserContextSummary>,
-    pub included_claims: Vec<SummaryClaimSource>,
-    pub included_memories: Vec<SummaryMemorySource>,
-    pub included_activity_refs: Vec<ActivityRef>,
-    pub dropped_claims: Vec<DroppedSource>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SummaryClaimSource {
-    pub id: i64,
-    pub claim_type: String,
-    pub claim_key: String,
-    pub claim_text: String,
-    pub owner_scope: String,
-    pub owner_key: String,
-    pub sensitivity: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SummaryMemorySource {
-    pub id: i64,
-    pub memory_type: String,
-    pub title: String,
-    pub preview: String,
-    pub owner_scope: Option<String>,
-    pub owner_key: Option<String>,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ActivityRef {
-    pub kind: String,
-    pub id: i64,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DroppedSource {
-    pub kind: String,
-    pub id: i64,
-    pub reason: String,
-}
-
-struct SourceBundle {
-    claims: Vec<SummaryClaimSource>,
-    memories: Vec<SummaryMemorySource>,
-    activity_refs: Vec<ActivityRef>,
-    dropped_claims: Vec<DroppedSource>,
-}
-
-struct SummaryRow {
-    id: i64,
-    user_key: String,
-    owner_scope: String,
-    owner_key: String,
-    scope: String,
-    scope_key: Option<String>,
-    summary_text: String,
-    source_claim_ids_json: String,
-    source_memory_ids_json: String,
-    source_activity_refs_json: String,
-    status: String,
-    model: Option<String>,
-    version: i64,
-    created_at_epoch: i64,
-    updated_at_epoch: i64,
-}
-
 pub fn load_active_summary(
+    conn: &Connection,
+    req: &SummaryRequest<'_>,
+) -> Result<Option<UserContextSummary>> {
+    let Some(summary) = load_active_summary_unfiltered(conn, req)? else {
+        return Ok(None);
+    };
+    if summary_sources_are_visible(conn, &summary)? {
+        Ok(Some(summary))
+    } else {
+        Ok(None)
+    }
+}
+
+fn load_active_summary_unfiltered(
     conn: &Connection,
     req: &SummaryRequest<'_>,
 ) -> Result<Option<UserContextSummary>> {
@@ -219,7 +133,11 @@ pub fn load_summary_sources(
     req: &SummaryRequest<'_>,
     include_excluded: bool,
 ) -> Result<SummarySources> {
-    let summary = load_active_summary(conn, req)?;
+    let summary = if include_excluded {
+        load_active_summary_unfiltered(conn, req)?
+    } else {
+        load_active_summary(conn, req)?
+    };
     let (owner_scope, owner_key, project) = normalize_summary_request(req)?;
     let mut sources = collect_sources(conn, &owner_scope, &owner_key, &project)?;
     if !include_excluded {
@@ -265,7 +183,7 @@ fn insert_active_summary(
     let source_activity_refs_json = encode_activity_refs(source_activity_refs)?;
     let now = chrono::Utc::now().timestamp();
     let tx = conn.unchecked_transaction()?;
-    let previous = load_active_summary(
+    let previous = load_active_summary_unfiltered(
         &tx,
         &SummaryRequest {
             owner_scope: Some(owner_scope),
@@ -308,6 +226,77 @@ fn insert_active_summary(
     Ok(summary)
 }
 
+fn summary_sources_are_visible(conn: &Connection, summary: &UserContextSummary) -> Result<bool> {
+    if summary_is_policy_suppressed(conn, summary)? {
+        return Ok(false);
+    }
+    for claim_id in &summary.source_claim_ids {
+        if !summary_claim_source_is_visible(conn, *claim_id)? {
+            return Ok(false);
+        }
+    }
+    for memory_id in &summary.source_memory_ids {
+        if !summary_memory_source_is_visible(conn, *memory_id)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn summary_is_policy_suppressed(conn: &Connection, summary: &UserContextSummary) -> Result<bool> {
+    let summary_id = summary.id.to_string();
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_suppressions
+         WHERE status = 'active'
+           AND target_kind = 'summary'
+           AND (
+                target_id = ?1
+             OR (target_value IS NOT NULL
+                 AND (
+                    target_value = ?2
+                  OR instr(lower(?3), lower(target_value)) > 0
+                 ))
+           )",
+        params![summary.id, summary_id, summary.summary_text],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn summary_claim_source_is_visible(conn: &Connection, claim_id: i64) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let sql = format!(
+        "SELECT COUNT(*)
+         FROM user_context_claims
+         WHERE id = ?1
+           AND status = 'active'
+           AND sensitivity NOT IN ('personal', 'sensitive', 'restricted')
+           AND (valid_from_epoch IS NULL OR valid_from_epoch <= ?2)
+           AND (valid_to_epoch IS NULL OR valid_to_epoch > ?3)
+           AND {}",
+        crate::memory::suppression::user_claim_policy_filter_sql("user_context_claims"),
+    );
+    let count: i64 = conn.query_row(&sql, params![claim_id, now, now], |row| row.get(0))?;
+    Ok(count > 0)
+}
+
+fn summary_memory_source_is_visible(conn: &Connection, memory_id: i64) -> Result<bool> {
+    let sql = format!(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE id = ?1
+           AND {}
+           AND {}
+           AND {}",
+        crate::memory::memory_current_filter_sql("status", "expires_at_epoch", false),
+        crate::memory::memory_not_superseded_filter_sql("memories"),
+        crate::memory::suppression::memory_policy_filter_sql("memories"),
+    );
+    let count: i64 = conn.query_row(&sql, [memory_id], |row| row.get(0))?;
+    Ok(count > 0)
+}
+
 fn load_summary_by_id(conn: &Connection, id: i64) -> Result<UserContextSummary> {
     let row = conn.query_row(
         "SELECT id, user_key, owner_scope, owner_key, scope, scope_key, summary_text,
@@ -345,15 +334,18 @@ fn load_claim_sources(
     project: &str,
 ) -> Result<(Vec<SummaryClaimSource>, Vec<DroppedSource>)> {
     let now = chrono::Utc::now().timestamp();
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, claim_type, claim_key, claim_text, owner_scope, owner_key,
                 sensitivity, status, valid_from_epoch, valid_to_epoch
          FROM user_context_claims
-         WHERE (owner_scope = ?1 AND owner_key = ?2)
-            OR (owner_scope = 'repo' AND owner_key = ?3)
+         WHERE ((owner_scope = ?1 AND owner_key = ?2)
+            OR (owner_scope = 'repo' AND owner_key = ?3))
+           AND {policy_filter}
          ORDER BY updated_at_epoch DESC, id DESC
          LIMIT 50",
-    )?;
+        policy_filter =
+            crate::memory::suppression::user_claim_policy_filter_sql("user_context_claims"),
+    ))?;
     let rows = stmt.query_map(params![owner_scope, owner_key, project], |row| {
         Ok(ClaimCandidate {
             id: row.get(0)?,
@@ -397,12 +389,15 @@ fn load_claim_sources(
 }
 
 fn load_claim_sources_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<SummaryClaimSource>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, claim_type, claim_key, claim_text, owner_scope, owner_key,
                 sensitivity, status
          FROM user_context_claims
-         WHERE id = ?1",
-    )?;
+         WHERE id = ?1
+           AND {policy_filter}",
+        policy_filter =
+            crate::memory::suppression::user_claim_policy_filter_sql("user_context_claims"),
+    ))?;
     let mut sources = Vec::new();
     for id in ids {
         if let Some(source) = stmt
@@ -427,11 +422,12 @@ fn load_claim_sources_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Summa
 }
 
 fn load_memory_sources(conn: &Connection, project: &str) -> Result<Vec<SummaryMemorySource>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, title, content, memory_type, owner_scope, owner_key, status
          FROM memories
          WHERE status = 'active'
            AND (expires_at_epoch IS NULL OR expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER))
+           AND {policy_filter}
            AND (
                 (owner_scope = 'repo' AND owner_key = ?1)
              OR (owner_scope = 'repo' AND target_project = ?1)
@@ -440,17 +436,20 @@ fn load_memory_sources(conn: &Connection, project: &str) -> Result<Vec<SummaryMe
            )
          ORDER BY updated_at_epoch DESC, id DESC
          LIMIT ?2",
-    )?;
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories"),
+    ))?;
     let rows = stmt.query_map(params![project, MAX_MEMORIES as i64], map_memory_source)?;
     crate::db::query::collect_rows(rows)
 }
 
 fn load_memory_sources_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<SummaryMemorySource>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT id, title, content, memory_type, owner_scope, owner_key, status
          FROM memories
-         WHERE id = ?1",
-    )?;
+         WHERE id = ?1
+           AND {policy_filter}",
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories"),
+    ))?;
     let mut sources = Vec::new();
     for id in ids {
         if let Some(source) = stmt.query_row(params![id], map_memory_source).optional()? {
@@ -684,19 +683,6 @@ fn compact_line(text: &str, max_chars: usize) -> String {
         .collect::<String>();
     out.push('…');
     out
-}
-
-struct ClaimCandidate {
-    id: i64,
-    claim_type: String,
-    claim_key: String,
-    claim_text: String,
-    owner_scope: String,
-    owner_key: String,
-    sensitivity: String,
-    status: String,
-    valid_from_epoch: Option<i64>,
-    valid_to_epoch: Option<i64>,
 }
 
 #[cfg(test)]

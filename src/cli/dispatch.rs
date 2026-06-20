@@ -7,13 +7,13 @@ use super::actions::{
     run_cleanup, run_commit, run_config, run_current_state, run_dream, run_encrypt, run_eval,
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
     run_eval_graph_decision, run_eval_local, run_eval_weight_grid, run_export_markdown,
-    run_governance, run_graph_review, run_import, run_memory_cleanup, run_merge_preferences,
+    run_governance, run_graph_review, run_import, run_memory_action, run_merge_preferences,
     run_model, run_pending, run_preferences, run_raw, run_reroute, run_review, run_search,
     run_show, run_status, run_timeline, run_usage, run_user, run_why, run_workstreams,
     GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, ContextGateAction, MemoryAction};
+use super::types::{Cli, Commands, ContextGateAction};
 
 #[path = "actions/context_gate.rs"]
 mod context_gate;
@@ -80,27 +80,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         }
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::User { action } => run_user(action)?,
-        Commands::Memory { action } => match action {
-            MemoryAction::Cleanup {
-                cwd,
-                cleanup_type,
-                all_types,
-                dry_run,
-                plan_out,
-                apply,
-                plan,
-                json,
-            } => run_memory_cleanup(
-                cwd.as_deref(),
-                cleanup_type,
-                all_types,
-                dry_run,
-                plan_out.as_deref(),
-                apply,
-                plan.as_deref(),
-                json,
-            )?,
-        },
+        Commands::Memory { action } => run_memory_action(action)?,
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
         Commands::GraphReview { action } => run_graph_review(action)?,
@@ -206,6 +186,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             offset,
             branch,
             include_stale,
+            include_suppressed,
             multi_hop,
             explain,
             json,
@@ -217,6 +198,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             offset,
             branch.as_deref(),
             include_stale,
+            include_suppressed,
             multi_hop,
             explain,
             json,

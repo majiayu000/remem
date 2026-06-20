@@ -139,6 +139,7 @@ fn cli_search_request_carries_service_search_options() {
         true,
         true,
         true,
+        true,
     );
 
     assert_eq!(request.query.as_deref(), Some("needle"));
@@ -148,6 +149,7 @@ fn cli_search_request_carries_service_search_options() {
     assert_eq!(request.offset, 10);
     assert_eq!(request.branch.as_deref(), Some("feature"));
     assert!(request.include_stale);
+    assert!(request.include_suppressed);
     assert!(request.multi_hop);
     assert!(request.explain);
 }
@@ -353,6 +355,7 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
         3,
         6,
         Some("main"),
+        true,
         true,
         true,
         true,
@@ -580,6 +583,7 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
         Some("main"),
         Some(&gate),
         None,
+        &[],
     );
 
     assert!(output.contains("Memory #1"));
@@ -588,6 +592,7 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
     assert!(output.contains("type: core memory type"));
     assert!(output.contains("status: active; default search can include it"));
     assert!(output.contains("currentness: no TTL/currentness metadata available"));
+    assert!(output.contains("suppression: not suppressed by policy"));
     assert!(output.contains("query scoring: query-specific"));
     assert!(output.contains("context visibility: memory index candidate and core candidate"));
     assert!(output.contains("context gate: latest codex-cli output for proj: mode=suppressed"));

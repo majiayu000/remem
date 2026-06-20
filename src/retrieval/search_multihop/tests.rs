@@ -115,6 +115,7 @@ fn search_multi_hop_demotes_verify_before_trust_second_hop() -> Result<()> {
         None,
         Some("main"),
         false,
+        false,
     )?;
     let ids = result
         .memories

@@ -160,7 +160,43 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
             memory_id INTEGER NOT NULL,
             entity_id INTEGER NOT NULL,
             PRIMARY KEY(memory_id, entity_id)
-        );",
+        );
+        CREATE TABLE IF NOT EXISTS memory_suppressions (
+            id INTEGER PRIMARY KEY,
+            owner_scope TEXT,
+            owner_key TEXT,
+            target_kind TEXT NOT NULL,
+            target_id INTEGER,
+            target_value TEXT,
+            reason TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL,
+            CHECK (target_id IS NOT NULL OR target_value IS NOT NULL),
+            CHECK (target_kind IN ('memory', 'user_claim', 'user_candidate', 'topic_key', 'entity', 'pattern', 'summary')),
+            CHECK (status IN ('active', 'revoked'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_suppressions_status_target
+            ON memory_suppressions(status, target_kind, target_id, target_value);
+        CREATE TABLE IF NOT EXISTS memory_feedback (
+            id INTEGER PRIMARY KEY,
+            target_kind TEXT NOT NULL,
+            target_id INTEGER,
+            target_value TEXT,
+            feedback TEXT NOT NULL,
+            source TEXT NOT NULL,
+            context_injection_item_id INTEGER,
+            session_id TEXT,
+            project TEXT,
+            reason TEXT,
+            created_at_epoch INTEGER NOT NULL,
+            CHECK (target_id IS NOT NULL OR target_value IS NOT NULL),
+            CHECK (target_kind IN ('memory', 'user_claim', 'user_candidate', 'topic_key', 'entity', 'pattern', 'summary')),
+            CHECK (feedback IN ('relevant', 'not_relevant', 'harmful', 'stale', 'too_noisy'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_feedback_target
+            ON memory_feedback(target_kind, target_id, target_value, created_at_epoch DESC);",
     )?;
     Ok(())
 }

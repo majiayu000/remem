@@ -24,6 +24,7 @@ pub(crate) fn collect_second_hop_ids(
     memory_type: Option<&str>,
     branch: Option<&str>,
     include_stale: bool,
+    include_suppressed: bool,
     fetch: i64,
     first_hop_set: &HashSet<i64>,
 ) -> Result<Vec<i64>> {
@@ -39,6 +40,7 @@ pub(crate) fn collect_second_hop_ids(
             fetch,
             include_stale,
         )?;
+        let entity_results = filter_suppressed_ids(conn, entity_results, include_suppressed)?;
         push_unique_ids(&mut second_hop_ids, entity_results, first_hop_set);
     }
 
@@ -55,11 +57,9 @@ pub(crate) fn collect_second_hop_ids(
             branch,
         ) {
             Ok(fts_results) => {
-                push_unique_ids(
-                    &mut second_hop_ids,
-                    fts_results.into_iter().map(|memory| memory.id),
-                    first_hop_set,
-                );
+                let ids = fts_results.into_iter().map(|memory| memory.id).collect();
+                let ids = filter_suppressed_ids(conn, ids, include_suppressed)?;
+                push_unique_ids(&mut second_hop_ids, ids, first_hop_set);
             }
             Err(error) => {
                 crate::log::warn(
@@ -71,4 +71,19 @@ pub(crate) fn collect_second_hop_ids(
     }
 
     Ok(second_hop_ids)
+}
+
+fn filter_suppressed_ids(
+    conn: &Connection,
+    ids: Vec<i64>,
+    include_suppressed: bool,
+) -> Result<Vec<i64>> {
+    if include_suppressed || ids.is_empty() {
+        return Ok(ids);
+    }
+    let suppressed = crate::memory::suppression::active_suppressed_memory_ids(conn, &ids)?;
+    Ok(ids
+        .into_iter()
+        .filter(|id| !suppressed.contains(id))
+        .collect())
 }

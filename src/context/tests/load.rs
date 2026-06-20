@@ -1,4 +1,5 @@
 use crate::memory::lesson::{save_lesson, SaveLessonRequest};
+use crate::memory::suppression::{create_suppression, parse_target, SuppressRequest};
 use rusqlite::Connection;
 
 use super::super::policy::{ContextLimits, ContextPolicy};
@@ -164,6 +165,54 @@ fn load_context_data_clusters_contexts_by_pr_reference() {
         .count();
 
     assert_eq!(pr_decision_count, 1);
+}
+
+#[test]
+fn load_context_data_excludes_policy_suppressed_memories() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_context_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("visible-context"),
+        "decision",
+        "Visible context memory",
+        "Visible context memory should be injected.",
+        now,
+    );
+    insert_memory(
+        &conn,
+        2,
+        project,
+        Some("hidden-context"),
+        "decision",
+        "Hidden context memory",
+        "Hidden context memory should not be injected.",
+        now + 1,
+    );
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: parse_target("memory:2")?,
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )?;
+
+    let loaded = load_context_data(&conn, project, None);
+
+    assert!(loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Visible context memory"));
+    assert!(!loaded
+        .memories
+        .iter()
+        .any(|memory| memory.title == "Hidden context memory"));
+    Ok(())
 }
 
 #[test]

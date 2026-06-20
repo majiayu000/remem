@@ -90,6 +90,9 @@ impl MemoryServer {
                 include_stale: params
                     .include_stale
                     .unwrap_or_else(service::default_include_stale),
+                include_suppressed: params
+                    .include_suppressed
+                    .unwrap_or_else(service::default_include_suppressed),
                 branch: params.branch.clone(),
                 multi_hop: requested_multi_hop,
                 explain: requested_explain,
@@ -209,6 +212,9 @@ impl MemoryServer {
                     "next_offset": next_offset,
                 }
             });
+            if req.include_suppressed {
+                response["next_step"]["include_suppressed"] = serde_json::json!(true);
+            }
             if let Some(meta) = multi_hop {
                 response["multi_hop"] = serde_json::json!({
                     "hops": meta.hops,
@@ -271,6 +277,7 @@ mod tests {
             r#type: None,
             offset: Some(0),
             include_stale: Some(true),
+            include_suppressed: None,
             branch: None,
             multi_hop: Some(false),
             explain,

@@ -315,6 +315,7 @@ pub fn list_lessons_for_context(
          JOIN memory_lessons l ON l.memory_id = m.id
          WHERE m.memory_type = 'lesson'
            AND {current_filter}
+           AND {policy_filter}
            AND ((m.owner_scope = 'repo' AND m.owner_key = ?1)
                 OR (m.owner_scope = 'repo' AND m.target_project = ?1)
                 OR (m.owner_scope = 'user' AND m.owner_key = 'user:default')
@@ -331,6 +332,7 @@ pub fn list_lessons_for_context(
         cols = prefixed_memory_cols("m"),
         current_filter =
             crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false),
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("m"),
     ))?;
     let rows = stmt.query_map(
         params![

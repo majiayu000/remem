@@ -8,7 +8,8 @@ invent mock graph/candidate data when the native binary lacks an endpoint.
 
 The complete web read-model surface is implemented in source version
 `0.5.109`. Fast health checks and cached status metadata are implemented in
-source version `0.5.112`. remem-web should require a published release with the
+source version `0.5.112`. Suppression audit opt-in is implemented in source
+version `0.5.113`. remem-web should require a published release with the
 specific capability it needs before directing installed-binary users to that
 surface. Clients should call `GET /api/v1/capabilities` before enabling
 optional UI features.
@@ -22,10 +23,10 @@ optional UI features.
 | GET | `/api/v1/health` | Cheap authenticated liveness and API readiness. |
 | GET | `/api/v1/status` | Cached operational queue state and counters. |
 | GET | `/api/v1/capabilities` | Native feature and endpoint discovery. |
-| GET | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&include_stale=&multi_hop=&explain=` | Search memories with optional explain. |
-| GET | `/api/v1/memory?id=` | Legacy compact single-memory endpoint. |
-| GET | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=` | Canonical browse endpoint. |
-| GET | `/api/v1/memories/{id}` | Rich detail with entities and memory edges. |
+| GET | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&include_stale=&include_suppressed=&multi_hop=&explain=` | Search memories with optional explain. |
+| GET | `/api/v1/memory?id=&include_suppressed=` | Legacy compact single-memory endpoint. |
+| GET | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | Canonical browse endpoint. |
+| GET | `/api/v1/memories/{id}?include_suppressed=` | Rich detail with entities and memory edges. |
 | POST | `/api/v1/memories` | Explicit durable memory save. |
 
 ### Web Read Model
@@ -37,14 +38,14 @@ optional UI features.
 | POST | `/api/v1/candidates/{id}/approve` | Approve a pending candidate. |
 | POST | `/api/v1/candidates/{id}/reject` | Reject a pending candidate; persisted status is `discarded`. |
 | POST | `/api/v1/candidates/{id}/edit` | Edit and approve a pending candidate. |
-| GET | `/api/v1/graph?project=&limit=` | DB-backed entity graph. |
+| GET | `/api/v1/graph?project=&limit=&include_suppressed=` | DB-backed entity graph. |
 
 ### Compatibility
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/v1/memories/list` | Compatibility alias for canonical `/api/v1/memories`. |
-| GET | `/api/v1/memory?id=` | Legacy compact single-memory endpoint. |
+| GET | `/api/v1/memory?id=&include_suppressed=` | Legacy compact single-memory endpoint. |
 
 ## Capabilities
 
@@ -52,8 +53,8 @@ optional UI features.
 
 ```json
 {
-  "version": "0.5.112",
-  "schema_version": 50,
+  "version": "0.5.113",
+  "schema_version": 51,
   "api_version": 1,
   "features": {
     "health": true,
@@ -96,9 +97,9 @@ returns:
 ```json
 {
   "ok": true,
-  "version": "0.5.112",
+  "version": "0.5.113",
   "api_version": 1,
-  "schema_version": 50
+  "schema_version": 51
 }
 ```
 
@@ -107,7 +108,7 @@ cache metadata. The default cache TTL is 2 seconds:
 
 ```json
 {
-  "version": "0.5.112",
+  "version": "0.5.113",
   "memories": 10,
   "observations": 20,
   "cache": {
@@ -142,6 +143,11 @@ List endpoints return:
 
 `GET /api/v1/search` keeps its existing search-specific `meta` shape and may
 also include `multi_hop`, `raw_hits`, `raw_hits_error`, and `explain`.
+Default search, memory browse, graph, and direct memory detail reads exclude
+policy-suppressed memories. Search also disables raw-archive fallback when
+active suppressions are present, so raw text cannot bypass a "do not mention/use
+by default" policy. Pass `include_suppressed=true` only for explicit audit views
+that need to inspect suppressed evidence.
 
 `GET /api/v1/graph` returns only DB-backed data:
 
@@ -224,6 +230,10 @@ until the `v0.5.109` tag and GitHub Release exist.
 For fast health and cached status, the release target is `remem 0.5.112`.
 Do not document those as installed-binary behavior until the corresponding tag
 and GitHub Release exist.
+
+For suppression audit opt-in, the release target is `remem 0.5.113`. Default
+read surfaces must continue excluding suppressed memories unless
+`include_suppressed=true` is explicitly requested by an audit surface.
 
 ## Smoke Test
 

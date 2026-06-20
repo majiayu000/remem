@@ -232,6 +232,7 @@ fn evaluate_arm(
                     query.memory_type.as_deref(),
                     query.branch.as_deref(),
                     false,
+                    false,
                 )?;
                 (
                     multi_hop.memories,

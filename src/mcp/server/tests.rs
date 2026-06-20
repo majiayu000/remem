@@ -72,6 +72,7 @@ fn search_reopens_database_after_file_removal() {
         r#type: None,
         offset: Some(0),
         include_stale: Some(true),
+        include_suppressed: None,
         branch: None,
         multi_hop: Some(false),
         explain: None,
@@ -89,6 +90,7 @@ fn search_reopens_database_after_file_removal() {
         r#type: None,
         offset: Some(0),
         include_stale: Some(true),
+        include_suppressed: None,
         branch: None,
         multi_hop: Some(false),
         explain: None,
@@ -410,6 +412,7 @@ fn search_returns_stable_compact_envelope_with_expansion_hint() {
             r#type: None,
             offset: Some(0),
             include_stale: Some(true),
+            include_suppressed: None,
             branch: None,
             multi_hop: Some(false),
             explain: None,
@@ -432,10 +435,59 @@ fn search_returns_stable_compact_envelope_with_expansion_hint() {
             ids: vec![memory_id],
             project: Some("/repo".to_string()),
             source: json["next_step"]["source"].as_str().map(str::to_string),
+            include_suppressed: None,
         }))
         .expect("expansion succeeds");
     let expanded_json: Value = serde_json::from_str(&expanded).expect("expanded json");
     assert_eq!(expanded_json[0]["id"], memory_id);
+}
+
+#[test]
+fn search_next_step_preserves_include_suppressed_for_audit_expansion() {
+    let _dir = ScopedTestDataDir::new("mcp-search-include-suppressed-next-step");
+    let conn = crate::db::open_db().expect("db opens");
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-include-suppressed"),
+        "/repo",
+        None,
+        "Suppressed audit target",
+        "suppressed-audit-needle should expand only with audit flag.",
+        "decision",
+        None,
+    )
+    .expect("memory insert succeeds");
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{memory_id}"))
+                .expect("target parses"),
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )
+    .expect("suppression insert succeeds");
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let response = server
+        .search(Parameters(SearchParams {
+            query: Some("suppressed-audit-needle".to_string()),
+            limit: Some(5),
+            project: Some("/repo".to_string()),
+            r#type: None,
+            offset: Some(0),
+            include_stale: None,
+            include_suppressed: Some(true),
+            branch: None,
+            multi_hop: Some(false),
+            explain: None,
+        }))
+        .expect("search succeeds");
+    let json: Value = serde_json::from_str(&response).expect("search returns json");
+
+    assert_eq!(json["results"][0]["id"], memory_id);
+    assert_eq!(json["next_step"]["include_suppressed"], true);
 }
 
 #[test]
@@ -503,6 +555,7 @@ fn get_observations_attaches_topic_trace_for_memory_topic_key() {
             ids: vec![memory_id],
             project: Some("/repo".to_string()),
             source: Some("memory".to_string()),
+            include_suppressed: None,
         }))
         .expect("expansion succeeds");
     let json: Value = serde_json::from_str(&expanded).expect("expanded json");
@@ -543,6 +596,7 @@ fn get_observations_marks_memory_accessed() {
             ids: vec![memory_id],
             project: Some("/repo".to_string()),
             source: Some("memory".to_string()),
+            include_suppressed: None,
         }))
         .expect("expansion succeeds");
 
@@ -556,6 +610,58 @@ fn get_observations_marks_memory_accessed() {
         .expect("usage row loads");
     assert_eq!(usage.0, 1);
     assert!(usage.1.is_some());
+}
+
+#[test]
+fn get_observations_hides_policy_suppressed_memories_by_default() {
+    let _dir = ScopedTestDataDir::new("mcp-memory-policy-suppressed");
+    let conn = crate::db::open_db().expect("db opens");
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-policy-suppressed"),
+        "/repo",
+        None,
+        "Suppressed detail",
+        "Suppressed details should require include_suppressed.",
+        "decision",
+        None,
+    )
+    .expect("memory insert succeeds");
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{memory_id}"))
+                .expect("target parses"),
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )
+    .expect("suppression insert succeeds");
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let hidden = server.get_observations(Parameters(GetObservationsParams {
+        ids: vec![memory_id],
+        project: Some("/repo".to_string()),
+        source: Some("memory".to_string()),
+        include_suppressed: None,
+    }));
+    let err = match hidden {
+        Ok(value) => panic!("suppressed memory should be hidden by default, got {value}"),
+        Err(err) => err,
+    };
+    assert_mcp_error(err, McpErrorCode::NotFound, "get_observations", false);
+
+    let expanded = server
+        .get_observations(Parameters(GetObservationsParams {
+            ids: vec![memory_id],
+            project: Some("/repo".to_string()),
+            source: Some("memory".to_string()),
+            include_suppressed: Some(true),
+        }))
+        .expect("explicit include_suppressed should expand");
+    let json: Value = serde_json::from_str(&expanded).expect("expanded json");
+    assert_eq!(json[0]["id"], memory_id);
 }
 
 #[test]
@@ -584,6 +690,7 @@ fn search_labels_sparse_result_raw_fallback_as_raw_archive() {
             r#type: None,
             offset: Some(0),
             include_stale: Some(true),
+            include_suppressed: None,
             branch: Some("main".to_string()),
             multi_hop: Some(false),
             explain: None,
@@ -613,6 +720,7 @@ fn search_preserves_multi_hop_metadata_in_compact_envelope() {
             r#type: None,
             offset: Some(0),
             include_stale: Some(true),
+            include_suppressed: None,
             branch: None,
             multi_hop: Some(true),
             explain: None,
@@ -635,6 +743,7 @@ fn get_observations_rejects_unknown_source() {
         ids: vec![1],
         project: None,
         source: Some("raw_archive".to_string()),
+        include_suppressed: None,
     }));
 
     let err = match result {
@@ -664,6 +773,7 @@ fn get_observations_reports_missing_memory_ids_as_not_found() {
         ids: vec![999_999],
         project: None,
         source: Some("memory".to_string()),
+        include_suppressed: None,
     }));
 
     let err = match result {
@@ -749,6 +859,7 @@ fn mcp_tool_errors_report_db_open_failure_as_retryable() {
         r#type: None,
         offset: Some(0),
         include_stale: Some(true),
+        include_suppressed: None,
         branch: None,
         multi_hop: Some(false),
         explain: None,

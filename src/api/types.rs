@@ -31,6 +31,7 @@ pub(super) struct SearchParams {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub include_stale: Option<bool>,
+    pub include_suppressed: Option<bool>,
     pub branch: Option<String>,
     pub multi_hop: Option<bool>,
     pub explain: Option<bool>,
@@ -218,6 +219,12 @@ pub(super) struct SaveMemoryNextStepResponse {
 #[derive(Deserialize)]
 pub(super) struct ShowParams {
     pub id: i64,
+    pub include_suppressed: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct MemoryDetailParams {
+    pub include_suppressed: Option<bool>,
 }
 // ===== remem-web 只读端点类型 =====
 
@@ -230,6 +237,7 @@ pub(super) struct ListParams {
     pub status: Option<String>,
     pub branch: Option<String>,
     pub q: Option<String>,
+    pub include_suppressed: Option<bool>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -314,6 +322,7 @@ pub(super) struct CandidateReviewResponse {
 #[derive(Deserialize)]
 pub(super) struct GraphParams {
     pub project: Option<String>,
+    pub include_suppressed: Option<bool>,
     pub limit: Option<i64>,
 }
 

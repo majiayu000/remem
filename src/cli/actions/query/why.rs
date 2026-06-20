@@ -3,7 +3,7 @@ use rusqlite::OptionalExtension;
 
 use crate::{
     db,
-    memory::{self, Memory},
+    memory::{self, suppression::SuppressionRecord, Memory},
 };
 
 use super::show::format_memory_timestamp;
@@ -29,7 +29,7 @@ pub(super) struct MemoryCurrentness {
 
 pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&str>) -> Result<()> {
     let conn = db::open_db()?;
-    let memories = memory::get_memories_by_ids(&conn, &[id], None)?;
+    let memories = memory::get_memories_by_ids_with_suppressed_policy(&conn, &[id], None, true)?;
 
     let Some(memory) = memories.first() else {
         println!("Memory #{id} not found.");
@@ -41,6 +41,7 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
     let gate_project = context_gate_project(memory, current_project.as_deref());
     let gate = load_latest_context_gate_summary(&conn, gate_project)?;
     let currentness = load_memory_currentness(&conn, memory.id)?;
+    let suppressions = memory::suppression::active_suppressions_for_memory(&conn, memory.id)?;
 
     print!(
         "{}",
@@ -49,7 +50,8 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
             current_project.as_deref(),
             current_branch.as_deref(),
             gate.as_ref(),
-            currentness.as_ref()
+            currentness.as_ref(),
+            &suppressions,
         )
     );
     Ok(())
@@ -137,6 +139,7 @@ pub(super) fn render_why_memory(
     current_branch: Option<&str>,
     gate: Option<&ContextGateSummary>,
     currentness: Option<&MemoryCurrentness>,
+    suppressions: &[SuppressionRecord],
 ) -> String {
     let mut output = String::new();
     output.push_str(&format!("Memory #{}\n", memory.id));
@@ -161,6 +164,10 @@ pub(super) fn render_why_memory(
     output.push_str(&format!(
         "  currentness: {}\n",
         currentness_visibility(currentness)
+    ));
+    output.push_str(&format!(
+        "  suppression: {}\n",
+        suppression_visibility(suppressions)
     ));
     output.push_str(&format!(
         "  recency: updated {}\n",
@@ -260,6 +267,32 @@ fn status_visibility(status: &str, currentness: Option<&MemoryCurrentness>) -> S
         }
         other => format!("{other}; not returned by the default active/stale/archive search filter"),
     }
+}
+
+fn suppression_visibility(suppressions: &[SuppressionRecord]) -> String {
+    if suppressions.is_empty() {
+        return "not suppressed by policy".to_string();
+    }
+    suppressions
+        .iter()
+        .map(|record| {
+            let target = record
+                .target_id
+                .map(|id| format!("{}:{id}", record.target_kind))
+                .or_else(|| {
+                    record
+                        .target_value
+                        .as_ref()
+                        .map(|value| format!("{}:{value}", record.target_kind))
+                })
+                .unwrap_or_else(|| record.target_kind.clone());
+            format!(
+                "suppressed by policy #{} target={} reason={} actor={}",
+                record.id, target, record.reason, record.actor
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn currentness_visibility(currentness: Option<&MemoryCurrentness>) -> String {
