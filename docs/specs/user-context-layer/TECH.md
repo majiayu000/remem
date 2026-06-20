@@ -372,21 +372,31 @@ Implemented in the first #579 slice:
 
 ## Automatic Extraction
 
-Automatic extraction is a later phase and must use a prompt/parser contract that
-requires:
+Implemented in source version `0.5.116`. Session rollup completion enqueues a
+`user_context_candidate` extraction task for the same captured-event range. The
+extractor loads raw captured events plus the matching session summary, builds a
+strict JSON prompt, validates the full model response before any write, and then
+persists only through `user_context_candidates`.
+
+The prompt/parser contract requires:
 
 - claim type
 - claim key
 - claim text
 - confidence
 - sensitivity
-- source refs
 - risk class
-- review status or block reason
+- source kind
+- non-empty `source_event_ids` that cite loaded captured events
 
-Malformed output fails closed. Sensitive/speculative candidates must not
-auto-promote. Contradictory candidates should update/supersede/noop through a
-lifecycle decision rather than append conflicting active rows.
+Malformed output fails closed and creates no candidate or active claim.
+Sensitive, speculative, assistant-authored, non-user-authored, medium/high risk,
+low-confidence, and non-preference/non-constraint candidates stay pending review
+with a block reason. Auto-promotion requires a normal, low-risk, high-confidence
+explicit user statement, a stable `claim_key`, and cited source events that are
+actually user-authored and support the claim text. Contradictory candidates
+update/supersede/noop through the candidate lifecycle rather than append
+conflicting active rows.
 
 ## Tests
 
@@ -421,5 +431,5 @@ schema migrations, extraction, MCP, or context injection.
 5. #579: guarded automatic extraction and review inbox.
 
 Each phase should ship independently with tests and documentation updates. Do
-not enable automatic user-context extraction before manual controls, summary
-source inspection, suppression, and review workflow are all working.
+not widen auto-promotion beyond explicit low-risk user-authored preference and
+constraint statements without adding review-gated tests first.

@@ -22,7 +22,7 @@ const SUPPORT_RISK_TOKENS: &[&str] = &[
     "won", "wouldn",
 ];
 
-pub(super) fn has_conservative_source_support(
+pub(crate) fn has_conservative_source_support(
     candidate_text: &str,
     observation_text: &str,
 ) -> bool {
