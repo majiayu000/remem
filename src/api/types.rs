@@ -1,9 +1,26 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 #[derive(Clone, Copy, Default)]
 pub struct DbState;
+
+#[derive(Clone, Default)]
+pub(super) struct StatusCache {
+    pub(super) entry: Arc<Mutex<Option<StatusCacheEntry>>>,
+}
+
+#[derive(Clone)]
+pub(super) struct StatusCacheEntry {
+    pub(super) generated_at_epoch: i64,
+    pub(super) payload: serde_json::Value,
+}
+
+#[derive(Deserialize, Default)]
+pub(super) struct StatusParams {
+    pub refresh: Option<bool>,
+}
 
 #[derive(Deserialize)]
 pub(super) struct SearchParams {
@@ -102,6 +119,7 @@ pub(super) struct CapabilitiesResponse {
 
 #[derive(Serialize)]
 pub(super) struct CapabilitiesFeatures {
+    pub health: bool,
     pub status: bool,
     pub stats: bool,
     pub search: bool,
@@ -112,6 +130,14 @@ pub(super) struct CapabilitiesFeatures {
     pub candidate_rows: bool,
     pub candidate_review: bool,
     pub graph: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct HealthResponse {
+    pub ok: bool,
+    pub version: &'static str,
+    pub api_version: u16,
+    pub schema_version: i64,
 }
 
 #[derive(Deserialize)]

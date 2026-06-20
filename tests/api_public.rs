@@ -125,6 +125,26 @@ async fn exported_router_covers_auth_save_list_search_and_detail() -> anyhow::Re
         ))
         .await?;
     assert_eq!(status.status(), StatusCode::OK);
+    let status_body = to_bytes(status.into_body(), usize::MAX).await?;
+    let status_payload: Value = serde_json::from_slice(&status_body)?;
+    assert_eq!(status_payload["cache"]["hit"], false);
+    assert_eq!(status_payload["cache"]["stale"], false);
+
+    let health = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/health",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(health.status(), StatusCode::OK);
+    let health_body = to_bytes(health.into_body(), usize::MAX).await?;
+    let health_payload: Value = serde_json::from_slice(&health_body)?;
+    assert_eq!(health_payload["ok"], true);
+    assert_eq!(health_payload["api_version"], 1);
+    assert!(health_payload.get("token").is_none());
 
     let invalid_save = app
         .clone()

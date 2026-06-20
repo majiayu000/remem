@@ -3,6 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{header, Method, Request, StatusCode},
     response::IntoResponse,
+    Extension,
 };
 use rusqlite::params;
 use serde_json::Value;
@@ -15,7 +16,9 @@ use super::handlers::{
     handle_get_memory, handle_graph, handle_list_candidates, handle_list_memories,
     handle_memory_detail, handle_search, handle_stats, handle_status, search_request_from_params,
 };
-use super::types::{CandidateParams, GraphParams, ListParams, SearchParams, ShowParams};
+use super::types::{
+    CandidateParams, GraphParams, ListParams, SearchParams, ShowParams, StatusCache, StatusParams,
+};
 use super::DbState;
 
 mod web_regressions;
@@ -71,6 +74,14 @@ fn insert_review_candidate(topic_key: &str, text: &str) -> anyhow::Result<i64> {
         params![task.project_id, topic_key, text, evidence_event_ids, now],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+fn default_status_extractors() -> (State<DbState>, Query<StatusParams>, Extension<StatusCache>) {
+    (
+        State(DbState),
+        Query(StatusParams::default()),
+        Extension(StatusCache::default()),
+    )
 }
 
 #[test]
@@ -244,15 +255,30 @@ async fn get_memory_handler_marks_memory_accessed() -> anyhow::Result<()> {
 #[tokio::test]
 async fn status_handler_reopens_database_after_file_removal() {
     let test_dir = ScopedTestDataDir::new("api-status");
+    let cache = StatusCache::default();
 
-    let first = handle_status(State(DbState)).await.into_response();
+    let first = handle_status(
+        State(DbState),
+        Query(StatusParams::default()),
+        Extension(cache.clone()),
+    )
+    .await
+    .into_response();
     assert_eq!(first.status(), StatusCode::OK);
     assert!(test_dir.db_path().exists());
 
     test_dir.remove_db_files();
     assert!(!test_dir.db_path().exists());
 
-    let second = handle_status(State(DbState)).await.into_response();
+    let second = handle_status(
+        State(DbState),
+        Query(StatusParams {
+            refresh: Some(true),
+        }),
+        Extension(cache),
+    )
+    .await
+    .into_response();
     assert_eq!(second.status(), StatusCode::OK);
     assert!(test_dir.db_path().exists());
 }
@@ -339,6 +365,7 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
         crate::build_info::binary_schema_version()
     );
     assert_eq!(payload["api_version"], 1);
+    assert_eq!(payload["features"]["health"], true);
     assert_eq!(payload["features"]["status"], true);
     assert_eq!(payload["features"]["stats"], true);
     assert_eq!(payload["features"]["search"], true);
@@ -349,6 +376,7 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     assert_eq!(payload["features"]["candidate_rows"], true);
     assert_eq!(payload["features"]["candidate_review"], true);
     assert_eq!(payload["features"]["graph"], true);
+    assert_eq!(payload["endpoints"]["health"], "/api/v1/health");
     assert_eq!(payload["endpoints"]["status"], "/api/v1/status");
     assert_eq!(payload["endpoints"]["stats"], "/api/v1/stats");
     assert_eq!(payload["endpoints"]["search"], "/api/v1/search");
@@ -369,6 +397,124 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     );
     assert_eq!(payload["endpoints"]["graph"], "/api/v1/graph");
     assert!(payload.get("token").is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_serves_health_with_auth_without_opening_database() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("api-health");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/health")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/health",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["version"], crate::build_info::package_version());
+    assert_eq!(payload["api_version"], 1);
+    assert_eq!(
+        payload["schema_version"],
+        crate::build_info::binary_schema_version()
+    );
+    assert!(payload.get("token").is_none());
+    assert!(payload.get("path").is_none());
+    assert!(!test_dir.db_path().exists());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_router_reports_cache_hits_and_refresh() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-status-cache");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let first = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/status",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body = to_bytes(first.into_body(), usize::MAX).await?;
+    let first_payload: Value = serde_json::from_slice(&first_body)?;
+    assert_eq!(first_payload["cache"]["hit"], false);
+    assert_eq!(first_payload["cache"]["stale"], false);
+    assert_eq!(first_payload["cache"]["ttl_secs"], 2);
+    assert!(first_payload["warnings"].is_null());
+    let first_memories = first_payload["memories"]
+        .as_i64()
+        .expect("status memories should be numeric");
+
+    let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-cache"),
+        "proj-cache",
+        None,
+        "status cache memory",
+        "visible after refresh",
+        "decision",
+        None,
+    )?;
+    drop(conn);
+
+    let cached = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/status",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(cached.status(), StatusCode::OK);
+    let cached_body = to_bytes(cached.into_body(), usize::MAX).await?;
+    let cached_payload: Value = serde_json::from_slice(&cached_body)?;
+    assert_eq!(cached_payload["cache"]["hit"], true);
+    assert_eq!(cached_payload["cache"]["stale"], false);
+    assert_eq!(cached_payload["memories"], first_memories);
+
+    let refreshed = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/status?refresh=true",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(refreshed.status(), StatusCode::OK);
+    let refreshed_body = to_bytes(refreshed.into_body(), usize::MAX).await?;
+    let refreshed_payload: Value = serde_json::from_slice(&refreshed_body)?;
+    assert_eq!(refreshed_payload["cache"]["hit"], false);
+    assert_eq!(refreshed_payload["cache"]["stale"], false);
+    assert_eq!(refreshed_payload["memories"], first_memories + 1);
 
     Ok(())
 }
@@ -1451,7 +1597,8 @@ async fn status_handler_matches_shared_system_stats() {
     let stats = db::query_system_stats(&conn).expect("system stats should load");
     drop(conn);
 
-    let response = handle_status(State(DbState)).await.into_response();
+    let (state, params, cache) = default_status_extractors();
+    let response = handle_status(state, params, cache).await.into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = to_bytes(response.into_body(), usize::MAX)

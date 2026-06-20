@@ -88,10 +88,15 @@ def require_keys(obj, keys):
     for key in keys:
         require(key in obj, f"missing key {key!r}")
 
-if shape == "status":
-    require_keys(payload, ["version"])
+if shape == "health":
+    require_keys(payload, ["ok", "version", "api_version", "schema_version"])
+    require(payload["ok"] is True, "ok should be true")
+elif shape == "status":
+    require_keys(payload, ["version", "cache"])
+    require_keys(payload["cache"], ["hit", "stale", "generated_at_epoch", "ttl_secs"])
 elif shape == "capabilities":
     require_keys(payload, ["version", "schema_version", "api_version", "features", "endpoints"])
+    require(payload["features"].get("health") is True, "health feature should be true")
     require(payload["features"].get("graph") is True, "graph feature should be true")
     require(payload["features"].get("candidate_review") is True, "candidate_review feature should be true")
 elif shape == "list":
@@ -172,12 +177,12 @@ for _ in $(seq 1 80); do
   if [[ -s "$TOKEN_FILE" ]]; then
     TOKEN="$(tr -d '\n\r' <"$TOKEN_FILE")"
     if [[ -n "$TOKEN" ]]; then
-      body="$TMP_BASE/ready-status.json"
+      body="$TMP_BASE/ready-health.json"
       code="$(curl -sS -o "$body" -w '%{http_code}' \
         -H "Authorization: Bearer ${TOKEN}" \
-        "${BASE_URL}/api/v1/status" || true)"
+        "${BASE_URL}/api/v1/health" || true)"
       if [[ "$code" == "200" ]]; then
-        validate_json "status" "status" "$body"
+        validate_json "health" "health" "$body"
         break
       fi
     fi
@@ -188,7 +193,28 @@ done
 [[ -n "$TOKEN" ]] || fail "API token was not created"
 
 request_json_no_auth "capabilities_unauthorized" "/api/v1/capabilities" "401" "error"
+request_json_no_auth "health_unauthorized" "/api/v1/health" "401" "error"
+request_json "health" "/api/v1/health" "200" "health"
 request_json "status" "/api/v1/status" "200" "status"
+request_json "status_cached" "/api/v1/status" "200" "status"
+request_json "status_refresh" "/api/v1/status?refresh=true" "200" "status"
+python3 - "$TMP_BASE/status.json" "$TMP_BASE/status_cached.json" "$TMP_BASE/status_refresh.json" <<'PY'
+import json
+import sys
+
+first, cached, refresh = [json.load(open(path, "r", encoding="utf-8")) for path in sys.argv[1:]]
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
+
+require(first["cache"]["hit"] is False, "first status response should not be a cache hit")
+require(first["cache"]["stale"] is False, "first status response should not be stale")
+require(cached["cache"]["hit"] is True, "second status response should be a cache hit")
+require(cached["cache"]["stale"] is False, "cached status response should not be stale")
+require(refresh["cache"]["hit"] is False, "refresh status response should bypass cache")
+require(refresh["cache"]["stale"] is False, "refresh status response should not be stale")
+PY
 request_json "capabilities" "/api/v1/capabilities" "200" "capabilities"
 request_json "memories" "/api/v1/memories?limit=1" "200" "list"
 request_json "memories_list_alias" "/api/v1/memories/list?limit=1" "200" "list"

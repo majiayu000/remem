@@ -10,6 +10,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
         schema_version: crate::build_info::binary_schema_version(),
         api_version: 1,
         features: CapabilitiesFeatures {
+            health: true,
             status: true,
             stats: true,
             search: true,
@@ -22,6 +23,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             graph: true,
         },
         endpoints: BTreeMap::from([
+            ("health", "/api/v1/health"),
             ("status", "/api/v1/status"),
             ("stats", "/api/v1/stats"),
             ("search", "/api/v1/search"),

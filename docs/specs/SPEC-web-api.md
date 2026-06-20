@@ -7,9 +7,11 @@ and Apps SDK clients. Clients must not read the SQLCipher database directly or
 invent mock graph/candidate data when the native binary lacks an endpoint.
 
 The complete web read-model surface is implemented in source version
-`0.5.109`. remem-web should require a published `remem >= 0.5.109` release
-before directing installed-binary users to the full API surface. Clients should
-call `GET /api/v1/capabilities` before enabling optional UI features.
+`0.5.109`. Fast health checks and cached status metadata are implemented in
+source version `0.5.112`. remem-web should require a published release with the
+specific capability it needs before directing installed-binary users to that
+surface. Clients should call `GET /api/v1/capabilities` before enabling
+optional UI features.
 
 ## Endpoint Groups
 
@@ -17,7 +19,8 @@ call `GET /api/v1/capabilities` before enabling optional UI features.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/v1/status` | Operational health, queue state, and counters. |
+| GET | `/api/v1/health` | Cheap authenticated liveness and API readiness. |
+| GET | `/api/v1/status` | Cached operational queue state and counters. |
 | GET | `/api/v1/capabilities` | Native feature and endpoint discovery. |
 | GET | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&include_stale=&multi_hop=&explain=` | Search memories with optional explain. |
 | GET | `/api/v1/memory?id=` | Legacy compact single-memory endpoint. |
@@ -49,10 +52,11 @@ call `GET /api/v1/capabilities` before enabling optional UI features.
 
 ```json
 {
-  "version": "0.5.109",
-  "schema_version": 48,
+  "version": "0.5.112",
+  "schema_version": 50,
   "api_version": 1,
   "features": {
+    "health": true,
     "status": true,
     "stats": true,
     "search": true,
@@ -65,6 +69,7 @@ call `GET /api/v1/capabilities` before enabling optional UI features.
     "graph": true
   },
   "endpoints": {
+    "health": "/api/v1/health",
     "status": "/api/v1/status",
     "stats": "/api/v1/stats",
     "search": "/api/v1/search",
@@ -83,6 +88,41 @@ Feature flags are the client gate. A web client should not infer support from
 package metadata alone.
 
 ## Response Contracts
+
+`GET /api/v1/health` is the fast liveness endpoint. It requires the same bearer
+token as other `/api/v1/*` routes, does not run aggregate system stats, and
+returns:
+
+```json
+{
+  "ok": true,
+  "version": "0.5.112",
+  "api_version": 1,
+  "schema_version": 50
+}
+```
+
+`GET /api/v1/status` preserves its existing counters and adds machine-readable
+cache metadata. The default cache TTL is 2 seconds:
+
+```json
+{
+  "version": "0.5.112",
+  "memories": 10,
+  "observations": 20,
+  "cache": {
+    "hit": false,
+    "stale": false,
+    "generated_at_epoch": 1781940000,
+    "ttl_secs": 2
+  }
+}
+```
+
+`GET /api/v1/status?refresh=true` bypasses the cache and recomputes status. If
+refresh fails but a bounded stale payload is still available, the response is
+HTTP 200 with `cache.stale=true` and a `warnings` array. Without an acceptable
+stale payload, status returns the existing structured error response.
 
 List endpoints return:
 
@@ -155,8 +195,13 @@ Candidate review errors include `not_found`, `candidate_not_pending`,
 - Every route requires `Authorization: Bearer <token>` from the data-dir
   `.api-token` file.
 - Queries use parameterized SQL placeholders.
-- `GET /api/v1/status`, `/capabilities`, `/stats`, `/search`, `/memories`,
-  `/candidates`, and `/graph` do not modify durable memory content.
+- `GET /api/v1/health`, `/status`, `/capabilities`, `/stats`, `/search`,
+  `/memories`, `/candidates`, and `/graph` do not modify durable memory
+  content.
+- `/health` is for cheap liveness. `/capabilities` is for feature detection.
+  `/status` is for dashboard counters and should not be polled more frequently
+  than its returned `cache.ttl_secs` unless the user explicitly requests
+  `/status?refresh=true`.
 - `GET /api/v1/memories/{id}` and legacy `GET /api/v1/memory?id=` update
   memory access telemetry on successful detail reads.
 - Candidate review endpoints are transactional. If promotion fails, the
@@ -168,12 +213,17 @@ Release notes for web API changes must identify:
 
 - the minimum `remem` version needed by remem-web;
 - which `/api/v1/capabilities.features` are available;
+- whether `/api/v1/status` responses include cache metadata;
 - compatibility guidance for `/api/v1/memory?id=` and `/api/v1/memories/list`;
 - whether candidates are list-only or include review actions.
 
 For the first complete native web API surface, the release target is
 `remem 0.5.109`. Do not document it as available to installed-binary users
 until the `v0.5.109` tag and GitHub Release exist.
+
+For fast health and cached status, the release target is `remem 0.5.112`.
+Do not document those as installed-binary behavior until the corresponding tag
+and GitHub Release exist.
 
 ## Smoke Test
 

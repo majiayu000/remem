@@ -1,19 +1,21 @@
 use axum::{
     middleware,
     routing::{get, post},
-    Router,
+    Extension, Router,
 };
 
 use super::auth::{ensure_api_token, require_api_token};
 use super::handlers::{
     handle_approve_candidate, handle_capabilities, handle_edit_candidate, handle_get_memory,
-    handle_graph, handle_list_candidates, handle_list_memories, handle_memory_detail,
-    handle_reject_candidate, handle_save_memory, handle_search, handle_stats, handle_status,
+    handle_graph, handle_health, handle_list_candidates, handle_list_memories,
+    handle_memory_detail, handle_reject_candidate, handle_save_memory, handle_search, handle_stats,
+    handle_status,
 };
-use super::types::DbState;
+use super::types::{DbState, StatusCache};
 
 pub fn build_router(_port: u16) -> Router<DbState> {
     Router::new()
+        .route("/api/v1/health", get(handle_health))
         .route("/api/v1/capabilities", get(handle_capabilities))
         .route("/api/v1/search", get(handle_search))
         .route("/api/v1/memory", get(handle_get_memory))
@@ -37,6 +39,7 @@ pub fn build_router(_port: u16) -> Router<DbState> {
         .route("/api/v1/graph", get(handle_graph))
         .route("/api/v1/stats", get(handle_stats))
         .route_layer(middleware::from_fn(require_api_token))
+        .layer(Extension(StatusCache::default()))
 }
 
 pub async fn run_api_server(port: u16) -> anyhow::Result<()> {

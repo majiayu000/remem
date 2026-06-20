@@ -98,8 +98,10 @@ metadata, it should read the smallest metadata source available.
 
 ## Status Cache Plan
 
-Add process-local cache state owned by the API state, not a global mutable
-singleton.
+Add process-local cache state owned by the Axum router, not a global mutable
+singleton. The implementation uses a router-owned extension so each
+`build_router(...).with_state(DbState)` instance has its own cache while
+preserving the public zero-sized `DbState` shape.
 
 The cache entry should store:
 
@@ -187,7 +189,7 @@ Recommended commands for the implementation PR:
 cargo fmt --check
 cargo check
 cargo test health
-cargo test status_cache
+cargo test status
 cargo test router_serves_capabilities_with_auth
 cargo test
 ```
