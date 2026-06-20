@@ -1,37 +1,188 @@
 # SPEC: remem-web local REST API
 
-为 remem-web UI 新增的本地 REST 端点。复用现有 axum router、Bearer 鉴权
-（`require_api_token`）与 `db::open_db()` 解密连接。查询端点全部参数化查询。
-GET 端点默认不改变 durable memory 内容；详情端点的访问遥测是唯一例外。
+Status: current contract. Refs #568.
 
-## 端点
+The native web API is the localhost, bearer-token boundary used by remem-web
+and Apps SDK clients. Clients must not read the SQLCipher database directly or
+invent mock graph/candidate data when the native binary lacks an endpoint.
 
-| 方法 | 路径 | 用途 | 复用 |
-|---|---|---|---|
-| GET | `/api/v1/memories` | 记忆列表（筛选/分页/搜索） | `MEMORY_COLS`+`map_memory_row` |
-| GET | `/api/v1/memories/:id` | 记忆详情（含实体/边），并记录访问遥测 | + `memory_entities` + `memory_edges` + `mark_memories_accessed` |
-| GET | `/api/v1/memory?id=` | 兼容详情端点，并记录访问遥测 | `search(..., limit=1)` + `mark_memories_accessed` |
-| POST | `/api/v1/memories` | 显式保存 durable memory | `save_memory_with_reference_time` |
-| GET | `/api/v1/candidates` | 待审候选 | `memory_candidates` 表 |
-| GET | `/api/v1/graph` | 实体图谱（共现） | `entities` + `memory_entities` |
-| GET | `/api/v1/stats` | 概览/用量 | `db::query::stats::*` |
+The complete web read-model surface is implemented in source version
+`0.5.109`. remem-web should require a published `remem >= 0.5.109` release
+before directing installed-binary users to the full API surface. Clients should
+call `GET /api/v1/capabilities` before enabling optional UI features.
 
-## 查询参数约定
+## Endpoint Groups
 
-列表端点统一：`?project=&type=&scope=&status=&branch=&q=&limit=&offset=`
-`project` 为空 = 所有项目。返回 `{ data, meta: { count, total, limit, offset } }`。
+### Stable Core
 
-## 安全
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/status` | Operational health, queue state, and counters. |
+| GET | `/api/v1/capabilities` | Native feature and endpoint discovery. |
+| GET | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&include_stale=&multi_hop=&explain=` | Search memories with optional explain. |
+| GET | `/api/v1/memory?id=` | Legacy compact single-memory endpoint. |
+| GET | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=` | Canonical browse endpoint. |
+| GET | `/api/v1/memories/{id}` | Rich detail with entities and memory edges. |
+| POST | `/api/v1/memories` | Explicit durable memory save. |
 
-- 仅 127.0.0.1 + Bearer token（沿用现有 `route_layer`）
-- 全部参数化查询（`?N` 占位），无字符串拼接 SQL（SEC-01）
-- GET 列表、候选、图谱、状态和搜索端点不写 db
-- `GET /api/v1/memories/:id` 与兼容详情端点 `GET /api/v1/memory?id=` 成功返回详情后会更新
-  `memories.access_count` 与 `memories.last_accessed_epoch`，作为 usage-aware ranking 的访问遥测；
-  失败响应不应更新访问计数
-- `POST /api/v1/memories` 是显式写入端点；校验失败返回稳定的 `save_validation_failed`
+### Web Read Model
 
-## 不在范围
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/stats` | Product stats for local dashboards. |
+| GET | `/api/v1/candidates?project=&status=&limit=&offset=` | Compact memory-candidate list. |
+| POST | `/api/v1/candidates/{id}/approve` | Approve a pending candidate. |
+| POST | `/api/v1/candidates/{id}/reject` | Reject a pending candidate; persisted status is `discarded`. |
+| POST | `/api/v1/candidates/{id}/edit` | Edit and approve a pending candidate. |
+| GET | `/api/v1/graph?project=&limit=` | DB-backed entity graph. |
 
-- 编辑/删除/批量治理
-- 全文检索（已有 `/api/v1/search`）
+### Compatibility
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/memories/list` | Compatibility alias for canonical `/api/v1/memories`. |
+| GET | `/api/v1/memory?id=` | Legacy compact single-memory endpoint. |
+
+## Capabilities
+
+`GET /api/v1/capabilities` returns:
+
+```json
+{
+  "version": "0.5.109",
+  "schema_version": 48,
+  "api_version": 1,
+  "features": {
+    "status": true,
+    "stats": true,
+    "search": true,
+    "search_explain": true,
+    "memory_list": true,
+    "memory_detail": true,
+    "save_memory": true,
+    "candidate_rows": true,
+    "candidate_review": true,
+    "graph": true
+  },
+  "endpoints": {
+    "status": "/api/v1/status",
+    "stats": "/api/v1/stats",
+    "search": "/api/v1/search",
+    "search_explain": "/api/v1/search?explain=true",
+    "memory_list": "/api/v1/memories",
+    "memory_detail": "/api/v1/memories/{id}",
+    "save_memory": "/api/v1/memories",
+    "candidate_rows": "/api/v1/candidates",
+    "candidate_review": "/api/v1/candidates/{id}/approve",
+    "graph": "/api/v1/graph"
+  }
+}
+```
+
+Feature flags are the client gate. A web client should not infer support from
+package metadata alone.
+
+## Response Contracts
+
+List endpoints return:
+
+```json
+{
+  "data": [],
+  "meta": {
+    "count": 0,
+    "total": 0,
+    "limit": 50,
+    "offset": 0,
+    "has_more": false,
+    "next_offset": null
+  }
+}
+```
+
+`GET /api/v1/search` keeps its existing search-specific `meta` shape and may
+also include `multi_hop`, `raw_hits`, `raw_hits_error`, and `explain`.
+
+`GET /api/v1/graph` returns only DB-backed data:
+
+```json
+{
+  "nodes": [],
+  "edges": []
+}
+```
+
+Empty graph or candidate tables return empty arrays, not synthesized rows.
+
+Candidate review responses are explicit:
+
+```json
+{
+  "candidate_id": 1,
+  "status": "approved",
+  "memory_id": 123
+}
+```
+
+`POST /api/v1/candidates/{id}/edit` accepts any changed subset of:
+
+```json
+{
+  "scope": "project",
+  "memory_type": "decision",
+  "topic_key": "native-api-contract",
+  "text": "edited memory text"
+}
+```
+
+All normal control-flow errors use:
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "Memory not found"
+  }
+}
+```
+
+Candidate review errors include `not_found`, `candidate_not_pending`,
+`candidate_edit_invalid`, and `candidate_review_failed`.
+
+## Security And Side Effects
+
+- API binds only to `127.0.0.1`.
+- Every route requires `Authorization: Bearer <token>` from the data-dir
+  `.api-token` file.
+- Queries use parameterized SQL placeholders.
+- `GET /api/v1/status`, `/capabilities`, `/stats`, `/search`, `/memories`,
+  `/candidates`, and `/graph` do not modify durable memory content.
+- `GET /api/v1/memories/{id}` and legacy `GET /api/v1/memory?id=` update
+  memory access telemetry on successful detail reads.
+- Candidate review endpoints are transactional. If promotion fails, the
+  candidate must remain pending and no memory should be partially created.
+
+## Release Gate
+
+Release notes for web API changes must identify:
+
+- the minimum `remem` version needed by remem-web;
+- which `/api/v1/capabilities.features` are available;
+- compatibility guidance for `/api/v1/memory?id=` and `/api/v1/memories/list`;
+- whether candidates are list-only or include review actions.
+
+For the first complete native web API surface, the release target is
+`remem 0.5.109`. Do not document it as available to installed-binary users
+until the `v0.5.109` tag and GitHub Release exist.
+
+## Smoke Test
+
+Run:
+
+```bash
+scripts/smoke_native_web_api.sh
+```
+
+The smoke starts a local built `remem api` process in an isolated
+`REMEM_DATA_DIR`, reads the generated API token, and verifies the documented
+read endpoints under bearer-token auth. It must not print or leak the token.

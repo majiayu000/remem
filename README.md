@@ -531,16 +531,47 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 Library users who build the router directly should call
 `remem::api::ensure_api_token()` before `remem::api::build_router(...)`.
 
+The complete native web API surface is implemented in source version
+`0.5.109`. remem-web should require a published `remem >= 0.5.109` release
+before pointing installed-binary users at the full graph, candidate, or
+rich-detail experience. Clients should call `/api/v1/capabilities` before
+enabling optional views.
+
+### Stable core endpoints
+
 | Endpoint | Method | Description |
 |---|---|---|
+| `/api/v1/status` | GET | Operational health, queue state, and counts |
+| `/api/v1/capabilities` | GET | Feature and endpoint detection for native clients |
 | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=` | GET | Search memories |
 | `/api/v1/memory?id=` | GET | Get one memory |
+| `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=` | GET | Canonical memory browse endpoint |
+| `/api/v1/memories/{id}` | GET | Rich memory detail with entities and edges |
+| `/api/v1/memories` | POST | Save memory |
+
+### Web read-model endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/v1/stats` | GET | Product stats for local dashboards |
 | `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
 | `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate |
 | `/api/v1/candidates/{id}/reject` | POST | Reject a pending memory candidate |
 | `/api/v1/candidates/{id}/edit` | POST | Edit and approve a pending memory candidate |
-| `/api/v1/memories` | POST | Save memory |
-| `/api/v1/status` | GET | System status |
+| `/api/v1/graph?project=&limit=` | GET | DB-backed entity graph read model |
+
+### Compatibility aliases
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/v1/memories/list` | GET | Compatibility alias for `/api/v1/memories` |
+| `/api/v1/memory?id=` | GET | Legacy compact single-memory endpoint |
+
+Run the local native API smoke test against a built binary with:
+
+```bash
+scripts/smoke_native_web_api.sh
+```
 
 ## Security
 
