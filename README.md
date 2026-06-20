@@ -515,6 +515,11 @@ remem user summary refresh
 remem user summary edit --text "updated profile summary"
 remem user summary sources
 remem user recall "review the remem user context design"
+remem user review inbox
+remem user review approve <id>
+remem user review edit <id> --text "updated candidate"
+remem user review reject <id>
+remem user review suppress <id>
 remem context --cwd .
 remem cleanup --dry-run --json
 remem cleanup
@@ -550,6 +555,16 @@ Default recall excludes suppressed, rejected, deleted, expired, future,
 personal, sensitive, and restricted claims. Use `--include-sensitive` and
 `--include-suppressed` only for explicit audit.
 
+`remem user review ...` governs review-gated user-context candidates before
+they become active claims. `inbox` shows pending candidates with risk,
+sensitivity, confidence, source preview, and block reason. `approve` applies a
+candidate to active claims only when it has a stable claim key and non-empty
+source refs; if an active claim with the same owner/type/key already exists,
+remem either noops on an exact match or supersedes the old row instead of
+appending a contradictory active claim. `edit` applies corrected text, key, or
+metadata, while `reject` and `suppress` close candidates without activating
+them.
+
 ### Scriptable JSON output
 
 These commands emit one JSON object and no human text on stdout when `--json`
@@ -574,6 +589,9 @@ is set:
 | `remem user summary refresh --json` / `edit --json` | `status`, `summary` |
 | `remem user summary sources --json` | `summary`, `included_claims`, `included_memories`, `included_activity_refs`, `dropped_claims` |
 | `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `included`, `dropped`, `diagnostics` |
+| `remem user review inbox --json` | `count`, `candidates` |
+| `remem user review approve <id> --json` / `edit <id> --json` | `status`, `action`, `candidate`, `claim` |
+| `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
@@ -599,6 +617,8 @@ opt-in with `include_suppressed=true` is implemented in source version
 `0.5.113`; default search, browse, graph, and detail reads omit
 policy-suppressed memories. On-demand user recall is implemented in source
 version `0.5.114` through CLI, MCP, and `POST /api/v1/user/recall`.
+User-context candidate review inbox and apply lifecycle commands are
+implemented in source version `0.5.115`.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more

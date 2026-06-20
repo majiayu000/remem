@@ -14,6 +14,7 @@ mod review;
 mod scope_cleanup;
 mod shared;
 mod usage;
+mod user_review;
 mod user_summary;
 
 pub(super) use admin::run_admin;
@@ -40,4 +41,5 @@ pub(super) use scope_cleanup::{
     run_archive, run_audit_scope, run_merge_preferences, run_reroute, RerouteCliRequest,
 };
 pub(super) use usage::run_usage;
+pub(super) use user_review::run_user_review;
 pub(super) use user_summary::run_user_summary;

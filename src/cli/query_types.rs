@@ -202,6 +202,11 @@ pub(in crate::cli) enum UserAction {
         #[command(subcommand)]
         action: UserSummaryAction,
     },
+    /// Review automatic user-context extraction candidates.
+    Review {
+        #[command(subcommand)]
+        action: UserReviewAction,
+    },
     /// Recall task-aware user context on demand without widening SessionStart.
     Recall {
         /// Query or task topic to recall user context for.
@@ -240,6 +245,61 @@ pub(in crate::cli) enum UserAction {
         #[arg(long, default_value = "4000")]
         budget_chars: usize,
         /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum UserReviewAction {
+    /// Show pending user-context candidates.
+    Inbox {
+        /// Include resolved candidates.
+        #[arg(long)]
+        include_resolved: bool,
+        /// Filter to one review status.
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value = "50")]
+        limit: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Approve a candidate and apply it to active user-context claims.
+    Approve {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Edit a candidate before applying it to active user-context claims.
+    Edit {
+        id: i64,
+        #[arg(long)]
+        text: String,
+        #[arg(long = "type", value_enum)]
+        claim_type: Option<UserClaimTypeArg>,
+        #[arg(long = "key")]
+        claim_key: Option<String>,
+        #[arg(long, value_enum)]
+        sensitivity: Option<UserClaimSensitivityArg>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reject a candidate without creating a claim.
+    Reject {
+        id: i64,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Suppress a candidate from future default review use.
+    Suppress {
+        id: i64,
+        #[arg(long)]
+        note: Option<String>,
         #[arg(long)]
         json: bool,
     },

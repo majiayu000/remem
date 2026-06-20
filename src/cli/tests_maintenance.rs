@@ -1,6 +1,6 @@
 use super::query_types::{
     UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg, UserClaimsAction,
-    UserSummaryAction,
+    UserReviewAction, UserSummaryAction,
 };
 use super::types::{Cli, Commands, UserAction};
 use clap::Parser;
@@ -454,5 +454,86 @@ fn cli_parses_user_recall_command() {
             assert!(json);
         }
         _ => panic!("expected user recall command"),
+    }
+}
+
+#[test]
+fn cli_parses_user_review_commands() {
+    let inbox = Cli::parse_from([
+        "remem",
+        "user",
+        "review",
+        "inbox",
+        "--include-resolved",
+        "--status",
+        "suppressed",
+        "--limit",
+        "7",
+        "--json",
+    ]);
+    match inbox.command {
+        Commands::User {
+            action:
+                UserAction::Review {
+                    action:
+                        UserReviewAction::Inbox {
+                            include_resolved,
+                            status,
+                            limit,
+                            json,
+                        },
+                },
+        } => {
+            assert!(include_resolved);
+            assert_eq!(status.as_deref(), Some("suppressed"));
+            assert_eq!(limit, 7);
+            assert!(json);
+        }
+        _ => panic!("expected user review inbox command"),
+    }
+
+    let edit = Cli::parse_from([
+        "remem",
+        "user",
+        "review",
+        "edit",
+        "42",
+        "--text",
+        "Prefer edited review gates",
+        "--type",
+        "preference",
+        "--key",
+        "preference:review-gates",
+        "--sensitivity",
+        "normal",
+        "--note",
+        "approved after edit",
+        "--json",
+    ]);
+    match edit.command {
+        Commands::User {
+            action:
+                UserAction::Review {
+                    action:
+                        UserReviewAction::Edit {
+                            id,
+                            text,
+                            claim_type,
+                            claim_key,
+                            sensitivity,
+                            note,
+                            json,
+                        },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert_eq!(text, "Prefer edited review gates");
+            assert_eq!(claim_type, Some(UserClaimTypeArg::Preference));
+            assert_eq!(claim_key.as_deref(), Some("preference:review-gates"));
+            assert_eq!(sensitivity, Some(UserClaimSensitivityArg::Normal));
+            assert_eq!(note.as_deref(), Some("approved after edit"));
+            assert!(json);
+        }
+        _ => panic!("expected user review edit command"),
     }
 }

@@ -260,6 +260,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_suppressions_feedback",
         sql: include_str!("../migrations/v051_memory_suppressions_feedback.sql"),
     },
+    Migration {
+        version: 52,
+        name: "user_context_candidates",
+        sql: include_str!("../migrations/v052_user_context_candidates.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
