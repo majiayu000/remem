@@ -1,5 +1,6 @@
 use super::query_types::{
     UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg, UserClaimsAction,
+    UserSummaryAction,
 };
 use super::types::{Cli, Commands, UserAction};
 use clap::Parser;
@@ -260,5 +261,143 @@ fn cli_parses_user_claim_governance_commands() {
             assert!(json);
         }
         _ => panic!("expected user claims delete command"),
+    }
+}
+
+#[test]
+fn cli_parses_user_summary_commands() {
+    let show = Cli::parse_from([
+        "remem",
+        "user",
+        "summary",
+        "show",
+        "--project",
+        "/repo",
+        "--scope",
+        "repo",
+        "--owner-key",
+        "/repo",
+        "--json",
+    ]);
+    match show.command {
+        Commands::User {
+            action:
+                UserAction::Summary {
+                    action:
+                        UserSummaryAction::Show {
+                            project,
+                            scope,
+                            owner_key,
+                            json,
+                        },
+                },
+        } => {
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(scope, UserClaimScopeArg::Repo);
+            assert_eq!(owner_key.as_deref(), Some("/repo"));
+            assert!(json);
+        }
+        _ => panic!("expected user summary show command"),
+    }
+
+    let refresh = Cli::parse_from([
+        "remem",
+        "user",
+        "summary",
+        "refresh",
+        "-p",
+        "/repo",
+        "--scope",
+        "workspace",
+        "--owner-key",
+        "/workspace",
+        "--json",
+    ]);
+    match refresh.command {
+        Commands::User {
+            action:
+                UserAction::Summary {
+                    action:
+                        UserSummaryAction::Refresh {
+                            project,
+                            scope,
+                            owner_key,
+                            json,
+                        },
+                },
+        } => {
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(scope, UserClaimScopeArg::Workspace);
+            assert_eq!(owner_key.as_deref(), Some("/workspace"));
+            assert!(json);
+        }
+        _ => panic!("expected user summary refresh command"),
+    }
+
+    let edit = Cli::parse_from([
+        "remem",
+        "user",
+        "summary",
+        "edit",
+        "--project",
+        "/repo",
+        "--text",
+        "Manual summary",
+        "--json",
+    ]);
+    match edit.command {
+        Commands::User {
+            action:
+                UserAction::Summary {
+                    action:
+                        UserSummaryAction::Edit {
+                            project,
+                            scope,
+                            owner_key,
+                            text,
+                            json,
+                        },
+                },
+        } => {
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(scope, UserClaimScopeArg::User);
+            assert!(owner_key.is_none());
+            assert_eq!(text, "Manual summary");
+            assert!(json);
+        }
+        _ => panic!("expected user summary edit command"),
+    }
+
+    let sources = Cli::parse_from([
+        "remem",
+        "user",
+        "summary",
+        "sources",
+        "--project",
+        "/repo",
+        "--include-excluded",
+        "--json",
+    ]);
+    match sources.command {
+        Commands::User {
+            action:
+                UserAction::Summary {
+                    action:
+                        UserSummaryAction::Sources {
+                            project,
+                            scope,
+                            owner_key,
+                            include_excluded,
+                            json,
+                        },
+                },
+        } => {
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(scope, UserClaimScopeArg::User);
+            assert!(owner_key.is_none());
+            assert!(include_excluded);
+            assert!(json);
+        }
+        _ => panic!("expected user summary sources command"),
     }
 }

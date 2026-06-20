@@ -39,7 +39,6 @@ pub(in crate::cli) fn run_preferences(action: PreferenceAction) -> Result<()> {
 }
 
 pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
-    let conn = db::open_db()?;
     match action {
         UserAction::Remember {
             scope,
@@ -53,6 +52,7 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
             json,
             text,
         } => {
+            let conn = db::open_db()?;
             let claim = claims::create_manual_claim(
                 &conn,
                 &claims::ManualClaimRequest {
@@ -76,7 +76,11 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
                 println!("User-context claim saved (id={}).", claim.id);
             }
         }
-        UserAction::Claims { action } => run_user_claims(&conn, action)?,
+        UserAction::Claims { action } => {
+            let conn = db::open_db()?;
+            run_user_claims(&conn, action)?
+        }
+        UserAction::Summary { action } => super::run_user_summary(action)?,
     }
     Ok(())
 }
