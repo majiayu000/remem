@@ -496,6 +496,22 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "memory_suppressions_feedback",
         "idx_memory_feedback_context_item",
     ),
+    SchemaInvariant::table(52, "user_context_candidates", "user_context_candidates"),
+    SchemaInvariant::index(
+        52,
+        "user_context_candidates",
+        "idx_user_context_candidates_inbox",
+    ),
+    SchemaInvariant::index(
+        52,
+        "user_context_candidates",
+        "idx_user_context_candidates_user_recent",
+    ),
+    SchemaInvariant::index(
+        52,
+        "user_context_candidates",
+        "idx_user_context_candidates_dedupe",
+    ),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {

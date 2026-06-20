@@ -61,7 +61,7 @@ CREATE TABLE user_context_claims (
   confidence REAL NOT NULL,
   sensitivity TEXT NOT NULL,
   source_kind TEXT NOT NULL,
-  source_refs_json TEXT NOT NULL,
+  source_refs_json TEXT NOT NULL, -- non-empty JSON array
   status TEXT NOT NULL,
   valid_from_epoch INTEGER,
   valid_to_epoch INTEGER,
@@ -110,6 +110,8 @@ directly and does not need this table.
 CREATE TABLE user_context_candidates (
   id INTEGER PRIMARY KEY,
   user_key TEXT NOT NULL DEFAULT 'user:default',
+  owner_scope TEXT NOT NULL,
+  owner_key TEXT NOT NULL,
   source_project TEXT,
   host TEXT,
   session_id TEXT,
@@ -121,8 +123,10 @@ CREATE TABLE user_context_candidates (
   risk_class TEXT NOT NULL,
   source_kind TEXT NOT NULL,
   source_refs_json TEXT NOT NULL,
+  source_preview TEXT,
   review_status TEXT NOT NULL,
   auto_promote_block_reason TEXT,
+  review_note TEXT,
   result_claim_id INTEGER,
   created_at_epoch INTEGER NOT NULL,
   updated_at_epoch INTEGER NOT NULL,
@@ -270,7 +274,6 @@ remem user review approve <id>
 remem user review edit <id>
 remem user review reject <id>
 remem user review suppress <id>
-remem user review unsuppress <id>
 ```
 
 Manual claims default to `--scope user --owner-key user:default`. Narrower
@@ -345,6 +348,27 @@ The initial implementation resolves current-state only for explicit
 free-form task text.
 
 No step may invent profile data. No-data returns an explicit empty result.
+
+## Candidate Review Lifecycle
+
+Implemented in the first #579 slice:
+
+1. `v052_user_context_candidates` adds review-gated candidate rows with owner,
+   source, risk, sensitivity, preview, status, block reason, review note, and
+   result claim id.
+2. `remem user review inbox` lists pending candidates.
+3. `approve` and `edit` apply a candidate to `user_context_claims` only after a
+   stable `claim_key` is present. Pending candidates may omit a key, but
+   activation must fail closed until the extractor supplies one or a reviewer
+   edits one in.
+4. Matching active claims noop on identical text/sensitivity or become
+   superseded before a replacement active claim is inserted.
+5. `reject` and `suppress` close candidates without creating active claims.
+6. Low-risk explicit user statements may auto-promote only when source refs are
+   non-empty, a stable `claim_key` is present, sensitivity is `normal`, risk is
+   `low`, confidence is at least `0.9`, and source kind is
+   `explicit_user_statement`; all other candidates keep a block reason and stay
+   pending review.
 
 ## Automatic Extraction
 

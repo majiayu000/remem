@@ -85,6 +85,7 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
             run_user_claims(&conn, action)?
         }
         UserAction::Summary { action } => super::run_user_summary(action)?,
+        UserAction::Review { action } => super::run_user_review(action)?,
         UserAction::Recall {
             query,
             project,
