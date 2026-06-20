@@ -552,6 +552,7 @@ is set:
 ```bash
 remem api --port 5567
 TOKEN=$(cat ~/.remem/.api-token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/health
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 ```
 
@@ -561,14 +562,21 @@ Library users who build the router directly should call
 The complete native web API surface is implemented in source version
 `0.5.109`. remem-web should require a published `remem >= 0.5.109` release
 before pointing installed-binary users at the full graph, candidate, or
-rich-detail experience. Clients should call `/api/v1/capabilities` before
-enabling optional views.
+rich-detail experience. Fast `/api/v1/health` and cached `/api/v1/status`
+metadata are implemented in source version `0.5.112`. Clients should call
+`/api/v1/capabilities` before enabling optional views.
+
+Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
+feature detection. Use `/api/v1/status` for dashboard counters no more
+frequently than the returned `cache.ttl_secs`; use
+`/api/v1/status?refresh=true` only for explicit refresh actions.
 
 ### Stable core endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/v1/status` | GET | Operational health, queue state, and counts |
+| `/api/v1/health` | GET | Cheap authenticated liveness and API readiness |
+| `/api/v1/status` | GET | Cached queue state and counts with cache metadata |
 | `/api/v1/capabilities` | GET | Feature and endpoint detection for native clients |
 | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=` | GET | Search memories |
 | `/api/v1/memory?id=` | GET | Get one memory |
