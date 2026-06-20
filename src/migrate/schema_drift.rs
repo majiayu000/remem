@@ -152,11 +152,6 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::index(28, "raw_ingest_failures", "idx_raw_ingest_failures_session"),
     SchemaInvariant::table(29, "memory_embeddings", "memory_embeddings"),
     SchemaInvariant::index(29, "memory_embeddings", "idx_memory_embeddings_model"),
-    SchemaInvariant::index(
-        29,
-        "memory_embeddings",
-        "idx_memory_embeddings_profile_memory_id",
-    ),
     SchemaInvariant::table(30, "dream_cluster_decisions", "dream_cluster_decisions"),
     SchemaInvariant::index(
         30,
@@ -173,22 +168,42 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::index(31, "graph_edges", "idx_graph_edges_to"),
     SchemaInvariant::index(31, "graph_edges", "idx_graph_edges_type"),
     SchemaInvariant::trigger(
-        31,
-        "graph_edges",
+        34,
+        "graph_edge_file_nodes",
         "graph_edges_validate_source_events_insert",
     ),
     SchemaInvariant::trigger(
-        31,
-        "graph_edges",
+        34,
+        "graph_edge_file_nodes",
         "graph_edges_validate_source_events_update",
     ),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_validate_nodes_insert"),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_validate_nodes_update"),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_memories_delete"),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_entities_delete"),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_memory_facts_delete"),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_captured_events_delete"),
-    SchemaInvariant::trigger(31, "graph_edges", "graph_edges_topic_segments_delete"),
+    SchemaInvariant::trigger(
+        34,
+        "graph_edge_file_nodes",
+        "graph_edges_validate_nodes_insert",
+    ),
+    SchemaInvariant::trigger(
+        34,
+        "graph_edge_file_nodes",
+        "graph_edges_validate_nodes_update",
+    ),
+    SchemaInvariant::trigger(34, "graph_edge_file_nodes", "graph_edges_memories_delete"),
+    SchemaInvariant::trigger(34, "graph_edge_file_nodes", "graph_edges_entities_delete"),
+    SchemaInvariant::trigger(
+        34,
+        "graph_edge_file_nodes",
+        "graph_edges_memory_facts_delete",
+    ),
+    SchemaInvariant::trigger(
+        34,
+        "graph_edge_file_nodes",
+        "graph_edges_captured_events_delete",
+    ),
+    SchemaInvariant::trigger(
+        34,
+        "graph_edge_file_nodes",
+        "graph_edges_topic_segments_delete",
+    ),
     SchemaInvariant::trigger(31, "graph_edges", "graph_edges_memory_state_keys_delete"),
     SchemaInvariant::column(
         32,
@@ -356,6 +371,11 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "graph_candidate_prompt_memory_refs",
         "graph_candidates",
         "prompt_memory_ref_ids",
+    ),
+    SchemaInvariant::index(
+        44,
+        "memory_embeddings_profile_index",
+        "idx_memory_embeddings_profile_memory_id",
     ),
     SchemaInvariant::column(
         45,
