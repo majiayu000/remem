@@ -550,6 +550,85 @@ async fn graph_nodes_are_ranked_from_current_memory_links() -> anyhow::Result<()
 }
 
 #[tokio::test]
+async fn graph_empty_database_returns_empty_arrays() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-empty");
+    let conn = db::open_db()?;
+    drop(conn);
+
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(10),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["nodes"], serde_json::json!([]));
+    assert_eq!(payload["edges"], serde_json::json!([]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_edges_use_stable_tie_breaker_after_weight() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-edge-order");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES
+          (1, 'alpha', 'topic', 1, 1),
+          (2, 'beta', 'topic', 1, 1),
+          (3, 'gamma', 'topic', 1, 1)",
+        [],
+    )?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-edge-order"),
+        "proj-a",
+        None,
+        "edge order graph row",
+        "edge order graph memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES
+         (?1, 3),
+         (?1, 1),
+         (?1, 2)",
+        params![memory_id],
+    )?;
+    drop(conn);
+
+    let response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: None,
+            limit: Some(10),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(
+        payload["edges"],
+        serde_json::json!([
+            { "a": 1, "b": 2, "w": 1 },
+            { "a": 1, "b": 3, "w": 1 },
+            { "a": 2, "b": 3, "w": 1 }
+        ])
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn graph_project_filter_scopes_nodes_and_memory_links() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-graph-project-scope");
     let conn = db::open_db()?;

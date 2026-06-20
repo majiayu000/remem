@@ -1,4 +1,3 @@
-use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use axum::{
@@ -169,7 +168,7 @@ pub(in crate::api) async fn handle_graph(
         .into_iter()
         .map(|((a, b), w)| GraphEdgeItem { a, b, w })
         .collect();
-    edges.sort_by_key(|edge| Reverse(edge.w));
+    edges.sort_by_key(|edge| (-edge.w, edge.a, edge.b));
     let edges = edges.into_iter().take((limit as usize) * 3).collect();
 
     let nodes_out: Vec<GraphNodeItem> = nodes
