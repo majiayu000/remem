@@ -118,6 +118,50 @@ fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<(
     Ok(())
 }
 
+#[test]
+fn run_migrations_allows_old_v029_without_pending_v044_profile_index() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_schema_with_pending_migrations_from(&conn, 44)?;
+    conn.execute_batch("DROP INDEX IF EXISTS idx_memory_embeddings_profile_memory_id;")?;
+
+    run_migrations(&conn)?;
+
+    assert_sqlite_object_exists(&conn, "index", "idx_memory_embeddings_profile_memory_id")?;
+    assert_migration_applied(&conn, 44)?;
+    Ok(())
+}
+
+#[test]
+fn run_migrations_allows_old_v031_without_pending_v034_trigger_set() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_schema_with_pending_migrations_from(&conn, 34)?;
+    for trigger in V034_GRAPH_EDGE_TRIGGERS {
+        conn.execute_batch(&format!("DROP TRIGGER IF EXISTS {trigger};"))?;
+    }
+
+    run_migrations(&conn)?;
+
+    for trigger in V034_GRAPH_EDGE_TRIGGERS {
+        assert_sqlite_object_exists(&conn, "trigger", trigger)?;
+    }
+    assert_migration_applied(&conn, 34)?;
+    Ok(())
+}
+
+const V034_GRAPH_EDGE_TRIGGERS: &[&str] = &[
+    "graph_edges_validate_source_events_insert",
+    "graph_edges_validate_source_events_update",
+    "graph_edges_validate_nodes_insert",
+    "graph_edges_validate_nodes_update",
+    "graph_edges_memories_delete",
+    "graph_edges_entities_delete",
+    "graph_edges_memory_facts_delete",
+    "graph_edges_captured_events_delete",
+    "graph_edges_topic_segments_delete",
+    "graph_edges_memory_state_keys_delete",
+    "graph_edges_graph_file_nodes_delete",
+];
+
 fn create_current_schema_missing_versions(
     conn: &Connection,
     missing_versions: &[i64],
@@ -148,5 +192,68 @@ fn create_current_schema_missing_versions(
         "PRAGMA user_version = {}; PRAGMA foreign_keys=ON;",
         super::types::OLD_BASELINE_VERSION - 1 + super::latest_schema_version()
     ))?;
+    Ok(())
+}
+
+fn create_schema_with_pending_migrations_from(
+    conn: &Connection,
+    pending_from_version: i64,
+) -> Result<()> {
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version < pending_from_version)
+    {
+        conn.execute_batch(migration.sql)?;
+    }
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at_epoch INTEGER NOT NULL
+        );",
+    )?;
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version < pending_from_version)
+    {
+        conn.execute(
+            "INSERT INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 1700000000)",
+            params![migration.version, migration.name],
+        )?;
+    }
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {}; PRAGMA foreign_keys=ON;",
+        super::types::OLD_BASELINE_VERSION + pending_from_version - 2
+    ))?;
+    Ok(())
+}
+
+fn assert_sqlite_object_exists(
+    conn: &Connection,
+    object_type: &str,
+    object_name: &str,
+) -> Result<()> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type=?1 AND name=?2",
+            params![object_type, object_name],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(exists, "{object_type} {object_name} should exist");
+    Ok(())
+}
+
+fn assert_migration_applied(conn: &Connection, version: i64) -> Result<()> {
+    let applied: bool = conn
+        .query_row(
+            "SELECT 1 FROM _schema_migrations WHERE version=?1",
+            [version],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(applied, "migration v{version:03} should be marked applied");
     Ok(())
 }
