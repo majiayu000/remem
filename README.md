@@ -618,7 +618,12 @@ opt-in with `include_suppressed=true` is implemented in source version
 policy-suppressed memories. On-demand user recall is implemented in source
 version `0.5.114` through CLI, MCP, and `POST /api/v1/user/recall`.
 User-context candidate review inbox and apply lifecycle commands are
-implemented in source version `0.5.115`.
+implemented in source version `0.5.115`. Guarded automatic user-context
+candidate extraction from session rollups is implemented in source version
+`0.5.116`; it creates review candidates from captured user conversations and
+session summaries, and auto-promotes only normal, low-risk explicit user
+preference or constraint statements cited to and supported by user-authored
+source events.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more

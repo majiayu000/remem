@@ -138,6 +138,10 @@ async fn process_extraction_task(task: &db::ExtractionTask) -> Result<Extraction
             let result = crate::memory_candidate::process(task).await?;
             Ok(memory_candidate_task_outcome(result))
         }
+        db::ExtractionTaskKind::UserContextCandidate => {
+            let result = crate::user_context::extraction::process(task).await?;
+            Ok(user_context_candidate_task_outcome(result))
+        }
         db::ExtractionTaskKind::GraphCandidate => {
             let result = crate::graph_candidate::process_graph_candidate_task(task).await?;
             Ok(graph_candidate_task_outcome(result))
@@ -193,6 +197,27 @@ fn graph_candidate_task_outcome(
             ExtractionTaskOutcome::Waiting(reason)
         }
         _ => ExtractionTaskOutcome::Done { to_event_id: None },
+    }
+}
+
+fn user_context_candidate_task_outcome(
+    result: crate::user_context::extraction::UserContextCandidateExtractResult,
+) -> ExtractionTaskOutcome {
+    match result {
+        crate::user_context::extraction::UserContextCandidateExtractResult::EmptyRange => {
+            ExtractionTaskOutcome::Done { to_event_id: None }
+        }
+        crate::user_context::extraction::UserContextCandidateExtractResult::NoCandidates {
+            to_event_id,
+        } => ExtractionTaskOutcome::Done {
+            to_event_id: Some(to_event_id),
+        },
+        crate::user_context::extraction::UserContextCandidateExtractResult::Written {
+            to_event_id,
+            ..
+        } => ExtractionTaskOutcome::Done {
+            to_event_id: Some(to_event_id),
+        },
     }
 }
 
@@ -264,6 +289,25 @@ mod tests {
         assert_eq!(
             outcome,
             ExtractionTaskOutcome::Waiting("memory review pending".to_string())
+        );
+    }
+
+    #[test]
+    fn user_context_candidate_done_carries_covered_event_id() {
+        let outcome = user_context_candidate_task_outcome(
+            crate::user_context::extraction::UserContextCandidateExtractResult::Written {
+                candidates: 1,
+                promoted: 1,
+                pending_review: 0,
+                to_event_id: 42,
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            ExtractionTaskOutcome::Done {
+                to_event_id: Some(42)
+            }
         );
     }
 }

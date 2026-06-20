@@ -113,6 +113,36 @@ async fn session_rollup_persists_partial_event_range() -> Result<()> {
 }
 
 #[tokio::test]
+async fn session_rollup_enqueues_user_context_candidate_followup() -> Result<()> {
+    let mut conn = setup_conn();
+    capture(
+        &conn,
+        "sess-user-context-followup",
+        "message",
+        "I prefer concise code reviews.",
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    let watermark = task.high_watermark_event_id;
+
+    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response("User prefers concise code reviews.", ""))
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::Written);
+    let followup_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM extraction_tasks
+         WHERE task_kind = 'user_context_candidate'
+           AND status = 'pending'
+           AND high_watermark_event_id = ?1",
+        params![watermark],
+        |row| row.get(0),
+    )?;
+    assert_eq!(followup_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_rollup_persists_topic_segments() -> Result<()> {
     let mut conn = setup_conn();
     capture(

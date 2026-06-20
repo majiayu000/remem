@@ -12,7 +12,7 @@ mod apply;
 mod parse;
 pub(crate) mod review;
 mod route;
-mod support;
+pub(crate) mod support;
 
 use apply::{
     promote_candidate_to_memory_with_route, update_candidate_after_lifecycle, CandidateApplyOutcome,
