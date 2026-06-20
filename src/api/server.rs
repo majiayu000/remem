@@ -2,13 +2,15 @@ use axum::{middleware, routing::get, Router};
 
 use super::auth::{ensure_api_token, require_api_token};
 use super::handlers::{
-    handle_get_memory, handle_graph, handle_list_candidates, handle_list_memories,
-    handle_memory_detail, handle_save_memory, handle_search, handle_stats, handle_status,
+    handle_capabilities, handle_get_memory, handle_graph, handle_list_candidates,
+    handle_list_memories, handle_memory_detail, handle_save_memory, handle_search, handle_stats,
+    handle_status,
 };
 use super::types::DbState;
 
 pub fn build_router(_port: u16) -> Router<DbState> {
     Router::new()
+        .route("/api/v1/capabilities", get(handle_capabilities))
         .route("/api/v1/search", get(handle_search))
         .route("/api/v1/memory", get(handle_get_memory))
         .route(

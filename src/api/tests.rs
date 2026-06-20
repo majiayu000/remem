@@ -259,6 +259,73 @@ async fn router_rejects_missing_and_invalid_api_token() {
 }
 
 #[tokio::test]
+async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-capabilities");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let app = super::build_router(0).with_state(DbState);
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/capabilities")
+                .body(Body::empty())?,
+        )
+        .await?;
+    assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/capabilities",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+
+    assert_eq!(payload["version"], crate::build_info::package_version());
+    assert_eq!(
+        payload["schema_version"],
+        crate::build_info::binary_schema_version()
+    );
+    assert_eq!(payload["api_version"], 1);
+    assert_eq!(payload["features"]["status"], true);
+    assert_eq!(payload["features"]["stats"], true);
+    assert_eq!(payload["features"]["search"], true);
+    assert_eq!(payload["features"]["search_explain"], true);
+    assert_eq!(payload["features"]["memory_list"], true);
+    assert_eq!(payload["features"]["memory_detail"], true);
+    assert_eq!(payload["features"]["save_memory"], true);
+    assert_eq!(payload["features"]["candidate_rows"], true);
+    assert_eq!(payload["features"]["candidate_review"], false);
+    assert_eq!(payload["features"]["graph"], true);
+    assert_eq!(payload["endpoints"]["status"], "/api/v1/status");
+    assert_eq!(payload["endpoints"]["stats"], "/api/v1/stats");
+    assert_eq!(payload["endpoints"]["search"], "/api/v1/search");
+    assert_eq!(
+        payload["endpoints"]["search_explain"],
+        "/api/v1/search?explain=true"
+    );
+    assert_eq!(payload["endpoints"]["memory_list"], "/api/v1/memories");
+    assert_eq!(
+        payload["endpoints"]["memory_detail"],
+        "/api/v1/memories/{id}"
+    );
+    assert_eq!(payload["endpoints"]["save_memory"], "/api/v1/memories");
+    assert_eq!(payload["endpoints"]["candidate_rows"], "/api/v1/candidates");
+    assert_eq!(payload["endpoints"]["graph"], "/api/v1/graph");
+    assert!(payload.get("token").is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn save_memory_response_reports_durable_feedback_shape() {
     let _test_dir = ScopedTestDataDir::new("api-save-feedback");
     crate::api::ensure_api_token().expect("API token should be created");
