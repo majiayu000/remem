@@ -29,6 +29,50 @@ fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Req
         .expect("request should build")
 }
 
+fn authorized_json_request(method: Method, uri: &str, token: &str, body: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request should build")
+}
+
+fn insert_review_candidate(topic_key: &str, text: &str) -> anyhow::Result<i64> {
+    let mut conn = db::open_db()?;
+    db::record_captured_event(
+        &conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id: "api-candidate-review",
+            project: "proj-review",
+            cwd: None,
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some("Bash"),
+            content: "candidate review API fixture evidence",
+            task_kind: Some(db::ExtractionTaskKind::MemoryCandidate),
+        },
+    )?;
+    let task = db::claim_next_extraction_task(&mut conn, "api-candidate-review-worker", 60)?
+        .ok_or_else(|| anyhow::anyhow!("candidate review fixture task should claim"))?;
+    let evidence_event_ids = serde_json::to_string(&vec![task
+        .high_watermark_event_id
+        .ok_or_else(|| anyhow::anyhow!("fixture task should have high watermark"))?])?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_candidates
+          (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+           confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES
+          (?1, 'project', 'decision', ?2, ?3, ?4, 0.82,
+           'medium', 'pending_review', ?5, ?5)",
+        params![task.project_id, topic_key, text, evidence_event_ids, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 #[test]
 fn db_state_is_stateless() {
     assert_eq!(std::mem::size_of::<DbState>(), 0);
@@ -303,7 +347,7 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     assert_eq!(payload["features"]["memory_detail"], true);
     assert_eq!(payload["features"]["save_memory"], true);
     assert_eq!(payload["features"]["candidate_rows"], true);
-    assert_eq!(payload["features"]["candidate_review"], false);
+    assert_eq!(payload["features"]["candidate_review"], true);
     assert_eq!(payload["features"]["graph"], true);
     assert_eq!(payload["endpoints"]["status"], "/api/v1/status");
     assert_eq!(payload["endpoints"]["stats"], "/api/v1/stats");
@@ -319,6 +363,10 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     );
     assert_eq!(payload["endpoints"]["save_memory"], "/api/v1/memories");
     assert_eq!(payload["endpoints"]["candidate_rows"], "/api/v1/candidates");
+    assert_eq!(
+        payload["endpoints"]["candidate_review"],
+        "/api/v1/candidates/{id}/approve"
+    );
     assert_eq!(payload["endpoints"]["graph"], "/api/v1/graph");
     assert!(payload.get("token").is_none());
 
@@ -721,6 +769,273 @@ async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["meta"]["total"], 1);
     assert_eq!(payload["data"][0]["review_status"], "pending_review");
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_approves_candidate_review() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-approve");
+    let candidate_id = insert_review_candidate("api-approve", "Approve through API")?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/approve"),
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["candidate_id"], candidate_id);
+    assert_eq!(payload["status"], "approved");
+    let memory_id = payload["memory_id"]
+        .as_i64()
+        .ok_or_else(|| anyhow::anyhow!("approve response should include memory_id"))?;
+
+    let conn = db::open_db()?;
+    let source_candidate_id: i64 = conn.query_row(
+        "SELECT source_candidate_id FROM memories WHERE id = ?1",
+        params![memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(source_candidate_id, candidate_id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_rejects_candidate_review() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-reject");
+    let candidate_id = insert_review_candidate("api-reject", "Reject through API")?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/reject"),
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["candidate_id"], candidate_id);
+    assert_eq!(payload["status"], "discarded");
+    assert!(payload.get("memory_id").is_none());
+
+    let conn = db::open_db()?;
+    let status: String = conn.query_row(
+        "SELECT review_status FROM memory_candidates WHERE id = ?1",
+        params![candidate_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(status, "discarded");
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_edits_candidate_review() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-edit");
+    let candidate_id = insert_review_candidate("api-edit", "Original candidate text")?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_json_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/edit"),
+            &token,
+            r#"{
+                "scope":"project",
+                "memory_type":"architecture",
+                "topic_key":"api-edited",
+                "text":"Edited through the API"
+            }"#,
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["candidate_id"], candidate_id);
+    assert_eq!(payload["status"], "edited");
+    let memory_id = payload["memory_id"]
+        .as_i64()
+        .ok_or_else(|| anyhow::anyhow!("edit response should include memory_id"))?;
+
+    let conn = db::open_db()?;
+    let (review_status, memory_type, topic_key, content): (String, String, String, String) = conn
+        .query_row(
+        "SELECT c.review_status, m.memory_type, m.topic_key, m.content
+             FROM memory_candidates c
+             JOIN memories m ON m.id = ?2
+             WHERE c.id = ?1",
+        params![candidate_id, memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(review_status, "edited");
+    assert_eq!(memory_type, "architecture");
+    assert_eq!(topic_key, "api-edited");
+    assert_eq!(content, "Edited through the API");
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_candidate_review_reports_not_found() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-not-found");
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::POST,
+            "/api/v1/candidates/404/approve",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "not_found");
+    assert_eq!(payload["error"]["message"], "candidate 404 not found");
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_candidate_review_reports_non_pending_conflict() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-non-pending");
+    let candidate_id = insert_review_candidate("api-non-pending", "Already approved")?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let first = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/approve"),
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = app
+        .oneshot(authorized_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/reject"),
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(second.status(), StatusCode::CONFLICT);
+
+    let body = to_bytes(second.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "candidate_not_pending");
+    assert_eq!(
+        payload["error"]["message"],
+        format!("candidate {candidate_id} is already approved")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_candidate_review_reports_invalid_edit() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-invalid-edit");
+    let candidate_id = insert_review_candidate("api-invalid-edit", "Invalid edit")?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let empty = app
+        .clone()
+        .oneshot(authorized_json_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/edit"),
+            &token,
+            "{}",
+        ))
+        .await?;
+    assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
+    let empty_body = to_bytes(empty.into_body(), usize::MAX).await?;
+    let empty_payload: Value = serde_json::from_slice(&empty_body)?;
+    assert_eq!(empty_payload["error"]["code"], "candidate_edit_invalid");
+
+    let invalid_type = app
+        .oneshot(authorized_json_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/edit"),
+            &token,
+            r#"{"memory_type":"session_activity"}"#,
+        ))
+        .await?;
+    assert_eq!(invalid_type.status(), StatusCode::BAD_REQUEST);
+    let invalid_body = to_bytes(invalid_type.into_body(), usize::MAX).await?;
+    let invalid_payload: Value = serde_json::from_slice(&invalid_body)?;
+    assert_eq!(invalid_payload["error"]["code"], "candidate_edit_invalid");
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_candidate_review_rolls_back_failed_promotion() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-review-rollback");
+    let candidate_id = insert_review_candidate("api-rollback", "Rollback failed promotion")?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_candidates SET confidence = 1.5 WHERE id = ?1",
+        params![candidate_id],
+    )?;
+    drop(conn);
+
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/approve"),
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "candidate_review_failed");
+    assert!(!payload["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty());
+
+    let conn = db::open_db()?;
+    let review_status: String = conn.query_row(
+        "SELECT review_status FROM memory_candidates WHERE id = ?1",
+        params![candidate_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(review_status, "pending_review");
+    let memory_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE source_candidate_id = ?1",
+        params![candidate_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(memory_count, 0);
     Ok(())
 }
 

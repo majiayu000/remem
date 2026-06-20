@@ -266,6 +266,26 @@ pub(super) struct CandidateItem {
 }
 
 #[derive(Deserialize)]
+pub(super) struct CandidateEditRequest {
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default, rename = "memory_type")]
+    pub memory_type: Option<String>,
+    #[serde(default)]
+    pub topic_key: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateReviewResponse {
+    pub candidate_id: i64,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct GraphParams {
     pub project: Option<String>,
     pub limit: Option<i64>,

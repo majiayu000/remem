@@ -535,6 +535,10 @@ Library users who build the router directly should call
 |---|---|---|
 | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=` | GET | Search memories |
 | `/api/v1/memory?id=` | GET | Get one memory |
+| `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
+| `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate |
+| `/api/v1/candidates/{id}/reject` | POST | Reject a pending memory candidate |
+| `/api/v1/candidates/{id}/edit` | POST | Edit and approve a pending memory candidate |
 | `/api/v1/memories` | POST | Save memory |
 | `/api/v1/status` | GET | System status |
 
