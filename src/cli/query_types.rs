@@ -197,6 +197,11 @@ pub(in crate::cli) enum UserAction {
         #[command(subcommand)]
         action: UserClaimsAction,
     },
+    /// Show, refresh, edit, or inspect profile summaries.
+    Summary {
+        #[command(subcommand)]
+        action: UserSummaryAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -260,6 +265,58 @@ pub(in crate::cli) enum UserClaimsAction {
     /// Soft-delete a claim while keeping the audit row.
     Delete {
         id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum UserSummaryAction {
+    /// Show the latest active profile summary.
+    Show {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, value_enum, default_value = "user")]
+        scope: UserClaimScopeArg,
+        #[arg(long)]
+        owner_key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recompile the profile summary from current safe sources.
+    Refresh {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, value_enum, default_value = "user")]
+        scope: UserClaimScopeArg,
+        #[arg(long)]
+        owner_key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manually edit the active profile summary while preserving source ids.
+    Edit {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, value_enum, default_value = "user")]
+        scope: UserClaimScopeArg,
+        #[arg(long)]
+        owner_key: Option<String>,
+        #[arg(long)]
+        text: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect the sources used by the summary compiler.
+    Sources {
+        #[arg(long, short)]
+        project: Option<String>,
+        #[arg(long, value_enum, default_value = "user")]
+        scope: UserClaimScopeArg,
+        #[arg(long)]
+        owner_key: Option<String>,
+        #[arg(long)]
+        include_excluded: bool,
         #[arg(long)]
         json: bool,
     },

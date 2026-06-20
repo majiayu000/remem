@@ -15,6 +15,8 @@ mod tests_convergence;
 mod tests_schema;
 #[cfg(test)]
 mod tests_schema_drift;
+#[cfg(test)]
+mod tests_user_context;
 mod transition;
 mod types;
 

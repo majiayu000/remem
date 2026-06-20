@@ -505,6 +505,10 @@ remem user claims edit <id> --text "updated claim"
 remem user claims suppress <id>
 remem user claims unsuppress <id>
 remem user claims delete <id>
+remem user summary show
+remem user summary refresh
+remem user summary edit --text "updated profile summary"
+remem user summary sources
 remem context --cwd .
 remem cleanup --dry-run --json
 remem cleanup
@@ -537,6 +541,9 @@ is set:
 | `remem user claims show <id> --json` / `remem user claims why <id> --json` | `found`, `claim` |
 | `remem user claims edit <id> --json` | `status`, `previous_id`, `claim` |
 | `remem user claims suppress <id> --json` / `unsuppress <id> --json` / `delete <id> --json` | `status`, `claim` |
+| `remem user summary show --json` | `found`, `summary` |
+| `remem user summary refresh --json` / `edit --json` | `status`, `summary` |
+| `remem user summary sources --json` | `summary`, `included_claims`, `included_memories`, `included_activity_refs`, `dropped_claims` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 

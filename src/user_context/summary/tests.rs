@@ -1,0 +1,256 @@
+use super::*;
+use crate::user_context::claims::{
+    create_manual_claim, suppress_claim, ManualClaimRequest, UserContextClaimType,
+    UserContextSensitivity,
+};
+
+fn summary_migrated_conn() -> Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    Ok(conn)
+}
+
+#[test]
+fn refresh_compiles_sources_and_filters_unsafe_claims() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    let active = create_manual_claim(
+        &conn,
+        &claim_request("Prefer concise reviews", UserContextSensitivity::Normal),
+    )?;
+    let personal = create_manual_claim(
+        &conn,
+        &claim_request(
+            "Prefer Chinese for architecture",
+            UserContextSensitivity::Personal,
+        ),
+    )?;
+    let suppressed = create_manual_claim(
+        &conn,
+        &claim_request("Do not include", UserContextSensitivity::Normal),
+    )?;
+    suppress_claim(&conn, suppressed.id)?;
+    create_manual_claim(
+        &conn,
+        &claim_request("Sensitive identity", UserContextSensitivity::Sensitive),
+    )?;
+    create_manual_claim(
+        &conn,
+        &ManualClaimRequest {
+            text: "Expired goal",
+            valid_to_epoch: Some(1),
+            ..claim_request("Expired goal", UserContextSensitivity::Normal)
+        },
+    )?;
+    insert_summary_memory_source(
+        &conn,
+        10,
+        "/repo",
+        "Architecture",
+        "Use source-backed summaries",
+    )?;
+    insert_summary_workstream_source(&conn, 20, "/repo", "Ship profile summaries")?;
+    insert_summary_session_source(&conn, 30, "/repo", "Reviewed user context design")?;
+
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+
+    assert!(summary.summary_text.contains("Prefer concise reviews"));
+    assert!(!summary.summary_text.contains("Prefer Chinese"));
+    assert!(summary.summary_text.contains("Use source-backed summaries"));
+    assert!(!summary.summary_text.contains("Do not include"));
+    assert!(!summary.summary_text.contains("Sensitive identity"));
+    assert_eq!(summary.source_claim_ids, vec![active.id]);
+    assert_eq!(summary.source_memory_ids, vec![10]);
+    assert_eq!(summary.source_activity_refs.len(), 2);
+
+    let sources = load_summary_sources(&conn, &summary_request("/repo"), true)?;
+    assert_eq!(sources.included_claims.len(), 1);
+    assert!(sources
+        .dropped_claims
+        .iter()
+        .any(|source| source.id == personal.id && source.reason == "sensitivity:personal"));
+    assert!(sources
+        .dropped_claims
+        .iter()
+        .any(|source| source.reason == "status:suppressed"));
+    assert!(sources
+        .dropped_claims
+        .iter()
+        .any(|source| source.reason == "sensitivity:sensitive"));
+    assert!(sources
+        .dropped_claims
+        .iter()
+        .any(|source| source.reason == "expired"));
+    Ok(())
+}
+
+#[test]
+fn sources_resolve_stored_ids_after_source_status_changes() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    let active = create_manual_claim(
+        &conn,
+        &claim_request("Keep source provenance", UserContextSensitivity::Normal),
+    )?;
+    insert_summary_memory_source(&conn, 10, "/repo", "Architecture", "Original memory source")?;
+    insert_summary_workstream_source(&conn, 20, "/repo", "Ship profile summaries")?;
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+
+    suppress_claim(&conn, active.id)?;
+    conn.execute("UPDATE memories SET status = 'stale' WHERE id = 10", [])?;
+
+    let sources = load_summary_sources(&conn, &summary_request("/repo"), false)?;
+
+    assert_eq!(sources.included_claims.len(), 1);
+    assert_eq!(sources.included_claims[0].id, active.id);
+    assert_eq!(sources.included_claims[0].status, "suppressed");
+    assert_eq!(sources.included_memories.len(), 1);
+    assert_eq!(sources.included_memories[0].id, 10);
+    assert_eq!(sources.included_memories[0].status, "stale");
+    assert_eq!(sources.included_activity_refs, summary.source_activity_refs);
+    assert!(sources.dropped_claims.is_empty());
+    Ok(())
+}
+
+#[test]
+fn generator_failure_keeps_previous_active_summary() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    create_manual_claim(
+        &conn,
+        &claim_request("Keep this summary", UserContextSensitivity::Normal),
+    )?;
+    let first = refresh_summary(&conn, &summary_request("/repo"))?;
+
+    let err =
+        refresh_summary_with_generator(&conn, &summary_request("/repo"), |_project, _sources| {
+            bail!("model provider unavailable")
+        })
+        .expect_err("summary generator failure should fail closed");
+    assert!(err.to_string().contains("generate profile summary"));
+    let current = load_active_summary(&conn, &summary_request("/repo"))?
+        .ok_or_else(|| anyhow::anyhow!("previous summary missing"))?;
+    assert_eq!(current.id, first.id);
+    assert_eq!(current.summary_text, first.summary_text);
+    Ok(())
+}
+
+#[test]
+fn edit_preserves_source_ids_and_supersedes_previous_version() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    create_manual_claim(
+        &conn,
+        &claim_request("Original source", UserContextSensitivity::Normal),
+    )?;
+    let first = refresh_summary(&conn, &summary_request("/repo"))?;
+    let edited = edit_summary(
+        &conn,
+        &SummaryEditRequest {
+            owner_scope: None,
+            owner_key: None,
+            project: "/repo",
+            text: "Edited user-visible summary",
+        },
+    )?;
+
+    assert_eq!(edited.version, first.version + 1);
+    assert_eq!(edited.summary_text, "Edited user-visible summary");
+    assert_eq!(edited.source_claim_ids, first.source_claim_ids);
+    let old_status: String = conn.query_row(
+        "SELECT status FROM user_context_summaries WHERE id = ?1",
+        [first.id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(old_status, "superseded");
+    Ok(())
+}
+
+#[test]
+fn source_json_parsers_reject_invalid_shapes_and_source_ids() {
+    let err = parse_ids("source_claim_ids_json", "{\"id\":1}")
+        .expect_err("source ids must be encoded as an array");
+    assert!(err.to_string().contains("JSON integer array"));
+    let err = parse_ids("source_claim_ids_json", "[1,\"two\"]")
+        .expect_err("source ids must contain integers");
+    assert!(err.to_string().contains("JSON integer array"));
+    let err = parse_ids("source_claim_ids_json", "[1,0]").expect_err("source ids must be positive");
+    assert!(err.to_string().contains("positive integer"));
+    let err = parse_activity_refs("{}").expect_err("activity refs must be encoded as an array");
+    assert!(err.to_string().contains("JSON array"));
+    let err = parse_activity_refs(r#"[{"kind":"workstream","id":0,"label":"x"}]"#)
+        .expect_err("activity refs must use positive ids");
+    assert!(err.to_string().contains("positive id"));
+    let err = parse_activity_refs(r#"[{"kind":"","id":1,"label":"x"}]"#)
+        .expect_err("activity refs must include a kind");
+    assert!(err.to_string().contains("positive id"));
+}
+
+fn summary_request(project: &str) -> SummaryRequest<'_> {
+    SummaryRequest {
+        owner_scope: None,
+        owner_key: None,
+        project,
+    }
+}
+
+fn claim_request(text: &str, sensitivity: UserContextSensitivity) -> ManualClaimRequest<'_> {
+    ManualClaimRequest {
+        text,
+        owner_scope: None,
+        owner_key: None,
+        claim_type: UserContextClaimType::Preference,
+        claim_key: None,
+        confidence: 1.0,
+        sensitivity,
+        valid_from_epoch: None,
+        valid_to_epoch: None,
+    }
+}
+
+fn insert_summary_memory_source(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    title: &str,
+    text: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, NULL, ?2, NULL, ?3, ?4, 'decision', NULL, 10, 10, 'active',
+                 NULL, 'project', ?2, ?2, 'repo', ?2)",
+        params![id, project, title, text],
+    )?;
+    Ok(())
+}
+
+fn insert_summary_workstream_source(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    title: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO workstreams
+         (id, project, title, status, created_at_epoch, updated_at_epoch,
+          source_project, target_project, owner_scope, owner_key)
+         VALUES (?1, ?2, ?3, 'active', 10, 10, ?2, ?2, 'repo', ?2)",
+        params![id, project, title],
+    )?;
+    Ok(())
+}
+
+fn insert_summary_session_source(
+    conn: &Connection,
+    id: i64,
+    project: &str,
+    request: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO session_summaries
+         (id, memory_session_id, project, request, created_at_epoch,
+          source_project, target_project, owner_scope, owner_key)
+         VALUES (?1, 'session-1', ?2, ?3, 10, ?2, ?2, 'repo', ?2)",
+        params![id, project, request],
+    )?;
+    Ok(())
+}
