@@ -4,7 +4,8 @@ use std::path::PathBuf;
 pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
 pub(in crate::cli) use super::query_types::{
-    CommitAction, RawAction, RawRole, TimelineAction, WorkstreamAction, WorkstreamStatusArg,
+    CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
+    WorkstreamStatusArg,
 };
 pub(super) use crate::install::InstallTarget;
 
@@ -135,6 +136,11 @@ pub(super) enum Commands {
     Preferences {
         #[command(subcommand)]
         action: PreferenceAction,
+    },
+    /// Store and inspect explicit user-context claims.
+    User {
+        #[command(subcommand)]
+        action: UserAction,
     },
     /// Inspect or apply data-only memory governance plans.
     Memory {

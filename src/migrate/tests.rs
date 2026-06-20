@@ -117,6 +117,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "graph_edges",
         "memory_citation_events",
         "memory_usage_events",
+        "user_context_claims",
     ] {
         let exists: bool = conn
             .query_row(
@@ -151,6 +152,9 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_memories_usage",
         "idx_memory_citation_events_project_recent",
         "idx_memory_usage_events_memory_recent",
+        "idx_user_context_claims_owner_active",
+        "idx_user_context_claims_user_recent",
+        "idx_user_context_claims_status",
     ] {
         let exists: bool = conn
             .query_row(

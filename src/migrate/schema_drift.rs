@@ -451,6 +451,18 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "failure_lesson_feed_events",
         "idx_memory_lesson_feed_events_memory",
     ),
+    SchemaInvariant::table(49, "user_context_claims", "user_context_claims"),
+    SchemaInvariant::index(
+        49,
+        "user_context_claims",
+        "idx_user_context_claims_owner_active",
+    ),
+    SchemaInvariant::index(
+        49,
+        "user_context_claims",
+        "idx_user_context_claims_user_recent",
+    ),
+    SchemaInvariant::index(49, "user_context_claims", "idx_user_context_claims_status"),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {
