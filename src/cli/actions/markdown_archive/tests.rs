@@ -99,6 +99,7 @@ fn markdown_export_import_round_trip_rebuilds_searchable_memory() -> Result<()> 
             limit: 10,
             offset: 0,
             include_stale: false,
+            include_suppressed: false,
             branch: Some("main".to_string()),
             multi_hop: false,
             explain: false,

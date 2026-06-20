@@ -73,6 +73,8 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "memory_lesson_feed_events",
     "user_context_claims",
     "user_context_summaries",
+    "memory_suppressions",
+    "memory_feedback",
 ];
 
 #[test]

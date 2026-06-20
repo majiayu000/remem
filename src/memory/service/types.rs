@@ -6,6 +6,7 @@ pub struct SearchRequest {
     pub limit: i64,
     pub offset: i64,
     pub include_stale: bool,
+    pub include_suppressed: bool,
     pub branch: Option<String>,
     pub multi_hop: bool,
     pub explain: bool,
@@ -16,6 +17,11 @@ pub struct SearchRequest {
 /// Default search returns only current curated memories. Callers that need
 /// stale or archived history must opt in explicitly.
 pub fn default_include_stale() -> bool {
+    false
+}
+
+/// Canonical default for `include_suppressed` across every adapter.
+pub fn default_include_suppressed() -> bool {
     false
 }
 

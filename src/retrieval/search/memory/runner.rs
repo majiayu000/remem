@@ -17,7 +17,7 @@ pub fn search(
     offset: i64,
     include_stale: bool,
 ) -> Result<Vec<Memory>> {
-    search_with_branch(
+    search_with_branch_with_suppressed_policy(
         conn,
         query,
         project,
@@ -26,6 +26,7 @@ pub fn search(
         offset,
         include_stale,
         None,
+        false,
     )
 }
 
@@ -39,6 +40,31 @@ pub fn search_with_branch(
     include_stale: bool,
     branch: Option<&str>,
 ) -> Result<Vec<Memory>> {
+    search_with_branch_with_suppressed_policy(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_with_branch_with_suppressed_policy(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+    include_suppressed: bool,
+) -> Result<Vec<Memory>> {
     match query {
         Some(query_text) if !query_text.is_empty() => search_with_query(
             conn,
@@ -49,6 +75,7 @@ pub fn search_with_branch(
             offset,
             include_stale,
             branch,
+            include_suppressed,
         ),
         _ => search_without_query(
             conn,
@@ -58,6 +85,7 @@ pub fn search_with_branch(
             offset,
             include_stale,
             branch,
+            include_suppressed,
         ),
     }
 }
@@ -84,6 +112,7 @@ pub(crate) fn search_with_branch_weights(
             offset,
             include_stale,
             branch,
+            false,
             weights,
         ),
         _ => search_without_query(
@@ -94,6 +123,7 @@ pub(crate) fn search_with_branch_weights(
             offset,
             include_stale,
             branch,
+            false,
         ),
     }
 }
@@ -108,6 +138,31 @@ pub fn search_with_branch_explain(
     include_stale: bool,
     branch: Option<&str>,
 ) -> Result<(Vec<Memory>, Option<SearchExplain>)> {
+    search_with_branch_explain_with_suppressed_policy(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_with_branch_explain_with_suppressed_policy(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+    include_suppressed: bool,
+) -> Result<(Vec<Memory>, Option<SearchExplain>)> {
     match query {
         Some(query_text) if !query_text.is_empty() => search_with_query_explain(
             conn,
@@ -118,6 +173,7 @@ pub fn search_with_branch_explain(
             offset,
             include_stale,
             branch,
+            include_suppressed,
         )
         .map(|result| (result.memories, Some(result.explain))),
         _ => Ok((
@@ -129,6 +185,7 @@ pub fn search_with_branch_explain(
                 offset,
                 include_stale,
                 branch,
+                include_suppressed,
             )?,
             None,
         )),

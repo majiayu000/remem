@@ -18,7 +18,7 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
     }
 
     let (mut memories, mut explain) = if req.explain {
-        crate::retrieval::search::search_with_branch_explain(
+        crate::retrieval::search::search_with_branch_explain_with_suppressed_policy(
             conn,
             query,
             req.project.as_deref(),
@@ -27,10 +27,11 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
             req.offset.max(0),
             req.include_stale,
             req.branch.as_deref(),
+            req.include_suppressed,
         )?
     } else {
         (
-            crate::retrieval::search::search_with_branch(
+            crate::retrieval::search::search_with_branch_with_suppressed_policy(
                 conn,
                 query,
                 req.project.as_deref(),
@@ -39,6 +40,7 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
                 req.offset.max(0),
                 req.include_stale,
                 req.branch.as_deref(),
+                req.include_suppressed,
             )?,
             None,
         )
@@ -78,6 +80,7 @@ fn multi_hop_search(
             req.memory_type.as_deref(),
             req.branch.as_deref(),
             req.include_stale,
+            req.include_suppressed,
         )?;
         let has_more = result.memories.len() as i64 > limit;
         result.memories.truncate(limit as usize);
@@ -124,6 +127,17 @@ fn maybe_fallback_raw(
     else {
         return (vec![], None);
     };
+    if !req.include_suppressed {
+        match crate::memory::suppression::has_active_suppressions(conn) {
+            Ok(true) => return (vec![], None),
+            Ok(false) => {}
+            Err(error) => {
+                let message = format!("suppression policy lookup failed: {error}");
+                crate::log::error("search", &message);
+                return (vec![], Some(message));
+            }
+        }
+    }
     let raw_req = crate::memory::raw_archive::RawSearchRequest {
         query: query.to_string(),
         project: req.project.clone(),
@@ -146,6 +160,7 @@ fn maybe_fallback_raw(
 mod tests {
     use super::*;
     use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
+    use crate::memory::suppression::{create_suppression, parse_target, SuppressRequest};
 
     #[test]
     fn raw_fallback_respects_branch_filter() -> Result<()> {
@@ -227,6 +242,123 @@ mod tests {
             .raw_error
             .as_deref()
             .is_some_and(|error| error.contains("raw archive fallback failed")));
+        Ok(())
+    }
+
+    #[test]
+    fn search_hides_suppressed_memories_unless_explicitly_included() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        crate::memory::insert_memory(
+            &conn,
+            Some("s1"),
+            "/repo",
+            None,
+            "Visible needle",
+            "The visible suppression needle should remain searchable.",
+            "decision",
+            None,
+        )?;
+        let hidden = crate::memory::insert_memory(
+            &conn,
+            Some("s2"),
+            "/repo",
+            None,
+            "Hidden needle",
+            "The hidden suppression needle should require include_suppressed.",
+            "decision",
+            None,
+        )?;
+        create_suppression(
+            &conn,
+            &SuppressRequest {
+                target: parse_target(&format!("memory:{hidden}"))?,
+                reason: Some("not relevant"),
+                actor: Some("test"),
+            },
+        )?;
+
+        let default = search_memories(
+            &conn,
+            &SearchRequest {
+                query: Some("suppression needle".to_string()),
+                project: Some("/repo".to_string()),
+                limit: 10,
+                ..SearchRequest::default()
+            },
+        )?;
+        let default_ids = default
+            .memories
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>();
+        assert!(!default_ids.contains(&hidden), "{default_ids:?}");
+
+        let explicit = search_memories(
+            &conn,
+            &SearchRequest {
+                query: Some("suppression needle".to_string()),
+                project: Some("/repo".to_string()),
+                limit: 10,
+                include_suppressed: true,
+                ..SearchRequest::default()
+            },
+        )?;
+        let explicit_ids = explicit
+            .memories
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>();
+        assert!(explicit_ids.contains(&hidden), "{explicit_ids:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn raw_fallback_does_not_bypass_active_suppression_policy() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        crate::memory::insert_memory(
+            &conn,
+            Some("s1"),
+            "/repo",
+            None,
+            "Suppressed memory",
+            "Suppressed raw fallback guard.",
+            "decision",
+            None,
+        )?;
+        create_suppression(
+            &conn,
+            &SuppressRequest {
+                target: parse_target("memory:1")?,
+                reason: Some("not relevant"),
+                actor: Some("test"),
+            },
+        )?;
+        insert_raw_message(
+            &conn,
+            "raw-session",
+            "/repo",
+            ROLE_USER,
+            "fallback-only needle",
+            SOURCE_HOOK,
+            None,
+            None,
+        )?;
+
+        let result = search_memories(
+            &conn,
+            &SearchRequest {
+                query: Some("fallback-only needle".to_string()),
+                project: Some("/repo".to_string()),
+                limit: 10,
+                ..SearchRequest::default()
+            },
+        )?;
+
+        assert!(result.memories.is_empty());
+        assert!(result.raw_hits.is_empty());
+        assert!(result.raw_error.is_none());
         Ok(())
     }
 }

@@ -1,7 +1,8 @@
 use super::cwd::resolve_cwd_arg;
 use super::types::{
     Cli, Commands, CommitAction, ContextGateAction, ImportAction, MemoryAction, MemoryCleanupType,
-    MemoryGovernanceCliAction, PendingAction, RawAction, RawRole, ReviewAction,
+    MemoryGovernanceCliAction, MemorySuppressionsAction, PendingAction, RawAction, RawRole,
+    ReviewAction,
 };
 use clap::{CommandFactory, Parser};
 
@@ -90,6 +91,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
         "--offset",
         "1",
         "--include-stale",
+        "--include-suppressed",
         "--multi-hop",
     ]);
 
@@ -102,6 +104,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             offset,
             branch,
             include_stale,
+            include_suppressed,
             multi_hop,
             explain,
             json,
@@ -113,6 +116,7 @@ fn cli_parses_search_type_alias_and_multi_hop_filters() {
             assert_eq!(offset, 1);
             assert_eq!(branch.as_deref(), Some("main"));
             assert!(include_stale);
+            assert!(include_suppressed);
             assert!(multi_hop);
             assert!(!explain);
             assert!(!json);
@@ -572,6 +576,80 @@ fn cli_parses_scope_cleanup_commands() {
             assert!(json);
         }
         _ => panic!("expected memory cleanup apply command"),
+    }
+}
+
+#[test]
+fn cli_parses_memory_suppression_and_feedback_commands() {
+    let suppress = Cli::parse_from([
+        "remem",
+        "memory",
+        "suppress",
+        "memory:42",
+        "--reason",
+        "too noisy",
+        "--json",
+    ]);
+    match suppress.command {
+        Commands::Memory {
+            action:
+                MemoryAction::Suppress {
+                    target,
+                    reason,
+                    json,
+                    ..
+                },
+        } => {
+            assert_eq!(target, "memory:42");
+            assert_eq!(reason.as_deref(), Some("too noisy"));
+            assert!(json);
+        }
+        _ => panic!("expected memory suppress command"),
+    }
+
+    let feedback = Cli::parse_from([
+        "remem",
+        "memory",
+        "feedback",
+        "memory:42",
+        "--value",
+        "not-relevant",
+        "--session-id",
+        "s1",
+    ]);
+    match feedback.command {
+        Commands::Memory {
+            action:
+                MemoryAction::Feedback {
+                    target,
+                    value,
+                    session_id,
+                    ..
+                },
+        } => {
+            assert_eq!(target, "memory:42");
+            assert_eq!(value, "not-relevant");
+            assert_eq!(session_id.as_deref(), Some("s1"));
+        }
+        _ => panic!("expected memory feedback command"),
+    }
+
+    let list = Cli::parse_from(["remem", "memory", "suppressions", "list", "--json"]);
+    match list.command {
+        Commands::Memory {
+            action:
+                MemoryAction::Suppressions {
+                    action:
+                        MemorySuppressionsAction::List {
+                            include_inactive,
+                            json,
+                        },
+                },
+        } => {
+            assert!(!include_inactive);
+            assert!(json);
+        }
+        _ => panic!("expected memory suppressions list command"),
     }
 }
 

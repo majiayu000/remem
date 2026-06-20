@@ -12,9 +12,11 @@ pub fn query_project_preferences(
         return Ok(Vec::new());
     }
 
+    let policy_filter = memory::suppression::memory_policy_filter_sql("memories");
     let sql = format!(
         "SELECT {} FROM memories \
          WHERE memory_type = 'preference' AND {} \
+         AND {} \
          AND {} \
          AND ((owner_scope = 'repo' AND owner_key = ?1) \
               OR (owner_scope = 'repo' AND target_project = ?1) \
@@ -26,6 +28,7 @@ pub fn query_project_preferences(
         memory::MEMORY_COLS,
         memory::memory_current_filter_sql("status", "expires_at_epoch", false),
         memory::memory_state_key_current_filter_sql("memories"),
+        policy_filter,
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![project, limit as i64], memory::map_memory_row_pub)?;
@@ -37,9 +40,11 @@ pub fn query_global_preferences(conn: &Connection, limit: usize) -> Result<Vec<M
         return Ok(Vec::new());
     }
 
+    let policy_filter = memory::suppression::memory_policy_filter_sql("memories");
     let sql = format!(
         "SELECT {} FROM memories \
          WHERE memory_type = 'preference' AND {} \
+         AND {} \
          AND {} \
          AND ((owner_scope = 'user' AND owner_key = 'user:default') \
               OR (owner_scope IS NULL AND scope = 'global')) \
@@ -50,6 +55,7 @@ pub fn query_global_preferences(conn: &Connection, limit: usize) -> Result<Vec<M
         memory::MEMORY_COLS,
         memory::memory_current_filter_sql("status", "expires_at_epoch", false),
         memory::memory_state_key_current_filter_sql("memories"),
+        policy_filter,
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![limit as i64], memory::map_memory_row_pub)?;

@@ -153,8 +153,12 @@ impl MemoryServer {
                     )?
                 }
                 "memory" => {
-                    let memories_result =
-                        memory::get_memories_by_ids(conn, &params.ids, params.project.as_deref());
+                    let memories_result = memory::get_memories_by_ids_with_suppressed_policy(
+                        conn,
+                        &params.ids,
+                        params.project.as_deref(),
+                        params.include_suppressed.unwrap_or(false),
+                    );
                     let memories = memories_result.map_err(|e| {
                         crate::log::warn("mcp", &format!("get_memories failed: {}", e));
                         McpToolError::db_query(TOOL, e)
@@ -174,7 +178,8 @@ impl MemoryServer {
                         crate::log::warn("mcp", &format!("load topic traces failed: {}", e));
                         McpToolError::db_query(TOOL, e)
                     })?;
-                    memory::mark_memories_accessed(conn, &params.ids).map_err(|e| {
+                    let accessed_ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+                    memory::mark_memories_accessed(conn, &accessed_ids).map_err(|e| {
                         crate::log::warn("mcp", &format!("mark_memories_accessed failed: {}", e));
                         McpToolError::db_query(TOOL, e)
                     })?;

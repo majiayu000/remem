@@ -13,7 +13,7 @@ use crate::{db, memory};
 use super::super::handlers::{
     handle_graph, handle_list_candidates, handle_list_memories, handle_memory_detail,
 };
-use super::super::types::{CandidateParams, GraphParams, ListParams};
+use super::super::types::{CandidateParams, GraphParams, ListParams, MemoryDetailParams};
 use super::super::DbState;
 
 #[tokio::test]
@@ -73,6 +73,7 @@ async fn list_memories_project_filter_uses_repo_ownership_fields() -> anyhow::Re
             status: None,
             branch: None,
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -146,6 +147,7 @@ async fn list_memories_scope_filter_treats_null_as_project() -> anyhow::Result<(
             status: None,
             branch: None,
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -221,6 +223,7 @@ async fn list_memories_active_status_excludes_superseded_state_key_rows() -> any
             status: Some("active".to_string()),
             branch: None,
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -290,6 +293,7 @@ async fn list_memories_active_status_keeps_unsuperseded_state_key_siblings() -> 
             status: Some("active".to_string()),
             branch: None,
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -396,9 +400,15 @@ async fn memory_detail_marks_memory_accessed() -> anyhow::Result<()> {
     )?;
     drop(conn);
 
-    let response = handle_memory_detail(State(DbState), Path(memory_id))
-        .await
-        .into_response();
+    let response = handle_memory_detail(
+        State(DbState),
+        Path(memory_id),
+        Query(MemoryDetailParams {
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let conn = db::open_db()?;
@@ -440,6 +450,7 @@ async fn list_memories_fails_when_source_anchor_label_fails() -> anyhow::Result<
             status: None,
             branch: None,
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -480,9 +491,15 @@ async fn memory_detail_fails_when_source_anchor_label_fails() -> anyhow::Result<
     )?;
     drop(conn);
 
-    let response = handle_memory_detail(State(DbState), Path(memory_id))
-        .await
-        .into_response();
+    let response = handle_memory_detail(
+        State(DbState),
+        Path(memory_id),
+        Query(MemoryDetailParams {
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let payload: Value = serde_json::from_slice(&body)?;
@@ -535,6 +552,7 @@ async fn graph_nodes_are_ranked_from_current_memory_links() -> anyhow::Result<()
         State(DbState),
         Query(GraphParams {
             project: None,
+            include_suppressed: None,
             limit: Some(1),
         }),
     )
@@ -559,6 +577,7 @@ async fn graph_empty_database_returns_empty_arrays() -> anyhow::Result<()> {
         State(DbState),
         Query(GraphParams {
             project: None,
+            include_suppressed: None,
             limit: Some(10),
         }),
     )
@@ -608,6 +627,7 @@ async fn graph_edges_use_stable_tie_breaker_after_weight() -> anyhow::Result<()>
         State(DbState),
         Query(GraphParams {
             project: None,
+            include_suppressed: None,
             limit: Some(10),
         }),
     )
@@ -689,6 +709,7 @@ async fn graph_project_filter_scopes_nodes_and_memory_links() -> anyhow::Result<
         State(DbState),
         Query(GraphParams {
             project: Some("proj-a".to_string()),
+            include_suppressed: None,
             limit: Some(10),
         }),
     )
@@ -772,6 +793,7 @@ async fn graph_excludes_superseded_state_key_memory_links() -> anyhow::Result<()
         State(DbState),
         Query(GraphParams {
             project: Some("proj-a".to_string()),
+            include_suppressed: None,
             limit: Some(10),
         }),
     )
@@ -839,6 +861,7 @@ async fn graph_keeps_unsuperseded_state_key_memory_links() -> anyhow::Result<()>
         State(DbState),
         Query(GraphParams {
             project: Some("proj-a".to_string()),
+            include_suppressed: None,
             limit: Some(10),
         }),
     )

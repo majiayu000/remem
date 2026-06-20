@@ -464,6 +464,7 @@ remem uninstall
 remem doctor
 remem search "query"
 remem search "query" --branch main --type decision --multi-hop --offset 10
+remem search "query" --include-suppressed
 remem search "query" --json
 remem show <id>
 remem show <id> --json
@@ -497,6 +498,10 @@ remem review edit <id> --text "updated memory"
 remem preferences list
 remem preferences add "text"
 remem preferences remove 42
+remem memory suppress memory:123 --reason "not relevant anymore"
+remem memory unsuppress memory:123 --reason "needed again"
+remem memory feedback memory:123 --value not-relevant
+remem memory suppressions list
 remem user remember "For this repo, review specs before code"
 remem user remember --scope repo --owner-key /repo/path --type goal "Ship remem user context"
 remem user claims list
@@ -525,6 +530,17 @@ and delete commands change status without hard-deleting the audit row; default
 claim lists exclude suppressed, deleted, expired, not-yet-valid, and restricted
 claims.
 
+`remem memory suppress` applies a default-read policy without deleting the
+source row. Targets can be `memory:<id>`, `claim:<id>`, `topic:<key>`,
+`entity:<name>`, `pattern:<text>`, or a bare memory id/topic key. Default
+search, SessionStart context, profile-summary sources, preferences, lessons,
+current-state lookup, MCP search, and REST search exclude active suppressions.
+Use `--include-suppressed` on search when an audit needs to inspect suppressed
+evidence explicitly. `remem why <id>` reports whether the memory is currently
+suppressed and which policy matched it. `remem memory feedback` records
+`relevant`, `not-relevant`, `harmful`, `stale`, or `too-noisy` events without
+changing ranking by default.
+
 ### Scriptable JSON output
 
 These commands emit one JSON object and no human text on stdout when `--json`
@@ -534,8 +550,12 @@ is set:
 |---|---|
 | `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `today`, `top_projects` |
 | `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied` |
-| `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
+| `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
+| `remem memory suppress <target> --json` | `status`, `suppression` |
+| `remem memory unsuppress <id-or-target> --json` | `status`, `count`, `suppressions` |
+| `remem memory feedback <target> --json` | `status`, `feedback` |
+| `remem memory suppressions list --json` | `count`, `suppressions` |
 | `remem user remember --json` | `status`, `claim` |
 | `remem user claims list --json` | `count`, `claims` |
 | `remem user claims show <id> --json` / `remem user claims why <id> --json` | `found`, `claim` |
@@ -564,7 +584,10 @@ The complete native web API surface is implemented in source version
 before pointing installed-binary users at the full graph, candidate, or
 rich-detail experience. Fast `/api/v1/health` and cached `/api/v1/status`
 metadata are implemented in source version `0.5.112`. Clients should call
-`/api/v1/capabilities` before enabling optional views.
+`/api/v1/capabilities` before enabling optional views. Suppression audit
+opt-in with `include_suppressed=true` is implemented in source version
+`0.5.113`; default search, browse, graph, and detail reads omit
+policy-suppressed memories.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more
@@ -578,10 +601,10 @@ frequently than the returned `cache.ttl_secs`; use
 | `/api/v1/health` | GET | Cheap authenticated liveness and API readiness |
 | `/api/v1/status` | GET | Cached queue state and counts with cache metadata |
 | `/api/v1/capabilities` | GET | Feature and endpoint detection for native clients |
-| `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=` | GET | Search memories |
-| `/api/v1/memory?id=` | GET | Get one memory |
-| `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=` | GET | Canonical memory browse endpoint |
-| `/api/v1/memories/{id}` | GET | Rich memory detail with entities and edges |
+| `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&multi_hop=&include_suppressed=` | GET | Search memories |
+| `/api/v1/memory?id=&include_suppressed=` | GET | Get one memory |
+| `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | GET | Canonical memory browse endpoint |
+| `/api/v1/memories/{id}?include_suppressed=` | GET | Rich memory detail with entities and edges |
 | `/api/v1/memories` | POST | Save memory |
 
 ### Web read-model endpoints
@@ -593,14 +616,14 @@ frequently than the returned `cache.ttl_secs`; use
 | `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate |
 | `/api/v1/candidates/{id}/reject` | POST | Reject a pending memory candidate |
 | `/api/v1/candidates/{id}/edit` | POST | Edit and approve a pending memory candidate |
-| `/api/v1/graph?project=&limit=` | GET | DB-backed entity graph read model |
+| `/api/v1/graph?project=&limit=&include_suppressed=` | GET | DB-backed entity graph read model |
 
 ### Compatibility aliases
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/v1/memories/list` | GET | Compatibility alias for `/api/v1/memories` |
-| `/api/v1/memory?id=` | GET | Legacy compact single-memory endpoint |
+| `/api/v1/memory?id=&include_suppressed=` | GET | Legacy compact single-memory endpoint |
 
 Run the local native API smoke test against a built binary with:
 

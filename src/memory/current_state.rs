@@ -263,7 +263,17 @@ fn load_state_key_matches(
 
     let sql = format!(
         "SELECT id, owner_scope, owner_key, memory_type, state_key, state_label,
-                state_status, current_memory_id
+                state_status,
+                CASE
+                    WHEN current_memory_id IS NULL THEN NULL
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM memories cm
+                        WHERE cm.id = memory_state_keys.current_memory_id
+                          AND {policy_filter}
+                    ) THEN current_memory_id
+                    ELSE NULL
+                END
          FROM memory_state_keys
          WHERE {}
          ORDER BY
@@ -271,7 +281,8 @@ fn load_state_key_matches(
              updated_at_epoch DESC,
              id DESC
          LIMIT 3",
-        conditions.join(" AND ")
+        conditions.join(" AND "),
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("cm"),
     );
     let refs = crate::db::to_sql_refs(&params_vec);
     let mut stmt = conn.prepare(&sql)?;
@@ -374,8 +385,10 @@ fn load_active_memory(conn: &Connection, id: i64, now_epoch: i64) -> Result<Opti
            AND status = 'active'
            AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
-           AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)",
-        memory::MEMORY_COLS
+           AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)
+           AND {policy_filter}",
+        memory::MEMORY_COLS,
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories"),
     );
     conn.query_row(
         &sql,
@@ -412,9 +425,11 @@ fn load_active_state_key_rivals(
            AND COALESCE(m.valid_from_epoch, m.created_at_epoch) <= ?3
            AND (m.valid_to_epoch IS NULL OR m.valid_to_epoch > ?3)
            AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?3)
+           AND {policy_filter}
          ORDER BY m.updated_at_epoch DESC, m.id DESC
          LIMIT ?4",
-        prefixed_memory_cols("m")
+        prefixed_memory_cols("m"),
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("m"),
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
@@ -444,11 +459,13 @@ fn load_memories_as_of(
            AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
            AND (status <> 'active' OR updated_at_epoch <= ?2)
            AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)
+           AND {policy_filter}
          ORDER BY COALESCE(valid_from_epoch, created_at_epoch) DESC,
                   updated_at_epoch DESC,
                   id DESC
          LIMIT ?3",
-        memory::MEMORY_COLS
+        memory::MEMORY_COLS,
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories"),
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
@@ -486,10 +503,12 @@ fn load_history(
          WHERE e.to_memory_id = ?1
            AND e.state_key_id = ?2
            AND e.edge_type IN ('supersedes', 'merged_into')
+           AND {policy_filter}
            {as_of_filter}
          ORDER BY e.created_at_epoch DESC, e.id DESC
          LIMIT ?3",
-        prefixed_memory_cols("m")
+        prefixed_memory_cols("m"),
+        policy_filter = crate::memory::suppression::memory_policy_filter_sql("m"),
     );
     let refs = crate::db::to_sql_refs(&params_vec);
     let mut stmt = conn.prepare(&sql)?;
@@ -529,9 +548,21 @@ fn load_why(
              OR (edge_type = 'conflicts'
                  AND (from_memory_id = ?1 OR to_memory_id = ?1)
                  AND state_key_id = ?2))
+           AND (from_memory_id IS NULL OR EXISTS (
+                 SELECT 1 FROM memories fm
+                 WHERE fm.id = from_memory_id
+                   AND {from_policy_filter}
+           ))
+           AND (to_memory_id IS NULL OR EXISTS (
+                 SELECT 1 FROM memories tm
+                 WHERE tm.id = to_memory_id
+                   AND {to_policy_filter}
+           ))
            {as_of_filter}
          ORDER BY created_at_epoch DESC, id DESC
-         LIMIT ?3"
+         LIMIT ?3",
+        from_policy_filter = crate::memory::suppression::memory_policy_filter_sql("fm"),
+        to_policy_filter = crate::memory::suppression::memory_policy_filter_sql("tm"),
     );
     let refs = crate::db::to_sql_refs(&params_vec);
     let mut stmt = conn.prepare(&sql)?;

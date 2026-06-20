@@ -21,7 +21,12 @@ pub(in crate::api) async fn handle_get_memory(
         Err(response) => return response,
     };
 
-    match memory::get_memories_by_ids(&conn, &[params.id], None) {
+    match memory::get_memories_by_ids_with_suppressed_policy(
+        &conn,
+        &[params.id],
+        None,
+        params.include_suppressed.unwrap_or(false),
+    ) {
         Ok(results) if !results.is_empty() => {
             let item = match memory_to_item_with_conn(&conn, &results[0]) {
                 Ok(item) => item,

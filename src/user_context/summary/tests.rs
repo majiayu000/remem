@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::suppression::{create_suppression, parse_target, SuppressRequest};
 use crate::user_context::claims::{
     create_manual_claim, suppress_claim, ManualClaimRequest, UserContextClaimType,
     UserContextSensitivity,
@@ -97,7 +98,7 @@ fn sources_resolve_stored_ids_after_source_status_changes() -> Result<()> {
     suppress_claim(&conn, active.id)?;
     conn.execute("UPDATE memories SET status = 'stale' WHERE id = 10", [])?;
 
-    let sources = load_summary_sources(&conn, &summary_request("/repo"), false)?;
+    let sources = load_summary_sources(&conn, &summary_request("/repo"), true)?;
 
     assert_eq!(sources.included_claims.len(), 1);
     assert_eq!(sources.included_claims[0].id, active.id);
@@ -107,6 +108,107 @@ fn sources_resolve_stored_ids_after_source_status_changes() -> Result<()> {
     assert_eq!(sources.included_memories[0].status, "stale");
     assert_eq!(sources.included_activity_refs, summary.source_activity_refs);
     assert!(sources.dropped_claims.is_empty());
+    Ok(())
+}
+
+#[test]
+fn refresh_excludes_policy_suppressed_claims_and_memories() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    let visible_claim = create_manual_claim(
+        &conn,
+        &claim_request("Prefer visible summaries", UserContextSensitivity::Normal),
+    )?;
+    let hidden_claim = create_manual_claim(
+        &conn,
+        &claim_request(
+            "Do not summarize this claim",
+            UserContextSensitivity::Normal,
+        ),
+    )?;
+    create_manual_claim(
+        &conn,
+        &claim_request(
+            "Do not summarize this secret pattern",
+            UserContextSensitivity::Normal,
+        ),
+    )?;
+    insert_summary_memory_source(
+        &conn,
+        10,
+        "/repo",
+        "Visible memory",
+        "Visible memory source",
+    )?;
+    insert_summary_memory_source(&conn, 11, "/repo", "Hidden memory", "Hidden memory source")?;
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: parse_target(&format!("claim:{}", hidden_claim.id))?,
+            reason: Some("not relevant"),
+            actor: Some("test"),
+        },
+    )?;
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: parse_target("memory:11")?,
+            reason: Some("stale"),
+            actor: Some("test"),
+        },
+    )?;
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: parse_target("pattern:secret pattern")?,
+            reason: Some("too noisy"),
+            actor: Some("test"),
+        },
+    )?;
+
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+
+    assert_eq!(summary.source_claim_ids, vec![visible_claim.id]);
+    assert_eq!(summary.source_memory_ids, vec![10]);
+    assert!(summary.summary_text.contains("Prefer visible summaries"));
+    assert!(!summary.summary_text.contains("Do not summarize"));
+    assert!(!summary.summary_text.contains("secret pattern"));
+    assert!(!summary.summary_text.contains("Hidden memory source"));
+    Ok(())
+}
+
+#[test]
+fn load_active_summary_hides_text_after_policy_suppresses_source() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    let claim = create_manual_claim(
+        &conn,
+        &claim_request("Old profile text", UserContextSensitivity::Normal),
+    )?;
+    insert_summary_memory_source(&conn, 10, "/repo", "Old memory", "Old memory text")?;
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+    assert!(summary.summary_text.contains("Old profile text"));
+    assert!(load_active_summary(&conn, &summary_request("/repo"))?.is_some());
+
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: parse_target(&format!("claim:{}", claim.id))?,
+            reason: Some("do not show"),
+            actor: Some("test"),
+        },
+    )?;
+
+    assert!(load_active_summary(&conn, &summary_request("/repo"))?.is_none());
+    let sources = load_summary_sources(&conn, &summary_request("/repo"), false)?;
+    assert!(sources.summary.is_none());
+    assert!(!sources
+        .included_claims
+        .iter()
+        .any(|item| item.claim_text.contains("Old profile text")));
+    let audit_sources = load_summary_sources(&conn, &summary_request("/repo"), true)?;
+    assert_eq!(
+        audit_sources.summary.as_ref().map(|item| item.id),
+        Some(summary.id)
+    );
     Ok(())
 }
 

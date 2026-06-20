@@ -54,6 +54,7 @@ fn get_observations_attaches_compressed_observation_sources() {
             ids: vec![compressed_id],
             project: Some("/repo".to_string()),
             source: Some("observation".to_string()),
+            include_suppressed: None,
         }))
         .expect("expansion succeeds");
     let json: Value = serde_json::from_str(&expanded).expect("expanded json");

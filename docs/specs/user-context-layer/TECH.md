@@ -41,8 +41,8 @@ The design builds on current remem behavior rather than replacing it:
 
 ## Schema
 
-Exact migration numbers are assigned when implementation starts. The first
-implementation should keep compatibility with existing databases and add tables
+The manual-claim and summary phases use earlier user-context migrations.
+Suppression and feedback controls are added by `v051_memory_suppressions_feedback`
 without rebuilding existing core tables.
 
 ### `user_context_claims`
@@ -226,6 +226,13 @@ relevant | not_relevant | harmful | stale | too_noisy
 
 Ranking changes must remain behind configuration until tested against
 retrieval regressions.
+
+Default retrieval, context, preference, lesson, current-state, summary-source,
+REST search/browse/graph/detail, and MCP search/detail paths must apply active
+suppressions unless the caller explicitly sets an audit-only
+`include_suppressed` flag.
+Feedback events are recorded for later analysis and must not alter ranking by
+default.
 
 ## Activity Timeline
 

@@ -19,8 +19,13 @@ fn paginate_memories(memories: Vec<Memory>, limit: i64, offset: i64) -> Vec<Memo
     memories[start..end].to_vec()
 }
 
-fn load_ranked_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
-    let loaded = memory::get_memories_by_ids(conn, ids, None)?;
+fn load_ranked_memories(
+    conn: &Connection,
+    ids: &[i64],
+    include_suppressed: bool,
+) -> Result<Vec<Memory>> {
+    let loaded =
+        memory::get_memories_by_ids_with_suppressed_policy(conn, ids, None, include_suppressed)?;
     let id_to_mem: HashMap<i64, Memory> = loaded
         .into_iter()
         .map(|memory| (memory.id, memory))
@@ -40,10 +45,11 @@ pub fn search_multi_hop(
     memory_type: Option<&str>,
     branch: Option<&str>,
     include_stale: bool,
+    include_suppressed: bool,
 ) -> Result<MultiHopResult> {
     let page_target = (limit.max(0) + offset.max(0)).max(1);
     let fetch = page_target * 3;
-    let first_hop = crate::retrieval::search::search_with_branch(
+    let first_hop = crate::retrieval::search::search_with_branch_with_suppressed_policy(
         conn,
         Some(query),
         project,
@@ -52,6 +58,7 @@ pub fn search_multi_hop(
         0,
         include_stale,
         branch,
+        include_suppressed,
     )?;
     let first_hop_ids: Vec<i64> = first_hop.iter().map(|memory| memory.id).collect();
 
@@ -80,6 +87,7 @@ pub fn search_multi_hop(
         memory_type,
         branch,
         include_stale,
+        include_suppressed,
         fetch,
         &first_hop_set,
     )?;
@@ -93,7 +101,19 @@ pub fn search_multi_hop(
 
     let merged = rank_merged_scores(&first_hop_ids, &second_hop_ids, fetch);
     let merged_ids = merged.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    let ranked = load_ranked_memories(conn, &merged_ids)?;
+    let ranked = load_ranked_memories(conn, &merged_ids, include_suppressed)?;
+    let ranked = if include_suppressed {
+        ranked
+    } else {
+        let suppressed = crate::memory::suppression::active_suppressed_memory_ids(
+            conn,
+            &ranked.iter().map(|memory| memory.id).collect::<Vec<_>>(),
+        )?;
+        ranked
+            .into_iter()
+            .filter(|memory| !suppressed.contains(&memory.id))
+            .collect()
+    };
     let (ranked, _) = crate::retrieval::search::apply_score_demotions(conn, &merged, ranked)?;
     let memories = paginate_memories(
         ranked.into_iter().take(page_target as usize).collect(),

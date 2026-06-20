@@ -998,6 +998,7 @@ fn bench_multi_hop_entity_graph_retrieval() -> Result<()> {
         None,
         None,
         true,
+        false,
     )?;
     let multi_ids: Vec<i64> = multi.memories.iter().map(|m| m.id).collect();
 

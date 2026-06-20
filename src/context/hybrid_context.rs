@@ -436,6 +436,11 @@ fn query_local_fact_channel(
         false,
         crate::retrieval::temporal::FactTimeMode::from_query(query),
     )?;
+    let suppressed = crate::memory::suppression::active_suppressed_memory_ids(conn, &ids)?;
+    let ids = ids
+        .into_iter()
+        .filter(|id| !suppressed.contains(id))
+        .collect();
     Ok(rank_ordered_hits(ids))
 }
 
@@ -577,6 +582,9 @@ fn push_context_memory_filters(
         false,
     ));
     conditions.push(crate::memory::memory_state_key_current_filter_sql(alias));
+    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+        table_ref(alias),
+    ));
     push_owner_included_filter(project, idx, conditions, params);
     if let Some(branch) = current_branch.filter(|branch| !branch.trim().is_empty()) {
         conditions.push(format!(

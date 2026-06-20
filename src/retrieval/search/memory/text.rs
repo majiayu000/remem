@@ -12,8 +12,8 @@ use super::super::common::{
     weighted_ranked_fuse, WeightedRankedChannel, WeightedRankedHit,
 };
 use super::{
-    ChannelContribution, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
-    SearchWeights,
+    suppression_filter, ChannelContribution, ChannelHit, SearchExplain, SearchExplainChannel,
+    SearchExplainResult, SearchWeights,
 };
 
 pub(super) struct QuerySearchWithExplain {
@@ -28,6 +28,7 @@ struct QuerySearchPlan {
     fts_query: Option<String>,
     temporal_range: Option<(i64, i64)>,
     temporal_field: Option<String>,
+    include_suppressed: bool,
     fetch_limit: i64,
     weights: SearchWeights,
     channels: Vec<NamedChannel>,
@@ -89,8 +90,13 @@ impl NamedChannel {
     }
 }
 
-fn load_ordered_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
-    let loaded = memory::get_memories_by_ids(conn, ids, None)?;
+fn load_ordered_memories(
+    conn: &Connection,
+    ids: &[i64],
+    include_suppressed: bool,
+) -> Result<Vec<Memory>> {
+    let loaded =
+        memory::get_memories_by_ids_with_suppressed_policy(conn, ids, None, include_suppressed)?;
     let id_to_memory: HashMap<i64, Memory> = loaded
         .into_iter()
         .map(|memory| (memory.id, memory))
@@ -109,7 +115,9 @@ fn gate_and_annotate_memories(
     plan: &QuerySearchPlan,
     ordered: Vec<Memory>,
 ) -> Result<(Vec<Memory>, Vec<(i64, f64)>)> {
-    let gated_fused = apply_confidence_gate(fused, plan, &ordered);
+    let (ordered, fused) =
+        suppression_filter::ordered(conn, ordered, fused, plan.include_suppressed)?;
+    let gated_fused = apply_confidence_gate(&fused, plan, &ordered);
     let gated_ids: HashSet<i64> = gated_fused.iter().map(|(id, _)| *id).collect();
     let mut ordered = ordered
         .into_iter()
@@ -133,6 +141,7 @@ pub(super) fn search_with_query(
     offset: i64,
     include_stale: bool,
     branch: Option<&str>,
+    include_suppressed: bool,
 ) -> Result<Vec<Memory>> {
     search_with_query_weights(
         conn,
@@ -143,6 +152,7 @@ pub(super) fn search_with_query(
         offset,
         include_stale,
         branch,
+        include_suppressed,
         SearchWeights::default(),
     )
 }
@@ -156,6 +166,7 @@ pub(super) fn search_with_query_weights(
     offset: i64,
     include_stale: bool,
     branch: Option<&str>,
+    include_suppressed: bool,
     weights: SearchWeights,
 ) -> Result<Vec<Memory>> {
     let mut plan = build_query_search_plan(
@@ -167,6 +178,7 @@ pub(super) fn search_with_query_weights(
         offset,
         include_stale,
         branch,
+        include_suppressed,
         weights,
     )?;
     if plan.channels.is_empty() {
@@ -182,7 +194,7 @@ pub(super) fn search_with_query_weights(
     });
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
-        load_ordered_memories(conn, &fused_ids)
+        load_ordered_memories(conn, &fused_ids, plan.include_suppressed)
     })?;
     let (ordered, fused) = time_result(&mut plan.timings, "source_anchor_demote", || {
         super::source_anchor::apply_score_demotions(conn, &fused, ordered)
@@ -211,6 +223,7 @@ pub(super) fn search_with_query_explain(
     offset: i64,
     include_stale: bool,
     branch: Option<&str>,
+    include_suppressed: bool,
 ) -> Result<QuerySearchWithExplain> {
     let mut plan = build_query_search_plan(
         conn,
@@ -221,6 +234,7 @@ pub(super) fn search_with_query_explain(
         offset,
         include_stale,
         branch,
+        include_suppressed,
         SearchWeights::default(),
     )?;
     if plan.channels.is_empty() {
@@ -262,7 +276,7 @@ pub(super) fn search_with_query_explain(
     });
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
-        load_ordered_memories(conn, &fused_ids)
+        load_ordered_memories(conn, &fused_ids, plan.include_suppressed)
     })?;
     let (ordered, fused) = time_result(&mut plan.timings, "source_anchor_demote", || {
         super::source_anchor::apply_score_demotions(conn, &fused, ordered)
@@ -310,6 +324,7 @@ fn build_query_search_plan(
     offset: i64,
     include_stale: bool,
     branch: Option<&str>,
+    include_suppressed: bool,
     weights: SearchWeights,
 ) -> Result<QuerySearchPlan> {
     let total_start = Instant::now();
@@ -349,6 +364,7 @@ fn build_query_search_plan(
                 branch,
             )
         })?;
+        let fts = suppression_filter::fts_hits(conn, fts, include_suppressed)?;
         if !fts.is_empty() {
             channels.push(NamedChannel::enabled_with_hits(
                 "fts",
@@ -369,6 +385,7 @@ fn build_query_search_plan(
             include_stale,
         )
     })?;
+    let entity_ids = suppression_filter::ids(conn, entity_ids, include_suppressed)?;
     if !entity_ids.is_empty() {
         channels.push(NamedChannel::enabled("entity", weights.entity, entity_ids));
     }
@@ -388,6 +405,7 @@ fn build_query_search_plan(
                 crate::retrieval::temporal::FactTimeMode::from_query(query_text),
             )
         })?;
+        let fact_ids = suppression_filter::ids(conn, fact_ids, include_suppressed)?;
         if !fact_ids.is_empty() {
             channels.push(NamedChannel::enabled("fact", weights.fact, fact_ids));
         }
@@ -410,6 +428,7 @@ fn build_query_search_plan(
                 include_stale,
             )
         })?;
+        let temporal_ids = suppression_filter::ids(conn, temporal_ids, include_suppressed)?;
         if !temporal_ids.is_empty() {
             channels.push(NamedChannel::enabled(
                 "temporal",
@@ -451,7 +470,8 @@ fn build_query_search_plan(
                 id: hit.memory_id,
                 normalized_score: vector_similarity_score(hit.distance, weights),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
         channels.push(
             NamedChannel::enabled_with_hits("vector", weights.vector, hits)
                 .with_candidates_scanned(candidates_scanned),
@@ -483,6 +503,7 @@ fn build_query_search_plan(
                 branch,
             )
         })?;
+        let like = suppression_filter::memories(conn, like, include_suppressed)?;
         if like.is_empty() {
             channels.push(NamedChannel::disabled(
                 "like_fallback",
@@ -526,6 +547,7 @@ fn build_query_search_plan(
         fts_query,
         temporal_range,
         temporal_field,
+        include_suppressed,
         fetch_limit: fetch,
         weights,
         channels,

@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
+pub(in crate::cli) use super::memory_types::{
+    MemoryAction, MemoryCleanupType, MemorySuppressionsAction,
+};
 pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
     WorkstreamStatusArg,
@@ -351,6 +354,9 @@ pub(super) enum Commands {
         /// Include stale or archived memories when searching.
         #[arg(long)]
         include_stale: bool,
+        /// Include policy-suppressed memories when searching.
+        #[arg(long)]
+        include_suppressed: bool,
         /// Expand through related entities after the first search pass.
         #[arg(long)]
         multi_hop: bool,
@@ -588,50 +594,6 @@ pub(in crate::cli) enum PreferenceAction {
     Remove {
         id: i64,
     },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum MemoryAction {
-    /// Build or apply a dry-run-first memory cleanup plan.
-    Cleanup {
-        /// Project working directory to plan cleanup for.
-        #[arg(long)]
-        cwd: Option<String>,
-        /// Cleanup detector type. The first implementation supports preference.
-        #[arg(long = "type", value_enum)]
-        cleanup_type: Option<MemoryCleanupType>,
-        /// Run every supported detector. Currently equivalent to --type preference.
-        #[arg(long)]
-        all_types: bool,
-        /// Print what would be changed without mutating the database.
-        #[arg(long)]
-        dry_run: bool,
-        /// Write the dry-run JSON plan to this path.
-        #[arg(long)]
-        plan_out: Option<PathBuf>,
-        /// Apply a saved plan. Requires --plan.
-        #[arg(long)]
-        apply: bool,
-        /// Saved cleanup plan JSON to apply.
-        #[arg(long)]
-        plan: Option<PathBuf>,
-        /// Emit a single JSON object with stable fields for scripts.
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(in crate::cli) enum MemoryCleanupType {
-    Preference,
-}
-
-impl MemoryCleanupType {
-    pub(in crate::cli) fn as_str(self) -> &'static str {
-        match self {
-            Self::Preference => "preference",
-        }
-    }
 }
 
 #[derive(Subcommand)]

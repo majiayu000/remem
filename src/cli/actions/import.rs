@@ -443,6 +443,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
                 include_stale: false,
+                include_suppressed: false,
                 branch: None,
                 multi_hop: false,
                 explain: false,

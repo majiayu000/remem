@@ -27,6 +27,9 @@ pub(in crate::api) fn search_request_from_params(params: SearchParams) -> servic
         include_stale: params
             .include_stale
             .unwrap_or_else(service::default_include_stale),
+        include_suppressed: params
+            .include_suppressed
+            .unwrap_or_else(service::default_include_suppressed),
         branch: params.branch,
         multi_hop: params.multi_hop.unwrap_or(false),
         explain: params.explain.unwrap_or(false),
@@ -144,6 +147,7 @@ mod tests {
             limit: Some(5),
             offset: Some(0),
             include_stale: Some(true),
+            include_suppressed: None,
             branch: None,
             multi_hop: Some(false),
             explain,

@@ -17,7 +17,8 @@ use super::handlers::{
     handle_memory_detail, handle_search, handle_stats, handle_status, search_request_from_params,
 };
 use super::types::{
-    CandidateParams, GraphParams, ListParams, SearchParams, ShowParams, StatusCache, StatusParams,
+    CandidateParams, GraphParams, ListParams, MemoryDetailParams, SearchParams, ShowParams,
+    StatusCache, StatusParams,
 };
 use super::DbState;
 
@@ -98,6 +99,7 @@ fn search_request_from_params_clamps_limit_and_offset() {
         limit: Some(999),
         offset: Some(-5),
         include_stale: None,
+        include_suppressed: None,
         branch: None,
         multi_hop: None,
         explain: None,
@@ -107,6 +109,7 @@ fn search_request_from_params_clamps_limit_and_offset() {
     assert_eq!(request.offset, 0);
     // Canonical default hides stale and archived memories unless callers opt in.
     assert!(!request.include_stale);
+    assert!(!request.include_suppressed);
     assert!(!request.multi_hop);
     assert!(!request.explain);
 }
@@ -120,6 +123,7 @@ fn search_request_from_params_preserves_filters() {
         limit: Some(8),
         offset: Some(3),
         include_stale: Some(true),
+        include_suppressed: Some(true),
         branch: Some("main".to_string()),
         multi_hop: Some(true),
         explain: Some(true),
@@ -130,6 +134,7 @@ fn search_request_from_params_preserves_filters() {
     assert_eq!(request.memory_type.as_deref(), Some("decision"));
     assert_eq!(request.limit, 8);
     assert_eq!(request.offset, 3);
+    assert!(request.include_suppressed);
     assert!(request.include_stale);
     assert_eq!(request.branch.as_deref(), Some("main"));
     assert!(request.multi_hop);
@@ -190,6 +195,7 @@ async fn search_handler_hides_inactive_memories_by_default() -> anyhow::Result<(
             limit: Some(10),
             offset: None,
             include_stale: None,
+            include_suppressed: None,
             branch: None,
             multi_hop: None,
             explain: None,
@@ -235,7 +241,10 @@ async fn get_memory_handler_marks_memory_accessed() -> anyhow::Result<()> {
 
     let response = handle_get_memory(
         State(DbState),
-        axum::extract::Query(ShowParams { id: memory_id }),
+        axum::extract::Query(ShowParams {
+            id: memory_id,
+            include_suppressed: None,
+        }),
     )
     .await
     .into_response();
@@ -249,6 +258,57 @@ async fn get_memory_handler_marks_memory_accessed() -> anyhow::Result<()> {
     )?;
     assert_eq!(usage.0, 1);
     assert!(usage.1.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_memory_handler_hides_policy_suppressed_rows_by_default() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-get-memory-policy-suppressed");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-legacy-detail-policy"),
+        "proj-a",
+        None,
+        "hidden legacy detail",
+        "legacy detail should require include_suppressed",
+        "decision",
+        None,
+    )?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{memory_id}"))?,
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )?;
+    drop(conn);
+
+    let default_response = handle_get_memory(
+        State(DbState),
+        Query(ShowParams {
+            id: memory_id,
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(default_response.status(), StatusCode::NOT_FOUND);
+
+    let audit_response = handle_get_memory(
+        State(DbState),
+        Query(ShowParams {
+            id: memory_id,
+            include_suppressed: Some(true),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(audit_response.status(), StatusCode::OK);
+    let body = to_bytes(audit_response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["id"], memory_id);
     Ok(())
 }
 
@@ -625,6 +685,92 @@ async fn router_serves_get_api_v1_memories() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn list_memories_excludes_policy_suppressed_rows_by_default() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-list-policy-suppressed");
+    let conn = db::open_db()?;
+    let visible_id = memory::insert_memory(
+        &conn,
+        Some("session-list-policy-visible"),
+        "proj-a",
+        None,
+        "visible list row",
+        "visible list memory",
+        "decision",
+        None,
+    )?;
+    let hidden_id = memory::insert_memory(
+        &conn,
+        Some("session-list-policy-hidden"),
+        "proj-a",
+        None,
+        "hidden list row",
+        "hidden list memory",
+        "decision",
+        None,
+    )?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{hidden_id}"))?,
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )?;
+    drop(conn);
+
+    let default_response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: None,
+            branch: None,
+            q: None,
+            include_suppressed: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(default_response.status(), StatusCode::OK);
+    let default_body = to_bytes(default_response.into_body(), usize::MAX).await?;
+    let default_payload: Value = serde_json::from_slice(&default_body)?;
+    assert_eq!(default_payload["meta"]["total"], 1);
+    assert_eq!(default_payload["data"][0]["id"], visible_id);
+
+    let audit_response = handle_list_memories(
+        State(DbState),
+        Query(ListParams {
+            project: Some("proj-a".to_string()),
+            memory_type: None,
+            scope: None,
+            status: None,
+            branch: None,
+            q: None,
+            include_suppressed: Some(true),
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(audit_response.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_response.into_body(), usize::MAX).await?;
+    let audit_payload: Value = serde_json::from_slice(&audit_body)?;
+    let ids: Vec<i64> = audit_payload["data"]
+        .as_array()
+        .expect("data should be array")
+        .iter()
+        .map(|item| item["id"].as_i64().expect("id should be i64"))
+        .collect();
+    assert!(ids.contains(&visible_id));
+    assert!(ids.contains(&hidden_id));
+    Ok(())
+}
+
+#[tokio::test]
 async fn router_memories_and_list_alias_return_same_pagination_meta() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-list-alias-meta");
     let conn = db::open_db()?;
@@ -729,6 +875,7 @@ async fn list_memories_q_filter_matches_title_or_content() -> anyhow::Result<()>
             status: None,
             branch: None,
             q: Some("needle".to_string()),
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -799,6 +946,7 @@ async fn list_memories_branch_filter_includes_null_branch() -> anyhow::Result<()
             status: None,
             branch: Some("main".to_string()),
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -861,6 +1009,7 @@ async fn list_memories_active_status_excludes_expired_rows() -> anyhow::Result<(
             status: Some("active".to_string()),
             branch: None,
             q: None,
+            include_suppressed: None,
             limit: Some(10),
             offset: None,
         }),
@@ -1210,9 +1359,15 @@ async fn memory_detail_returns_rich_memory_with_entities() -> anyhow::Result<()>
     )?;
     drop(conn);
 
-    let response = handle_memory_detail(State(DbState), Path(memory_id))
-        .await
-        .into_response();
+    let response = handle_memory_detail(
+        State(DbState),
+        Path(memory_id),
+        Query(MemoryDetailParams {
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
@@ -1235,12 +1390,69 @@ async fn memory_detail_returns_rich_memory_with_entities() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+async fn memory_detail_hides_policy_suppressed_rows_by_default() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-memory-detail-policy-suppressed");
+    let conn = db::open_db()?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-rich-detail-policy"),
+        "proj-a",
+        None,
+        "hidden rich detail",
+        "rich detail should require include_suppressed",
+        "decision",
+        None,
+    )?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{memory_id}"))?,
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )?;
+    drop(conn);
+
+    let default_response = handle_memory_detail(
+        State(DbState),
+        Path(memory_id),
+        Query(MemoryDetailParams {
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(default_response.status(), StatusCode::NOT_FOUND);
+
+    let audit_response = handle_memory_detail(
+        State(DbState),
+        Path(memory_id),
+        Query(MemoryDetailParams {
+            include_suppressed: Some(true),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(audit_response.status(), StatusCode::OK);
+    let body = to_bytes(audit_response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["id"], memory_id);
+    Ok(())
+}
+
+#[tokio::test]
 async fn memory_detail_returns_structured_not_found() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-memory-detail-not-found");
 
-    let response = handle_memory_detail(State(DbState), Path(404))
-        .await
-        .into_response();
+    let response = handle_memory_detail(
+        State(DbState),
+        Path(404),
+        Query(MemoryDetailParams {
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
@@ -1288,9 +1500,15 @@ async fn memory_detail_includes_incoming_and_outgoing_edges() -> anyhow::Result<
     )?;
     drop(conn);
 
-    let response = handle_memory_detail(State(DbState), Path(new_id))
-        .await
-        .into_response();
+    let response = handle_memory_detail(
+        State(DbState),
+        Path(new_id),
+        Query(MemoryDetailParams {
+            include_suppressed: None,
+        }),
+    )
+    .await
+    .into_response();
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = to_bytes(response.into_body(), usize::MAX).await?;
@@ -1342,6 +1560,7 @@ async fn graph_limits_memory_fanout_per_entity() -> anyhow::Result<()> {
         State(DbState),
         Query(GraphParams {
             project: None,
+            include_suppressed: None,
             limit: Some(1),
         }),
     )
@@ -1417,6 +1636,7 @@ async fn graph_uses_only_current_memories_for_links() -> anyhow::Result<()> {
         State(DbState),
         Query(GraphParams {
             project: None,
+            include_suppressed: None,
             limit: Some(2),
         }),
     )
@@ -1442,6 +1662,95 @@ async fn graph_uses_only_current_memories_for_links() -> anyhow::Result<()> {
     assert!(!left_mems.contains(&expired_id));
     assert!(!left_mems.contains(&stale_id));
     assert_eq!(payload["edges"][0]["w"], 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn graph_excludes_policy_suppressed_memories_by_default() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-graph-policy-suppressed");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO entities (id, canonical_name, entity_type, mention_count, created_at_epoch)
+         VALUES
+          (1, 'hidden-only', 'topic', 1, 1),
+          (2, 'visible-only', 'topic', 1, 1)",
+        [],
+    )?;
+    let hidden_id = memory::insert_memory(
+        &conn,
+        Some("session-hidden-graph-policy"),
+        "proj-a",
+        None,
+        "hidden graph row",
+        "hidden graph memory",
+        "decision",
+        None,
+    )?;
+    let visible_id = memory::insert_memory(
+        &conn,
+        Some("session-visible-graph-policy"),
+        "proj-a",
+        None,
+        "visible graph row",
+        "visible graph memory",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO memory_entities (memory_id, entity_id) VALUES (?1, 1), (?2, 2)",
+        params![hidden_id, visible_id],
+    )?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{hidden_id}"))?,
+            reason: Some("not useful"),
+            actor: Some("test"),
+        },
+    )?;
+    drop(conn);
+
+    let default_response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: Some("proj-a".to_string()),
+            include_suppressed: None,
+            limit: Some(10),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(default_response.status(), StatusCode::OK);
+    let default_body = to_bytes(default_response.into_body(), usize::MAX).await?;
+    let default_payload: Value = serde_json::from_slice(&default_body)?;
+    assert_eq!(default_payload["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(default_payload["nodes"][0]["id"], 2);
+    assert_eq!(
+        default_payload["nodes"][0]["mems"],
+        serde_json::json!([visible_id])
+    );
+
+    let audit_response = handle_graph(
+        State(DbState),
+        Query(GraphParams {
+            project: Some("proj-a".to_string()),
+            include_suppressed: Some(true),
+            limit: Some(10),
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(audit_response.status(), StatusCode::OK);
+    let audit_body = to_bytes(audit_response.into_body(), usize::MAX).await?;
+    let audit_payload: Value = serde_json::from_slice(&audit_body)?;
+    let node_ids: Vec<i64> = audit_payload["nodes"]
+        .as_array()
+        .expect("nodes should be array")
+        .iter()
+        .map(|node| node["id"].as_i64().expect("node id should be i64"))
+        .collect();
+    assert!(node_ids.contains(&1));
+    assert!(node_ids.contains(&2));
     Ok(())
 }
 

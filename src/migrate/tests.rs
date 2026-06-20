@@ -118,6 +118,9 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_citation_events",
         "memory_usage_events",
         "user_context_claims",
+        "user_context_summaries",
+        "memory_suppressions",
+        "memory_feedback",
     ] {
         let exists: bool = conn
             .query_row(
@@ -155,6 +158,12 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_user_context_claims_owner_active",
         "idx_user_context_claims_user_recent",
         "idx_user_context_claims_status",
+        "idx_user_context_summaries_owner_active",
+        "idx_user_context_summaries_user_recent",
+        "idx_memory_suppressions_target_active",
+        "idx_memory_suppressions_owner_active",
+        "idx_memory_feedback_target_recent",
+        "idx_memory_feedback_context_item",
     ] {
         let exists: bool = conn
             .query_row(

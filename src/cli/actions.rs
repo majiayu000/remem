@@ -5,6 +5,7 @@ mod eval;
 mod import;
 mod maintenance;
 mod markdown_archive;
+mod memory_policy;
 mod model;
 mod pending;
 mod preferences;
@@ -26,6 +27,7 @@ pub(super) use maintenance::{
     run_cleanup, run_dream, run_encrypt, run_governance, GovernanceCliRequest,
 };
 pub(super) use markdown_archive::run_export_markdown;
+pub(super) use memory_policy::run_memory_action;
 pub(super) use model::run_model;
 pub(super) use pending::run_pending;
 pub(super) use preferences::{run_preferences, run_user};
@@ -35,8 +37,7 @@ pub(super) use query::{
 };
 pub(super) use review::{run_graph_review, run_review};
 pub(super) use scope_cleanup::{
-    run_archive, run_audit_scope, run_memory_cleanup, run_merge_preferences, run_reroute,
-    RerouteCliRequest,
+    run_archive, run_audit_scope, run_merge_preferences, run_reroute, RerouteCliRequest,
 };
 pub(super) use usage::run_usage;
 pub(super) use user_summary::run_user_summary;

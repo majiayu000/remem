@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -11,21 +11,29 @@ use crate::memory;
 use super::super::helpers::{
     error_response, memory_to_item_with_conn, open_request_db, staleness_error_response,
 };
+use super::super::types::MemoryDetailParams;
 use super::super::types::{DbState, MemoryDetailResponse, MemoryEdgeItem};
 
 pub(in crate::api) async fn handle_memory_detail(
     State(_state): State<DbState>,
     Path(id): Path<i64>,
+    Query(params): Query<MemoryDetailParams>,
 ) -> impl IntoResponse {
     let conn = match open_request_db() {
         Ok(conn) => conn,
         Err(response) => return response,
     };
 
+    let policy_filter = if params.include_suppressed.unwrap_or(false) {
+        "1=1".to_string()
+    } else {
+        crate::memory::suppression::memory_policy_filter_sql("memories")
+    };
     let mem = match conn.query_row(
         &format!(
-            "SELECT {} FROM memories WHERE id = ?1",
-            crate::memory::types::MEMORY_COLS
+            "SELECT {} FROM memories WHERE id = ?1 AND {}",
+            crate::memory::types::MEMORY_COLS,
+            policy_filter
         ),
         params![id],
         crate::memory::types::map_memory_row_pub,

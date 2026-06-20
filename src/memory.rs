@@ -26,6 +26,7 @@ pub mod service;
 pub mod staleness;
 pub mod state_key;
 pub mod store;
+pub mod suppression;
 pub mod types;
 pub(crate) mod usage;
 

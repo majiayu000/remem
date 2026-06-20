@@ -1,6 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+use crate::memory::suppression::{create_suppression, parse_target, SuppressRequest};
 use crate::memory::{self, Memory};
 
 use super::{
@@ -124,6 +125,45 @@ fn test_project_preferences_exclude_tool_owned_rows_from_same_project() -> Resul
     let prefs = query_project_preferences(&conn, "test/proj", 20)?;
     assert_eq!(prefs.len(), 1);
     assert_eq!(prefs[0].text, "Use the local project workflow");
+    Ok(())
+}
+
+#[test]
+fn project_preferences_exclude_policy_suppressed_rows() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("visible-pref"),
+        "Preference: Visible",
+        "Use visible preference",
+        "preference",
+        None,
+    )?;
+    let hidden = memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("hidden-pref"),
+        "Preference: Hidden",
+        "Do not render hidden preference",
+        "preference",
+        None,
+    )?;
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: parse_target(&format!("memory:{hidden}"))?,
+            reason: Some("too noisy"),
+            actor: Some("test"),
+        },
+    )?;
+
+    let prefs = query_project_preferences(&conn, "test/proj", 20)?;
+
+    assert_eq!(prefs.len(), 1);
+    assert_eq!(prefs[0].text, "Use visible preference");
     Ok(())
 }
 

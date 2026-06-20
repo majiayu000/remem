@@ -172,6 +172,9 @@ pub fn list_claims(conn: &Connection, req: &ClaimListRequest<'_>) -> Result<Vec<
         values.push(Box::new(now));
         conditions.push("(valid_to_epoch IS NULL OR valid_to_epoch > ?4)".to_string());
         values.push(Box::new(now));
+        conditions.push(crate::memory::suppression::user_claim_policy_filter_sql(
+            "user_context_claims",
+        ));
         idx = 5;
     }
 
@@ -516,6 +519,18 @@ mod tests {
             &conn,
             &request("restricted", UserContextSensitivity::Restricted),
         )?;
+        let pattern_suppressed = create_manual_claim(
+            &conn,
+            &request("contains secret phrase", UserContextSensitivity::Normal),
+        )?;
+        crate::memory::suppression::create_suppression(
+            &conn,
+            &crate::memory::suppression::SuppressRequest {
+                target: crate::memory::suppression::parse_target("pattern:secret")?,
+                reason: Some("too noisy"),
+                actor: Some("test"),
+            },
+        )?;
 
         let visible = list_claims(
             &conn,
@@ -538,7 +553,8 @@ mod tests {
                 limit: 100,
             },
         )?;
-        assert_eq!(all.len(), 6);
+        assert!(all.iter().any(|claim| claim.id == pattern_suppressed.id));
+        assert_eq!(all.len(), 7);
         Ok(())
     }
 

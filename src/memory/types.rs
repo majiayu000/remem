@@ -592,6 +592,32 @@ pub mod tests_helper {
                 recovery_count INTEGER NOT NULL DEFAULT 0 CHECK (recovery_count >= 0),
                 correction_count INTEGER NOT NULL DEFAULT 0 CHECK (correction_count >= 0),
                 revert_count INTEGER NOT NULL DEFAULT 0 CHECK (revert_count >= 0)
+            );
+            CREATE TABLE IF NOT EXISTS memory_suppressions (
+                id INTEGER PRIMARY KEY,
+                owner_scope TEXT,
+                owner_key TEXT,
+                target_kind TEXT NOT NULL,
+                target_id INTEGER,
+                target_value TEXT,
+                reason TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at_epoch INTEGER NOT NULL,
+                updated_at_epoch INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_feedback (
+                id INTEGER PRIMARY KEY,
+                target_kind TEXT NOT NULL,
+                target_id INTEGER,
+                target_value TEXT,
+                feedback TEXT NOT NULL,
+                source TEXT NOT NULL,
+                context_injection_item_id INTEGER,
+                session_id TEXT,
+                project TEXT,
+                reason TEXT,
+                created_at_epoch INTEGER NOT NULL
             );",
         )
         .unwrap();
