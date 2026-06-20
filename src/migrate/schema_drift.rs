@@ -463,6 +463,17 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "idx_user_context_claims_user_recent",
     ),
     SchemaInvariant::index(49, "user_context_claims", "idx_user_context_claims_status"),
+    SchemaInvariant::table(50, "user_context_summaries", "user_context_summaries"),
+    SchemaInvariant::index(
+        50,
+        "user_context_summaries",
+        "idx_user_context_summaries_owner_active",
+    ),
+    SchemaInvariant::index(
+        50,
+        "user_context_summaries",
+        "idx_user_context_summaries_user_recent",
+    ),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {

@@ -13,6 +13,7 @@ mod review;
 mod scope_cleanup;
 mod shared;
 mod usage;
+mod user_summary;
 
 pub(super) use admin::run_admin;
 pub(super) use config_command::run_config;
@@ -38,3 +39,4 @@ pub(super) use scope_cleanup::{
     RerouteCliRequest,
 };
 pub(super) use usage::run_usage;
+pub(super) use user_summary::run_user_summary;
