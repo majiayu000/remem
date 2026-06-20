@@ -1,4 +1,5 @@
 mod candidates;
+mod capabilities;
 mod detail;
 mod graph;
 mod list;
@@ -9,6 +10,7 @@ mod stats;
 mod status;
 
 pub(super) use candidates::handle_list_candidates;
+pub(super) use capabilities::handle_capabilities;
 pub(super) use detail::handle_memory_detail;
 pub(super) use graph::handle_graph;
 pub(super) use list::handle_list_memories;

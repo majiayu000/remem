@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Default)]
@@ -87,6 +89,29 @@ pub(super) struct ErrorResponse {
 pub(super) struct ErrorDetail {
     pub code: String,
     pub message: String,
+}
+
+#[derive(Serialize)]
+pub(super) struct CapabilitiesResponse {
+    pub version: &'static str,
+    pub schema_version: i64,
+    pub api_version: u16,
+    pub features: CapabilitiesFeatures,
+    pub endpoints: BTreeMap<&'static str, &'static str>,
+}
+
+#[derive(Serialize)]
+pub(super) struct CapabilitiesFeatures {
+    pub status: bool,
+    pub stats: bool,
+    pub search: bool,
+    pub search_explain: bool,
+    pub memory_list: bool,
+    pub memory_detail: bool,
+    pub save_memory: bool,
+    pub candidate_rows: bool,
+    pub candidate_review: bool,
+    pub graph: bool,
 }
 
 #[derive(Deserialize)]
