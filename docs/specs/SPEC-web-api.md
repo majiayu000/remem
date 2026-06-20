@@ -9,10 +9,11 @@ invent mock graph/candidate data when the native binary lacks an endpoint.
 The complete web read-model surface is implemented in source version
 `0.5.109`. Fast health checks and cached status metadata are implemented in
 source version `0.5.112`. Suppression audit opt-in is implemented in source
-version `0.5.113`. remem-web should require a published release with the
-specific capability it needs before directing installed-binary users to that
-surface. Clients should call `GET /api/v1/capabilities` before enabling
-optional UI features.
+version `0.5.113`. Task-aware user recall is implemented in source version
+`0.5.114`. remem-web should require a published release with the specific
+capability it needs before directing installed-binary users to that surface.
+Clients should call `GET /api/v1/capabilities` before enabling optional UI
+features.
 
 ## Endpoint Groups
 
@@ -28,6 +29,7 @@ optional UI features.
 | GET | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | Canonical browse endpoint. |
 | GET | `/api/v1/memories/{id}?include_suppressed=` | Rich detail with entities and memory edges. |
 | POST | `/api/v1/memories` | Explicit durable memory save. |
+| POST | `/api/v1/user/recall` | Task-aware user-context recall with source and drop reasons. |
 
 ### Web Read Model
 
@@ -53,7 +55,7 @@ optional UI features.
 
 ```json
 {
-  "version": "0.5.113",
+  "version": "0.5.114",
   "schema_version": 51,
   "api_version": 1,
   "features": {
@@ -67,7 +69,8 @@ optional UI features.
     "save_memory": true,
     "candidate_rows": true,
     "candidate_review": true,
-    "graph": true
+    "graph": true,
+    "user_recall": true
   },
   "endpoints": {
     "health": "/api/v1/health",
@@ -80,7 +83,8 @@ optional UI features.
     "save_memory": "/api/v1/memories",
     "candidate_rows": "/api/v1/candidates",
     "candidate_review": "/api/v1/candidates/{id}/approve",
-    "graph": "/api/v1/graph"
+    "graph": "/api/v1/graph",
+    "user_recall": "/api/v1/user/recall"
   }
 }
 ```
@@ -97,7 +101,7 @@ returns:
 ```json
 {
   "ok": true,
-  "version": "0.5.113",
+  "version": "0.5.114",
   "api_version": 1,
   "schema_version": 51
 }
@@ -108,7 +112,7 @@ cache metadata. The default cache TTL is 2 seconds:
 
 ```json
 {
-  "version": "0.5.113",
+  "version": "0.5.114",
   "memories": 10,
   "observations": 20,
   "cache": {
@@ -234,6 +238,10 @@ and GitHub Release exist.
 For suppression audit opt-in, the release target is `remem 0.5.113`. Default
 read surfaces must continue excluding suppressed memories unless
 `include_suppressed=true` is explicitly requested by an audit surface.
+
+For task-aware user recall, the release target is `remem 0.5.114`. Clients
+must gate the UI on `capabilities.features.user_recall` and call
+`POST /api/v1/user/recall` instead of widening SessionStart context.
 
 ## Smoke Test
 

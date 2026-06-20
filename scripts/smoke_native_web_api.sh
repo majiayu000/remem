@@ -99,6 +99,8 @@ elif shape == "capabilities":
     require(payload["features"].get("health") is True, "health feature should be true")
     require(payload["features"].get("graph") is True, "graph feature should be true")
     require(payload["features"].get("candidate_review") is True, "candidate_review feature should be true")
+    require(payload["features"].get("user_recall") is True, "user_recall feature should be true")
+    require(payload["endpoints"].get("user_recall") == "/api/v1/user/recall", "user_recall endpoint mismatch")
 elif shape == "list":
     require_keys(payload, ["data", "meta"])
     require(isinstance(payload["data"], list), "data should be an array")
@@ -124,6 +126,11 @@ elif shape == "stats":
         "type_distribution",
     ])
     require(isinstance(payload["type_distribution"], list), "type_distribution should be an array")
+elif shape == "user_recall":
+    require_keys(payload, ["query", "project", "empty", "context", "included", "dropped", "diagnostics"])
+    require(isinstance(payload["included"], list), "included should be an array")
+    require(isinstance(payload["dropped"], list), "dropped should be an array")
+    require_keys(payload["diagnostics"], ["requested_limit", "budget_chars", "used_chars", "candidate_counts"])
 elif shape == "error":
     require_keys(payload, ["error"])
     require_keys(payload["error"], ["code", "message"])
@@ -142,6 +149,25 @@ request_json() {
 
   code="$(curl -sS -o "$body" -w '%{http_code}' \
     -H "Authorization: Bearer ${TOKEN}" \
+    "${BASE_URL}${path}" || true)"
+  [[ "$code" == "$expected_code" ]] || fail "$name returned HTTP $code, expected $expected_code"
+  validate_json "$name" "$shape" "$body"
+  echo "ok $name"
+}
+
+request_json_post() {
+  local name="$1"
+  local path="$2"
+  local expected_code="$3"
+  local shape="$4"
+  local payload="$5"
+  local body="$TMP_BASE/${name}.json"
+  local code
+
+  code="$(curl -sS -o "$body" -w '%{http_code}' \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
     "${BASE_URL}${path}" || true)"
   [[ "$code" == "$expected_code" ]] || fail "$name returned HTTP $code, expected $expected_code"
   validate_json "$name" "$shape" "$body"
@@ -222,6 +248,8 @@ request_json "search" "/api/v1/search?query=remem&limit=1" "200" "search"
 request_json "candidates" "/api/v1/candidates?limit=1" "200" "list"
 request_json "graph" "/api/v1/graph?limit=1" "200" "graph"
 request_json "stats" "/api/v1/stats" "200" "stats"
+request_json_post "user_recall" "/api/v1/user/recall" "200" "user_recall" \
+  '{"query":"native API recall smoke","project":"/tmp/remem-smoke","limit":3,"budget_chars":1000}'
 request_json "legacy_memory_not_found" "/api/v1/memory?id=1" "404" "error"
 request_json "memory_detail_not_found" "/api/v1/memories/1" "404" "error"
 assert_no_token_leak

@@ -131,6 +131,7 @@ pub(super) struct CapabilitiesFeatures {
     pub candidate_rows: bool,
     pub candidate_review: bool,
     pub graph: bool,
+    pub user_recall: bool,
 }
 
 #[derive(Serialize)]
@@ -174,6 +175,35 @@ pub(super) struct SaveMemoryRequest {
     pub claim_enabled: Option<bool>,
     #[serde(default)]
     pub claim_source: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct UserRecallRequest {
+    pub query: String,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub task_intent: Option<String>,
+    #[serde(default)]
+    pub current_files: Vec<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub owner_scope: Option<String>,
+    #[serde(default)]
+    pub owner_key: Option<String>,
+    #[serde(default)]
+    pub state_keys: Vec<String>,
+    #[serde(default)]
+    pub include_sensitive: bool,
+    #[serde(default)]
+    pub include_suppressed: bool,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub budget_chars: Option<usize>,
 }
 
 #[derive(Serialize)]

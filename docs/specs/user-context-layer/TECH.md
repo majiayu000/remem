@@ -280,13 +280,25 @@ for list/show/summary/recall/review commands before MCP relies on them.
 
 ## MCP Surface
 
-Add MCP tools only after CLI behavior is stable:
+Implemented in the #578 slice:
+
+```text
+recall_user_context
+```
+
+The MCP tool shares behavior with:
+
+```text
+remem user recall <query>
+POST /api/v1/user/recall
+```
+
+Later user-context tools remain future work:
 
 ```text
 get_user_profile
 search_user_claims
 search_user_timeline
-recall_user_context
 review_user_context_candidates
 suppress_user_context
 unsuppress_user_context
@@ -327,6 +339,10 @@ Longer user context must be retrieved through `recall_user_context`.
    when configured.
 7. Return compact, source-attributed context with included and dropped reason
    codes.
+
+The initial implementation resolves current-state only for explicit
+`state_keys` supplied by the caller; it does not guess arbitrary state keys from
+free-form task text.
 
 No step may invent profile data. No-data returns an explicit empty result.
 

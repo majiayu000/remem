@@ -401,3 +401,58 @@ fn cli_parses_user_summary_commands() {
         _ => panic!("expected user summary sources command"),
     }
 }
+
+#[test]
+fn cli_parses_user_recall_command() {
+    let cli = Cli::parse_from([
+        "remem",
+        "user",
+        "recall",
+        "review recall design",
+        "--project",
+        "/repo",
+        "--task-intent",
+        "review",
+        "--current-file",
+        "src/user_context/recall.rs",
+        "--state-key",
+        "recall-design",
+        "--include-sensitive",
+        "--include-suppressed",
+        "--limit",
+        "7",
+        "--budget-chars",
+        "1200",
+        "--json",
+    ]);
+    match cli.command {
+        Commands::User {
+            action:
+                UserAction::Recall {
+                    query,
+                    project,
+                    task_intent,
+                    current_files,
+                    state_keys,
+                    include_sensitive,
+                    include_suppressed,
+                    limit,
+                    budget_chars,
+                    json,
+                    ..
+                },
+        } => {
+            assert_eq!(query, "review recall design");
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(task_intent.as_deref(), Some("review"));
+            assert_eq!(current_files, vec!["src/user_context/recall.rs"]);
+            assert_eq!(state_keys, vec!["recall-design"]);
+            assert!(include_sensitive);
+            assert!(include_suppressed);
+            assert_eq!(limit, 7);
+            assert_eq!(budget_chars, 1200);
+            assert!(json);
+        }
+        _ => panic!("expected user recall command"),
+    }
+}

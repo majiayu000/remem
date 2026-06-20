@@ -514,6 +514,7 @@ remem user summary show
 remem user summary refresh
 remem user summary edit --text "updated profile summary"
 remem user summary sources
+remem user recall "review the remem user context design"
 remem context --cwd .
 remem cleanup --dry-run --json
 remem cleanup
@@ -541,6 +542,14 @@ suppressed and which policy matched it. `remem memory feedback` records
 `relevant`, `not-relevant`, `harmful`, `stale`, or `too-noisy` events without
 changing ranking by default.
 
+`remem user recall <query>` retrieves task-aware user context on demand without
+expanding SessionStart. It combines safe profile summaries, active
+non-sensitive claims, repo memory, explicitly requested current-state keys,
+active workstreams, and recent sessions into compact source-attributed context.
+Default recall excludes suppressed, rejected, deleted, expired, future,
+personal, sensitive, and restricted claims. Use `--include-sensitive` and
+`--include-suppressed` only for explicit audit.
+
 ### Scriptable JSON output
 
 These commands emit one JSON object and no human text on stdout when `--json`
@@ -564,6 +573,7 @@ is set:
 | `remem user summary show --json` | `found`, `summary` |
 | `remem user summary refresh --json` / `edit --json` | `status`, `summary` |
 | `remem user summary sources --json` | `summary`, `included_claims`, `included_memories`, `included_activity_refs`, `dropped_claims` |
+| `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `included`, `dropped`, `diagnostics` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
@@ -587,7 +597,8 @@ metadata are implemented in source version `0.5.112`. Clients should call
 `/api/v1/capabilities` before enabling optional views. Suppression audit
 opt-in with `include_suppressed=true` is implemented in source version
 `0.5.113`; default search, browse, graph, and detail reads omit
-policy-suppressed memories.
+policy-suppressed memories. On-demand user recall is implemented in source
+version `0.5.114` through CLI, MCP, and `POST /api/v1/user/recall`.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more
@@ -606,6 +617,7 @@ frequently than the returned `cache.ttl_secs`; use
 | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | GET | Canonical memory browse endpoint |
 | `/api/v1/memories/{id}?include_suppressed=` | GET | Rich memory detail with entities and edges |
 | `/api/v1/memories` | POST | Save memory |
+| `/api/v1/user/recall` | POST | Task-aware user-context recall with source and drop reasons |
 
 ### Web read-model endpoints
 

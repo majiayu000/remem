@@ -9,7 +9,7 @@ use super::handlers::{
     handle_approve_candidate, handle_capabilities, handle_edit_candidate, handle_get_memory,
     handle_graph, handle_health, handle_list_candidates, handle_list_memories,
     handle_memory_detail, handle_reject_candidate, handle_save_memory, handle_search, handle_stats,
-    handle_status,
+    handle_status, handle_user_recall,
 };
 use super::types::{DbState, StatusCache};
 
@@ -23,6 +23,7 @@ pub fn build_router(_port: u16) -> Router<DbState> {
             "/api/v1/memories",
             get(handle_list_memories).post(handle_save_memory),
         )
+        .route("/api/v1/user/recall", post(handle_user_recall))
         .route("/api/v1/status", get(handle_status))
         .route("/api/v1/memories/list", get(handle_list_memories))
         .route("/api/v1/memories/{id}", get(handle_memory_detail))

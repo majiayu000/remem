@@ -1,7 +1,11 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::{db, memory::preference, user_context::claims};
+use crate::{
+    db,
+    memory::preference,
+    user_context::{claims, recall},
+};
 
 use super::shared::resolve_cwd_project;
 use crate::cli::query_types::UserClaimsAction;
@@ -81,6 +85,85 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
             run_user_claims(&conn, action)?
         }
         UserAction::Summary { action } => super::run_user_summary(action)?,
+        UserAction::Recall {
+            query,
+            project,
+            task_intent,
+            current_files,
+            host,
+            scope,
+            owner_key,
+            state_keys,
+            include_sensitive,
+            include_suppressed,
+            limit,
+            budget_chars,
+            json,
+        } => run_user_recall(UserRecallCliRequest {
+            query,
+            project,
+            task_intent,
+            current_files,
+            host,
+            owner_scope: scope.db_value().to_string(),
+            owner_key,
+            state_keys,
+            include_sensitive,
+            include_suppressed,
+            limit,
+            budget_chars,
+            json,
+        })?,
+    }
+    Ok(())
+}
+
+struct UserRecallCliRequest {
+    query: String,
+    project: Option<String>,
+    task_intent: Option<String>,
+    current_files: Vec<String>,
+    host: Option<String>,
+    owner_scope: String,
+    owner_key: Option<String>,
+    state_keys: Vec<String>,
+    include_sensitive: bool,
+    include_suppressed: bool,
+    limit: i64,
+    budget_chars: usize,
+    json: bool,
+}
+
+fn run_user_recall(req: UserRecallCliRequest) -> Result<()> {
+    let conn = db::open_db()?;
+    let project = req.project.unwrap_or_else(|| resolve_cwd_project().1);
+    let result = recall::recall_user_context(
+        &conn,
+        &recall::UserRecallRequest {
+            query: req.query,
+            project,
+            task_intent: req.task_intent,
+            current_files: req.current_files,
+            host: req.host,
+            owner_scope: Some(req.owner_scope),
+            owner_key: req.owner_key,
+            state_keys: req.state_keys,
+            include_sensitive: req.include_sensitive,
+            include_suppressed: req.include_suppressed,
+            limit: Some(req.limit),
+            budget_chars: Some(req.budget_chars),
+        },
+    )?;
+    if req.json {
+        print_json(&result)?;
+    } else if result.empty {
+        println!("No relevant user context found.");
+    } else {
+        println!("{}", result.context);
+        if !result.dropped.is_empty() {
+            println!();
+            println!("Dropped {} candidate(s).", result.dropped.len());
+        }
     }
     Ok(())
 }
@@ -329,6 +412,43 @@ mod tests {
         })?;
         assert_eq!(claims::load_claim(&conn, 2)?.status, "deleted");
         Ok(())
+    }
+
+    #[test]
+    fn user_recall_action_returns_json_shape() -> Result<()> {
+        let _dir = crate::db::test_support::ScopedTestDataDir::new("user-recall-cli-action");
+        let conn = db::open_db()?;
+        claims::create_manual_claim(
+            &conn,
+            &claims::ManualClaimRequest {
+                text: "Prefer recall CLI JSON",
+                owner_scope: None,
+                owner_key: None,
+                claim_type: claims::UserContextClaimType::Preference,
+                claim_key: None,
+                confidence: 1.0,
+                sensitivity: claims::UserContextSensitivity::Normal,
+                valid_from_epoch: None,
+                valid_to_epoch: None,
+            },
+        )?;
+        drop(conn);
+
+        run_user(UserAction::Recall {
+            query: "recall CLI".to_string(),
+            project: Some("/repo".to_string()),
+            task_intent: None,
+            current_files: Vec::new(),
+            host: None,
+            scope: crate::cli::query_types::UserClaimScopeArg::User,
+            owner_key: None,
+            state_keys: Vec::new(),
+            include_sensitive: false,
+            include_suppressed: false,
+            limit: 5,
+            budget_chars: 1_000,
+            json: true,
+        })
     }
 
     #[test]

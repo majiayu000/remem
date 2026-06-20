@@ -10,6 +10,7 @@ mod search;
 mod show;
 mod stats;
 mod status;
+mod user_recall;
 
 pub(super) use candidate_review::{
     handle_approve_candidate, handle_edit_candidate, handle_reject_candidate,
@@ -27,3 +28,4 @@ pub(super) use search::search_request_from_params;
 pub(super) use show::handle_get_memory;
 pub(super) use stats::handle_stats;
 pub(super) use status::handle_status;
+pub(super) use user_recall::handle_user_recall;

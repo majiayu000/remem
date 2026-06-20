@@ -436,6 +436,7 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     assert_eq!(payload["features"]["candidate_rows"], true);
     assert_eq!(payload["features"]["candidate_review"], true);
     assert_eq!(payload["features"]["graph"], true);
+    assert_eq!(payload["features"]["user_recall"], true);
     assert_eq!(payload["endpoints"]["health"], "/api/v1/health");
     assert_eq!(payload["endpoints"]["status"], "/api/v1/status");
     assert_eq!(payload["endpoints"]["stats"], "/api/v1/stats");
@@ -456,8 +457,53 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
         "/api/v1/candidates/{id}/approve"
     );
     assert_eq!(payload["endpoints"]["graph"], "/api/v1/graph");
+    assert_eq!(payload["endpoints"]["user_recall"], "/api/v1/user/recall");
     assert!(payload.get("token").is_none());
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn router_serves_user_recall_with_auth() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-user-recall");
+    crate::api::ensure_api_token().expect("API token should be created");
+    let token = crate::api::load_api_token().expect("API token should load");
+    let conn = db::open_db()?;
+    crate::user_context::claims::create_manual_claim(
+        &conn,
+        &crate::user_context::claims::ManualClaimRequest {
+            text: "Prefer API recall JSON",
+            owner_scope: None,
+            owner_key: None,
+            claim_type: crate::user_context::claims::UserContextClaimType::Preference,
+            claim_key: None,
+            confidence: 1.0,
+            sensitivity: crate::user_context::claims::UserContextSensitivity::Normal,
+            valid_from_epoch: None,
+            valid_to_epoch: None,
+        },
+    )?;
+    drop(conn);
+    let app = super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_json_request(
+            Method::POST,
+            "/api/v1/user/recall",
+            &token,
+            r#"{"query":"API recall","project":"/repo","limit":5,"budget_chars":1000}"#,
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["empty"], false);
+    assert_eq!(payload["included"][0]["source_type"], "user_claim");
+    assert!(payload["context"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("recall"));
     Ok(())
 }
 
