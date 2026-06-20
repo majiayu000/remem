@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.5.109"
+version = "0.5.110"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
 license = "MIT"
