@@ -1,0 +1,55 @@
+name: Epic / Capability
+description: Track a user-visible capability across spec and implementation work.
+title: "[Epic] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use an epic for user-visible capabilities that may need a spec PR and one
+        or more implementation PRs. Do not close the epic until acceptance
+        criteria are implemented and verified.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user-visible problem or opportunity does this capability address?
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done When
+      description: Concrete conditions that prove the capability is complete.
+      placeholder: |
+        - [ ] Product/technical spec accepted, if needed
+        - [ ] Implementation issue(s) closed
+        - [ ] Tests and smoke checks passed
+        - [ ] User-facing docs updated
+    validations:
+      required: true
+  - type: textarea
+    id: spec_links
+    attributes:
+      label: Spec Links
+      description: Link spec PRs or docs. Spec PRs should use Refs, not Closes.
+      placeholder: |
+        - Spec PR:
+        - PRODUCT.md:
+        - TECH.md:
+  - type: textarea
+    id: implementation_links
+    attributes:
+      label: Implementation Issues / PRs
+      description: Link implementation issues and PRs that may close independently.
+      placeholder: |
+        - [ ] #123
+        - [ ] #124
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation Plan
+      description: Commands, smoke checks, evals, or review gates needed before closing this epic.
+    validations:
+      required: true
