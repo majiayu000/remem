@@ -64,6 +64,36 @@ pub(super) struct TimelineParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct UserRecallParams {
+    #[schemars(description = "Task or topic query for user-context recall.")]
+    pub query: String,
+    #[schemars(description = "Project key/path filter. If omitted, cwd is normalized.")]
+    pub project: Option<String>,
+    #[schemars(description = "Current working directory used to derive the project key.")]
+    pub cwd: Option<String>,
+    #[schemars(description = "Optional task intent, e.g. review, implement, debug, plan.")]
+    pub task_intent: Option<String>,
+    #[schemars(description = "Current file paths relevant to the task.")]
+    pub current_files: Option<Vec<String>>,
+    #[schemars(description = "Host profile, e.g. codex-cli or claude-code.")]
+    pub host: Option<String>,
+    #[schemars(description = "Explicit user-context owner scope.")]
+    pub owner_scope: Option<String>,
+    #[schemars(description = "Explicit user-context owner key.")]
+    pub owner_key: Option<String>,
+    #[schemars(description = "Stable current-state keys to resolve exactly.")]
+    pub state_keys: Option<Vec<String>>,
+    #[schemars(description = "Include personal/sensitive/restricted claims for explicit audit.")]
+    pub include_sensitive: Option<bool>,
+    #[schemars(description = "Include policy-suppressed claims and memories for explicit audit.")]
+    pub include_suppressed: Option<bool>,
+    #[schemars(description = "Maximum included recall items.")]
+    pub limit: Option<i64>,
+    #[schemars(description = "Maximum compact context characters.")]
+    pub budget_chars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct GetObservationsParams {
     #[schemars(description = "List of observation IDs to fetch")]
     pub ids: Vec<i64>,

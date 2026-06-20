@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::super::types::{
     CommitLookupParams, GetObservationsParams, GovernMemoryParams, SaveMemoryParams, SearchParams,
-    SessionCommitsParams,
+    SessionCommitsParams, UserRecallParams,
 };
 use super::errors::{self, McpErrorCode, McpToolError};
 use super::MemoryServer;
@@ -58,6 +58,55 @@ fn memory_server_new_does_not_open_database_eagerly() {
 
     let _server = MemoryServer::new().expect("memory server should initialize");
     assert!(!db_path.exists());
+}
+
+#[test]
+fn recall_user_context_returns_source_attributed_context() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-user-recall");
+    let conn = crate::db::open_db()?;
+    crate::user_context::claims::create_manual_claim(
+        &conn,
+        &crate::user_context::claims::ManualClaimRequest {
+            text: "Prefer recall MCP JSON context",
+            owner_scope: None,
+            owner_key: None,
+            claim_type: crate::user_context::claims::UserContextClaimType::Preference,
+            claim_key: None,
+            confidence: 1.0,
+            sensitivity: crate::user_context::claims::UserContextSensitivity::Normal,
+            valid_from_epoch: None,
+            valid_to_epoch: None,
+        },
+    )?;
+    drop(conn);
+
+    let server = MemoryServer::new()?;
+    let response = server
+        .recall_user_context(Parameters(UserRecallParams {
+            query: "recall MCP".to_string(),
+            project: Some("/repo".to_string()),
+            cwd: None,
+            task_intent: Some("review".to_string()),
+            current_files: None,
+            host: Some("codex-cli".to_string()),
+            owner_scope: None,
+            owner_key: None,
+            state_keys: None,
+            include_sensitive: None,
+            include_suppressed: None,
+            limit: Some(5),
+            budget_chars: Some(1_000),
+        }))
+        .map_err(anyhow::Error::msg)?;
+    let json: Value = serde_json::from_str(&response)?;
+
+    assert_eq!(json["empty"], false);
+    assert_eq!(json["included"][0]["source_type"], "user_claim");
+    assert!(json["context"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("recall"));
+    Ok(())
 }
 
 #[test]

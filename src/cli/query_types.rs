@@ -202,6 +202,47 @@ pub(in crate::cli) enum UserAction {
         #[command(subcommand)]
         action: UserSummaryAction,
     },
+    /// Recall task-aware user context on demand without widening SessionStart.
+    Recall {
+        /// Query or task topic to recall user context for.
+        query: String,
+        /// Project path to combine with user context. Defaults to current cwd project.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Optional task intent, e.g. review, implement, debug, plan.
+        #[arg(long)]
+        task_intent: Option<String>,
+        /// Current file path relevant to the task. Can be repeated.
+        #[arg(long = "current-file")]
+        current_files: Vec<String>,
+        /// Host profile for context, e.g. codex-cli or claude-code.
+        #[arg(long)]
+        host: Option<String>,
+        /// User-context owner scope.
+        #[arg(long, value_enum, default_value = "user")]
+        scope: UserClaimScopeArg,
+        /// Owner key for the selected scope. Defaults to user:default for user scope.
+        #[arg(long)]
+        owner_key: Option<String>,
+        /// Stable current-state key to resolve. Can be repeated.
+        #[arg(long = "state-key")]
+        state_keys: Vec<String>,
+        /// Include personal, sensitive, and restricted claims for explicit audit.
+        #[arg(long)]
+        include_sensitive: bool,
+        /// Include suppressed claims and policy-suppressed memories for explicit audit.
+        #[arg(long)]
+        include_suppressed: bool,
+        /// Maximum included recall items.
+        #[arg(long, default_value = "12")]
+        limit: i64,
+        /// Maximum compact context characters.
+        #[arg(long, default_value = "4000")]
+        budget_chars: usize,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]

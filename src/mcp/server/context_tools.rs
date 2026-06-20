@@ -4,7 +4,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde::Serialize;
 
-use super::super::types::{GetObservationsParams, TimelineParams};
+use super::super::types::{GetObservationsParams, TimelineParams, UserRecallParams};
 use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::retrieval::search;
@@ -12,6 +12,45 @@ use crate::{db, memory};
 
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {
+    #[tool(
+        description = "Recall task-aware user context on demand. Combines safe user claims, profile summary, repo memories, current-state keys, workstreams, and recent sessions into compact source-attributed context with include/drop reason codes."
+    )]
+    pub(super) fn recall_user_context(
+        &self,
+        Parameters(params): Parameters<UserRecallParams>,
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "recall_user_context";
+        if params.query.trim().is_empty() {
+            return Err(McpToolError::invalid_request(TOOL, "query is required"));
+        }
+        let project =
+            resolve_recall_project(TOOL, params.project.as_deref(), params.cwd.as_deref())?;
+        self.with_conn(TOOL, |conn| {
+            let result = crate::user_context::recall::recall_user_context(
+                conn,
+                &crate::user_context::recall::UserRecallRequest {
+                    query: params.query.clone(),
+                    project,
+                    task_intent: params.task_intent.clone(),
+                    current_files: params.current_files.clone().unwrap_or_default(),
+                    host: params.host.clone(),
+                    owner_scope: params.owner_scope.clone(),
+                    owner_key: params.owner_key.clone(),
+                    state_keys: params.state_keys.clone().unwrap_or_default(),
+                    include_sensitive: params.include_sensitive.unwrap_or(false),
+                    include_suppressed: params.include_suppressed.unwrap_or(false),
+                    limit: params.limit,
+                    budget_chars: params.budget_chars,
+                },
+            )
+            .map_err(|e| {
+                crate::log::warn("mcp", &format!("recall_user_context failed: {}", e));
+                McpToolError::db_query(TOOL, e)
+            })?;
+            errors::to_json_pretty(TOOL, &result)
+        })
+    }
+
     #[tool(
         description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point."
     )]
@@ -204,6 +243,23 @@ impl MemoryServer {
             errors::to_json_pretty(TOOL, &results)
         })
     }
+}
+
+fn resolve_recall_project(
+    tool: &'static str,
+    project: Option<&str>,
+    cwd: Option<&str>,
+) -> McpToolResult<String> {
+    if let Some(project) = project.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(project.to_string());
+    }
+    if let Some(cwd) = cwd.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(crate::db::project_from_cwd(cwd));
+    }
+    let cwd = std::env::current_dir().map_err(|e| {
+        McpToolError::invalid_request(tool, format!("project or cwd required: {e}"))
+    })?;
+    Ok(crate::db::project_from_cwd(cwd.to_string_lossy().as_ref()))
 }
 
 fn observation_details_with_compressed_sources(
