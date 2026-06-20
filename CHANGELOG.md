@@ -1,12 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.104] - 2026-06-20
 
 ### Added
 - Added current-state queries over `memory_state_keys` for CLI and MCP callers,
   including compact history, conflict, edge-evidence, and as-of-time output.
 - Added human-editable markdown memory export and reindex import, including
   archived state, temporal facts, and current-state edge metadata.
+- Added deterministic failure-trajectory lesson feeding from raw transcripts:
+  repeated failed-fix evidence plus an explicit lesson now records an
+  idempotent `failure` lesson outcome before summary short-circuits.
 
 ### Fixed
 - Fixed current-state as-of history so mutable historical memory rows updated

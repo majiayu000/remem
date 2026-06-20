@@ -416,6 +416,21 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "revert_count",
     ),
     SchemaInvariant::index(47, "lesson_outcome_metadata", "idx_memory_lessons_outcome"),
+    SchemaInvariant::table(
+        48,
+        "failure_lesson_feed_events",
+        "memory_lesson_feed_events",
+    ),
+    SchemaInvariant::index(
+        48,
+        "failure_lesson_feed_events",
+        "idx_memory_lesson_feed_events_project_recent",
+    ),
+    SchemaInvariant::index(
+        48,
+        "failure_lesson_feed_events",
+        "idx_memory_lesson_feed_events_memory",
+    ),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {

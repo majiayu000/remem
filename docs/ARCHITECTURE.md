@@ -140,6 +140,7 @@ Stop hook fires
        ├─ Load captured_events range
        ├─ Single AI call → structured observations/candidates
        ├─ File overlap detection → mark old observations stale
+       ├─ Raw transcript failure lessons → deterministic lesson feed
        │
        ▼
   summarize (session summary)

@@ -33,8 +33,40 @@ pub async fn process_summary_job_input(
 
     // Raw archive ingest happens BEFORE every summarize short-circuit so that
     // "what was said is searchable" is independent of curation outcome.
+    let current_branch = time_value(&mut timings, "detect_branch", || db::detect_git_branch(cwd));
     time_value(&mut timings, "raw_archive", || {
-        capture_raw_archive(&conn, &hook, &session_id, &project, cwd)
+        capture_raw_archive(
+            &conn,
+            &hook,
+            &session_id,
+            &project,
+            cwd,
+            current_branch.as_deref(),
+        )
+    });
+    time_value(&mut timings, "failure_lessons", || {
+        match crate::memory::failure_lesson::distill_session_failure_lessons(
+            &conn,
+            &session_id,
+            &project,
+            current_branch.as_deref(),
+        ) {
+            Ok(report) if report.inserted > 0 || report.duplicates > 0 => crate::log::info(
+                "summary-job",
+                &format!(
+                    "failure lesson feed inserted={} duplicates={} project={}",
+                    report.inserted, report.duplicates, project
+                ),
+            ),
+            Ok(_) => {}
+            Err(error) => crate::log::error(
+                "summary-job",
+                &format!(
+                    "failure lesson feed failed for project={} session={}: {}",
+                    project, session_id, error
+                ),
+            ),
+        }
     });
 
     let assistant_msg = time_value(&mut timings, "extract_assistant_message", || {
@@ -207,8 +239,8 @@ fn capture_raw_archive(
     session_id: &str,
     project: &str,
     cwd: &str,
+    branch: Option<&str>,
 ) {
-    let branch = db::detect_git_branch(cwd);
     let cwd_opt = Some(cwd);
 
     if let Some(transcript_path) = hook.transcript_path.as_deref() {
@@ -217,7 +249,7 @@ fn capture_raw_archive(
             transcript_path,
             session_id,
             project,
-            branch.as_deref(),
+            branch,
             cwd_opt,
         ) {
             Ok(report) => {
@@ -236,14 +268,7 @@ fn capture_raw_archive(
                 );
                 if report.read_error.is_some() {
                     if let Some(last) = hook.last_assistant_message.as_deref() {
-                        insert_raw_hook_fallback(
-                            conn,
-                            session_id,
-                            project,
-                            last,
-                            branch.as_deref(),
-                            cwd_opt,
-                        );
+                        insert_raw_hook_fallback(conn, session_id, project, last, branch, cwd_opt);
                     }
                 }
             }
@@ -253,7 +278,7 @@ fn capture_raw_archive(
             ),
         }
     } else if let Some(last) = hook.last_assistant_message.as_deref() {
-        insert_raw_hook_fallback(conn, session_id, project, last, branch.as_deref(), cwd_opt);
+        insert_raw_hook_fallback(conn, session_id, project, last, branch, cwd_opt);
     }
 }
 
@@ -475,6 +500,51 @@ mod tests {
         process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
 
         assert_eq!(memory_usage_counts(memory_id)?, (1, 1, 1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn process_distills_failure_lesson_before_cooldown_skip() -> Result<()> {
+        let data_dir = ScopedTestDataDir::new("summary-failure-lesson-before-cooldown");
+        std::fs::create_dir_all(&data_dir.path)?;
+        let cwd = std::fs::canonicalize(&data_dir.path)?
+            .to_string_lossy()
+            .to_string();
+        let project = db::project_from_cwd(&cwd);
+        let transcript = data_dir.path.join("transcript.jsonl");
+        std::fs::write(
+            &transcript,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"cargo check failed with the same compiler error after the third attempted fix"}]}}
+{"type":"user","message":{"content":[{"type":"text","text":"Lesson: after three consecutive failed fixes, stop and challenge the hypothesis before editing again"}]}}
+"#,
+        )?;
+        let conn = db::open_db()?;
+        conn.execute(
+            "INSERT INTO summarize_cooldown(project, last_summarize_epoch, last_message_hash)
+             VALUES (?1, ?2, NULL)",
+            params![project, chrono::Utc::now().timestamp()],
+        )?;
+        drop(conn);
+        let payload = serde_json::json!({
+            "session_id": "session-failure-lesson-before-cooldown",
+            "cwd": cwd,
+            "transcript_path": transcript.to_string_lossy(),
+            "last_assistant_message": "short"
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        let conn = db::open_db()?;
+        let (outcome_kind, failure_count): (String, i64) = conn.query_row(
+            "SELECT l.outcome_kind, l.failure_count
+             FROM memories m
+             JOIN memory_lessons l ON l.memory_id = m.id
+             WHERE m.memory_type = 'lesson'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(outcome_kind, "failure");
+        assert_eq!(failure_count, 1);
         Ok(())
     }
 

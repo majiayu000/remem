@@ -240,6 +240,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "lesson_outcome_metadata",
         sql: include_str!("../migrations/v047_lesson_outcome_metadata.sql"),
     },
+    Migration {
+        version: 48,
+        name: "failure_lesson_feed_events",
+        sql: include_str!("../migrations/v048_failure_lesson_feed_events.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
