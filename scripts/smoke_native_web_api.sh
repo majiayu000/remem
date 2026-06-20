@@ -17,9 +17,34 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -z "${REMEM_BIN:-}" ]]; then
-  TARGET_DIR="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
-  REMEM_BIN="$TARGET_DIR/debug/remem"
-  cargo build --bin remem
+  REMEM_BIN="$(
+    cargo build --bin remem --message-format=json 2>"$TMP_BASE/cargo-build.log" |
+      python3 -c '
+import json
+import sys
+
+executable = ""
+for line in sys.stdin:
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if (
+        message.get("reason") == "compiler-artifact"
+        and message.get("target", {}).get("name") == "remem"
+        and message.get("executable")
+    ):
+        executable = message["executable"]
+
+if executable:
+    print(executable)
+'
+  )"
+  if [[ -z "$REMEM_BIN" || ! -x "$REMEM_BIN" ]]; then
+    echo "native web API smoke failed: cargo did not report an executable remem binary" >&2
+    sed -n '1,120p' "$TMP_BASE/cargo-build.log" >&2 || true
+    exit 1
+  fi
 elif [[ ! -x "$REMEM_BIN" ]]; then
   echo "native web API smoke failed: REMEM_BIN is not executable: $REMEM_BIN" >&2
   exit 1
