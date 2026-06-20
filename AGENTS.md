@@ -35,6 +35,11 @@ Use specs as contracts only after checking their status in `docs/specs/README.md
 | Historical `SPEC-*.md` says "proposed" or "active" | Check `docs/specs/README.md` and current code first; many are historical implementation references |
 | Old refactor-step specs | Treat `docs/specs/refactor-steps/` as completed historical split contracts unless current code proves drift |
 
+Spec-only PRs must use `Refs #...`, not `Closes` / `Fixes` / `Resolves`,
+unless the linked issue is explicitly only about writing the spec. Runtime
+capabilities close implementation issues after code, tests, docs, and smoke
+checks land. See `docs/specs/spec-lifecycle-governance/`.
+
 ## High-Risk Areas
 
 - Migrations and schema drift: inspect `src/migrate/`, `src/migrations/`, `src/db/`, and schema tests before changing DB behavior.

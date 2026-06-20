@@ -1,0 +1,54 @@
+name: Implementation Task
+description: Execute a scoped slice from an accepted spec or clear bug root cause.
+title: "[Impl] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Link the spec, epic, bug, or root-cause analysis this implements.
+      placeholder: |
+        Refs #
+        Spec:
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What must change? Include likely files or modules when known.
+      placeholder: |
+        Files likely in scope:
+        - src/...
+        - tests/...
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-Goals
+      description: What should not be changed in this implementation slice?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Checklist for closing this implementation issue.
+      placeholder: |
+        - [ ] Behavior implemented
+        - [ ] Focused regression tests added
+        - [ ] Docs/specs updated where needed
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test Plan
+      description: Exact commands expected before the implementation PR is submitted.
+      placeholder: |
+        cargo fmt --check
+        cargo check
+        cargo test
+    validations:
+      required: true

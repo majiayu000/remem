@@ -14,6 +14,12 @@ jobs:
         run: python3 scripts/ci/check_plugin_version_sync.py
       - name: Test plugin runtime scripts
         run: node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js
+      - name: Check spec lifecycle
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 scripts/ci/check_spec_lifecycle.py "${{ github.event.pull_request.base.sha }}" HEAD
       - name: Check version bump
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/check_version_bump.py "${{ github.event.pull_request.base.sha }}" HEAD

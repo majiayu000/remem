@@ -15,6 +15,26 @@ Many `SPEC-*.md` files were written before or during implementation. Some still 
 
 For new substantial work, prefer `docs/specs/<id>/PRODUCT.md` and `docs/specs/<id>/TECH.md` instead of adding another long root-style `SPEC-*.md`.
 
+## Spec Lifecycle
+
+Specs are contracts, not proof that implementation is done.
+
+Use this handoff for substantial behavior, API, DB, hook, plugin, or
+cross-module architecture work:
+
+1. Create an epic or feature issue for the user-visible capability.
+2. Open a spec PR for `docs/specs/<id>/PRODUCT.md`, `TECH.md`, and this index.
+   Spec-only PRs use `Refs #...`, not `Closes` / `Fixes` / `Resolves`, unless
+   the linked issue is explicitly only about writing the spec.
+3. Create or link implementation issue(s) with file scope, acceptance criteria,
+   and test commands.
+4. Implementation PRs may close implementation issues after code, tests, docs,
+   and smoke checks land.
+5. Close the epic only after all acceptance criteria are actually verified.
+
+The CI lifecycle guard enforces the highest-risk parts of this flow. See
+`spec-lifecycle-governance/` for the full contract.
+
 ## Current Reading Order
 
 1. `README.md` for user-facing installation and command behavior.
@@ -27,6 +47,7 @@ For new substantial work, prefer `docs/specs/<id>/PRODUCT.md` and `docs/specs/<i
 | Directory | Status | Notes |
 |---|---|---|
 | `issue385-coding-agent-ab/` | Current contract | Product and technical contract for the flagship coding-agent A/B benchmark comparing no-memory, remem, and curated-file conditions. Refs #385. |
+| `spec-lifecycle-governance/` | Current contract | Product and technical contract for separating epic, spec, and implementation issue lifecycles. Refs #592. |
 | `status-health-performance/` | Current contract | Product and technical contract for splitting fast API liveness from cached aggregate status diagnostics. Refs #588. |
 | `user-context-layer/` | Current contract | Product and technical contract for auditable user-level context: manual claims, editable profile summaries, suppression/feedback, on-demand recall, and guarded automatic extraction. Refs #574-#579. |
 

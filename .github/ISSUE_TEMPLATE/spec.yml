@@ -1,0 +1,53 @@
+name: Spec Work
+description: Write or update a PRODUCT/TECH spec without closing implementation work.
+title: "[Spec] "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Spec issues track design work only. If the spec is for a user-visible
+        capability, keep the capability epic open and create implementation
+        issues after the spec is accepted.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Decision Area
+      description: What needs a product/technical contract?
+    validations:
+      required: true
+  - type: textarea
+    id: expected_docs
+    attributes:
+      label: Expected Spec Files
+      description: Prefer docs/specs/<id>/PRODUCT.md and TECH.md.
+      placeholder: |
+        - docs/specs/<id>/PRODUCT.md
+        - docs/specs/<id>/TECH.md
+        - docs/specs/README.md
+    validations:
+      required: true
+  - type: textarea
+    id: required_sections
+    attributes:
+      label: Required Sections
+      value: |
+        - Problem and non-goals
+        - Product contract
+        - Technical contract
+        - Alternatives considered
+        - Risks and mitigations
+        - Success metrics
+        - Acceptance criteria
+        - Implementation issue handoff
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Implementation Handoff
+      description: Which issue(s) should be created or updated after the spec PR merges?
+      placeholder: |
+        - Epic:
+        - Implementation issue(s):
+    validations:
+      required: true
