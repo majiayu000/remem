@@ -27,6 +27,7 @@ For new substantial work, prefer `docs/specs/<id>/PRODUCT.md` and `docs/specs/<i
 | Directory | Status | Notes |
 |---|---|---|
 | `issue385-coding-agent-ab/` | Current contract | Product and technical contract for the flagship coding-agent A/B benchmark comparing no-memory, remem, and curated-file conditions. Refs #385. |
+| `user-context-layer/` | Current contract | Product and technical contract for auditable user-level context: manual claims, editable profile summaries, suppression/feedback, on-demand recall, and guarded automatic extraction. Refs #574-#579. |
 
 ## Top-Level Specs
 
