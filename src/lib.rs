@@ -36,5 +36,6 @@ pub mod runtime_config;
 mod session_rollup;
 pub mod summarize;
 pub mod timeline;
+pub mod user_context;
 pub mod worker;
 pub mod workstream;

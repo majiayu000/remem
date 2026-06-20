@@ -245,6 +245,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "failure_lesson_feed_events",
         sql: include_str!("../migrations/v048_failure_lesson_feed_events.sql"),
     },
+    Migration {
+        version: 49,
+        name: "user_context_claims",
+        sql: include_str!("../migrations/v049_user_context_claims.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

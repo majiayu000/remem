@@ -157,3 +157,177 @@ impl RawRole {
         }
     }
 }
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum UserAction {
+    /// Explicitly remember a user-context claim.
+    Remember {
+        /// User-context owner scope. Non-user scopes require --owner-key.
+        #[arg(long, value_enum, default_value = "user")]
+        scope: UserClaimScopeArg,
+        /// Owner key for the selected scope. Defaults to user:default for user scope.
+        #[arg(long)]
+        owner_key: Option<String>,
+        /// Claim type vocabulary.
+        #[arg(long = "type", value_enum, default_value = "preference")]
+        claim_type: UserClaimTypeArg,
+        /// Stable claim key. Defaults to a deterministic hash of type and text.
+        #[arg(long = "key")]
+        claim_key: Option<String>,
+        /// Claim sensitivity.
+        #[arg(long, value_enum, default_value = "normal")]
+        sensitivity: UserClaimSensitivityArg,
+        /// Confidence from 0.0 to 1.0.
+        #[arg(long, default_value = "1.0")]
+        confidence: f64,
+        /// Optional validity start epoch.
+        #[arg(long)]
+        valid_from_epoch: Option<i64>,
+        /// Optional validity end epoch.
+        #[arg(long)]
+        valid_to_epoch: Option<i64>,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+        /// Claim text to remember.
+        text: String,
+    },
+    /// Inspect or govern explicit user-context claims.
+    Claims {
+        #[command(subcommand)]
+        action: UserClaimsAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum UserClaimsAction {
+    /// List active claims by default.
+    List {
+        #[arg(long, value_enum)]
+        scope: Option<UserClaimScopeArg>,
+        #[arg(long)]
+        owner_key: Option<String>,
+        /// Include inactive, expired, not-yet-valid, and restricted claims.
+        #[arg(long)]
+        include_inactive: bool,
+        #[arg(long, default_value = "50")]
+        limit: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one claim and its source metadata.
+    Show {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain one claim and its source metadata.
+    Why {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Edit a claim by superseding it with a new active row.
+    Edit {
+        id: i64,
+        #[arg(long)]
+        text: String,
+        #[arg(long = "type", value_enum)]
+        claim_type: Option<UserClaimTypeArg>,
+        #[arg(long = "key")]
+        claim_key: Option<String>,
+        #[arg(long, value_enum)]
+        sensitivity: Option<UserClaimSensitivityArg>,
+        #[arg(long)]
+        valid_from_epoch: Option<i64>,
+        #[arg(long)]
+        valid_to_epoch: Option<i64>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Suppress a claim from default reads without deleting it.
+    Suppress {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Return a suppressed claim to active status.
+    Unsuppress {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Soft-delete a claim while keeping the audit row.
+    Delete {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(in crate::cli) enum UserClaimScopeArg {
+    User,
+    Workspace,
+    Repo,
+    Session,
+}
+
+impl UserClaimScopeArg {
+    pub(in crate::cli) fn db_value(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Workspace => "workspace",
+            Self::Repo => "repo",
+            Self::Session => "session",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(in crate::cli) enum UserClaimTypeArg {
+    Identity,
+    Role,
+    Preference,
+    Skill,
+    Goal,
+    Project,
+    Relationship,
+    Constraint,
+    Activity,
+}
+
+impl From<UserClaimTypeArg> for crate::user_context::claims::UserContextClaimType {
+    fn from(value: UserClaimTypeArg) -> Self {
+        match value {
+            UserClaimTypeArg::Identity => Self::Identity,
+            UserClaimTypeArg::Role => Self::Role,
+            UserClaimTypeArg::Preference => Self::Preference,
+            UserClaimTypeArg::Skill => Self::Skill,
+            UserClaimTypeArg::Goal => Self::Goal,
+            UserClaimTypeArg::Project => Self::Project,
+            UserClaimTypeArg::Relationship => Self::Relationship,
+            UserClaimTypeArg::Constraint => Self::Constraint,
+            UserClaimTypeArg::Activity => Self::Activity,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(in crate::cli) enum UserClaimSensitivityArg {
+    Normal,
+    Personal,
+    Sensitive,
+    Restricted,
+}
+
+impl From<UserClaimSensitivityArg> for crate::user_context::claims::UserContextSensitivity {
+    fn from(value: UserClaimSensitivityArg) -> Self {
+        match value {
+            UserClaimSensitivityArg::Normal => Self::Normal,
+            UserClaimSensitivityArg::Personal => Self::Personal,
+            UserClaimSensitivityArg::Sensitive => Self::Sensitive,
+            UserClaimSensitivityArg::Restricted => Self::Restricted,
+        }
+    }
+}

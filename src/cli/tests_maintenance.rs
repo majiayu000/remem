@@ -1,4 +1,7 @@
-use super::types::{Cli, Commands};
+use super::query_types::{
+    UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg, UserClaimsAction,
+};
+use super::types::{Cli, Commands, UserAction};
 use clap::Parser;
 
 #[test]
@@ -62,5 +65,200 @@ fn cli_parses_reindex_embeddings_batch_size() {
             assert_eq!(batch_size, 5000);
         }
         _ => panic!("expected reindex-embeddings alias"),
+    }
+}
+
+#[test]
+fn cli_parses_user_remember_with_claim_metadata() {
+    let cli = Cli::parse_from([
+        "remem",
+        "user",
+        "remember",
+        "--scope",
+        "repo",
+        "--owner-key",
+        "/repo",
+        "--type",
+        "goal",
+        "--key",
+        "goal:remem",
+        "--sensitivity",
+        "personal",
+        "--confidence",
+        "0.8",
+        "--json",
+        "Make remem the best coding-agent memory system",
+    ]);
+
+    match cli.command {
+        Commands::User {
+            action:
+                UserAction::Remember {
+                    scope,
+                    owner_key,
+                    claim_type,
+                    claim_key,
+                    sensitivity,
+                    confidence,
+                    json,
+                    text,
+                    ..
+                },
+        } => {
+            assert_eq!(scope, UserClaimScopeArg::Repo);
+            assert_eq!(owner_key.as_deref(), Some("/repo"));
+            assert_eq!(claim_type, UserClaimTypeArg::Goal);
+            assert_eq!(claim_key.as_deref(), Some("goal:remem"));
+            assert_eq!(sensitivity, UserClaimSensitivityArg::Personal);
+            assert_eq!(confidence, 0.8);
+            assert!(json);
+            assert_eq!(text, "Make remem the best coding-agent memory system");
+        }
+        _ => panic!("expected user remember command"),
+    }
+}
+
+#[test]
+fn cli_parses_user_claim_governance_commands() {
+    let list = Cli::parse_from([
+        "remem",
+        "user",
+        "claims",
+        "list",
+        "--scope",
+        "session",
+        "--owner-key",
+        "session-1",
+        "--include-inactive",
+        "--limit",
+        "25",
+        "--json",
+    ]);
+    match list.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action:
+                        UserClaimsAction::List {
+                            scope,
+                            owner_key,
+                            include_inactive,
+                            limit,
+                            json,
+                        },
+                },
+        } => {
+            assert_eq!(scope, Some(UserClaimScopeArg::Session));
+            assert_eq!(owner_key.as_deref(), Some("session-1"));
+            assert!(include_inactive);
+            assert_eq!(limit, 25);
+            assert!(json);
+        }
+        _ => panic!("expected user claims list command"),
+    }
+
+    let show = Cli::parse_from(["remem", "user", "claims", "show", "42", "--json"]);
+    match show.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action: UserClaimsAction::Show { id, json },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert!(json);
+        }
+        _ => panic!("expected user claims show command"),
+    }
+
+    let why = Cli::parse_from(["remem", "user", "claims", "why", "42", "--json"]);
+    match why.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action: UserClaimsAction::Why { id, json },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert!(json);
+        }
+        _ => panic!("expected user claims why command"),
+    }
+
+    let edit = Cli::parse_from([
+        "remem",
+        "user",
+        "claims",
+        "edit",
+        "42",
+        "--text",
+        "Prefer concise updates",
+        "--type",
+        "preference",
+        "--sensitivity",
+        "normal",
+    ]);
+    match edit.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action:
+                        UserClaimsAction::Edit {
+                            id,
+                            text,
+                            claim_type,
+                            sensitivity,
+                            ..
+                        },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert_eq!(text, "Prefer concise updates");
+            assert_eq!(claim_type, Some(UserClaimTypeArg::Preference));
+            assert_eq!(sensitivity, Some(UserClaimSensitivityArg::Normal));
+        }
+        _ => panic!("expected user claims edit command"),
+    }
+
+    let suppress = Cli::parse_from(["remem", "user", "claims", "suppress", "42", "--json"]);
+    match suppress.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action: UserClaimsAction::Suppress { id, json },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert!(json);
+        }
+        _ => panic!("expected user claims suppress command"),
+    }
+
+    let unsuppress = Cli::parse_from(["remem", "user", "claims", "unsuppress", "42", "--json"]);
+    match unsuppress.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action: UserClaimsAction::Unsuppress { id, json },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert!(json);
+        }
+        _ => panic!("expected user claims unsuppress command"),
+    }
+
+    let delete = Cli::parse_from(["remem", "user", "claims", "delete", "42", "--json"]);
+    match delete.command {
+        Commands::User {
+            action:
+                UserAction::Claims {
+                    action: UserClaimsAction::Delete { id, json },
+                },
+        } => {
+            assert_eq!(id, 42);
+            assert!(json);
+        }
+        _ => panic!("expected user claims delete command"),
     }
 }

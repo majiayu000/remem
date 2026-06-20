@@ -497,6 +497,14 @@ remem review edit <id> --text "updated memory"
 remem preferences list
 remem preferences add "text"
 remem preferences remove 42
+remem user remember "For this repo, review specs before code"
+remem user remember --scope repo --owner-key /repo/path --type goal "Ship remem user context"
+remem user claims list
+remem user claims why <id>
+remem user claims edit <id> --text "updated claim"
+remem user claims suppress <id>
+remem user claims unsuppress <id>
+remem user claims delete <id>
 remem context --cwd .
 remem cleanup --dry-run --json
 remem cleanup
@@ -505,6 +513,13 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+`remem user ...` stores explicit user-context claims separately from
+repo-scoped coding memories. Manual claims default to `owner_scope=user`,
+`owner_key=user:default`, `source_kind=manual`, and `status=active`. Suppress
+and delete commands change status without hard-deleting the audit row; default
+claim lists exclude suppressed, deleted, expired, not-yet-valid, and restricted
+claims.
 
 ### Scriptable JSON output
 
@@ -517,6 +532,11 @@ is set:
 | `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied` |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
+| `remem user remember --json` | `status`, `claim` |
+| `remem user claims list --json` | `count`, `claims` |
+| `remem user claims show <id> --json` / `remem user claims why <id> --json` | `found`, `claim` |
+| `remem user claims edit <id> --json` | `status`, `previous_id`, `claim` |
+| `remem user claims suppress <id> --json` / `unsuppress <id> --json` / `delete <id> --json` | `status`, `claim` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
