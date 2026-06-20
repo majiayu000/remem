@@ -201,7 +201,8 @@ Records relevance and quality feedback without mutating the target row.
 CREATE TABLE memory_feedback (
   id INTEGER PRIMARY KEY,
   target_kind TEXT NOT NULL,
-  target_id INTEGER NOT NULL,
+  target_id INTEGER,
+  target_value TEXT,
   feedback TEXT NOT NULL,
   source TEXT NOT NULL,
   context_injection_item_id INTEGER,
@@ -212,6 +213,10 @@ CREATE TABLE memory_feedback (
   FOREIGN KEY(context_injection_item_id) REFERENCES context_injection_items(id)
 );
 ```
+
+At least one of `target_id` or `target_value` must be present. Use
+`target_value` for text-keyed targets such as `topic_key`, `entity`, and
+`pattern`; do not overload unrelated integer ids.
 
 Allowed feedback values:
 
@@ -241,11 +246,12 @@ importance scoring.
 Add a top-level `user` command group:
 
 ```text
-remem user remember <text>
+remem user remember [--scope user|workspace|repo|session] [--owner-key <key>] <text>
 remem user claims list
 remem user claims why <id>
 remem user claims edit <id>
 remem user claims suppress <id>
+remem user claims unsuppress <id>
 remem user claims delete <id>
 remem user summary show
 remem user summary refresh
@@ -257,10 +263,13 @@ remem user review approve <id>
 remem user review edit <id>
 remem user review reject <id>
 remem user review suppress <id>
+remem user review unsuppress <id>
 ```
 
-Add stable `--json` output for list/show/summary/recall/review commands before
-MCP relies on them.
+Manual claims default to `--scope user --owner-key user:default`. Narrower
+workspace, repo, or session ownership must be explicit; CLI validation must reject
+missing or malformed owner keys for non-user scopes. Add stable `--json` output
+for list/show/summary/recall/review commands before MCP relies on them.
 
 ## MCP Surface
 
@@ -273,6 +282,7 @@ search_user_timeline
 recall_user_context
 review_user_context_candidates
 suppress_user_context
+unsuppress_user_context
 explain_user_context
 ```
 

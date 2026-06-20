@@ -133,15 +133,20 @@ Users can explicitly create and govern claims:
 
 ```bash
 remem user remember "For remem, analyze from product and architecture first"
+remem user remember --scope repo --owner-key /repo/path "For this repo, review specs before code"
 remem user claims list
 remem user claims why <id>
 remem user claims edit <id>
 remem user claims suppress <id>
+remem user claims unsuppress <id>
 remem user claims delete <id>
 ```
 
 Default list/show commands exclude suppressed, rejected, deleted, expired, and
 restricted claims unless an explicit admin flag includes them.
+Manual claim creation defaults to `user:user:default`; narrower workspace, repo,
+or session ownership must be explicit in the command and visible in `--json`
+output.
 
 ### Profile Summary
 
@@ -164,7 +169,8 @@ Users can stop unwanted context without deleting evidence:
 
 ```bash
 remem memory suppress memory:123 --reason "not relevant anymore"
-remem memory feedback memory:123 --value not-relevant
+remem memory unsuppress memory:123 --reason "needed again"
+remem memory feedback memory:123 --value not_relevant
 remem memory suppressions list
 ```
 
@@ -195,7 +201,8 @@ summary support are implemented:
 - stable user preferences relevant to the current host/repo;
 - active project relationship when clearly relevant;
 - current workstream or goal when scoped to the current repo;
-- no sensitive, restricted, suppressed, rejected, expired, or unrelated claims.
+- no personal, sensitive, restricted, suppressed, rejected, expired, or unrelated
+  claims unless the claim was explicitly approved for startup context.
 
 Long-tail user context is retrieved through on-demand recall, not injected by
 default.
@@ -215,7 +222,7 @@ summary with source traceability. Keep summaries derived and reversible.
 
 ### Phase 3: Suppression and Feedback (#577)
 
-Add first-class suppress/unsuppress and relevant/not-relevant feedback controls
+Add first-class suppress/unsuppress and relevant/not_relevant feedback controls
 for claims, memories, topics, and injected context items.
 
 ### Phase 4: On-Demand Recall (#578)
