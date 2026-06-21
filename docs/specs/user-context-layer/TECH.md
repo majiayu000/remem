@@ -410,6 +410,13 @@ Source version `0.5.117` tightens the post-review guardrails:
   and edited candidate rows persist the corrected text/type/key/sensitivity used
   to create the active claim.
 
+Source version `0.5.118` closes follow-up race gaps:
+
+- Revived failed bounded follow-up tasks reset their cursor to the original
+  bounded range start before retrying extraction.
+- Auto-promotion rechecks active `claim_key` conflicts inside the apply
+  transaction before superseding claims.
+
 ## Tests
 
 Minimum test coverage by phase:

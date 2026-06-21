@@ -109,12 +109,9 @@ pub fn create_candidate(
     let session_id = normalized_optional(req.session_id);
     let source_preview = normalized_optional(req.source_preview);
     let now = chrono::Utc::now().timestamp();
-    let has_key_conflict = auto_promote_key_conflict(conn, req)?;
-    let allowed = auto_promote_allowed(req, source_kind) && !has_key_conflict;
+    let allowed = auto_promote_allowed(req, source_kind);
     let block_reason = if allowed {
         None
-    } else if has_key_conflict {
-        Some("claim_key_conflict_requires_review".to_string())
     } else {
         Some(
             normalized_optional(req.auto_promote_block_reason)
@@ -298,6 +295,20 @@ fn apply_candidate_tx(
         &claim_type,
         &claim_key,
     )?;
+    if final_status == "auto_promoted" && active_claim_key_conflict(&active, &text, &sensitivity) {
+        block_candidate_auto_promote(
+            conn,
+            id,
+            "claim_key_conflict_requires_review",
+            note.as_deref(),
+            now,
+        )?;
+        return Ok(CandidateApplyResult {
+            candidate: load_candidate_tx(conn, id)?,
+            claim: None,
+            action: "pending_review".to_string(),
+        });
+    }
     if let Some(existing) = active
         .iter()
         .find(|claim| claim.claim_text == text && claim.sensitivity == sensitivity)
@@ -451,6 +462,28 @@ fn supersede_other_active_claims(
     Ok(())
 }
 
+fn block_candidate_auto_promote(
+    conn: &Connection,
+    id: i64,
+    reason: &str,
+    review_note: Option<&str>,
+    now: i64,
+) -> Result<()> {
+    let updated = conn.execute(
+        "UPDATE user_context_candidates
+         SET auto_promote_block_reason = ?1,
+             review_note = ?2,
+             updated_at_epoch = ?3
+         WHERE id = ?4
+           AND review_status IN ('pending_review', 'deferred')",
+        params![reason, review_note, now, id],
+    )?;
+    if updated != 1 {
+        bail!("user-context candidate {id} is no longer reviewable");
+    }
+    Ok(())
+}
+
 fn update_candidate_after_apply(
     conn: &Connection,
     id: i64,
@@ -533,20 +566,10 @@ fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserContextCa
     })
 }
 
-fn auto_promote_key_conflict(conn: &Connection, req: &CandidateCreateRequest<'_>) -> Result<bool> {
-    let Some(claim_key) = normalized_optional(req.claim_key) else {
-        return Ok(false);
-    };
-    let (owner_scope, owner_key) = normalized_owner(req.owner_scope, req.owner_key)?;
-    Ok(active_claims_for_key(
-        conn,
-        owner_scope,
-        owner_key,
-        req.claim_type.db_value(),
-        claim_key,
-    )?
-    .into_iter()
-    .any(|claim| claim.claim_text != req.text || claim.sensitivity != req.sensitivity.db_value()))
+fn active_claim_key_conflict(active: &[UserContextClaim], text: &str, sensitivity: &str) -> bool {
+    active
+        .iter()
+        .any(|claim| claim.claim_text != text || claim.sensitivity != sensitivity)
 }
 
 fn auto_promote_allowed(req: &CandidateCreateRequest<'_>, source_kind: &str) -> bool {

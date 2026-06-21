@@ -150,7 +150,8 @@ pub fn enqueue_bounded_followup_extraction_task(
             high_watermark_event_id
         )
     };
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO extraction_tasks
          (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
           idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
@@ -167,9 +168,29 @@ pub fn enqueue_bounded_followup_extraction_task(
                  WHEN extraction_tasks.status = 'failed' THEN 0
                  ELSE extraction_tasks.attempts
              END,
+             cursor_event_id = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN excluded.cursor_event_id
+                 ELSE extraction_tasks.cursor_event_id
+             END,
+             high_watermark_event_id = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN excluded.high_watermark_event_id
+                 ELSE extraction_tasks.high_watermark_event_id
+             END,
              next_retry_epoch = CASE
                  WHEN extraction_tasks.status = 'failed' THEN NULL
                  ELSE extraction_tasks.next_retry_epoch
+             END,
+             lease_owner = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.lease_owner
+             END,
+             lease_expires_epoch = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.lease_expires_epoch
+             END,
+             last_error = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.last_error
              END,
              updated_at_epoch = excluded.updated_at_epoch",
         params![
@@ -186,11 +207,84 @@ pub fn enqueue_bounded_followup_extraction_task(
             source.replay_range_id
         ],
     )?;
-    Ok(conn.query_row(
+    let task_id = tx.query_row(
         "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
         params![idempotency_key],
         |row| row.get(0),
-    )?)
+    )?;
+    link_matching_replay_range_for_bounded_retry(
+        &tx,
+        task_id,
+        task_kind,
+        cursor_event_id,
+        high_watermark_event_id,
+        now,
+    )?;
+    tx.commit()?;
+    Ok(task_id)
+}
+
+fn link_matching_replay_range_for_bounded_retry(
+    conn: &Connection,
+    task_id: i64,
+    task_kind: ExtractionTaskKind,
+    cursor_event_id: i64,
+    high_watermark_event_id: i64,
+    now: i64,
+) -> Result<()> {
+    let range_id = conn
+        .query_row(
+            "SELECT id
+             FROM extraction_replay_ranges
+             WHERE source_task_id = ?1
+               AND task_kind = ?2
+               AND from_event_id = ?3
+               AND to_event_id = ?4
+               AND status IN ('pending', 'failed', 'requeued')
+             ORDER BY id DESC
+             LIMIT 1",
+            params![
+                task_id,
+                task_kind.as_str(),
+                cursor_event_id + 1,
+                high_watermark_event_id
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(range_id) = range_id else {
+        return Ok(());
+    };
+    let linked = conn.execute(
+        "UPDATE extraction_tasks
+         SET replay_range_id = ?1,
+             updated_at_epoch = ?2
+         WHERE id = ?3
+           AND status = 'pending'
+           AND cursor_event_id = ?4
+           AND high_watermark_event_id = ?5",
+        params![
+            range_id,
+            now,
+            task_id,
+            cursor_event_id,
+            high_watermark_event_id
+        ],
+    )?;
+    if linked != 1 {
+        bail!("failed to link bounded extraction task {task_id} to replay range {range_id}");
+    }
+    conn.execute(
+        "UPDATE extraction_replay_ranges
+         SET status = 'requeued',
+             replay_task_id = ?1,
+             attempts = attempts + 1,
+             updated_at_epoch = ?2
+         WHERE id = ?3
+           AND status IN ('pending', 'failed')",
+        params![task_id, now, range_id],
+    )?;
+    Ok(())
 }
 
 pub fn claim_next_extraction_task(
