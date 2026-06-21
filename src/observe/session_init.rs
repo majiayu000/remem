@@ -29,7 +29,7 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
         );
     }
 
-    let Some(event) = session_init_event(input, host) else {
+    let Some((adapter_name, event)) = session_init_event_with_adapter(input, host) else {
         timer.done("skipped");
         return Ok(None);
     };
@@ -37,7 +37,24 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     let project = event.project.clone();
     let conn = db::open_db_for_hook()?;
     db::upsert_session(&conn, &event.session_id, &event.project, None)?;
-    let output = if let Some(prompt) = user_prompt_submit_prompt(input) {
+    let user_prompt = user_prompt_submit_prompt(input);
+    if let Some(prompt) = user_prompt.as_deref() {
+        db::record_captured_event(
+            &conn,
+            &db::CaptureEventInput {
+                host: adapter_name,
+                session_id: &event.session_id,
+                project: &event.project,
+                cwd: event.cwd.as_deref(),
+                event_type: "user_prompt_submit",
+                role: Some("user"),
+                tool_name: None,
+                content: prompt,
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+    }
+    let output = if let Some(prompt) = user_prompt {
         let cwd = event.cwd.as_deref().unwrap_or(&event.project);
         crate::context::prompt_submit_additional_context(
             &conn,
@@ -57,8 +74,16 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     Ok(output)
 }
 
+#[cfg(test)]
 fn session_init_event(input: &str, host: Option<&str>) -> Option<crate::adapter::ParsedHookEvent> {
-    let Some((_adapter, event)) = super::hook::detect_adapter_for_host(input, host) else {
+    session_init_event_with_adapter(input, host).map(|(_, event)| event)
+}
+
+fn session_init_event_with_adapter(
+    input: &str,
+    host: Option<&str>,
+) -> Option<(&'static str, crate::adapter::ParsedHookEvent)> {
+    let Some((adapter, event)) = super::hook::detect_adapter_for_host(input, host) else {
         crate::log::warn("session-init", "SKIP no adapter matched hook input");
         return None;
     };
@@ -67,7 +92,7 @@ fn session_init_event(input: &str, host: Option<&str>) -> Option<crate::adapter:
         "session-init",
         &format!("project={} session={}", event.project, event.session_id),
     );
-    Some(event)
+    Some((adapter.name(), event))
 }
 
 fn user_prompt_submit_prompt(input: &str) -> Option<String> {
@@ -125,6 +150,41 @@ mod tests {
         assert_eq!(event.session_id, "sess-user-prompt");
         assert_eq!(event.project, "/tmp/remem");
         assert_eq!(user_prompt_submit_prompt(&input).as_deref(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn user_prompt_submit_records_user_captured_event() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("session-init-user-prompt-capture");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let setup = rusqlite::Connection::open(test_dir.db_path())?;
+        crate::migrate::run_migrations(&setup)?;
+        drop(setup);
+        let input = serde_json::json!({
+            "session_id": "sess-user-prompt-capture",
+            "cwd": "/tmp/remem",
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "I prefer concise code reviews."
+        })
+        .to_string();
+
+        session_init_input(&input, Some("claude-code")).await?;
+
+        let conn = crate::db::open_db()?;
+        let (event_type, role, content): (String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT event_type, role, content_text FROM captured_events",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        assert_eq!(event_type, "user_prompt_submit");
+        assert_eq!(role.as_deref(), Some("user"));
+        assert_eq!(content.as_deref(), Some("I prefer concise code reviews."));
+        let task_kind: String =
+            conn.query_row("SELECT task_kind FROM extraction_tasks", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(task_kind, "session_rollup");
+        Ok(())
     }
 
     #[tokio::test]

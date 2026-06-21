@@ -398,6 +398,18 @@ actually user-authored and support the claim text. Contradictory candidates
 update/supersede/noop through the candidate lifecycle rather than append
 conflicting active rows.
 
+Source version `0.5.117` tightens the post-review guardrails:
+
+- `UserPromptSubmit` hooks are captured as `user_prompt_submit` events with
+  `role=user` so automatic extraction can see explicit prompt text.
+- Session rollups enqueue bounded `user_context_candidate` follow-up tasks keyed
+  by exact captured-event range, preserving the matching session summary.
+- Auto-promotion stays review-gated when the stable `claim_key` already has an
+  active conflicting claim.
+- Candidate reject/suppress/apply updates are conditional on reviewable status,
+  and edited candidate rows persist the corrected text/type/key/sensitivity used
+  to create the active claim.
+
 ## Tests
 
 Minimum test coverage by phase:

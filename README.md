@@ -623,7 +623,9 @@ candidate extraction from session rollups is implemented in source version
 `0.5.116`; it creates review candidates from captured user conversations and
 session summaries, and auto-promotes only normal, low-risk explicit user
 preference or constraint statements cited to and supported by user-authored
-source events.
+source events. Source capture, bounded rollup follow-up ranges, stale review
+guards, edited candidate audit persistence, and claim-key conflict review gates
+are tightened in source version `0.5.117`.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more

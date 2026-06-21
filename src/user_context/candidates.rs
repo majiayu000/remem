@@ -109,9 +109,12 @@ pub fn create_candidate(
     let session_id = normalized_optional(req.session_id);
     let source_preview = normalized_optional(req.source_preview);
     let now = chrono::Utc::now().timestamp();
-    let allowed = auto_promote_allowed(req, source_kind);
+    let has_key_conflict = auto_promote_key_conflict(conn, req)?;
+    let allowed = auto_promote_allowed(req, source_kind) && !has_key_conflict;
     let block_reason = if allowed {
         None
+    } else if has_key_conflict {
+        Some("claim_key_conflict_requires_review".to_string())
     } else {
         Some(
             normalized_optional(req.auto_promote_block_reason)
@@ -239,20 +242,23 @@ fn apply_candidate_tx(
     edit: Option<&CandidateEditRequest<'_>>,
     final_status: &str,
 ) -> Result<CandidateApplyResult> {
-    let candidate = load_candidate_tx(conn, id)?;
+    let mut candidate = load_candidate_tx(conn, id)?;
     ensure_reviewable(&candidate)?;
     let claim_type = edit
         .and_then(|edit| edit.claim_type)
         .map(UserContextClaimType::db_value)
-        .unwrap_or(candidate.claim_type.as_str());
+        .unwrap_or(candidate.claim_type.as_str())
+        .to_string();
     let text = edit
         .map(|edit| normalize_required("candidate text", edit.text))
         .transpose()?
-        .unwrap_or(candidate.claim_text.as_str());
+        .unwrap_or(candidate.claim_text.as_str())
+        .to_string();
     let sensitivity = edit
         .and_then(|edit| edit.sensitivity)
         .map(UserContextSensitivity::db_value)
-        .unwrap_or(candidate.sensitivity.as_str());
+        .unwrap_or(candidate.sensitivity.as_str())
+        .to_string();
     let claim_key = edit
         .and_then(|edit| normalized_optional(edit.claim_key))
         .map(str::to_string)
@@ -267,11 +273,29 @@ fn apply_candidate_tx(
         .and_then(|edit| normalized_optional(edit.review_note))
         .map(str::to_string);
     let now = chrono::Utc::now().timestamp();
+    if edit.is_some() {
+        let updated = conn.execute(
+            "UPDATE user_context_candidates
+             SET claim_type = ?1,
+                 claim_key = ?2,
+                 claim_text = ?3,
+                 sensitivity = ?4,
+                 review_note = ?5,
+                 updated_at_epoch = ?6
+             WHERE id = ?7
+               AND review_status IN ('pending_review', 'deferred')",
+            params![&claim_type, &claim_key, &text, &sensitivity, note, now, id],
+        )?;
+        if updated != 1 {
+            bail!("user-context candidate {id} is no longer reviewable");
+        }
+        candidate = load_candidate_tx(conn, id)?;
+    }
     let active = active_claims_for_key(
         conn,
         &candidate.owner_scope,
         &candidate.owner_key,
-        claim_type,
+        &claim_type,
         &claim_key,
     )?;
     if let Some(existing) = active
@@ -316,11 +340,11 @@ fn apply_candidate_tx(
             candidate.user_key,
             candidate.owner_scope,
             candidate.owner_key,
-            claim_type,
-            claim_key,
-            text,
+            &claim_type,
+            &claim_key,
+            &text,
             candidate.confidence,
-            sensitivity,
+            &sensitivity,
             source_refs_json,
             now,
             supersedes_claim_id,
@@ -351,11 +375,12 @@ fn transition_candidate(
     let updated = conn.execute(
         "UPDATE user_context_candidates
          SET review_status = ?1, review_note = ?2, updated_at_epoch = ?3
-         WHERE id = ?4",
+         WHERE id = ?4
+           AND review_status IN ('pending_review', 'deferred')",
         params![review_status, note, chrono::Utc::now().timestamp(), id],
     )?;
     if updated != 1 {
-        bail!("failed to update user-context candidate {id}");
+        bail!("user-context candidate {id} is no longer reviewable");
     }
     load_candidate(conn, id)
 }
@@ -438,11 +463,12 @@ fn update_candidate_after_apply(
         "UPDATE user_context_candidates
          SET review_status = ?1, result_claim_id = ?2, review_note = ?3,
              updated_at_epoch = ?4
-         WHERE id = ?5",
+         WHERE id = ?5
+           AND review_status IN ('pending_review', 'deferred')",
         params![review_status, claim_id, review_note, now, id],
     )?;
     if updated != 1 {
-        bail!("failed to update user-context candidate {id}");
+        bail!("user-context candidate {id} is no longer reviewable");
     }
     Ok(())
 }
@@ -505,6 +531,22 @@ fn candidate_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserContextCa
         created_at_epoch: row.get(20)?,
         updated_at_epoch: row.get(21)?,
     })
+}
+
+fn auto_promote_key_conflict(conn: &Connection, req: &CandidateCreateRequest<'_>) -> Result<bool> {
+    let Some(claim_key) = normalized_optional(req.claim_key) else {
+        return Ok(false);
+    };
+    let (owner_scope, owner_key) = normalized_owner(req.owner_scope, req.owner_key)?;
+    Ok(active_claims_for_key(
+        conn,
+        owner_scope,
+        owner_key,
+        req.claim_type.db_value(),
+        claim_key,
+    )?
+    .into_iter()
+    .any(|claim| claim.claim_text != req.text || claim.sensitivity != req.sensitivity.db_value()))
 }
 
 fn auto_promote_allowed(req: &CandidateCreateRequest<'_>, source_kind: &str) -> bool {
