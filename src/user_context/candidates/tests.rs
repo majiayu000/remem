@@ -62,6 +62,42 @@ fn auto_promote_blocks_conflicting_active_claim_key() -> Result<()> {
 }
 
 #[test]
+fn auto_promote_rechecks_claim_key_conflict_inside_apply_transaction() -> Result<()> {
+    let conn = migrated_conn()?;
+    let mut req = candidate_request("Prefer concise review notes", false);
+    req.claim_key = Some("preference:release-notes");
+    let candidate = create_candidate(&conn, &req)?.candidate;
+    let existing = create_manual_claim(
+        &conn,
+        &ManualClaimRequest {
+            text: "Prefer verbose release notes",
+            owner_scope: None,
+            owner_key: None,
+            claim_type: UserContextClaimType::Preference,
+            claim_key: Some("preference:release-notes"),
+            confidence: 1.0,
+            sensitivity: UserContextSensitivity::Normal,
+            valid_from_epoch: None,
+            valid_to_epoch: None,
+        },
+    )?;
+
+    let tx = conn.unchecked_transaction()?;
+    let result = apply_candidate_tx(&tx, candidate.id, None, "auto_promoted")?;
+    tx.commit()?;
+
+    assert_eq!(result.action, "pending_review");
+    assert!(result.claim.is_none());
+    assert_eq!(result.candidate.review_status, "pending_review");
+    assert_eq!(
+        result.candidate.auto_promote_block_reason.as_deref(),
+        Some("claim_key_conflict_requires_review")
+    );
+    assert_eq!(load_claim(&conn, existing.id)?.status, "active");
+    Ok(())
+}
+
+#[test]
 fn candidates_require_non_empty_source_refs() -> Result<()> {
     let conn = migrated_conn()?;
     let mut req = candidate_request("Missing source refs", false);

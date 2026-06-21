@@ -485,6 +485,112 @@ fn enqueue_followup_revives_exhausted_task_with_fresh_retry_budget() {
 }
 
 #[test]
+fn enqueue_bounded_followup_revives_failed_task_from_original_range_start() {
+    let mut conn = setup_conn();
+    insert_task(
+        &conn,
+        "sess-bounded-followup-revive",
+        ExtractionTaskKind::SessionRollup,
+    )
+    .expect("source task should insert");
+    let source = claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("source task should be claimed");
+    let high_watermark = source
+        .high_watermark_event_id
+        .expect("source task should have a watermark");
+    let bounded_id = enqueue_bounded_followup_extraction_task(
+        &conn,
+        &source,
+        ExtractionTaskKind::UserContextCandidate,
+        0,
+        high_watermark,
+    )
+    .expect("bounded followup should enqueue");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, bounded_id],
+    )
+    .expect("bounded task attempts should update");
+    let bounded = claim_next_extraction_task(&mut conn, "worker-b", 60)
+        .expect("claim should succeed")
+        .expect("bounded task should be claimable");
+    assert_eq!(bounded.id, bounded_id);
+    defer_claimed_extraction_task(&conn, &bounded, "worker-b", "exhausted", 30)
+        .expect("bounded task should exhaust");
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].status, "pending");
+    assert_eq!(ranges[0].source_task_id, bounded_id);
+
+    let revived_id = enqueue_bounded_followup_extraction_task(
+        &conn,
+        &source,
+        ExtractionTaskKind::UserContextCandidate,
+        0,
+        high_watermark,
+    )
+    .expect("same bounded followup should revive");
+
+    assert_eq!(revived_id, bounded_id);
+    let (status, attempts, cursor, next_retry, lease_owner, last_error, replay_range_id): (
+        String,
+        i64,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    ) = conn
+        .query_row(
+            "SELECT status, attempts, cursor_event_id, next_retry_epoch, lease_owner, last_error,
+                    replay_range_id
+             FROM extraction_tasks WHERE id = ?1",
+            params![bounded_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .expect("revived bounded task should query");
+    assert_eq!(status, "pending");
+    assert_eq!(attempts, 0);
+    assert_eq!(cursor, Some(0), "revival must retry the full bounded range");
+    assert!(next_retry.is_none());
+    assert!(lease_owner.is_none());
+    assert!(last_error.is_none());
+    assert_eq!(replay_range_id, Some(ranges[0].id));
+    let ranges = list_extraction_replay_ranges(&conn, None, 10).expect("ranges should list");
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].status, "requeued");
+
+    let revived = claim_next_extraction_task(&mut conn, "worker-c", 60)
+        .expect("claim should succeed")
+        .expect("revived bounded task should be claimable");
+    assert_eq!(revived.id, bounded_id);
+    mark_extraction_task_done(
+        &conn,
+        revived.id,
+        "worker-c",
+        revived.high_watermark_event_id,
+    )
+    .expect("revived bounded task should finish");
+    assert!(
+        list_extraction_replay_ranges(&conn, None, 10)
+            .expect("ranges should list")
+            .is_empty(),
+        "successful revived bounded retry must clear the recorded replay range"
+    );
+}
+
+#[test]
 fn exhaustion_records_only_claimed_range_when_watermark_advances() {
     let mut conn = setup_conn();
     let task_id = insert_task(
