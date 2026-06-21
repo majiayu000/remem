@@ -130,15 +130,16 @@ async fn session_rollup_enqueues_user_context_candidate_followup() -> Result<()>
     .await?;
 
     assert_eq!(result, SessionRollupResult::Written);
-    let followup_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM extraction_tasks
+    let (followup_count, cursor): (i64, Option<i64>) = conn.query_row(
+        "SELECT COUNT(*), MIN(cursor_event_id) FROM extraction_tasks
          WHERE task_kind = 'user_context_candidate'
            AND status = 'pending'
            AND high_watermark_event_id = ?1",
         params![watermark],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     assert_eq!(followup_count, 1);
+    assert_eq!(cursor, Some(0));
     Ok(())
 }
 
@@ -247,6 +248,24 @@ async fn session_rollup_persists_later_same_topic_segments_in_session() -> Resul
     })
     .await?;
     assert_eq!(second, SessionRollupResult::Written);
+    let followups = conn
+        .prepare(
+            "SELECT cursor_event_id, high_watermark_event_id
+             FROM extraction_tasks
+             WHERE task_kind = 'user_context_candidate'
+             ORDER BY cursor_event_id ASC, high_watermark_event_id ASC",
+        )?
+        .query_map([], |row| {
+            Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        followups,
+        vec![
+            (Some(0), Some(first_event_id)),
+            (Some(first_event_id), Some(second_event_id))
+        ]
+    );
 
     let mut stmt = conn.prepare(
         "SELECT covered_from_event_id, summary

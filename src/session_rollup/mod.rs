@@ -86,7 +86,7 @@ where
         return Ok(SessionRollupResult::EmptyRange);
     };
     if session_rollup_exists(conn, task, &range)? {
-        enqueue_user_context_followup(conn, task, range.to_event_id)?;
+        enqueue_user_context_followup(conn, task, &range)?;
         return Ok(SessionRollupResult::AlreadyExists);
     }
 
@@ -94,20 +94,21 @@ where
     let response = summarize(prompt).await?;
     let output = parse::parse_rollup_response(&response, &range)?;
     persist::persist_session_rollup(conn, task, &range, &output)?;
-    enqueue_user_context_followup(conn, task, range.to_event_id)?;
+    enqueue_user_context_followup(conn, task, &range)?;
     Ok(SessionRollupResult::Written)
 }
 
 fn enqueue_user_context_followup(
     conn: &Connection,
     task: &db::ExtractionTask,
-    high_watermark_event_id: i64,
+    range: &RollupRange,
 ) -> Result<()> {
-    db::enqueue_followup_extraction_task(
+    db::enqueue_bounded_followup_extraction_task(
         conn,
         task,
         db::ExtractionTaskKind::UserContextCandidate,
-        high_watermark_event_id,
+        range.from_event_id.saturating_sub(1),
+        range.to_event_id,
     )?;
     Ok(())
 }

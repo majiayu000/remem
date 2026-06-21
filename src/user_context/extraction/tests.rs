@@ -446,6 +446,25 @@ async fn contradictory_candidate_supersedes_existing_claim_by_stable_key() -> Re
     })
     .await?;
 
+    let (candidate_id, status, reason): (i64, String, Option<String>) = conn.query_row(
+        "SELECT id, review_status, auto_promote_block_reason FROM user_context_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(status, "pending_review");
+    assert_eq!(
+        reason.as_deref(),
+        Some("claim_key_conflict_requires_review")
+    );
+    let active_text: String = conn.query_row(
+        "SELECT claim_text FROM user_context_claims WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_text, "User prefers concise code reviews.");
+
+    super::super::candidates::approve_candidate(&conn, candidate_id)?;
+
     let active_text: String = conn.query_row(
         "SELECT claim_text FROM user_context_claims WHERE status = 'active'",
         [],

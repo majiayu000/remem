@@ -29,6 +29,39 @@ fn low_risk_explicit_user_statement_can_auto_promote() -> Result<()> {
 }
 
 #[test]
+fn auto_promote_blocks_conflicting_active_claim_key() -> Result<()> {
+    let conn = migrated_conn()?;
+    let existing = create_manual_claim(
+        &conn,
+        &ManualClaimRequest {
+            text: "Prefer verbose release notes",
+            owner_scope: None,
+            owner_key: None,
+            claim_type: UserContextClaimType::Preference,
+            claim_key: Some("preference:release-notes"),
+            confidence: 1.0,
+            sensitivity: UserContextSensitivity::Normal,
+            valid_from_epoch: None,
+            valid_to_epoch: None,
+        },
+    )?;
+    let mut req = candidate_request("Prefer concise review notes", true);
+    req.claim_key = Some("preference:release-notes");
+
+    let result = create_candidate(&conn, &req)?;
+
+    assert_eq!(result.action, "pending_review");
+    assert!(result.claim.is_none());
+    assert_eq!(result.candidate.review_status, "pending_review");
+    assert_eq!(
+        result.candidate.auto_promote_block_reason.as_deref(),
+        Some("claim_key_conflict_requires_review")
+    );
+    assert_eq!(load_claim(&conn, existing.id)?.status, "active");
+    Ok(())
+}
+
+#[test]
 fn candidates_require_non_empty_source_refs() -> Result<()> {
     let conn = migrated_conn()?;
     let mut req = candidate_request("Missing source refs", false);
@@ -236,6 +269,26 @@ fn edit_reject_and_suppress_candidate_review_paths() -> Result<()> {
     assert_eq!(
         edited.claim.as_ref().map(|claim| claim.claim_key.as_str()),
         Some("preference:edited-review-style")
+    );
+    assert_eq!(edited.candidate.claim_text, "Prefer edited review style");
+    assert_eq!(
+        edited.candidate.claim_key.as_deref(),
+        Some("preference:edited-review-style")
+    );
+    assert_eq!(edited.candidate.claim_type, "preference");
+    assert_eq!(edited.candidate.sensitivity, "normal");
+    assert_eq!(
+        edited.claim.as_ref().map(|claim| claim.claim_text.as_str()),
+        Some("Prefer edited review style")
+    );
+    let stale_reject = reject_candidate(&conn, edited.candidate.id, Some("too late"))
+        .expect_err("resolved candidate must not be rejected later");
+    assert!(stale_reject
+        .to_string()
+        .contains("only pending_review or deferred"));
+    assert_eq!(
+        load_candidate(&conn, edited.candidate.id)?.review_status,
+        "edited"
     );
 
     let rejected =

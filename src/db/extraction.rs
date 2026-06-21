@@ -112,6 +112,87 @@ pub fn enqueue_followup_extraction_task(
     )?)
 }
 
+pub fn enqueue_bounded_followup_extraction_task(
+    conn: &Connection,
+    source: &ExtractionTask,
+    task_kind: ExtractionTaskKind,
+    cursor_event_id: i64,
+    high_watermark_event_id: i64,
+) -> Result<i64> {
+    if high_watermark_event_id <= cursor_event_id {
+        bail!(
+            "bounded follow-up extraction task requires high_watermark_event_id > cursor_event_id"
+        );
+    }
+    let session_row_id = source
+        .session_row_id
+        .ok_or_else(|| anyhow::anyhow!("follow-up extraction task requires session_row_id"))?;
+    let now = chrono::Utc::now().timestamp();
+    let idempotency_key = if let Some(replay_range_id) = source.replay_range_id {
+        format!(
+            "{}:{}:{}:{}:bounded:{}:{}:replay:{}",
+            source.host_id,
+            source.project_id,
+            session_row_id,
+            task_kind.as_str(),
+            cursor_event_id,
+            high_watermark_event_id,
+            replay_range_id
+        )
+    } else {
+        format!(
+            "{}:{}:{}:{}:bounded:{}:{}",
+            source.host_id,
+            source.project_id,
+            session_row_id,
+            task_kind.as_str(),
+            cursor_event_id,
+            high_watermark_event_id
+        )
+    };
+    conn.execute(
+        "INSERT INTO extraction_tasks
+         (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
+          idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
+          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch,
+          updated_at_epoch, replay_range_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, 0, NULL, NULL, NULL, NULL,
+                 ?10, ?10, ?11)
+         ON CONFLICT(idempotency_key) DO UPDATE SET
+             status = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN 'pending'
+                 ELSE extraction_tasks.status
+             END,
+             attempts = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN 0
+                 ELSE extraction_tasks.attempts
+             END,
+             next_retry_epoch = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.next_retry_epoch
+             END,
+             updated_at_epoch = excluded.updated_at_epoch",
+        params![
+            task_kind.as_str(),
+            source.host_id,
+            source.workspace_id,
+            source.project_id,
+            session_row_id,
+            task_kind.priority(),
+            idempotency_key,
+            cursor_event_id,
+            high_watermark_event_id,
+            now,
+            source.replay_range_id
+        ],
+    )?;
+    Ok(conn.query_row(
+        "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
+        params![idempotency_key],
+        |row| row.get(0),
+    )?)
+}
+
 pub fn claim_next_extraction_task(
     conn: &mut Connection,
     lease_owner: &str,
