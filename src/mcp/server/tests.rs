@@ -888,13 +888,12 @@ fn timeline_reports_query_miss_as_not_found() {
 #[test]
 fn mcp_tool_errors_report_db_open_failure_as_retryable() {
     let test_dir = ScopedTestDataDir::new("mcp-db-open-error");
-    if let Err(err) = std::fs::remove_dir_all(&test_dir.path) {
-        if err.kind() != std::io::ErrorKind::NotFound {
-            panic!("remove temp dir: {err}");
-        }
+    if let Err(err) = std::fs::create_dir_all(&test_dir.path) {
+        panic!("create temp dir: {err}");
     }
-    if let Err(err) = std::fs::write(&test_dir.path, "not a directory") {
-        panic!("create blocking file: {err}");
+    let blocked_db_path = test_dir.db_path();
+    if let Err(err) = std::fs::create_dir(&blocked_db_path) {
+        panic!("create blocking db path: {err}");
     }
 
     let server = match MemoryServer::new() {
@@ -914,9 +913,9 @@ fn mcp_tool_errors_report_db_open_failure_as_retryable() {
         explain: None,
     }));
 
-    if let Err(err) = std::fs::remove_file(&test_dir.path) {
+    if let Err(err) = std::fs::remove_dir(&blocked_db_path) {
         if err.kind() != std::io::ErrorKind::NotFound {
-            panic!("remove blocking file: {err}");
+            panic!("remove blocking db path: {err}");
         }
     }
     let err = match result {
