@@ -53,20 +53,29 @@ ALTER TABLE workstreams ADD COLUMN merged_into_workstream_id INTEGER;
 CREATE TABLE IF NOT EXISTS workstream_aliases (
     id INTEGER PRIMARY KEY,
     workstream_id INTEGER NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,
-    project TEXT NOT NULL,
-    owner_scope TEXT,
-    owner_key TEXT,
     title TEXT NOT NULL,
     normalized_title TEXT NOT NULL,
-    source TEXT NOT NULL,
-    memory_session_id TEXT,
     first_seen_epoch INTEGER NOT NULL,
     last_seen_epoch INTEGER NOT NULL,
     UNIQUE(workstream_id, normalized_title)
 );
 
+CREATE TABLE IF NOT EXISTS workstream_alias_sources (
+    id INTEGER PRIMARY KEY,
+    alias_id INTEGER NOT NULL REFERENCES workstream_aliases(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    memory_session_id TEXT,
+    source_workstream_id INTEGER REFERENCES workstreams(id),
+    observed_title TEXT NOT NULL,
+    first_seen_epoch INTEGER NOT NULL,
+    last_seen_epoch INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_workstream_aliases_lookup
-    ON workstream_aliases(project, owner_scope, owner_key, normalized_title);
+    ON workstream_aliases(normalized_title);
+
+CREATE INDEX IF NOT EXISTS idx_workstream_alias_sources_alias
+    ON workstream_alias_sources(alias_id);
 
 CREATE INDEX IF NOT EXISTS idx_workstreams_identity_key
     ON workstreams(identity_key);
@@ -82,6 +91,21 @@ it does not need to be user-authored.
 
 `merged_into_workstream_id` keeps duplicate rows auditable while allowing query
 paths to hide merged rows from active context.
+
+Alias lookup must not duplicate ownership columns from `workstreams`. Owner or
+project filters are applied by joining `workstream_aliases.workstream_id` back
+to `workstreams` and filtering the canonical row. This avoids stale alias owner
+copies when existing scope-cleanup governance reroutes a workstream to a new
+project, owner scope, or owner key.
+
+`workstream_alias_sources` stores per-observation provenance for an alias. The
+same normalized alias may be observed in multiple summaries, sessions, or
+merged duplicate rows; those source facts must not collapse into one
+`memory_session_id` on the alias row. The implementation may enforce an
+idempotency key for repeated source observations, but it must preserve enough
+source rows to answer which session or duplicate introduced an alias, which
+exact title text was observed, and when that source first and last contributed
+the alias.
 
 ### Title Normalization
 
@@ -106,13 +130,20 @@ Change `upsert_workstream` to use this order:
    - active/paused rows only;
    - same owner/project filters as current query paths;
    - excludes rows with `merged_into_workstream_id IS NOT NULL`;
-   - strongest signal, because a summary rerun for the same session should
-     update the same workstream even if the display title changed.
+   - safe only when the session query returns exactly one canonical candidate;
+   - also requires supporting continuity evidence, such as an existing alias or
+     normalized-title relation, explicit future workstream ref, or prior
+     `<existing_summary>` context for the same task;
+   - if the same session links multiple active workstreams, or the only link
+     lacks continuity evidence, log `session_link_ambiguous` and continue to
+     the next safe matcher instead of updating the prior task.
 2. Explicit identity/ref match:
    - reserved for a future summary prompt contract;
    - not required for the first implementation.
 3. Alias exact match:
    - lookup normalized title in `workstream_aliases`;
+   - join through `workstreams` for project, owner, status, and merged-row
+     filters instead of trusting copied alias ownership fields;
    - active/paused canonical rows only;
    - if multiple candidates exist, do not auto-merge; log an ambiguity warning
      and continue to the next safe path.
@@ -147,7 +178,9 @@ After every successful insert or update:
 - if the canonical row had a previous title, ensure that previous title also
   exists as an alias;
 - update `last_seen_epoch` when an alias repeats;
-- store `memory_session_id` for the alias source when available.
+- insert or update a `workstream_alias_sources` row for the source observation,
+  including `memory_session_id`, source duplicate workstream ID, observed title,
+  and first/last observed timestamps when available.
 
 ### Query Changes
 
@@ -161,6 +194,9 @@ Affected areas:
 
 - `src/workstream/query.rs`
 - `src/workstream/matcher.rs`
+- `build_existing_summary_context` / `get_linked_workstream_context`, which
+  must resolve merged duplicate links to their canonical row or exclude rows where
+  `merged_into_workstream_id IS NOT NULL`
 - context rendering paths that rely on `query_active_workstreams`
 - MCP/CLI list behavior through existing query functions
 
@@ -177,7 +213,8 @@ Merge behavior:
 
 - validate all rows are in the same project/owner visibility scope;
 - move `workstream_sessions` links with `INSERT OR IGNORE`;
-- copy aliases/history to the canonical row;
+- copy aliases/history to the canonical row and preserve source rows for every
+  copied alias;
 - set `merged_into_workstream_id` on duplicate rows;
 - mark duplicate rows non-active for query purposes;
 - log the merge with canonical and duplicate IDs.
@@ -192,7 +229,7 @@ Migration should be additive and safe for encrypted/local databases:
 2. Create `workstream_aliases`.
 3. Backfill `identity_key` for existing rows.
 4. Backfill each existing `workstreams.title` as an alias with
-   `source='migration'`.
+   `source='migration'` and a matching alias source row.
 5. Do not attempt automatic historical duplicate merge during migration.
    Duplicate repair is a separate explicit governance action.
 
@@ -202,10 +239,19 @@ Add focused tests under `src/workstream/tests/` and
 `src/summarize/summary_job/persist.rs` as appropriate:
 
 - same `memory_session_id`, three renamed titles, one canonical row;
+- same `memory_session_id`, unrelated topic switch, no automatic update of the
+  prior task;
+- same `memory_session_id` with multiple linked active candidates logs
+  ambiguity instead of picking the first row;
 - alias exact match across a later session updates the canonical row;
+- alias exact match still works after scope cleanup reroutes the canonical
+  workstream to a new owner/project;
 - unrelated active tasks with shared broad words do not merge;
 - merged duplicate rows are hidden from active query results;
+- `build_existing_summary_context` excludes merged rows or resolves them to the
+  canonical workstream;
 - alias rows are created for old and new titles;
+- alias source rows preserve each contributing session or duplicate source;
 - migration convergence includes the new table/indexes/columns;
 - summary persistence logs or returns enough data to assert match reason where
   practical.
@@ -236,6 +282,8 @@ flowguard / run-guard Skill 生命周期工作流
 | Over-merging unrelated tasks | Prefer session link and exact alias before fuzzy matching; keep fuzzy fallback conservative and tested. |
 | Existing duplicates remain after migration | Provide explicit merge governance instead of risky automatic historical merges. |
 | Alias lookup creates ambiguous candidates | Log ambiguity and avoid automatic merge when multiple canonical rows match. |
+| Same session contains unrelated tasks | Require a unique linked candidate plus continuity evidence; log ambiguity rather than unconditional update. |
+| Alias ownership drifts after scope cleanup | Derive project/owner filters by joining aliases to canonical workstreams. |
 | Schema drift across old databases | Add migration convergence tests and backfill only nullable/additive fields. |
 | LLM repeats unstable names | Treat LLM titles as display/alias input, not the sole identity source. |
 

@@ -101,9 +101,13 @@ and which summary/session introduced it.
 
 ### Matching Order
 
-Matching should prefer high-confidence identity signals before text matching:
+Matching should prefer high-confidence identity signals before text matching,
+but same-session matching is not unconditional. A long assistant session can
+contain multiple unrelated user tasks, so a session link is safe only when it
+selects one candidate and there is supporting continuity evidence.
 
-1. Existing workstream linked to the same `memory_session_id`.
+1. Unique existing workstream linked to the same `memory_session_id`, with
+   supporting continuity evidence.
 2. Explicit workstream identity/ref, if present in a future summary contract.
 3. Exact alias or exact normalized title match inside the same project/owner.
 4. Conservative title similarity fallback.
