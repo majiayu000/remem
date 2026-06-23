@@ -72,10 +72,11 @@ pub(super) fn render_current_state(result: &CurrentStateResult) -> String {
     if let Some(current) = &result.current {
         output.push_str("\nAnswer:\n");
         output.push_str(&format!(
-            "  [#{}] {} | {} | updated {}\n",
+            "  [#{}] {} | {} | {} | updated {}\n",
             current.id,
             current.title,
             current.status,
+            format_staleness_label(&current.staleness),
             format_memory_timestamp(current.updated_at_epoch)
         ));
         output.push_str(&format!("  {}\n", preview_current_text(&current.text)));
@@ -132,10 +133,11 @@ pub(super) fn render_current_state(result: &CurrentStateResult) -> String {
 
 fn format_memory_ref(memory: &crate::memory::current_state::CurrentStateMemoryRef) -> String {
     let mut line = format!(
-        "  [#{}] {} | {} | updated {}",
+        "  [#{}] {} | {} | {} | updated {}",
         memory.id,
         memory.title,
         memory.status,
+        format_staleness_label(&memory.staleness),
         format_memory_timestamp(memory.updated_at_epoch)
     );
     if let Some(relation) = &memory.relation {
@@ -149,6 +151,14 @@ fn format_memory_ref(memory: &crate::memory::current_state::CurrentStateMemoryRe
     }
     line.push('\n');
     line
+}
+
+fn format_staleness_label(staleness: &crate::memory::MemoryStalenessLabel) -> String {
+    let mut label = staleness.label.clone();
+    if let Some(error) = &staleness.error {
+        label.push_str(&format!(" error={error}"));
+    }
+    label
 }
 
 fn preview_current_text(text: &str) -> String {

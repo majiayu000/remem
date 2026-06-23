@@ -27,7 +27,38 @@ fn current_state_tool_returns_explicit_conflict_status() {
 
     assert_eq!(json["status"], "unresolved_conflict");
     assert_eq!(json["current"]["id"], 2);
+    assert_eq!(json["current"]["staleness"]["source_anchor"], "untracked");
     assert_eq!(json["conflicts"][0]["id"], 3);
+    assert_eq!(
+        json["conflicts"][0]["staleness"]["source_anchor"],
+        "untracked"
+    );
+}
+
+#[test]
+fn current_state_tool_reports_source_anchor_error_per_ref() {
+    let _test_dir = ScopedTestDataDir::new("mcp-current-state-source-error");
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let conn = crate::db::open_db().expect("test database should open");
+    seed_mcp_current_state_source_error(&conn);
+
+    let response = server
+        .current_state(Parameters(CurrentStateParams {
+            state_key: "deploy-target".to_string(),
+            project: Some("/repo".to_string()),
+            r#type: Some("decision".to_string()),
+            owner_scope: None,
+            owner_key: None,
+            as_of_epoch: None,
+        }))
+        .expect("current_state should return JSON");
+    let json: Value = serde_json::from_str(&response).expect("current_state response is JSON");
+
+    assert_eq!(json["status"], "current");
+    assert_eq!(json["current"]["staleness"]["source_anchor"], "error");
+    assert!(json["current"]["staleness"]["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("source-anchor staleness")));
 }
 
 #[test]
@@ -80,4 +111,17 @@ fn seed_mcp_current_state_conflict(conn: &rusqlite::Connection) {
         [],
     )
     .expect("current memory pointer updated");
+}
+
+fn seed_mcp_current_state_source_error(conn: &rusqlite::Connection) {
+    seed_mcp_current_state_conflict(conn);
+    conn.execute("DELETE FROM memories WHERE id = 3", [])
+        .expect("conflict memory deleted");
+    conn.execute(
+        "UPDATE memories
+         SET session_id = 'session-bad-source', files = '[not-json', branch = 'main'
+         WHERE id = 2",
+        [],
+    )
+    .expect("current memory source corrupted");
 }

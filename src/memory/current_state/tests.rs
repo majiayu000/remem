@@ -27,6 +27,13 @@ fn returns_current_answer_when_state_key_has_single_active_current() -> Result<(
 
     assert_eq!(result.status, "current");
     assert_eq!(result.current.as_ref().map(|memory| memory.id), Some(2));
+    assert_eq!(
+        result
+            .current
+            .as_ref()
+            .map(|memory| memory.staleness.source_anchor.as_str()),
+        Some("untracked")
+    );
     assert!(result.conflicts.is_empty());
     Ok(())
 }
@@ -179,6 +186,7 @@ fn shows_superseded_history_and_edge_evidence_for_current_answer() -> Result<()>
     assert_eq!(result.history[0].id, 1);
     assert_eq!(result.history[0].relation.as_deref(), Some("supersedes"));
     assert_eq!(result.history[0].evidence_event_ids, vec![7, 8]);
+    assert_eq!(result.history[0].staleness.source_anchor, "untracked");
     assert_eq!(result.why[0].reason.as_deref(), Some("new deploy decision"));
     Ok(())
 }
@@ -269,6 +277,98 @@ fn unresolved_active_conflict_does_not_silently_choose_current_pointer() -> Resu
     assert_eq!(result.current.as_ref().map(|memory| memory.id), Some(2));
     assert_eq!(result.conflicts.len(), 1);
     assert_eq!(result.conflicts[0].id, 3);
+    assert_eq!(result.conflicts[0].staleness.source_anchor, "untracked");
+    Ok(())
+}
+
+#[test]
+fn staleness_labels_cover_tracked_current_and_verify_before_trust_conflict() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory(
+        &conn,
+        2,
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        None,
+        None,
+    )?;
+    insert_current_state_memory(
+        &conn,
+        3,
+        "Deploy target conflict",
+        "Use staging.",
+        "active",
+        10,
+        None,
+        None,
+    )?;
+    set_memory_source(&conn, 2, "session-current", &["src/current.rs"])?;
+    set_memory_source(&conn, 3, "session-conflict", &["src/conflict.rs"])?;
+    link_current_state_commit(
+        &conn,
+        100,
+        "source-current",
+        100,
+        &["src/current.rs"],
+        "session-current",
+    )?;
+    link_current_state_commit(
+        &conn,
+        101,
+        "source-conflict",
+        100,
+        &["src/conflict.rs"],
+        "session-conflict",
+    )?;
+    insert_current_state_commit(&conn, 102, "later-conflict", 200, &["src/conflict.rs"])?;
+    set_current_memory(&conn, 2)?;
+
+    let result = current_state(&conn, &request())?;
+
+    assert_eq!(result.status, "unresolved_conflict");
+    assert_eq!(
+        result
+            .current
+            .as_ref()
+            .map(|memory| memory.staleness.source_anchor.as_str()),
+        Some("tracked")
+    );
+    assert_eq!(result.conflicts.len(), 1);
+    assert_eq!(
+        result.conflicts[0].staleness.source_anchor,
+        "verify-before-trust"
+    );
+    Ok(())
+}
+
+#[test]
+fn source_anchor_errors_are_reported_per_current_state_ref() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory(
+        &conn,
+        2,
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        None,
+        None,
+    )?;
+    set_memory_files_raw(&conn, 2, "[not-json")?;
+    set_current_memory(&conn, 2)?;
+
+    let result = current_state(&conn, &request())?;
+    let staleness = &result.current.as_ref().expect("current memory").staleness;
+
+    assert_eq!(staleness.source_anchor, "error");
+    assert!(staleness
+        .error
+        .as_deref()
+        .is_some_and(|error| { error.contains("source-anchor staleness") }));
     Ok(())
 }
 
@@ -312,6 +412,54 @@ fn as_of_time_uses_memory_validity_window() -> Result<()> {
         result.current.as_ref().map(|memory| memory.status.as_str()),
         Some("stale")
     );
+    Ok(())
+}
+
+#[test]
+fn as_of_conflict_refs_include_staleness_labels() -> Result<()> {
+    let conn = current_state_test_conn()?;
+    insert_state_key(&conn)?;
+    insert_current_state_memory_at(
+        &conn,
+        1,
+        "/repo",
+        "Old deploy target",
+        "Use staging.",
+        "active",
+        10,
+        100,
+        None,
+        None,
+    )?;
+    insert_current_state_memory_at(
+        &conn,
+        2,
+        "/repo",
+        "Deploy target",
+        "Use production.",
+        "active",
+        10,
+        120,
+        None,
+        None,
+    )?;
+    set_current_memory(&conn, 2)?;
+
+    let result = current_state(
+        &conn,
+        &CurrentStateRequest {
+            as_of_epoch: Some(150),
+            ..request()
+        },
+    )?;
+
+    assert_eq!(result.status, "unresolved_conflict");
+    assert!(result.current.is_none());
+    assert_eq!(result.conflicts.len(), 2);
+    assert!(result
+        .conflicts
+        .iter()
+        .all(|memory| memory.staleness.source_anchor == "untracked"));
     Ok(())
 }
 
