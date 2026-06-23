@@ -1,3 +1,4 @@
+pub mod coding_bench;
 pub mod current_memory_contracts;
 pub mod e2e;
 pub mod extraction;

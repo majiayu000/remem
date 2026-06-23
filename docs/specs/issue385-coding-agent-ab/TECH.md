@@ -171,6 +171,8 @@ Each run entry records:
 - task id
 - run index
 - resolved boolean
+- `memory_contract_status`: `passed`, `failed`, or `not_applicable`
+- `runtime_contract_failure` and `runtime_contract_failure_reason`
 - score command outputs or references
 - token usage
 - turn count
@@ -178,6 +180,27 @@ Each run entry records:
 - final head SHA or patch artifact
 - unauthorized path changes
 - failure reason
+
+For `remem` condition runs, the run entry must also include
+`remem_contract_snapshot`. The snapshot is the benchmark handoff from
+`docs/specs/current-memory-contracts/TECH.md` and must include:
+
+- the full `current_memory_contracts` deterministic report used for the run;
+- `contract_health`, including failing examples and contract warnings;
+- citation precision and usage feedback coverage;
+- injected, dropped, and abstained memory audit coverage;
+- staleness/source-anchor handling;
+- temporal fact eligibility checks.
+
+`no_memory` and `curated_file` runs must set `memory_contract_status` to
+`not_applicable` and must not carry a `remem_contract_snapshot`. This keeps the
+three benchmark conditions comparable and prevents control runs from faking
+remem runtime evidence.
+
+Task failure and runtime contract failure are separate outcome dimensions. A
+coding task can pass while the remem runtime contract fails; that run must set
+`task_success=true` and `runtime_contract_failure=true` instead of hiding the
+contract failure inside a generic task failure reason.
 
 Reports must not include full prompts containing secrets, provider API keys, or
 private user memory content.
