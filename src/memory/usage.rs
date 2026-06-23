@@ -20,6 +20,8 @@ pub(crate) struct MemoryUsageFeedbackStats {
     pub parsed_events: i64,
     pub matched_events: i64,
     pub inserted_events: i64,
+    pub no_citation_events: i64,
+    pub unmatched_events: i64,
     pub usage_events: i64,
 }
 
@@ -271,18 +273,36 @@ pub(crate) fn query_memory_usage_feedback_stats(
             parsed_events: 0,
             matched_events: 0,
             inserted_events: 0,
+            no_citation_events: 0,
+            unmatched_events: 0,
             usage_events: 0,
         });
     }
 
-    let (parsed_events, matched_events, inserted_events): (i64, i64, i64) = conn.query_row(
+    let (parsed_events, matched_events, inserted_events, no_citation_events, unmatched_events): (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = conn.query_row(
         "SELECT
              COALESCE(SUM(CASE WHEN citation_line_present > 0 THEN 1 ELSE 0 END), 0),
              COALESCE(SUM(CASE WHEN matched_count > 0 THEN 1 ELSE 0 END), 0),
-             COALESCE(SUM(CASE WHEN inserted_count > 0 THEN 1 ELSE 0 END), 0)
+             COALESCE(SUM(CASE WHEN inserted_count > 0 THEN 1 ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN status = 'no_citation' THEN 1 ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN status = 'unmatched' THEN 1 ELSE 0 END), 0)
          FROM memory_citation_events",
         [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
     )?;
     let usage_events = count_memory_usage_table_rows(conn, "memory_usage_events")?;
     Ok(MemoryUsageFeedbackStats {
@@ -290,6 +310,8 @@ pub(crate) fn query_memory_usage_feedback_stats(
         parsed_events,
         matched_events,
         inserted_events,
+        no_citation_events,
+        unmatched_events,
         usage_events,
     })
 }

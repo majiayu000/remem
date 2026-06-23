@@ -286,12 +286,14 @@ pub(super) fn check_memory_usage_feedback(conn: Option<&Connection>) -> Check {
     }
 
     let detail = format!(
-        "{} citation event(s), parsed={} ({:.1}%), matched={} ({:.1}% of parsed), usage_events={}",
+        "{} citation event(s), parsed={} ({:.1}%), matched={} ({:.1}% of parsed), no_citation={}, unmatched={}, usage_events={}",
         stats.total_events,
         stats.parsed_events,
         percent(stats.parsed_events, stats.total_events),
         stats.matched_events,
         percent(stats.matched_events, stats.parsed_events),
+        stats.no_citation_events,
+        stats.unmatched_events,
         stats.usage_events
     );
     if stats.inserted_events == 0 {

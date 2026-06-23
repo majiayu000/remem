@@ -7,7 +7,7 @@ mod suppression_filter;
 #[cfg(test)]
 mod tests;
 mod text;
-mod usage_rank;
+pub(crate) mod usage_rank;
 mod weights;
 
 pub use explain::{
