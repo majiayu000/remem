@@ -2,7 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${REMEM_API_SMOKE_PORT:-5567}"
+if [[ -n "${REMEM_API_SMOKE_PORT:-}" ]]; then
+  PORT="$REMEM_API_SMOKE_PORT"
+else
+  PORT="$(
+    python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+  )"
+fi
 BASE_URL="http://127.0.0.1:${PORT}"
 TMP_BASE="$(mktemp -d "${TMPDIR:-/tmp}/remem-api-smoke.XXXXXX")"
 SERVER_PID=""
