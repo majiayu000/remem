@@ -102,11 +102,37 @@ With audit flags, excluded items must include `reason`:
 
 Default output must include:
 
-- active profile summary from `load_active_summary`;
-- active claims from `list_claims` default filters;
+- the applicable active profile summary only when its provenance is clear;
+- active normal-sensitivity claims selected by a snapshot-specific owner query;
 - summary source ids;
 - no personal, sensitive, restricted, suppressed, deleted, expired, or future
   claims.
+
+Do not call `list_claims` without snapshot-specific filtering for the default
+export. The existing default list path is broader than this contract because it
+excludes `restricted` sensitivity but may still return `personal` or `sensitive`
+active claims.
+
+Snapshot owner selection must mirror the context the user is auditing:
+
+- include `owner_scope='user' AND owner_key='user:default'`;
+- include `owner_scope='repo'` rows for the current project path or normalized
+  project key;
+- include workspace/session owners only when explicitly requested;
+- exclude unrelated repo, workspace, session, tool, and domain owners by
+  default.
+
+Profile summaries require provenance labels:
+
+- deterministic summaries with non-empty source ids may appear as
+  `provenance: source-supported`;
+- manually edited summaries using `model='manual-edit'` must appear as
+  `provenance: manual-edit` and show the preserved source ids separately;
+- summaries with empty source ids must appear as `provenance: unsourced` and
+  must not be presented as source-supported profile truth;
+- if a manual edit changes text beyond the cited sources, the snapshot must
+  still render it as manual user-authored summary text, not as a claim backed by
+  the old source ids.
 
 Audit output may include excluded rows only when explicitly requested:
 
@@ -114,7 +140,13 @@ Audit output may include excluded rows only when explicitly requested:
   reason labels;
 - `--include-sensitive` includes personal, sensitive, and restricted claims with
   sensitivity labels;
-- deleted rows should require a separate explicit flag if included later.
+- `--include-inactive` includes expired, future, stale, and superseded claims
+  with validity/status labels;
+- `--include-deleted` includes soft-deleted rows with `status:deleted` labels.
+
+Deleted rows must never appear in default output. If a future hard-purge command
+physically removes deleted rows, the snapshot should report that purged rows are
+not recoverable instead of implying they are hidden.
 
 ### Renderer
 
@@ -212,16 +244,23 @@ Keep the existing positive constraints:
 
 ### Store and Review Behavior
 
-The first implementation may enforce the blocklist at prompt level plus existing
-review gates. If parser/store enforcement is added, it must be deterministic:
+The first implementation must enforce the highest-risk blocklist items
+deterministically, not only through prompt wording. Prompt guidance is useful,
+but it is not fail-closed once a syntactically valid model response reaches the
+candidate store.
 
-- credentials/secrets should be rejected or redacted before candidate insert;
-- role-play/hypothetical markers should block auto-promotion;
+Required insertion/promotion gates:
+
+- credentials/secrets must be rejected or redacted before candidate insert,
+  including `claim_text` and `source_preview`;
+- role-play, fiction, joke, sarcasm, and hypothetical markers must force
+  `auto_promote=false` or an equivalent deterministic block before promotion;
 - third-party claims should require pending review unless explicitly phrased as
   the user's own durable context.
 
 Do not widen auto-promotion. Auto-promotion remains limited to normal,
-low-risk, high-confidence, explicit user-authored preferences or constraints.
+low-risk, high-confidence, explicit user-authored preferences or constraints
+that also pass the deterministic blocklist gates.
 
 ### Tests
 
@@ -229,8 +268,10 @@ Required tests:
 
 - prompt JSON contains the full non-retention blocklist;
 - malformed model output still creates no candidates;
-- secret-like candidate text cannot auto-promote;
-- joke/role-play/hypothetical candidate text cannot auto-promote;
+- secret-like candidate text and previews are rejected or redacted before
+  insertion;
+- joke/role-play/hypothetical candidate text cannot auto-promote even when the
+  model labels it low-risk;
 - third-party candidate text stays pending review unless explicitly approved by
   review flow.
 

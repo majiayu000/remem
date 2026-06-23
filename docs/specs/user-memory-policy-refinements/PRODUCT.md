@@ -78,14 +78,15 @@ The snapshot should answer:
 - What active user claims exist?
 - What profile summary is currently active?
 - Which source ids support the summary?
-- Which claims are suppressed, deleted, expired, future, or restricted, when an
-  audit flag requests them?
+- Which claims are suppressed, inactive, deleted, expired, future, or
+  restricted, when an audit flag requests them?
 - When was the snapshot generated?
 
-The default snapshot excludes inactive, suppressed, deleted, expired, future,
-personal, sensitive, and restricted claims. Audit flags may include excluded
-items, but the file must clearly label why each item is excluded from default
-use.
+The default snapshot includes only active, normal-sensitivity claims that are
+eligible for default user-context use in the current project. It excludes
+inactive, suppressed, deleted, expired, future, personal, sensitive, and
+restricted claims. Audit flags may include excluded items, but the file must
+clearly label why each item is excluded from default use.
 
 The snapshot is a derived artifact. Editing it must not mutate remem state in
 the first implementation.
@@ -147,9 +148,10 @@ Acceptance:
 - The output has stable sections and stable ordering.
 - The output clearly says it is a derived snapshot.
 - The default output contains only active, default-eligible user context.
-- `--include-sensitive` and `--include-suppressed` are explicit audit modes.
-- Tests prove suppressed, deleted, expired, future, personal, sensitive, and
-  restricted claims are excluded by default.
+- `--include-sensitive`, `--include-suppressed`, `--include-inactive`, and
+  `--include-deleted` are explicit audit modes.
+- Tests prove unrelated-owner, suppressed, deleted, expired, future, personal,
+  sensitive, and restricted claims are excluded by default.
 
 ### Natural Usage
 
@@ -173,7 +175,8 @@ Acceptance:
 - The extraction prompt contains the non-retention blocklist.
 - Parser/store behavior still fails closed on malformed output.
 - Tests prove the prompt includes the blocklist.
-- Tests prove blocklisted example candidates cannot auto-promote.
+- Tests prove secret-like blocklisted content is rejected or redacted before
+  candidate insertion, and role-play/hypothetical examples cannot auto-promote.
 
 ## Rollout
 
