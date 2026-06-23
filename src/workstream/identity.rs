@@ -163,7 +163,7 @@ fn meaningful_tokens(normalized: &str) -> Vec<&str> {
     normalized
         .split_whitespace()
         .filter(|token| !BROAD_TOKENS.contains(token))
-        .filter(|token| token.chars().any(|ch| !ch.is_ascii()) || token.len() >= 4)
+        .filter(|token| !token.is_ascii() || token.len() >= 4)
         .collect()
 }
 
