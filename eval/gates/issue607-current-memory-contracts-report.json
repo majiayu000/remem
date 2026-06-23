@@ -1,0 +1,2567 @@
+{
+  "version": "2026-06-23",
+  "baseline_version": "2026-06-23",
+  "thresholds_version": "2026-06-23",
+  "summary": {
+    "metrics_checked": 70,
+    "passed": true
+  },
+  "deltas": [
+    {
+      "metric": "current_memory_contracts.all_checks",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.current_state.ambiguous",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.current_state.current",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.current_state.no_current",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.current_state.unresolved_conflict",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.injection.audit_abstained",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.injection.audit_dropped",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.injection.audit_injected",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.staleness.error",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.staleness.tracked",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.staleness.untracked",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.staleness.verify_before_trust",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.temporal.as_of_fact_retrieval",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.temporal.expired_fact_exclusion",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.temporal.invalidated_fact_exclusion",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.usage.citation_event_matched",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "current_memory_contracts.usage.usage_event_linked_to_injection_item",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.all_checks",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.candidate_precision",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.candidate_recall",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.forbidden_candidate_exclusion",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.forbidden_observation_exclusion",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.observation_precision",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.observation_recall",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "extraction.over_save_quality",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.overall.evidence_recall_at_k",
+      "baseline": 0.75,
+      "current": 0.7560975609756098,
+      "delta": 0.0060975609756097615,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.overall.hit_at_k",
+      "baseline": 0.75,
+      "current": 0.7560975609756098,
+      "delta": 0.0060975609756097615,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.overall.mrr_at_10",
+      "baseline": 0.6708333333333333,
+      "current": 0.7560975609756098,
+      "delta": 0.08526422764227648,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.overall.ndcg_at_10",
+      "baseline": 0.6569288667454157,
+      "current": 0.7560975609756098,
+      "delta": 0.09916869423019403,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.overall.precision_at_k",
+      "baseline": 0.2250000000000001,
+      "current": 0.6991869918699187,
+      "delta": 0.47418699186991864,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.overall.recall_at_k",
+      "baseline": 0.75,
+      "current": 0.7560975609756098,
+      "delta": 0.0060975609756097615,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.scored_queries",
+      "baseline": 41.0,
+      "current": 41.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.abstention.abstention_pass_rate",
+      "baseline": 0.0,
+      "current": 1.0,
+      "delta": 1.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.failure_lesson.evidence_recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.failure_lesson.hit_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.failure_lesson.mrr_at_10",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.failure_lesson.ndcg_at_10",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.failure_lesson.precision_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.failure_lesson.recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.knowledge_update.evidence_recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.knowledge_update.hit_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.knowledge_update.mrr_at_10",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.knowledge_update.ndcg_at_10",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.knowledge_update.precision_at_k",
+      "baseline": 0.25,
+      "current": 0.8,
+      "delta": 0.55,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.knowledge_update.recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.multi_hop.evidence_recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.multi_hop.hit_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.multi_hop.mrr_at_10",
+      "baseline": 0.95,
+      "current": 1.0,
+      "delta": 0.050000000000000044,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.multi_hop.ndcg_at_10",
+      "baseline": 0.827715466981663,
+      "current": 1.0,
+      "delta": 0.17228453301833702,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.multi_hop.precision_at_k",
+      "baseline": 0.4,
+      "current": 0.9666666666666666,
+      "delta": 0.5666666666666665,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.multi_hop.recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.paraphrase.evidence_recall_at_k",
+      "baseline": 0.0,
+      "current": 0.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.paraphrase.hit_at_k",
+      "baseline": 0.0,
+      "current": 0.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.paraphrase.mrr_at_10",
+      "baseline": 0.0,
+      "current": 0.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.paraphrase.ndcg_at_10",
+      "baseline": 0.0,
+      "current": 0.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.paraphrase.precision_at_k",
+      "baseline": 0.0,
+      "current": 0.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.paraphrase.recall_at_k",
+      "baseline": 0.0,
+      "current": 0.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.temporal.evidence_recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.temporal.hit_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.temporal.mrr_at_10",
+      "baseline": 0.7333333333333333,
+      "current": 1.0,
+      "delta": 0.2666666666666667,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.temporal.ndcg_at_10",
+      "baseline": 0.8,
+      "current": 1.0,
+      "delta": 0.19999999999999996,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.temporal.precision_at_k",
+      "baseline": 0.25,
+      "current": 1.0,
+      "delta": 0.75,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.slice.temporal.recall_at_k",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "golden.total_queries",
+      "baseline": 51.0,
+      "current": 51.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "injection.abstention_false_positive_bound",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "injection.all_checks",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "injection.expected_memory_recall",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "injection.forbidden_memory_exclusion",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "injection.user_prompt_submit_abstention_false_positive_bound",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    },
+    {
+      "metric": "injection.user_prompt_submit_memory_recall",
+      "baseline": 1.0,
+      "current": 1.0,
+      "delta": 0.0,
+      "max_drop": 0.0,
+      "status": "pass"
+    }
+  ],
+  "failures": [],
+  "source_reports": {
+    "current_memory_contracts": {
+      "cases": [
+        {
+          "actual": "status=current current=Some(101)",
+          "category": "current_state",
+          "expected": "status=current and current id=101",
+          "id": "current",
+          "pass": true
+        },
+        {
+          "actual": "status=no_current current=None",
+          "category": "current_state",
+          "expected": "status=no_current with no current answer",
+          "id": "no_current",
+          "pass": true
+        },
+        {
+          "actual": "status=unresolved_conflict conflicts=1",
+          "category": "current_state",
+          "expected": "status=unresolved_conflict with one conflict",
+          "id": "unresolved_conflict",
+          "pass": true
+        },
+        {
+          "actual": "status=ambiguous matches=2",
+          "category": "current_state",
+          "expected": "status=ambiguous with repo and user matches",
+          "id": "ambiguous",
+          "pass": true
+        },
+        {
+          "actual": "production",
+          "category": "temporal",
+          "expected": "current facts exclude invalidated",
+          "id": "invalidated_fact_exclusion",
+          "pass": true
+        },
+        {
+          "actual": "production",
+          "category": "temporal",
+          "expected": "current facts exclude expired",
+          "id": "expired_fact_exclusion",
+          "pass": true
+        },
+        {
+          "actual": "status=current current=Some(501) facts=staging",
+          "category": "temporal",
+          "expected": "as_of=150 returns historical staging fact",
+          "id": "as_of_fact_retrieval",
+          "pass": true
+        },
+        {
+          "actual": "untracked",
+          "category": "staleness",
+          "expected": "source_anchor=untracked",
+          "id": "untracked",
+          "pass": true
+        },
+        {
+          "actual": "tracked",
+          "category": "staleness",
+          "expected": "source_anchor=tracked",
+          "id": "tracked",
+          "pass": true
+        },
+        {
+          "actual": "verify-before-trust",
+          "category": "staleness",
+          "expected": "source_anchor=verify-before-trust",
+          "id": "verify_before_trust",
+          "pass": true
+        },
+        {
+          "actual": "error",
+          "category": "staleness",
+          "expected": "source_anchor=error",
+          "id": "error",
+          "pass": true
+        },
+        {
+          "actual": "injected=1 item_id=1",
+          "category": "injection",
+          "expected": "context injection audit has injected row",
+          "id": "audit_injected",
+          "pass": true
+        },
+        {
+          "actual": "dropped=1",
+          "category": "injection",
+          "expected": "context injection audit has dropped row",
+          "id": "audit_dropped",
+          "pass": true
+        },
+        {
+          "actual": "abstained=1",
+          "category": "injection",
+          "expected": "context injection audit has abstained row",
+          "id": "audit_abstained",
+          "pass": true
+        },
+        {
+          "actual": "report matched=1 inserted=1 status=Some(\"matched\")",
+          "category": "usage",
+          "expected": "stop citation event status=matched",
+          "id": "citation_event_matched",
+          "pass": true
+        },
+        {
+          "actual": "linked_usage_events=1",
+          "category": "usage",
+          "expected": "usage event references injected context item",
+          "id": "usage_event_linked_to_injection_item",
+          "pass": true
+        }
+      ],
+      "failing_examples": [],
+      "metadata": {
+        "corpus": "builtin-current-memory-contracts-v1",
+        "host": "claude-code",
+        "project": "/tmp/remem-current-contract-eval/repo",
+        "real_db_touched": false,
+        "scenarios": 16,
+        "storage": "in-memory sqlite with production migrations"
+      },
+      "metrics": {
+        "all_checks_passed": true,
+        "current_state": {
+          "ambiguous": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "current": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "no_current": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "unresolved_conflict": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          }
+        },
+        "injection": {
+          "audit_abstained": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "audit_dropped": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "audit_injected": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          }
+        },
+        "staleness": {
+          "error": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "tracked": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "untracked": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "verify_before_trust": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          }
+        },
+        "temporal": {
+          "as_of_fact_retrieval": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "expired_fact_exclusion": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "invalidated_fact_exclusion": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          }
+        },
+        "usage": {
+          "citation_event_matched": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          },
+          "usage_event_linked_to_injection_item": {
+            "passed": 1,
+            "rate": 1.0,
+            "total": 1
+          }
+        }
+      }
+    },
+    "golden": {
+      "abstention_passed": 10,
+      "abstention_queries": 10,
+      "by_category": {
+        "abstention": {
+          "abstention_passed": 10,
+          "abstention_queries": 10,
+          "metrics": null,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 3.628292,
+          "retrieval_latency_p95_ms": 4.881749999999999,
+          "scored_queries": 0,
+          "total_queries": 10
+        },
+        "knowledge_update": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 4.96475,
+          "retrieval_latency_p95_ms": 5.522666,
+          "scored_queries": 10,
+          "total_queries": 10
+        },
+        "multi_hop": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 5.776916,
+          "retrieval_latency_p95_ms": 6.199792,
+          "scored_queries": 10,
+          "total_queries": 10
+        },
+        "retrieval": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 11,
+            "evidence_recall_at_k": 0.09090909090909091,
+            "hit_at_k": 0.09090909090909091,
+            "mrr_at_10": 0.09090909090909091,
+            "ndcg_at_10": 0.09090909090909091,
+            "precision_at_k": 0.09090909090909091,
+            "recall_at_k": 0.09090909090909091
+          },
+          "query_tokens_per_query": 8.454545454545455,
+          "retrieval_latency_p50_ms": 3.408709,
+          "retrieval_latency_p95_ms": 7.6775,
+          "scored_queries": 11,
+          "total_queries": 11
+        },
+        "temporal": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 4.953166,
+          "retrieval_latency_p95_ms": 5.387709,
+          "scored_queries": 10,
+          "total_queries": 10
+        }
+      },
+      "by_slice": {
+        "abstention": {
+          "abstention_passed": 10,
+          "abstention_queries": 10,
+          "metrics": null,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 3.628292,
+          "retrieval_latency_p95_ms": 4.881749999999999,
+          "scored_queries": 0,
+          "total_queries": 10
+        },
+        "failure_lesson": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 1,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 19.0,
+          "retrieval_latency_p50_ms": 7.6775,
+          "retrieval_latency_p95_ms": 7.6775,
+          "scored_queries": 1,
+          "total_queries": 1
+        },
+        "knowledge_update": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 4.96475,
+          "retrieval_latency_p95_ms": 5.522666,
+          "scored_queries": 10,
+          "total_queries": 10
+        },
+        "multi_hop": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 5.776916,
+          "retrieval_latency_p95_ms": 6.199792,
+          "scored_queries": 10,
+          "total_queries": 10
+        },
+        "paraphrase": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 3.408709,
+          "retrieval_latency_p95_ms": 4.995542,
+          "scored_queries": 10,
+          "total_queries": 10
+        },
+        "temporal": {
+          "abstention_passed": 0,
+          "abstention_queries": 0,
+          "metrics": {
+            "count": 10,
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 4.953166,
+          "retrieval_latency_p95_ms": 5.387709,
+          "scored_queries": 10,
+          "total_queries": 10
+        }
+      },
+      "description": "Synthetic golden retrieval dataset for remem. Fictional project/entity names prevent pretraining leakage; slice labels drive per-slice metrics.",
+      "evaluation_layers": {
+        "answer_generation": {
+          "description": "answer generation is intentionally excluded from golden retrieval eval",
+          "status": "not_run"
+        },
+        "llm_judge": {
+          "description": "LLM judging is intentionally excluded from deterministic golden eval",
+          "status": "not_run"
+        },
+        "retrieval": {
+          "description": "fixed golden retrieval metrics: Hit@K, Recall@K, MRR, nDCG, evidence recall",
+          "status": "deterministic"
+        }
+      },
+      "k": 5,
+      "overall": {
+        "count": 41,
+        "evidence_recall_at_k": 0.7560975609756098,
+        "hit_at_k": 0.7560975609756098,
+        "mrr_at_10": 0.7560975609756098,
+        "ndcg_at_10": 0.7560975609756098,
+        "precision_at_k": 0.6991869918699187,
+        "recall_at_k": 0.7560975609756098
+      },
+      "queries": [
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-01",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Mira Vale controls violet rail allowance for Project KestrelNook.",
+              "title_contains": null,
+              "topic_key": "kestrelnook-violet-rail-allowance"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "owner mauve locomotive ration",
+          "query_tokens": 8,
+          "result_count": 0,
+          "retrieval_latency_ms": 4.995542,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-02",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Toma Reed owns orange dock shutdown window for Project LumenQuay.",
+              "title_contains": null,
+              "topic_key": "lumenquay-orange-dock-window"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "keeper amber harbor curfew",
+          "query_tokens": 7,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.408709,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-03",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Nia Sol runs gray grove pruning protocol for Project CinderBloom.",
+              "title_contains": null,
+              "topic_key": "cinderbloom-gray-grove-pruning"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "executor silver orchard cleanse",
+          "query_tokens": 8,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.010208,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-04",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Oren Pike stores blue kiln inspection notes in Project BrindleForge.",
+              "title_contains": null,
+              "topic_key": "brindleforge-blue-kiln-inspection"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "where azure furnace audit",
+          "query_tokens": 7,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.078292,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-05",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Ivo Lane manages red archive allowance for Project VellumSpire.",
+              "title_contains": null,
+              "topic_key": "vellumspire-red-archive-allowance"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "holder crimson library quota",
+          "query_tokens": 7,
+          "result_count": 0,
+          "retrieval_latency_ms": 2.620584,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-06",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Sana Holt guards green span revert plan for Project HollowSpan.",
+              "title_contains": null,
+              "topic_key": "hollowspan-green-span-revert"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "custodian emerald bridge rollback",
+          "query_tokens": 9,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.5796669999999997,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-07",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Pax Rune coordinates white ravine handoff for Project PaleRavine.",
+              "title_contains": null,
+              "topic_key": "paleravine-white-ravine-handoff"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "lead ivory canyon relay",
+          "query_tokens": 6,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.2901670000000003,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-08",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Lina Moss controls copper oven alert for Project CopperOven.",
+              "title_contains": null,
+              "topic_key": "copperoven-copper-oven-alert"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "owner bronze bakery alarm",
+          "query_tokens": 7,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.2365839999999997,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-09",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Miko Ash maintains cyan ward schedule for Project CyanWard.",
+              "title_contains": null,
+              "topic_key": "cyanward-cyan-ward-schedule"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "keeper teal clinic roster",
+          "query_tokens": 7,
+          "result_count": 0,
+          "retrieval_latency_ms": 4.304333,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "paraphrase-10",
+          "matched_refs": 0,
+          "metrics": {
+            "evidence_recall_at_k": 0.0,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "ndcg_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0
+          },
+          "missing_evidence_refs": [
+            {
+              "branch": null,
+              "memory_id": null,
+              "memory_type": "decision",
+              "project": null,
+              "scope": null,
+              "text_contains": "Vera Knox owns purple observatory authorization for Project VioletDome.",
+              "title_contains": null,
+              "topic_key": "violetdome-purple-observatory-authorization"
+            }
+          ],
+          "missing_relevant_ids": [],
+          "query": "handler plum telescope permit",
+          "query_tokens": 8,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.5756249999999996,
+          "retrieved_ids": [],
+          "slice": "paraphrase",
+          "status": "MISS"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-01",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.5,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current NebulaLatch quorum for Project kestrelnook?",
+          "query_tokens": 13,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.18225,
+          "retrieved_ids": [
+            11,
+            21
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-02",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current HarborMint signer for Project lumenquay?",
+          "query_tokens": 12,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.869167,
+          "retrieved_ids": [
+            12
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-03",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current GroveCache shard for Project cinderbloom?",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.594958,
+          "retrieved_ids": [
+            13
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-04",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current KilnGuard threshold for Project brindleforge?",
+          "query_tokens": 14,
+          "result_count": 1,
+          "retrieval_latency_ms": 5.522666,
+          "retrieved_ids": [
+            14
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-05",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current ArchiveFox retention for Project vellumspire?",
+          "query_tokens": 14,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.999375000000001,
+          "retrieved_ids": [
+            15
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-06",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.5,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current SpanDrift owner for Project hollowspan?",
+          "query_tokens": 12,
+          "result_count": 2,
+          "retrieval_latency_ms": 4.70575,
+          "retrieved_ids": [
+            16,
+            41
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-07",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current RavineRelay region for Project paleravine?",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.6043330000000005,
+          "retrieved_ids": [
+            17
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-08",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.5,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current OvenBell route for Project copperoven?",
+          "query_tokens": 12,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.188917,
+          "retrieved_ids": [
+            18,
+            28
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-09",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.5,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current WardRoster source for Project cyanward?",
+          "query_tokens": 12,
+          "result_count": 2,
+          "retrieval_latency_ms": 4.928042,
+          "retrieved_ids": [
+            19,
+            29
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "knowledge_update",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "knowledge-update-10",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Current DomePermit approver for Project violetdome?",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.96475,
+          "retrieved_ids": [
+            20
+          ],
+          "slice": "knowledge_update",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-01",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "latest NightJar deployment for Project kestrelnook",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.556,
+          "retrieved_ids": [
+            21
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-02",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "before HarborMint freeze for Project lumenquay",
+          "query_tokens": 12,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.953166,
+          "retrieved_ids": [
+            22
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-03",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "after GroveCache rotation for Project cinderbloom",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.500166,
+          "retrieved_ids": [
+            23
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-04",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "during KilnGuard audit week for Project brindleforge",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 5.23825,
+          "retrieved_ids": [
+            24
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-05",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "latest ArchiveFox cleanup for Project vellumspire",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.648125,
+          "retrieved_ids": [
+            25
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-06",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "before SpanDrift cutover for Project hollowspan",
+          "query_tokens": 12,
+          "result_count": 1,
+          "retrieval_latency_ms": 5.314834,
+          "retrieved_ids": [
+            26
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-07",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "after RavineRelay incident for Project paleravine",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.819375,
+          "retrieved_ids": [
+            27
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-08",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "during OvenBell maintenance for Project copperoven",
+          "query_tokens": 13,
+          "result_count": 1,
+          "retrieval_latency_ms": 5.387709,
+          "retrieved_ids": [
+            28
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-09",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "latest WardRoster import for Project cyanward",
+          "query_tokens": 12,
+          "result_count": 1,
+          "retrieval_latency_ms": 4.444209,
+          "retrieved_ids": [
+            29
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "temporal",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "temporal-10",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "after DomePermit review for Project violetdome",
+          "query_tokens": 12,
+          "result_count": 1,
+          "retrieval_latency_ms": 5.071542,
+          "retrieved_ids": [
+            30
+          ],
+          "slice": "temporal",
+          "status": "HIT"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-01",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Has Project KestrelNook migrated NebulaLatch to Oracle Cloud?",
+          "query_tokens": 16,
+          "result_count": 0,
+          "retrieval_latency_ms": 4.881749999999999,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-02",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "What is the HarborMint password rotation secret?",
+          "query_tokens": 12,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.628292,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-03",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which production customer paid for GroveCache premium?",
+          "query_tokens": 14,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.886,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-04",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Show the KilnGuard private signing key.",
+          "query_tokens": 10,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.318917,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-05",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Did ArchiveFox replace remem with Cassandra?",
+          "query_tokens": 11,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.641584,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-06",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "What is the SpanDrift payroll token?",
+          "query_tokens": 9,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.378583,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-07",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which RavineRelay medical record was exported?",
+          "query_tokens": 12,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.600708,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-08",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Has OvenBell switched to MongoDB-only storage?",
+          "query_tokens": 12,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.3805419999999997,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-09",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "What is the WardRoster user credit card number?",
+          "query_tokens": 12,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.423625,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "abstention",
+          "expected_refs": 0,
+          "expected_relevant_ids": [],
+          "id": "abstention-10",
+          "matched_refs": 0,
+          "metrics": null,
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Did DomePermit delete all audit logs yesterday?",
+          "query_tokens": 12,
+          "result_count": 0,
+          "retrieval_latency_ms": 3.883042,
+          "retrieved_ids": [],
+          "slice": "abstention",
+          "status": "PASS"
+        },
+        {
+          "category": "retrieval",
+          "expected_refs": 1,
+          "expected_relevant_ids": [],
+          "id": "failure-lesson-01",
+          "matched_refs": 1,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "third identical cargo check failure stop editing challenge hypothesis lesson",
+          "query_tokens": 19,
+          "result_count": 1,
+          "retrieval_latency_ms": 7.6775,
+          "retrieved_ids": [
+            52
+          ],
+          "slice": "failure_lesson",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-01",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 0.6666666666666666,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles NebulaLatch through its owning team in Project kestrelnook?",
+          "query_tokens": 20,
+          "result_count": 3,
+          "retrieval_latency_ms": 6.199792,
+          "retrieved_ids": [
+            31,
+            32,
+            21
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-02",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles HarborMint through its owning team in Project lumenquay?",
+          "query_tokens": 19,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.8328750000000005,
+          "retrieved_ids": [
+            33,
+            34
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-03",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles GroveCache through its owning team in Project cinderbloom?",
+          "query_tokens": 20,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.822417,
+          "retrieved_ids": [
+            35,
+            36
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-04",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles KilnGuard through its owning team in Project brindleforge?",
+          "query_tokens": 20,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.401625,
+          "retrieved_ids": [
+            37,
+            38
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-05",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles ArchiveFox through its owning team in Project vellumspire?",
+          "query_tokens": 20,
+          "result_count": 2,
+          "retrieval_latency_ms": 6.171916,
+          "retrieved_ids": [
+            39,
+            40
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-06",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles SpanDrift through its owning team in Project hollowspan?",
+          "query_tokens": 19,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.656167,
+          "retrieved_ids": [
+            41,
+            42
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-07",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles RavineRelay through its owning team in Project paleravine?",
+          "query_tokens": 20,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.776916,
+          "retrieved_ids": [
+            43,
+            44
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-08",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles OvenBell through its owning team in Project copperoven?",
+          "query_tokens": 19,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.296791000000001,
+          "retrieved_ids": [
+            45,
+            46
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-09",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles WardRoster through its owning team in Project cyanward?",
+          "query_tokens": 19,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.574875,
+          "retrieved_ids": [
+            47,
+            48
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        },
+        {
+          "category": "multi_hop",
+          "expected_refs": 2,
+          "expected_relevant_ids": [],
+          "id": "multi-hop-10",
+          "matched_refs": 2,
+          "metrics": {
+            "evidence_recall_at_k": 1.0,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "ndcg_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0
+          },
+          "missing_evidence_refs": [],
+          "missing_relevant_ids": [],
+          "query": "Which pager handles DomePermit through its owning team in Project violetdome?",
+          "query_tokens": 20,
+          "result_count": 2,
+          "retrieval_latency_ms": 5.487375,
+          "retrieved_ids": [
+            49,
+            50
+          ],
+          "slice": "multi_hop",
+          "status": "HIT"
+        }
+      ],
+      "rank_k": 10,
+      "scored_queries": 41,
+      "skipped_queries": 0,
+      "total_queries": 51,
+      "version": "2.0"
+    },
+    "injection": {
+      "cases": [
+        {
+          "expectation": "expected",
+          "id": "1",
+          "matched": true,
+          "title": "Migration locking fix",
+          "topic_key": "inject-migration-locking"
+        },
+        {
+          "expectation": "expected",
+          "id": "2",
+          "matched": true,
+          "title": "API token handling decision",
+          "topic_key": "inject-api-token-handling"
+        },
+        {
+          "expectation": "expected",
+          "id": "8",
+          "matched": true,
+          "title": "Stale source anchor decision",
+          "topic_key": "inject-stale-source-anchor"
+        },
+        {
+          "expectation": "forbidden",
+          "id": "3",
+          "matched": true,
+          "title": "Feature branch wasm snapshot",
+          "topic_key": "inject-branch-mismatch"
+        },
+        {
+          "expectation": "forbidden",
+          "id": "4",
+          "matched": true,
+          "title": "Other project migration shortcut",
+          "topic_key": "inject-cross-project"
+        },
+        {
+          "expectation": "forbidden",
+          "id": "5",
+          "matched": true,
+          "title": "Deleted project advice",
+          "topic_key": "inject-deleted-advice"
+        }
+      ],
+      "failing_examples": [],
+      "metadata": {
+        "boundary": "context::render_context_output",
+        "branch": "main",
+        "core_count": 4,
+        "corpus": "builtin-context-injection-v2",
+        "data_dir": "/var/folders/h2/29bv07g91nqd40ybjj_vb6nm0000gn/T/remem-injection-eval-59108-1782200156334139000",
+        "data_dir_kept": false,
+        "host": "codex-cli",
+        "index_count": 0,
+        "lesson_count": 0,
+        "memories_loaded": 4,
+        "output_chars": 1485,
+        "preference_count": 0,
+        "project": "/tmp/remem-injection-eval/repo",
+        "real_db_touched": false,
+        "session_count": 0,
+        "storage": "temporary sqlite",
+        "truncated": false,
+        "workstream_count": 0
+      },
+      "metrics": {
+        "abstention_false_positive_bound": {
+          "passed": 1,
+          "rate": 1.0,
+          "total": 1
+        },
+        "all_checks_passed": true,
+        "expected_memory_recall": {
+          "passed": 3,
+          "rate": 1.0,
+          "total": 3
+        },
+        "forbidden_memory_exclusion": {
+          "passed": 3,
+          "rate": 1.0,
+          "total": 3
+        },
+        "stale_anchor_labeling": {
+          "passed": 1,
+          "rate": 1.0,
+          "total": 1
+        },
+        "user_prompt_submit_abstention_false_positive_bound": {
+          "passed": 1,
+          "rate": 1.0,
+          "total": 1
+        },
+        "user_prompt_submit_memory_recall": {
+          "passed": 1,
+          "rate": 1.0,
+          "total": 1
+        }
+      }
+    },
+    "extraction": {
+      "cases": [
+        {
+          "candidate_request_sha256": "a21e45990a9f9a11b49107714b0e2b0f644e6709eb617ddbca7837a503c76f3d",
+          "forbidden_candidates": [],
+          "forbidden_observations": [],
+          "id": "build-fix-loop-guard",
+          "missing_expected_candidates": [],
+          "missing_expected_observations": [],
+          "observation_request_sha256": "ded254888675feba15e8cc2fda35d5a29a81f8f4b248d4ce257e84cb02834c9f",
+          "over_saved_predictions": 0,
+          "pass": true,
+          "predicted_candidates": [
+            {
+              "index": 0,
+              "memory_type": "lesson",
+              "risk_class": "medium",
+              "scope": "project",
+              "text": "After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again.",
+              "topic_key": "build-fix-loop-guard"
+            }
+          ],
+          "predicted_observations": [
+            {
+              "confidence": 0.91,
+              "index": 0,
+              "observation_type": "decision",
+              "text": "After three consecutive failed build fixes on the same problem, stop and challenge the hypothesis before editing again."
+            }
+          ],
+          "transcript_events": 3,
+          "unexpected_candidates": [],
+          "unexpected_observations": []
+        },
+        {
+          "candidate_request_sha256": "c885dc5134cd6e9cf944bcb6cc341432b925c2a1a3a6101b36d2fe78721e28ee",
+          "forbidden_candidates": [],
+          "forbidden_observations": [],
+          "id": "automatic-capture-primary",
+          "missing_expected_candidates": [],
+          "missing_expected_observations": [],
+          "observation_request_sha256": "024b14719614bda0fed7abba0096cadfd171ee52c2c54d8bc89c80b48da7e552",
+          "over_saved_predictions": 0,
+          "pass": true,
+          "predicted_candidates": [
+            {
+              "index": 0,
+              "memory_type": "architecture",
+              "risk_class": "medium",
+              "scope": "project",
+              "text": "Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are supplemental.",
+              "topic_key": "automatic-capture-primary"
+            }
+          ],
+          "predicted_observations": [
+            {
+              "confidence": 0.95,
+              "index": 0,
+              "observation_type": "decision",
+              "text": "Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are only supplemental."
+            }
+          ],
+          "transcript_events": 2,
+          "unexpected_candidates": [],
+          "unexpected_observations": []
+        }
+      ],
+      "failing_examples": [],
+      "metadata": {
+        "cases": 2,
+        "corpus": "eval/extraction/corpus.json",
+        "corpus_version": "2026-06-12",
+        "description": "Deterministic extraction-quality corpus for observation and memory-candidate parser outputs.",
+        "transcript_events": 5
+      },
+      "metrics": {
+        "all_checks_passed": true,
+        "candidate_precision": {
+          "passed": 2,
+          "rate": 1.0,
+          "total": 2
+        },
+        "candidate_recall": {
+          "passed": 2,
+          "rate": 1.0,
+          "total": 2
+        },
+        "forbidden_candidate_exclusion": {
+          "passed": 2,
+          "rate": 1.0,
+          "total": 2
+        },
+        "forbidden_observation_exclusion": {
+          "passed": 2,
+          "rate": 1.0,
+          "total": 2
+        },
+        "observation_precision": {
+          "passed": 2,
+          "rate": 1.0,
+          "total": 2
+        },
+        "observation_recall": {
+          "passed": 2,
+          "rate": 1.0,
+          "total": 2
+        },
+        "over_save_penalty": 0.0,
+        "over_saved_predictions": 0,
+        "total_predictions": 4
+      }
+    }
+  }
+}
