@@ -122,6 +122,8 @@ fn full_migration_on_empty_db() -> Result<()> {
         "user_context_candidates",
         "memory_suppressions",
         "memory_feedback",
+        "workstream_aliases",
+        "workstream_alias_sources",
     ] {
         let exists: bool = conn
             .query_row(
@@ -168,6 +170,10 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_user_context_candidates_inbox",
         "idx_user_context_candidates_user_recent",
         "idx_user_context_candidates_dedupe",
+        "idx_workstream_aliases_lookup",
+        "idx_workstream_alias_sources_alias",
+        "idx_workstreams_identity_key",
+        "idx_workstreams_merged_into",
     ] {
         let exists: bool = conn
             .query_row(
@@ -216,6 +222,55 @@ fn memory_usage_migration_adds_columns_with_defaults() -> Result<()> {
         )?;
         assert!(exists, "{name} should exist");
     }
+    Ok(())
+}
+
+#[test]
+fn workstream_identity_migration_backfills_alias_history() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    for migration in &MIGRATIONS[..52] {
+        conn.execute_batch(migration.sql)?;
+    }
+
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          source_project, target_project, owner_scope, owner_key)
+         VALUES ('test/proj', 'agent-workflow Skill 生命周期工作流', 'active',
+                 1700000000, 1700000100, 'test/proj', 'test/proj', 'repo', 'test/proj')",
+        [],
+    )?;
+    conn.execute_batch(MIGRATIONS[52].sql)?;
+
+    let identity_key: String = conn.query_row(
+        "SELECT identity_key FROM workstreams WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(identity_key, "ws_1");
+
+    let alias: (String, String, i64, i64) = conn.query_row(
+        "SELECT title, normalized_title, first_seen_epoch, last_seen_epoch
+         FROM workstream_aliases WHERE workstream_id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(alias.0, "agent-workflow Skill 生命周期工作流");
+    assert_eq!(alias.1, "agent workflow skill 生命周期工作流");
+    assert_eq!(alias.2, 1700000000);
+    assert_eq!(alias.3, 1700000100);
+
+    let source: (String, Option<String>, i64) = conn.query_row(
+        "SELECT was.source, was.memory_session_id, was.source_workstream_id
+         FROM workstream_alias_sources was
+         JOIN workstream_aliases wa ON wa.id = was.alias_id
+         WHERE wa.workstream_id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(source, ("migration".to_string(), None, 1));
+
     Ok(())
 }
 

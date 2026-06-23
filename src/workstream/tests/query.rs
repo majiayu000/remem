@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use super::support::setup_workstream_schema;
 use crate::workstream::{
     find_matching_workstream, query_active_workstreams, query_workstreams, upsert_workstream,
-    ParsedWorkStream, WorkStreamStatus,
+    upsert_workstream_with_match, ParsedWorkStream, WorkStreamStatus,
 };
 
 #[test]
@@ -100,6 +100,151 @@ fn test_no_match_creates_new() {
 
     let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
     assert_eq!(workstreams.len(), 2);
+}
+
+#[test]
+fn same_session_rename_chain_keeps_one_canonical_workstream() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    for title in [
+        "agent-workflow Skill 生命周期工作流",
+        "flowguard Skill 生命周期工作流",
+        "flowguard / run-guard Skill 生命周期工作流",
+    ] {
+        let parsed = ParsedWorkStream {
+            title: Some(title.to_string()),
+            progress: Some(format!("progress for {title}")),
+            next_action: None,
+            blockers: None,
+            is_completed: false,
+        };
+        upsert_workstream(&conn, "test/proj", "mem-spellbook", &parsed).unwrap();
+    }
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(
+        workstreams[0].title,
+        "flowguard / run-guard Skill 生命周期工作流"
+    );
+
+    let alias_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workstream_aliases WHERE workstream_id = ?1",
+            params![workstreams[0].id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(alias_count, 3);
+
+    let session_links: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workstream_sessions WHERE workstream_id = ?1",
+            params![workstreams[0].id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(session_links, 1);
+}
+
+#[test]
+fn same_session_unrelated_title_does_not_update_prior_workstream() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    for title in [
+        "agent-workflow Skill 生命周期工作流",
+        "release notes cleanup",
+    ] {
+        let parsed = ParsedWorkStream {
+            title: Some(title.to_string()),
+            progress: None,
+            next_action: None,
+            blockers: None,
+            is_completed: false,
+        };
+        upsert_workstream(&conn, "test/proj", "mem-shared", &parsed).unwrap();
+    }
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 2);
+}
+
+#[test]
+fn alias_exact_match_updates_canonical_workstream_from_later_session() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let original = ParsedWorkStream {
+        title: Some("agent-workflow Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let canonical_id = upsert_workstream(&conn, "test/proj", "mem-first", &original).unwrap();
+    let renamed = ParsedWorkStream {
+        title: Some("flowguard Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    upsert_workstream(&conn, "test/proj", "mem-first", &renamed).unwrap();
+
+    let later = ParsedWorkStream {
+        title: Some("agent-workflow Skill 生命周期工作流".to_string()),
+        progress: Some("later session reused old title".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let result = upsert_workstream_with_match(&conn, "test/proj", "mem-later", &later).unwrap();
+
+    assert_eq!(result.id, canonical_id);
+    assert_eq!(result.match_reason, "alias_exact");
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(
+        workstreams[0].progress.as_deref(),
+        Some("later session reused old title")
+    );
+}
+
+#[test]
+fn merged_duplicate_rows_are_hidden_from_active_queries_and_matchers() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let canonical = ParsedWorkStream {
+        title: Some("Canonical Task".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let canonical_id = upsert_workstream(&conn, "test/proj", "mem-a", &canonical).unwrap();
+    let duplicate = ParsedWorkStream {
+        title: Some("Duplicate Task".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let duplicate_id = upsert_workstream(&conn, "test/proj", "mem-b", &duplicate).unwrap();
+    conn.execute(
+        "UPDATE workstreams SET merged_into_workstream_id = ?1 WHERE id = ?2",
+        params![canonical_id, duplicate_id],
+    )
+    .unwrap();
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(workstreams[0].id, canonical_id);
+
+    let found = find_matching_workstream(&conn, "test/proj", "Duplicate Task").unwrap();
+    assert!(found.is_none());
 }
 
 #[test]

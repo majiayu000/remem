@@ -73,6 +73,24 @@ pub(in crate::cli) enum WorkstreamAction {
         #[arg(long)]
         json: bool,
     },
+    /// Merge duplicate workstreams into a canonical workstream.
+    Merge {
+        /// Project path that owns the workstreams.
+        #[arg(long, short)]
+        project: String,
+        /// Canonical workstream ID to keep visible.
+        #[arg(long, value_name = "CANONICAL_ID")]
+        into: i64,
+        /// Duplicate workstream ID(s) to hide and link to the canonical row.
+        #[arg(value_name = "DUPLICATE_ID", required = true)]
+        duplicates: Vec<i64>,
+        /// Confirm the mutation after reviewing id, project, and duplicates.
+        #[arg(long)]
+        confirm: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

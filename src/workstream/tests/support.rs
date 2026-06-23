@@ -24,7 +24,9 @@ pub(super) fn setup_workstream_schema(conn: &Connection) {
             context_class TEXT,
             expires_at_epoch INTEGER,
             valid_from_epoch INTEGER,
-            valid_to_epoch INTEGER
+            valid_to_epoch INTEGER,
+            identity_key TEXT,
+            merged_into_workstream_id INTEGER
         );
         CREATE TABLE workstream_sessions (
             id INTEGER PRIMARY KEY,
@@ -32,6 +34,25 @@ pub(super) fn setup_workstream_schema(conn: &Connection) {
             memory_session_id TEXT NOT NULL,
             linked_at_epoch INTEGER NOT NULL,
             UNIQUE(workstream_id, memory_session_id)
+        );
+        CREATE TABLE workstream_aliases (
+            id INTEGER PRIMARY KEY,
+            workstream_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            normalized_title TEXT NOT NULL,
+            first_seen_epoch INTEGER NOT NULL,
+            last_seen_epoch INTEGER NOT NULL,
+            UNIQUE(workstream_id, normalized_title)
+        );
+        CREATE TABLE workstream_alias_sources (
+            id INTEGER PRIMARY KEY,
+            alias_id INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            memory_session_id TEXT,
+            source_workstream_id INTEGER,
+            observed_title TEXT NOT NULL,
+            first_seen_epoch INTEGER NOT NULL,
+            last_seen_epoch INTEGER NOT NULL
         );",
     )
     .unwrap();
