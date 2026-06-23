@@ -167,26 +167,54 @@ fn query_context_injection_metrics(
 fn query_usage_feedback_metrics(conn: &Connection) -> Result<UsageFeedbackObservabilityMetrics> {
     let citation_table_exists = table_exists(conn, "memory_citation_events")?;
     let usage_table_exists = table_exists(conn, "memory_usage_events")?;
-    if !citation_table_exists || !usage_table_exists {
-        return Ok(UsageFeedbackObservabilityMetrics {
-            citation_table_exists,
-            usage_table_exists,
-            ..UsageFeedbackObservabilityMetrics::default()
-        });
-    }
-
-    let stats = crate::memory::usage::query_memory_usage_feedback_stats(conn)?;
-    Ok(UsageFeedbackObservabilityMetrics {
+    let mut metrics = UsageFeedbackObservabilityMetrics {
         citation_table_exists,
         usage_table_exists,
-        citation_events: stats.total_events,
-        citation_line_present_events: stats.parsed_events,
-        matched_events: stats.matched_events,
-        inserted_events: stats.inserted_events,
-        no_citation_events: stats.total_events.saturating_sub(stats.parsed_events),
-        unmatched_events: stats.total_events.saturating_sub(stats.matched_events),
-        usage_events: stats.usage_events,
-    })
+        ..UsageFeedbackObservabilityMetrics::default()
+    };
+
+    if citation_table_exists {
+        let (
+            citation_events,
+            citation_line_present_events,
+            matched_events,
+            inserted_events,
+            no_citation_events,
+            unmatched_events,
+        ) = conn.query_row(
+            "SELECT
+                 COUNT(*),
+                 COALESCE(SUM(CASE WHEN citation_line_present > 0 THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN status = 'matched' THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN inserted_count > 0 THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN status = 'no_citation' THEN 1 ELSE 0 END), 0),
+                 COALESCE(SUM(CASE WHEN status = 'unmatched' THEN 1 ELSE 0 END), 0)
+             FROM memory_citation_events",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        metrics.citation_events = citation_events;
+        metrics.citation_line_present_events = citation_line_present_events;
+        metrics.matched_events = matched_events;
+        metrics.inserted_events = inserted_events;
+        metrics.no_citation_events = no_citation_events;
+        metrics.unmatched_events = unmatched_events;
+    }
+
+    if usage_table_exists {
+        metrics.usage_events = table_count(conn, "memory_usage_events")?;
+    }
+
+    Ok(metrics)
 }
 
 fn query_temporal_fact_metrics(conn: &Connection) -> Result<TemporalFactObservabilityMetrics> {

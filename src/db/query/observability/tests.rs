@@ -225,7 +225,9 @@ fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> 
           parsed_count, matched_count, inserted_count, status, created_at_epoch)
          VALUES
          ('codex-cli', 'proj', 'sess', 'stop_citation', 'm1', 1, 1, 1, 1, 'recorded', 70),
-         ('codex-cli', 'proj', 'sess', 'stop_citation', 'm2', 0, 0, 0, 0, 'recorded', 71);
+         ('codex-cli', 'proj', 'sess', 'stop_citation', 'm2', 1, 0, 0, 0, 'recorded', 71);
+         UPDATE memory_citation_events SET status = 'matched' WHERE message_hash = 'm1';
+         UPDATE memory_citation_events SET status = 'no_citation' WHERE message_hash = 'm2';
          INSERT INTO memory_usage_events
          (citation_event_id, host, project, session_id, source, message_hash, memory_id,
           context_injection_item_id, created_at_epoch)
@@ -249,7 +251,13 @@ fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> 
     assert_eq!(report.metrics.context_injection.output_emit_count, 2);
     assert_eq!(report.metrics.context_injection.item_rows, 2);
     assert_eq!(report.metrics.usage_feedback.citation_events, 2);
+    assert_eq!(
+        report.metrics.usage_feedback.citation_line_present_events,
+        2
+    );
     assert_eq!(report.metrics.usage_feedback.no_citation_events, 1);
+    assert_eq!(report.metrics.usage_feedback.unmatched_events, 0);
+    assert_eq!(report.metrics.usage_feedback.matched_events, 1);
     assert_eq!(report.metrics.usage_feedback.usage_events, 1);
     assert_eq!(report.metrics.temporal_facts.total_rows, 1);
     assert_eq!(report.metrics.temporal_facts.retrieval_eligible_rows, 1);
@@ -258,6 +266,40 @@ fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> 
         .checks
         .iter()
         .any(|check| check.code == "promotion_funnel_all_pending_review"));
+    Ok(())
+}
+
+#[test]
+fn observability_report_keeps_citation_counts_when_usage_table_is_missing() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_schema(&conn)?;
+    conn.execute_batch(
+        "DROP TABLE memory_usage_events;
+         INSERT INTO memory_citation_events
+         (host, project, session_id, source, message_hash, citation_line_present,
+          parsed_count, matched_count, inserted_count, status, created_at_epoch)
+         VALUES
+         ('codex-cli', 'proj', 'sess', 'stop_citation', 'm1', 1, 1, 0, 0, 'unmatched', 70),
+         ('codex-cli', 'proj', 'sess', 'stop_citation', 'm2', 1, 0, 0, 0, 'no_citation', 71);",
+    )?;
+
+    let report = query_observability_report(&conn, 100)?;
+
+    assert!(report.metrics.usage_feedback.citation_table_exists);
+    assert!(!report.metrics.usage_feedback.usage_table_exists);
+    assert_eq!(report.metrics.usage_feedback.citation_events, 2);
+    assert_eq!(
+        report.metrics.usage_feedback.citation_line_present_events,
+        2
+    );
+    assert_eq!(report.metrics.usage_feedback.no_citation_events, 1);
+    assert_eq!(report.metrics.usage_feedback.unmatched_events, 1);
+    assert_eq!(report.metrics.usage_feedback.usage_events, 0);
+    assert!(report.checks.iter().any(|check| {
+        check.code == "memory_usage_feedback_missing"
+            && check.metrics.get("citation_table_exists") == Some(&1)
+            && check.metrics.get("usage_table_exists") == Some(&0)
+    }));
     Ok(())
 }
 
