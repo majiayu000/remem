@@ -1,3 +1,4 @@
+mod observability;
 mod queries;
 mod search;
 mod shared;
@@ -6,6 +7,7 @@ mod status_spend;
 mod summaries;
 mod timeline;
 
+pub use observability::*;
 pub use queries::*;
 pub use search::*;
 pub use shared::{collect_rows, push_project_filter};

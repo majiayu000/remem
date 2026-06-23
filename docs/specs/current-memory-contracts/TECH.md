@@ -182,7 +182,13 @@ The structured observability payload should include:
 - queues and worker state;
 - warnings with stable codes and suggested actions.
 
-`doctor --json` should expose structured fields beyond string details:
+`doctor --json` exposes this contract through a root `observability` object.
+That object carries its own schema version, `spec_path` pointing back to this
+file, stable check codes, severity, scope, metrics, and actions. Human doctor
+output remains a convenience view; machine consumers should read
+`observability` instead of scraping check details.
+
+Each observability check uses the following shape:
 
 ```json
 {

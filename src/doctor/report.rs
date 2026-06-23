@@ -291,11 +291,31 @@ fn write_json<W: Write>(
                 duration_ms: c.duration_ms,
             })
             .collect(),
+        observability: build_observability_report(),
     };
 
     let serialized = serde_json::to_string(&report)?;
     writeln!(out, "{serialized}")?;
     Ok(())
+}
+
+fn build_observability_report() -> crate::db::ObservabilityReport {
+    let generated_at_epoch = chrono::Utc::now().timestamp();
+    if !crate::db::db_path().exists() {
+        return crate::db::ObservabilityReport::unavailable(
+            generated_at_epoch,
+            "remem database does not exist",
+        );
+    }
+    match crate::db::open_db_read_only() {
+        Ok(conn) => crate::db::query_observability_report(&conn, generated_at_epoch)
+            .unwrap_or_else(|error| {
+                crate::db::ObservabilityReport::unavailable(generated_at_epoch, error.to_string())
+            }),
+        Err(error) => {
+            crate::db::ObservabilityReport::unavailable(generated_at_epoch, error.to_string())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -363,7 +383,7 @@ mod tests {
         write_json(&mut buf, &checks, outcome, 123).unwrap();
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-        assert_eq!(parsed["schema_version"], 2);
+        assert_eq!(parsed["schema_version"], 3);
         assert_eq!(
             parsed["binary_schema_version"],
             crate::migrate::latest_schema_version()
@@ -372,6 +392,13 @@ mod tests {
         assert_eq!(parsed["fails"], 1);
         assert_eq!(parsed["warns"], 0);
         assert_eq!(parsed["elapsed_ms"], 123);
+        assert_eq!(parsed["observability"]["schema_version"], 1);
+        assert_eq!(
+            parsed["observability"]["spec_path"],
+            "docs/specs/current-memory-contracts/TECH.md"
+        );
+        assert!(parsed["observability"]["checks"].is_array());
+        assert!(parsed["observability"]["metrics"]["capture"]["captured_events"].is_i64());
         let checks_json = parsed["checks"].as_array().unwrap();
         assert_eq!(checks_json.len(), 2);
         assert_eq!(checks_json[0]["name"], "Database");

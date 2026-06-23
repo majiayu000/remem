@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::db::ObservabilityReport;
+
 /// One probe in `remem doctor`. `name` is `&'static str` because every probe
 /// is statically defined in this crate.
 pub(crate) struct Check {
@@ -88,7 +90,7 @@ impl DoctorOutcome {
 
 /// Current JSON contract version. Bump when removing or renaming a field, or
 /// when adding mandatory observability fields to every check/root report.
-pub(crate) const REPORT_SCHEMA_VERSION: u32 = 2;
+pub(crate) const REPORT_SCHEMA_VERSION: u32 = 3;
 
 /// JSON-stable shape for `remem doctor --json`. Field names and the
 /// `status` tag are part of the CLI's machine-readable contract; do not
@@ -111,4 +113,5 @@ pub(crate) struct ReportJson<'a> {
     pub warns: usize,
     pub elapsed_ms: u64,
     pub checks: Vec<CheckJson<'a>>,
+    pub observability: ObservabilityReport,
 }
