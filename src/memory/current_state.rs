@@ -1,128 +1,19 @@
+use std::collections::HashMap;
+
 use anyhow::{bail, Context, Result};
 use rusqlite::{types::ToSql, Connection, OptionalExtension};
-use serde::Serialize;
 
-use crate::memory::{self, Memory};
+use crate::memory::{self, Memory, MemoryStalenessLabel};
+use types::CurrentStateMemoryRefParts;
+
+mod types;
+
+pub use types::{
+    CurrentStateAnswer, CurrentStateFact, CurrentStateKeySummary, CurrentStateMemoryRef,
+    CurrentStateRequest, CurrentStateResult, CurrentStateWhy,
+};
 
 const HISTORY_LIMIT: i64 = 10;
-
-#[derive(Debug, Clone, Default)]
-pub struct CurrentStateRequest {
-    pub state_key: String,
-    pub project: Option<String>,
-    pub owner_scope: Option<String>,
-    pub owner_key: Option<String>,
-    pub memory_type: Option<String>,
-    pub as_of_epoch: Option<i64>,
-    pub include_history: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CurrentStateResult {
-    pub status: String,
-    pub state_key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub as_of_epoch: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<CurrentStateKeySummary>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub matches: Vec<CurrentStateKeySummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current: Option<CurrentStateAnswer>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub conflicts: Vec<CurrentStateMemoryRef>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub history: Vec<CurrentStateMemoryRef>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub facts: Vec<CurrentStateFact>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub why: Vec<CurrentStateWhy>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CurrentStateKeySummary {
-    pub id: i64,
-    pub owner_scope: String,
-    pub owner_key: String,
-    pub memory_type: String,
-    pub state_key: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub state_label: Option<String>,
-    pub state_status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_memory_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CurrentStateAnswer {
-    pub id: i64,
-    pub title: String,
-    pub text: String,
-    pub memory_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub topic_key: Option<String>,
-    pub project: String,
-    pub scope: String,
-    pub status: String,
-    pub updated_at_epoch: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CurrentStateMemoryRef {
-    pub id: i64,
-    pub title: String,
-    pub memory_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub topic_key: Option<String>,
-    pub project: String,
-    pub status: String,
-    pub updated_at_epoch: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub relation: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub evidence_event_ids: Vec<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_candidate_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_operation_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CurrentStateWhy {
-    pub edge_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_memory_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub to_memory_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub evidence_event_ids: Vec<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_candidate_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_operation_id: Option<i64>,
-    pub created_at_epoch: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CurrentStateFact {
-    pub id: i64,
-    pub subject: String,
-    pub predicate: String,
-    pub object: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub valid_from_epoch: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub valid_to_epoch: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_memory_id: Option<i64>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub source_event_ids: Vec<i64>,
-    pub status: String,
-}
 
 pub fn current_state(conn: &Connection, req: &CurrentStateRequest) -> Result<CurrentStateResult> {
     let state_key = req.state_key.trim();
@@ -328,16 +219,32 @@ fn resolve_current_state(
     }
 
     let now_epoch = chrono::Utc::now().timestamp();
-    let current = state
+    let current_memory = state
         .current_memory_id
         .map(|id| load_active_memory(conn, id, now_epoch))
         .transpose()?
-        .flatten()
-        .map(CurrentStateAnswer::from_memory);
-    let conflicts = match current.as_ref() {
+        .flatten();
+    let conflict_parts = match current_memory.as_ref() {
         Some(current) => load_active_state_key_rivals(conn, state.id, current.id, now_epoch)?,
         None => load_active_state_key_rivals(conn, state.id, -1, now_epoch)?,
     };
+    let mut memories = Vec::new();
+    if let Some(memory) = &current_memory {
+        memories.push(memory.clone());
+    }
+    memories.extend(conflict_parts.iter().map(|parts| parts.memory.clone()));
+    let staleness_labels = staleness_labels_for_memories(conn, &memories, now_epoch)?;
+    let current = current_memory.map(|memory| {
+        let staleness = staleness_label_for_memory(&staleness_labels, &memory, now_epoch);
+        CurrentStateAnswer::from_memory(memory, staleness)
+    });
+    let conflicts = conflict_parts
+        .into_iter()
+        .map(|parts| {
+            let staleness = staleness_label_for_memory(&staleness_labels, &parts.memory, now_epoch);
+            CurrentStateMemoryRef::from_parts(parts, staleness)
+        })
+        .collect::<Vec<_>>();
 
     let status = if !conflicts.is_empty() {
         "unresolved_conflict"
@@ -358,22 +265,35 @@ fn resolve_as_of_state(
     Option<CurrentStateAnswer>,
     Vec<CurrentStateMemoryRef>,
 )> {
+    let now_epoch = chrono::Utc::now().timestamp();
     let candidates = load_memories_as_of(conn, state_key_id, as_of_epoch)?;
     match candidates.as_slice() {
         [] => Ok(("no_current".to_string(), None, Vec::new())),
-        [memory] => Ok((
-            "current".to_string(),
-            Some(CurrentStateAnswer::from_memory(memory.clone())),
-            Vec::new(),
-        )),
-        _ => Ok((
-            "unresolved_conflict".to_string(),
-            None,
-            candidates
-                .into_iter()
-                .map(CurrentStateMemoryRef::from_memory)
-                .collect(),
-        )),
+        [memory] => {
+            let staleness_labels =
+                staleness_labels_for_memories(conn, std::slice::from_ref(memory), now_epoch)?;
+            let staleness = staleness_label_for_memory(&staleness_labels, memory, now_epoch);
+            Ok((
+                "current".to_string(),
+                Some(CurrentStateAnswer::from_memory(memory.clone(), staleness)),
+                Vec::new(),
+            ))
+        }
+        _ => {
+            let staleness_labels = staleness_labels_for_memories(conn, &candidates, now_epoch)?;
+            Ok((
+                "unresolved_conflict".to_string(),
+                None,
+                candidates
+                    .into_iter()
+                    .map(|memory| {
+                        let staleness =
+                            staleness_label_for_memory(&staleness_labels, &memory, now_epoch);
+                        CurrentStateMemoryRef::from_memory(memory, staleness)
+                    })
+                    .collect(),
+            ))
+        }
     }
 }
 
@@ -404,7 +324,7 @@ fn load_active_state_key_rivals(
     state_key_id: i64,
     current_memory_id: i64,
     now_epoch: i64,
-) -> Result<Vec<CurrentStateMemoryRef>> {
+) -> Result<Vec<CurrentStateMemoryRefParts>> {
     let sql = format!(
         "SELECT {}, e.edge_type, e.reason, e.evidence_event_ids,
                 e.source_candidate_id, e.source_operation_id
@@ -436,7 +356,7 @@ fn load_active_state_key_rivals(
         rusqlite::params![state_key_id, current_memory_id, now_epoch, HISTORY_LIMIT],
         |row| {
             let memory = memory::map_memory_row_pub(row)?;
-            ref_from_edge_row(memory, row, 13)
+            ref_parts_from_edge_row(memory, row, 13)
         },
     )?;
     crate::db::query::collect_rows(rows).context("load active current-state rivals")
@@ -514,9 +434,22 @@ fn load_history(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(refs.as_slice(), |row| {
         let memory = memory::map_memory_row_pub(row)?;
-        ref_from_edge_row(memory, row, 13)
+        ref_parts_from_edge_row(memory, row, 13)
     })?;
-    crate::db::query::collect_rows(rows).context("load current-state history")
+    let parts = crate::db::query::collect_rows(rows).context("load current-state history")?;
+    let now_epoch = chrono::Utc::now().timestamp();
+    let memories = parts
+        .iter()
+        .map(|parts| parts.memory.clone())
+        .collect::<Vec<_>>();
+    let staleness_labels = staleness_labels_for_memories(conn, &memories, now_epoch)?;
+    Ok(parts
+        .into_iter()
+        .map(|parts| {
+            let staleness = staleness_label_for_memory(&staleness_labels, &parts.memory, now_epoch);
+            CurrentStateMemoryRef::from_parts(parts, staleness)
+        })
+        .collect())
 }
 
 fn load_why(
@@ -648,20 +581,14 @@ fn load_facts_for_memory(
     crate::db::query::collect_rows(rows).context("load current-state facts")
 }
 
-fn ref_from_edge_row(
+fn ref_parts_from_edge_row(
     memory: Memory,
     row: &rusqlite::Row<'_>,
     offset: usize,
-) -> rusqlite::Result<CurrentStateMemoryRef> {
+) -> rusqlite::Result<CurrentStateMemoryRefParts> {
     let evidence_json: Option<String> = row.get(offset + 2)?;
-    Ok(CurrentStateMemoryRef {
-        id: memory.id,
-        title: memory.title,
-        memory_type: memory.memory_type,
-        topic_key: memory.topic_key,
-        project: memory.project,
-        status: memory.status,
-        updated_at_epoch: memory.updated_at_epoch,
+    Ok(CurrentStateMemoryRefParts {
+        memory,
         relation: row.get(offset)?,
         reason: row.get(offset + 1)?,
         evidence_event_ids: parse_evidence_event_ids(evidence_json, offset + 2)?,
@@ -692,39 +619,27 @@ fn prefixed_memory_cols(alias: &str) -> String {
         .join(", ")
 }
 
-impl CurrentStateAnswer {
-    fn from_memory(memory: Memory) -> Self {
-        Self {
-            id: memory.id,
-            title: memory.title,
-            text: memory.text,
-            memory_type: memory.memory_type,
-            topic_key: memory.topic_key,
-            project: memory.project,
-            scope: memory.scope,
-            status: memory.status,
-            updated_at_epoch: memory.updated_at_epoch,
-        }
-    }
+fn staleness_labels_for_memories(
+    conn: &Connection,
+    memories: &[Memory],
+    now_epoch: i64,
+) -> Result<HashMap<i64, MemoryStalenessLabel>> {
+    memory::memory_staleness_labels_for_memories_lossy(conn, memories, now_epoch, |_id, _err| {})
+        .context("load current-state staleness labels")
 }
 
-impl CurrentStateMemoryRef {
-    fn from_memory(memory: Memory) -> Self {
-        Self {
-            id: memory.id,
-            title: memory.title,
-            memory_type: memory.memory_type,
-            topic_key: memory.topic_key,
-            project: memory.project,
-            status: memory.status,
-            updated_at_epoch: memory.updated_at_epoch,
-            relation: None,
-            reason: None,
-            evidence_event_ids: Vec::new(),
-            source_candidate_id: None,
-            source_operation_id: None,
-        }
-    }
+fn staleness_label_for_memory(
+    labels: &HashMap<i64, MemoryStalenessLabel>,
+    memory: &Memory,
+    now_epoch: i64,
+) -> MemoryStalenessLabel {
+    labels.get(&memory.id).cloned().unwrap_or_else(|| {
+        memory::memory_staleness_error_label(
+            memory,
+            now_epoch,
+            format!("missing staleness label for memory id={}", memory.id),
+        )
+    })
 }
 
 #[cfg(test)]

@@ -57,6 +57,16 @@ fn sample_raw() -> RawMessage {
     }
 }
 
+fn sample_staleness(source_anchor: &str) -> crate::memory::MemoryStalenessLabel {
+    crate::memory::MemoryStalenessLabel {
+        status: "active".to_string(),
+        age: "fresh",
+        source_anchor: source_anchor.to_string(),
+        label: format!("status=active; staleness=fresh; source_anchor={source_anchor}"),
+        error: None,
+    }
+}
+
 fn sample_explain() -> SearchExplain {
     SearchExplain {
         query: "needle".to_string(),
@@ -94,13 +104,7 @@ fn sample_explain() -> SearchExplain {
             project: "proj".to_string(),
             scope: "project".to_string(),
             visibility: "project-local".to_string(),
-            staleness: crate::memory::MemoryStalenessLabel {
-                status: "active".to_string(),
-                age: "fresh",
-                source_anchor: "untracked".to_string(),
-                label: "status=active; staleness=fresh; source_anchor=untracked".to_string(),
-                error: None,
-            },
+            staleness: sample_staleness("untracked"),
             contributions: vec![ChannelContribution {
                 channel: "fts".to_string(),
                 rank: 1,
@@ -269,6 +273,7 @@ fn cli_current_state_render_is_compact_and_shows_conflict_evidence() {
             scope: "project".to_string(),
             status: "active".to_string(),
             updated_at_epoch: 0,
+            staleness: sample_staleness("tracked"),
         }),
         conflicts: vec![CurrentStateMemoryRef {
             id: 3,
@@ -278,6 +283,7 @@ fn cli_current_state_render_is_compact_and_shows_conflict_evidence() {
             project: "/repo".to_string(),
             status: "active".to_string(),
             updated_at_epoch: 0,
+            staleness: sample_staleness("verify-before-trust"),
             relation: None,
             reason: Some("operator conflict".to_string()),
             evidence_event_ids: vec![7],
@@ -303,6 +309,8 @@ fn cli_current_state_render_is_compact_and_shows_conflict_evidence() {
     assert!(output.contains("Current state: unresolved_conflict"));
     assert!(output.contains("[#2] Deploy target"));
     assert!(output.contains("[#3] Deploy target conflict"));
+    assert!(output.contains("source_anchor=tracked"));
+    assert!(output.contains("source_anchor=verify-before-trust"));
     assert!(output.contains("evidence=[7]"));
     assert!(!output.contains("Detailed internal rationale"));
 }

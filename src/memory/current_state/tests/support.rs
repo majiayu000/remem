@@ -130,6 +130,68 @@ pub(super) fn set_current_memory(conn: &Connection, current_memory_id: i64) -> R
     Ok(())
 }
 
+pub(super) fn set_memory_source(
+    conn: &Connection,
+    memory_id: i64,
+    session_id: &str,
+    files: &[&str],
+) -> Result<()> {
+    let files_json = serde_json::to_string(files)?;
+    conn.execute(
+        "UPDATE memories
+         SET session_id = ?1, files = ?2, branch = 'main'
+         WHERE id = ?3",
+        params![session_id, files_json, memory_id],
+    )?;
+    Ok(())
+}
+
+pub(super) fn set_memory_files_raw(conn: &Connection, memory_id: i64, files: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE memories
+         SET session_id = 'session-bad-source', files = ?1, branch = 'main'
+         WHERE id = ?2",
+        params![files, memory_id],
+    )?;
+    Ok(())
+}
+
+pub(super) fn link_current_state_commit(
+    conn: &Connection,
+    id: i64,
+    sha: &str,
+    epoch: i64,
+    changed_files: &[&str],
+    memory_session_id: &str,
+) -> Result<()> {
+    insert_current_state_commit(conn, id, sha, epoch, changed_files)?;
+    conn.execute(
+        "INSERT INTO git_commit_sessions
+         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
+         VALUES (?1, ?2, ?3, 'test', ?4)",
+        params![id, format!("content-{id}"), memory_session_id, epoch],
+    )?;
+    Ok(())
+}
+
+pub(super) fn insert_current_state_commit(
+    conn: &Connection,
+    id: i64,
+    sha: &str,
+    epoch: i64,
+    changed_files: &[&str],
+) -> Result<()> {
+    let changed_files = serde_json::to_string(changed_files)?;
+    conn.execute(
+        "INSERT INTO git_commits
+         (id, project, repo_path, sha, short_sha, branch, message,
+          authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch)
+         VALUES (?1, '/repo', '/repo', ?2, ?2, 'main', NULL, ?3, ?4, ?3, ?3)",
+        params![id, sha, epoch, changed_files],
+    )?;
+    Ok(())
+}
+
 pub(super) fn request() -> CurrentStateRequest {
     CurrentStateRequest {
         state_key: "deploy-target".to_string(),
