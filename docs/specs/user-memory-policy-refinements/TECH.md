@@ -1,0 +1,265 @@
+# User Memory Policy Refinements Technical Spec
+
+Status: Proposed current contract
+Date: 2026-06-24
+
+Tracking:
+- Spec/tracking issue: #617
+- Profile Markdown snapshot: #619
+- Usage policy injection rules: #620
+- Automatic extraction blocklist: #618
+
+## Existing Implementation Facts
+
+This spec builds on the current user-context layer:
+
+- `user_context_claims` stores source-attributed user claims with owner scope,
+  claim type, claim key, confidence, sensitivity, status, validity windows, and
+  supersession.
+- `user_context_candidates` stores review-gated automatic extraction output.
+- `user_context_summaries` stores compiled profile summaries and source ids.
+- `memory_suppressions` applies default-read exclusions across memories, user
+  claims, topics, entities, patterns, and summaries.
+- `memory_feedback` records relevance and quality signals without changing
+  ranking by default.
+- `recall_user_context` composes safe profile summaries, active claims, repo
+  memory, explicitly requested current-state keys, workstreams, and recent
+  sessions.
+- Markdown export/import already exists for curated repo memories. This spec
+  adds a user-profile snapshot, not a replacement storage backend.
+
+## Design Rules
+
+- SQLite remains canonical.
+- Markdown profile output is derived and read-only in the first implementation.
+- User-context usage guidance must travel with injected/recalled context.
+- Automatic extraction must name both positive retention criteria and explicit
+  non-retention criteria.
+- Runtime prompt changes must be covered by focused tests.
+- No code path may silently include suppressed, deleted, expired, future,
+  personal, sensitive, or restricted user context in default profile output.
+
+## Phase 1: Profile Markdown Snapshot
+
+### CLI
+
+Preferred command:
+
+```text
+remem user profile export --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive]
+```
+
+Acceptable first slice if command surface should stay smaller:
+
+```text
+remem user summary show --format markdown [--output <path>]
+```
+
+The first implementation should choose one command shape and document it in
+README. If both are supported, they must share one renderer.
+
+### Output Contract
+
+Default Markdown sections:
+
+```markdown
+# remem User Profile Snapshot
+
+Generated: 2026-06-24T00:00:00Z
+Owner: user:user:default
+Project: /path/to/repo
+Source of truth: ~/.remem/remem.db
+Mode: default
+
+## Active Summary
+
+...
+
+## Active Claims
+
+- [claim:123] preference:review-style - Prefer concise code reviews.
+  - sensitivity: normal
+  - source: manual
+  - updated: 2026-06-24T00:00:00Z
+
+## Sources
+
+- summary:45 claim_ids=[123] memory_ids=[456] activity_refs=[...]
+
+## Excluded From Default Use
+
+No excluded items shown. Re-run with audit flags to inspect them.
+```
+
+With audit flags, excluded items must include `reason`:
+
+```markdown
+- [claim:124] identity:location - ...
+  - reason: sensitivity:personal
+```
+
+### Data Selection
+
+Default output must include:
+
+- active profile summary from `load_active_summary`;
+- active claims from `list_claims` default filters;
+- summary source ids;
+- no personal, sensitive, restricted, suppressed, deleted, expired, or future
+  claims.
+
+Audit output may include excluded rows only when explicitly requested:
+
+- `--include-suppressed` includes suppressed and policy-suppressed claims with
+  reason labels;
+- `--include-sensitive` includes personal, sensitive, and restricted claims with
+  sensitivity labels;
+- deleted rows should require a separate explicit flag if included later.
+
+### Renderer
+
+Add a dedicated renderer under `src/user_context/` rather than formatting in CLI
+actions. The renderer should accept a structured request and return a string so
+CLI, REST, or tests can share it.
+
+Recommended module:
+
+```text
+src/user_context/profile_snapshot.rs
+```
+
+The renderer should not open the database itself. It should accept `&Connection`
+and a request struct, matching existing user-context modules.
+
+### Tests
+
+Required tests:
+
+- active summary and active normal claims render in stable order;
+- suppressed/deleted/expired/future/restricted claims are excluded by default;
+- `--include-suppressed` labels suppressed claims and does not make them active;
+- `--include-sensitive` labels personal/sensitive/restricted claims;
+- snapshot output says it is derived and names SQLite as source of truth;
+- CLI `--output` refuses to overwrite an existing file unless a future `--force`
+  flag is added.
+
+## Phase 2: Usage Policy Injection Rules
+
+### Policy Text
+
+Add this guidance to user-context injection or recall output when user context is
+returned to an agent:
+
+```text
+Use user context only when it materially improves the current answer. Prefer
+invisible adaptation over explicit memory narration. Limit explicit memory
+mentions to 0-1 per response. Do not say "I remember you said" or "from previous
+conversations" unless the user is discussing memory, provenance, or correction.
+Do not infer profile facts beyond the cited items. If no user context applies,
+do not invent a profile.
+```
+
+### Integration Points
+
+Add the policy where agents will actually see it:
+
+- SessionStart user-context overlay, if rendered.
+- `remem user recall` human output, when context items are returned.
+- `recall_user_context` MCP response instructions or metadata.
+- REST recall response only if it already carries human-facing guidance. Do not
+  add noisy prose to machine-only JSON unless a structured field is available.
+
+### Tests
+
+Required tests:
+
+- rendered user-context output includes the usage policy once;
+- no-data recall does not include profile claims or invite inference;
+- MCP recall schema remains stable if policy is added as metadata.
+
+## Phase 3: Automatic Extraction Blocklist
+
+### Prompt Contract
+
+Extend `src/user_context/extraction/prompt.rs` quality gates with explicit
+non-retention rules:
+
+```text
+Do not create candidates for temporary state, mood, fatigue, meals, weather, or
+one-off circumstances.
+Do not create candidates for world knowledge, project-independent facts, or
+general technical facts.
+Do not create candidates for third-party details unless the user explicitly
+frames them as relevant to their own durable context.
+Do not create candidates from guesses, jokes, sarcasm, role-play, fiction, or
+hypothetical identities.
+Do not create candidates containing credentials, secrets, API keys, tokens,
+passwords, account numbers, identity documents, or payment data.
+Do not create candidates for illegal, harmful, or clearly false claims.
+Do not create assistant-authored claims about the user unless directly supported
+by cited user-authored events.
+Do not create claims derived from files or external sources without explicit
+user approval.
+```
+
+Keep the existing positive constraints:
+
+- `source_event_ids` must cite loaded events;
+- low risk is only for explicit first-party user preference or constraint
+  statements with normal sensitivity;
+- assistant-authored summaries, inferred behavior, sensitive categories, and
+  speculative statements stay review-gated.
+
+### Store and Review Behavior
+
+The first implementation may enforce the blocklist at prompt level plus existing
+review gates. If parser/store enforcement is added, it must be deterministic:
+
+- credentials/secrets should be rejected or redacted before candidate insert;
+- role-play/hypothetical markers should block auto-promotion;
+- third-party claims should require pending review unless explicitly phrased as
+  the user's own durable context.
+
+Do not widen auto-promotion. Auto-promotion remains limited to normal,
+low-risk, high-confidence, explicit user-authored preferences or constraints.
+
+### Tests
+
+Required tests:
+
+- prompt JSON contains the full non-retention blocklist;
+- malformed model output still creates no candidates;
+- secret-like candidate text cannot auto-promote;
+- joke/role-play/hypothetical candidate text cannot auto-promote;
+- third-party candidate text stays pending review unless explicitly approved by
+  review flow.
+
+## Issue Split
+
+Recommended GitHub issue split:
+
+1. Profile Markdown snapshot.
+2. Usage policy injection rules.
+3. Automatic extraction blocklist.
+
+Do not combine all three in one implementation PR. Each touches a different
+surface and has different verification gates.
+
+## Verification
+
+Documentation-only spec PR:
+
+```bash
+git diff --check
+```
+
+Implementation PRs:
+
+```bash
+cargo fmt --check
+cargo check
+```
+
+Run targeted tests for the touched module first. Run `cargo test` before
+merging changes to extraction, context rendering, MCP behavior, REST behavior,
+or schema.
