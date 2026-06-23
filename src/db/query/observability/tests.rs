@@ -2,7 +2,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::{
-    query_observability_report, CURRENT_MEMORY_CONTRACT_SPEC_PATH, OBSERVABILITY_SCHEMA_VERSION,
+    query_observability_report, CountBucket, CURRENT_MEMORY_CONTRACT_SPEC_PATH,
+    OBSERVABILITY_SCHEMA_VERSION,
 };
 
 fn setup_schema(conn: &Connection) -> Result<()> {
@@ -187,6 +188,14 @@ fn setup_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn bucket_count(buckets: &[CountBucket], value: &str) -> i64 {
+    buckets
+        .iter()
+        .find(|bucket| bucket.value == value)
+        .map(|bucket| bucket.count)
+        .unwrap_or_default()
+}
+
 #[test]
 fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -262,6 +271,16 @@ fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> 
     assert_eq!(report.metrics.temporal_facts.total_rows, 1);
     assert_eq!(report.metrics.temporal_facts.retrieval_eligible_rows, 1);
     assert_eq!(report.metrics.staleness.total_memories, 1);
+    let worker_check = report
+        .checks
+        .iter()
+        .find(|check| check.code == "worker_daemon_not_healthy")
+        .ok_or_else(|| anyhow::anyhow!("missing worker health check"))?;
+    assert_eq!(
+        worker_check.metrics.get("heartbeat_owner_present"),
+        Some(&0)
+    );
+    assert!(!worker_check.metrics.contains_key("heartbeat_age_secs"));
     assert!(report
         .checks
         .iter()
@@ -324,5 +343,106 @@ fn observability_report_warns_on_missing_optional_truth_tables() -> Result<()> {
         .any(|check| check.code == "memory_usage_feedback_missing" && check.severity == "warn"));
     assert!(!report.metrics.context_injection.item_table_exists);
     assert!(!report.metrics.usage_feedback.citation_table_exists);
+    Ok(())
+}
+
+#[test]
+fn staleness_metrics_qualify_state_key_current_filter() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_schema(&conn)?;
+    conn.execute_batch(
+        "INSERT INTO memory_state_keys (id, current_memory_id)
+         VALUES (200, 1);
+         INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope, expires_at_epoch,
+          state_key_id)
+         VALUES
+         (1, NULL, 'proj', NULL, 'Tracked', 'body', 'decision', NULL,
+          10, 20, 'active', NULL, 'project', NULL, 200);",
+    )?;
+
+    let report = query_observability_report(&conn, 100)?;
+
+    assert_eq!(report.metrics.staleness.total_memories, 1);
+    Ok(())
+}
+
+#[test]
+fn no_citation_usage_feedback_is_not_reported_as_unmatched() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_schema(&conn)?;
+    conn.execute_batch(
+        "INSERT INTO memory_citation_events
+         (host, project, session_id, source, message_hash, citation_line_present,
+          parsed_count, matched_count, inserted_count, status, created_at_epoch)
+         VALUES
+         ('codex-cli', 'proj', 'sess', 'stop_citation', 'm1', 0, 0, 0, 0,
+          'no_citation', 70);",
+    )?;
+
+    let report = query_observability_report(&conn, 100)?;
+
+    assert_eq!(report.metrics.usage_feedback.no_citation_events, 1);
+    assert_eq!(report.metrics.usage_feedback.unmatched_events, 0);
+    assert!(!report
+        .checks
+        .iter()
+        .any(|check| check.code == "memory_usage_feedback_no_matches"));
+    Ok(())
+}
+
+#[test]
+fn null_context_staleness_is_counted_as_unknown() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_schema(&conn)?;
+    conn.execute_batch(
+        "INSERT INTO context_injection_items
+         (injection_run_id, host, project, session_id, injection_key, output_mode, decision,
+          item_kind, memory_id, channel, status, drop_reason, title, provenance, staleness,
+          injected_at_epoch)
+         VALUES
+         ('run-1', 'codex-cli', 'proj', 'sess', 'key-a', 'full', 'emit',
+          'memory', 1, 'core', 'injected', NULL, 'Tracked', 'src=memory', NULL, 60);",
+    )?;
+
+    let report = query_observability_report(&conn, 100)?;
+
+    assert_eq!(
+        bucket_count(
+            &report
+                .metrics
+                .context_injection
+                .item_staleness_source_anchors,
+            "unknown",
+        ),
+        1
+    );
+    assert_eq!(
+        bucket_count(
+            &report.metrics.context_injection.item_staleness_ages,
+            "unknown",
+        ),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn captured_events_without_observations_warn_on_promotion_funnel() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_schema(&conn)?;
+    conn.execute_batch(
+        "INSERT INTO captured_events (id, created_at_epoch, inserted_at_epoch)
+         VALUES (1, 30, 30);",
+    )?;
+
+    let report = query_observability_report(&conn, 100)?;
+
+    assert!(report.checks.iter().any(|check| {
+        check.code == "promotion_funnel_no_observations"
+            && check.metrics.get("captured_events") == Some(&1)
+            && check.metrics.get("observations") == Some(&0)
+    }));
     Ok(())
 }

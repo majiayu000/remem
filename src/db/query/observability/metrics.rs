@@ -277,10 +277,10 @@ fn query_staleness_metrics(
         return Ok(StalenessObservabilityMetrics::default());
     }
 
-    let active_filter = memory_current_filter_sql("status", "expires_at_epoch", false);
-    let state_filter = memory_state_key_current_filter_sql("");
+    let active_filter = memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
+    let state_filter = memory_state_key_current_filter_sql("m");
     let sql =
-        format!("SELECT {MEMORY_COLS} FROM memories WHERE {active_filter} AND {state_filter}");
+        format!("SELECT {MEMORY_COLS} FROM memories m WHERE {active_filter} AND {state_filter}");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], map_memory_row_pub)?;
     let memories = collect_rows(rows)?;
@@ -325,10 +325,13 @@ fn grouped_counts(conn: &Connection, table: &str, column: &str) -> Result<Vec<Co
 
 fn grouped_staleness_token_counts(conn: &Connection, token: &str) -> Result<Vec<CountBucket>> {
     let mut stmt = conn.prepare("SELECT staleness FROM context_injection_items")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map([], |row| row.get::<_, Option<String>>(0))?;
     let mut counts = BTreeMap::new();
     for row in rows {
-        let staleness = row?;
+        let Some(staleness) = row? else {
+            increment(&mut counts, "unknown");
+            continue;
+        };
         increment(&mut counts, extract_staleness_token(&staleness, token));
     }
     Ok(buckets(counts))

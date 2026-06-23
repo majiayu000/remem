@@ -17,7 +17,7 @@ pub(super) fn observability_checks(
 ) -> Vec<ObservabilityCheck> {
     let mut checks = Vec::new();
     push_capture_checks(&mut checks, capture);
-    push_promotion_checks(&mut checks, promotion);
+    push_promotion_checks(&mut checks, promotion, capture);
     push_context_checks(&mut checks, context);
     push_usage_checks(&mut checks, usage);
     push_fact_checks(&mut checks, facts);
@@ -53,8 +53,22 @@ fn push_capture_checks(
 fn push_promotion_checks(
     checks: &mut Vec<ObservabilityCheck>,
     metrics: &PromotionObservabilityMetrics,
+    capture: &CaptureObservabilityMetrics,
 ) {
-    if metrics.observations > 0 && metrics.candidates == 0 {
+    if capture.captured_events > 0 && metrics.observations == 0 {
+        checks.push(
+            ObservabilityCheck::new(
+                "promotion_funnel_no_observations",
+                "warn",
+                "promotion",
+                "captured events exist but no observations were produced",
+            )
+            .metric("captured_events", capture.captured_events)
+            .metric("observations", metrics.observations)
+            .action("run `remem worker --once`")
+            .action("inspect extraction logs before expecting memory candidates"),
+        );
+    } else if metrics.observations > 0 && metrics.candidates == 0 {
         checks.push(
             ObservabilityCheck::new(
                 "promotion_funnel_no_candidates",
@@ -129,15 +143,16 @@ fn push_usage_checks(
             )
             .action("run database migrations before reading usage feedback"),
         );
-    } else if metrics.citation_events > 0 && metrics.matched_events == 0 {
+    } else if metrics.unmatched_events > 0 {
         checks.push(
             ObservabilityCheck::new(
                 "memory_usage_feedback_no_matches",
                 "warn",
                 "usage",
-                "citation events exist but none matched injected memories",
+                "citation events referenced memories that were not injected",
             )
             .metric("citation_events", metrics.citation_events)
+            .metric("unmatched_events", metrics.unmatched_events)
             .metric("matched_events", metrics.matched_events)
             .action("verify injected citation ids use the `memory:#<id>` contract"),
         );
@@ -233,19 +248,20 @@ fn push_queue_checks(
 
 fn push_worker_checks(checks: &mut Vec<ObservabilityCheck>, metrics: &WorkerObservabilityMetrics) {
     if !metrics.daemon_healthy {
-        checks.push(
-            ObservabilityCheck::new(
-                "worker_daemon_not_healthy",
-                "info",
-                "worker",
-                "daemon worker heartbeat is missing or stale",
-            )
-            .metric(
-                "heartbeat_age_secs",
-                metrics.heartbeat_age_secs.unwrap_or_default(),
-            )
-            .action("when Stop hooks are installed, they run `remem worker --once`"),
+        let mut check = ObservabilityCheck::new(
+            "worker_daemon_not_healthy",
+            "info",
+            "worker",
+            "daemon worker heartbeat is missing or stale",
+        )
+        .metric(
+            "heartbeat_owner_present",
+            metric_bool(metrics.heartbeat_owner_present),
         );
+        if let Some(heartbeat_age_secs) = metrics.heartbeat_age_secs {
+            check = check.metric("heartbeat_age_secs", heartbeat_age_secs);
+        }
+        checks.push(check.action("when Stop hooks are installed, they run `remem worker --once`"));
     }
 }
 

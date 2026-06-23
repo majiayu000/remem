@@ -59,10 +59,11 @@ pub(crate) fn run_doctor_with_writer<W: Write>(
         Ok(())
     })?;
     let outcome = tally(&checks);
-    let elapsed_ms = duration_ms(started.elapsed());
 
     if opts.json {
-        write_json(out, &checks, outcome, elapsed_ms)?;
+        let observability = build_observability_report();
+        let elapsed_ms = duration_ms(started.elapsed());
+        write_json(out, &checks, outcome, elapsed_ms, observability)?;
     } else if !opts.quiet {
         write_human_summary(out, outcome)?;
     }
@@ -265,6 +266,7 @@ fn write_json<W: Write>(
     checks: &[Check],
     outcome: DoctorOutcome,
     elapsed_ms: u64,
+    observability: crate::db::ObservabilityReport,
 ) -> Result<()> {
     let overall = if outcome.fails > 0 {
         Status::Fail
@@ -291,7 +293,7 @@ fn write_json<W: Write>(
                 duration_ms: c.duration_ms,
             })
             .collect(),
-        observability: build_observability_report(),
+        observability,
     };
 
     let serialized = serde_json::to_string(&report)?;
@@ -324,6 +326,10 @@ mod tests {
 
     fn make(name: &'static str, status: Status, detail: &str) -> Check {
         Check::new(name, status, detail)
+    }
+
+    fn test_observability_report() -> crate::db::ObservabilityReport {
+        crate::db::ObservabilityReport::unavailable(0, "test")
     }
 
     #[test]
@@ -373,14 +379,14 @@ mod tests {
     }
 
     #[test]
-    fn json_output_is_machine_parseable() {
+    fn json_output_is_machine_parseable() -> anyhow::Result<()> {
         let checks = vec![
             make("Database", Status::Ok, "0.1 MB, 0 memories"),
             make("Hooks", Status::Fail, "missing"),
         ];
         let outcome = tally(&checks);
         let mut buf = Vec::new();
-        write_json(&mut buf, &checks, outcome, 123).unwrap();
+        write_json(&mut buf, &checks, outcome, 123, test_observability_report())?;
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(parsed["schema_version"], 3);
@@ -405,22 +411,24 @@ mod tests {
         assert_eq!(checks_json[0]["status"], "ok");
         assert_eq!(checks_json[0]["duration_ms"], 0);
         assert_eq!(checks_json[1]["status"], "fail");
+        Ok(())
     }
 
     #[test]
-    fn json_output_for_all_ok_reports_status_ok_and_zero_counts() {
+    fn json_output_for_all_ok_reports_status_ok_and_zero_counts() -> anyhow::Result<()> {
         let checks = vec![
             make("Binary", Status::Ok, "ok"),
             make("Database", Status::Ok, "ok"),
         ];
         let outcome = tally(&checks);
         let mut buf = Vec::new();
-        write_json(&mut buf, &checks, outcome, 0).unwrap();
+        write_json(&mut buf, &checks, outcome, 0, test_observability_report())?;
         let parsed: serde_json::Value =
             serde_json::from_str(String::from_utf8(buf).unwrap().trim()).unwrap();
         assert_eq!(parsed["status"], "ok");
         assert_eq!(parsed["fails"], 0);
         assert_eq!(parsed["warns"], 0);
+        Ok(())
     }
 
     #[test]
@@ -487,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn json_wins_over_quiet_when_both_set() {
+    fn json_wins_over_quiet_when_both_set() -> anyhow::Result<()> {
         // The contract: --json is the API surface, --quiet only suppresses
         // the human formatter. With both flags the JSON object must still
         // be emitted (otherwise scripts using `remem doctor --json --quiet`
@@ -500,7 +508,7 @@ mod tests {
         let outcome = tally(&checks);
         let mut buf = Vec::new();
         if opts.json {
-            write_json(&mut buf, &checks, outcome, 0).unwrap();
+            write_json(&mut buf, &checks, outcome, 0, test_observability_report())?;
         } else if !opts.quiet {
             write_human(&mut buf, &checks, outcome).unwrap();
         }
@@ -508,10 +516,11 @@ mod tests {
         let text = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(parsed["status"], "ok");
+        Ok(())
     }
 
     #[test]
-    fn quiet_human_mode_emits_no_output_but_returns_outcome() {
+    fn quiet_human_mode_emits_no_output_but_returns_outcome() -> anyhow::Result<()> {
         let opts = DoctorOptions {
             json: false,
             quiet: true,
@@ -522,12 +531,13 @@ mod tests {
         let outcome = tally(&checks);
         let mut buf = Vec::new();
         if opts.json {
-            write_json(&mut buf, &checks, outcome, 0).unwrap();
+            write_json(&mut buf, &checks, outcome, 0, test_observability_report())?;
         } else if !opts.quiet {
             write_human(&mut buf, &checks, outcome).unwrap();
         }
         assert!(buf.is_empty(), "quiet mode must not write to stdout");
         assert_eq!(outcome.fails, 1);
         assert_eq!(outcome.exit_code(), 2);
+        Ok(())
     }
 }
