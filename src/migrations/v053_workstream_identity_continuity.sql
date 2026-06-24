@@ -51,9 +51,12 @@ INSERT OR IGNORE INTO workstream_aliases (
 SELECT
     id,
     title,
-    lower(trim(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(title,
+    replace(replace(replace(replace(replace(replace(replace(replace(
+        lower(trim(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(title,
         '/', ' '), '\', ' '), '-', ' '), '_', ' '), ':', ' '), ';', ' '), ',', ' '), '.', ' '),
         '(', ' '), ')', ' '), '[', ' '), ']', ' '))),
+        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),
+        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),
     created_at_epoch,
     updated_at_epoch
 FROM workstreams
@@ -79,7 +82,10 @@ SELECT
 FROM workstreams ws
 JOIN workstream_aliases wa
   ON wa.workstream_id = ws.id
- AND wa.normalized_title = lower(trim(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(ws.title,
+ AND wa.normalized_title = replace(replace(replace(replace(replace(replace(replace(replace(
+        lower(trim(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(ws.title,
         '/', ' '), '\', ' '), '-', ' '), '_', ' '), ':', ' '), ';', ' '), ',', ' '), '.', ' '),
-        '(', ' '), ')', ' '), '[', ' '), ']', ' ')))
+        '(', ' '), ')', ' '), '[', ' '), ']', ' '))),
+        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),
+        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' ')
 WHERE ws.title IS NOT NULL AND trim(ws.title) <> '';

@@ -275,6 +275,44 @@ fn workstream_identity_migration_backfills_alias_history() -> Result<()> {
 }
 
 #[test]
+fn workstream_identity_migration_collapses_alias_whitespace_like_runtime() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    for migration in &MIGRATIONS[..52] {
+        conn.execute_batch(migration.sql)?;
+    }
+
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          source_project, target_project, owner_scope, owner_key)
+         VALUES ('test/proj', 'flowguard / run-guard Skill 生命周期工作流', 'active',
+                 1700000000, 1700000100, 'test/proj', 'test/proj', 'repo', 'test/proj')",
+        [],
+    )?;
+    conn.execute_batch(MIGRATIONS[52].sql)?;
+
+    let normalized_title: String = conn.query_row(
+        "SELECT normalized_title FROM workstream_aliases WHERE workstream_id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(normalized_title, "flowguard run guard skill 生命周期工作流");
+
+    let source_count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM workstream_alias_sources was
+         JOIN workstream_aliases wa ON wa.id = was.alias_id
+         WHERE wa.normalized_title = ?1",
+        ["flowguard run guard skill 生命周期工作流"],
+        |row| row.get(0),
+    )?;
+    assert_eq!(source_count, 1);
+
+    Ok(())
+}
+
+#[test]
 fn memory_search_context_migration_backfills_and_indexes_metadata() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;

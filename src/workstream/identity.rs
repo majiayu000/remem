@@ -75,9 +75,14 @@ pub(super) fn title_has_continuity(left: &str, right: &str) -> bool {
         return false;
     }
     let right_tokens = meaningful_tokens(&right);
-    right_tokens
+    let shared = right_tokens
         .iter()
-        .any(|token| left_tokens.iter().any(|candidate| candidate == token))
+        .filter(|token| left_tokens.iter().any(|candidate| candidate == *token))
+        .collect::<Vec<_>>();
+    shared.len() >= 2
+        || shared
+            .iter()
+            .any(|token| token_is_strong_continuity_anchor(token))
 }
 
 pub(super) fn workstream_identity_key(
@@ -167,6 +172,10 @@ fn meaningful_tokens(normalized: &str) -> Vec<&str> {
         .collect()
 }
 
+fn token_is_strong_continuity_anchor(token: &str) -> bool {
+    token.chars().any(|ch| !ch.is_ascii()) && token.chars().count() >= 4
+}
+
 #[cfg(test)]
 mod tests {
     use super::{normalize_title, title_has_continuity};
@@ -192,6 +201,10 @@ mod tests {
         assert!(!title_has_continuity(
             "agent-workflow Skill 生命周期工作流",
             "release notes cleanup"
+        ));
+        assert!(!title_has_continuity(
+            "billing import cleanup",
+            "billing dashboard rollout"
         ));
     }
 }

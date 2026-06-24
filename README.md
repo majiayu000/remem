@@ -523,6 +523,8 @@ remem user review suppress <id>
 remem context --cwd .
 remem cleanup --dry-run --json
 remem cleanup
+remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm
+remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm --json
 remem dream [--project X] [--profile NAME] [--dry-run]
 remem install --target codex
 remem mcp
@@ -592,6 +594,7 @@ is set:
 | `remem user review inbox --json` | `count`, `candidates` |
 | `remem user review approve <id> --json` / `edit <id> --json` | `status`, `action`, `candidate`, `claim` |
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
+| `remem workstreams merge --json` | `project`, `result` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 

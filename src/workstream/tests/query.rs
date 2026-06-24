@@ -172,6 +172,26 @@ fn same_session_unrelated_title_does_not_update_prior_workstream() {
 }
 
 #[test]
+fn same_session_titles_sharing_one_domain_token_do_not_merge() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    for title in ["billing import cleanup", "billing dashboard rollout"] {
+        let parsed = ParsedWorkStream {
+            title: Some(title.to_string()),
+            progress: None,
+            next_action: None,
+            blockers: None,
+            is_completed: false,
+        };
+        upsert_workstream(&conn, "test/proj", "mem-shared", &parsed).unwrap();
+    }
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 2);
+}
+
+#[test]
 fn alias_exact_match_updates_canonical_workstream_from_later_session() {
     let conn = Connection::open_in_memory().unwrap();
     setup_workstream_schema(&conn);
