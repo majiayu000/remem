@@ -322,6 +322,50 @@ async fn summary_blocklist_text_does_not_block_direct_candidate_evidence() -> Re
 }
 
 #[tokio::test]
+async fn source_preview_trims_unrelated_third_party_detail() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-preview-trim",
+        Some("user"),
+        "I prefer concise code reviews. Alice lives in Boston.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:review-style",
+            "User prefers concise code reviews.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let source_preview: String = conn.query_row(
+        "SELECT source_preview FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(source_preview.contains("I prefer concise code reviews."));
+    assert!(!source_preview.contains("Alice lives in Boston"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn assistant_sourced_explicit_statement_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -565,6 +609,48 @@ async fn paraphrased_user_framed_third_party_relationship_stays_pending_review()
             to_event_id: event_id,
         }
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_framed_third_party_candidate_with_changed_fact_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-third-party-changed-fact",
+        Some("user"),
+        "My manager is Alice.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:bob-manager",
+            "Bob is the user's manager.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
     Ok(())
 }
 

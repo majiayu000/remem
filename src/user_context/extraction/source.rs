@@ -171,11 +171,108 @@ pub(super) fn source_preview(
     let parts = batch
         .events_for_candidate(candidate)
         .into_iter()
-        .map(|event| event.content.trim())
-        .filter(|text| !text.is_empty())
+        .filter_map(|event| evidence_preview_for_event(&event.content, &candidate.claim_text))
         .collect::<Vec<_>>();
     let preview = parts.join("\n");
     (!preview.is_empty()).then(|| crate::db::truncate_str(&preview, 500).to_string())
+}
+
+fn evidence_preview_for_event(content: &str, claim_text: &str) -> Option<String> {
+    let claim_tokens = preview_match_tokens(claim_text);
+    if claim_tokens.is_empty() {
+        return None;
+    }
+    let evidence = evidence_segments(content)
+        .into_iter()
+        .filter(|segment| segment_matches_claim(segment, &claim_tokens))
+        .collect::<Vec<_>>();
+    if evidence.is_empty() {
+        return None;
+    }
+    Some(evidence.join(" "))
+}
+
+fn evidence_segments(content: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    for (index, ch) in content.char_indices() {
+        if matches!(ch, '.' | '?' | '!' | '\n' | ';') {
+            let end = index + ch.len_utf8();
+            let segment = content[start..end].trim();
+            if !segment.is_empty() {
+                segments.push(segment.to_string());
+            }
+            start = end;
+        }
+    }
+    let tail = content[start..].trim();
+    if !tail.is_empty() {
+        segments.push(tail.to_string());
+    }
+    segments
+}
+
+fn segment_matches_claim(segment: &str, claim_tokens: &[String]) -> bool {
+    let segment_tokens = preview_match_tokens(segment);
+    if segment_tokens.is_empty() {
+        return false;
+    }
+    let matches = claim_tokens
+        .iter()
+        .filter(|token| {
+            segment_tokens
+                .iter()
+                .any(|segment_token| segment_token == *token)
+        })
+        .count();
+    matches >= claim_tokens.len().min(2)
+}
+
+fn preview_match_tokens(text: &str) -> Vec<String> {
+    let mut tokens = text
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| normalize_preview_token(&token.to_ascii_lowercase()))
+        .filter(|token| !is_preview_stopword(token))
+        .collect::<Vec<_>>();
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn normalize_preview_token(token: &str) -> String {
+    if let Some(stem) = token.strip_suffix("ies") {
+        return format!("{stem}y");
+    }
+    if token.len() > 4 && token.ends_with('s') && !token.ends_with("ss") && !token.ends_with("us") {
+        return token[..token.len() - 1].to_string();
+    }
+    token.to_string()
+}
+
+fn is_preview_stopword(token: &str) -> bool {
+    matches!(
+        token,
+        "a" | "an"
+            | "and"
+            | "as"
+            | "for"
+            | "from"
+            | "i"
+            | "in"
+            | "is"
+            | "me"
+            | "my"
+            | "of"
+            | "on"
+            | "our"
+            | "s"
+            | "the"
+            | "their"
+            | "to"
+            | "user"
+            | "we"
+    )
 }
 
 fn load_session_summary(

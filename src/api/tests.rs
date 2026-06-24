@@ -437,6 +437,7 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     assert_eq!(payload["features"]["candidate_review"], true);
     assert_eq!(payload["features"]["graph"], true);
     assert_eq!(payload["features"]["user_recall"], true);
+    assert_eq!(payload["features"]["user_recall_usage_policy"], true);
     assert_eq!(payload["endpoints"]["health"], "/api/v1/health");
     assert_eq!(payload["endpoints"]["status"], "/api/v1/status");
     assert_eq!(payload["endpoints"]["stats"], "/api/v1/stats");
