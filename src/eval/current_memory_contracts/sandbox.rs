@@ -1,12 +1,11 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
 pub(super) fn run_in_eval_sandbox<T>(run: impl FnOnce() -> Result<T>) -> Result<T> {
-    let _env_guard = env_lock()
+    let _env_guard = crate::runtime_config::ENV_LOCK
         .lock()
         .map_err(|error| anyhow::anyhow!("lock current-memory-contract eval env: {error}"))?;
     let data_dir = unique_temp_data_dir();
@@ -22,11 +21,6 @@ pub(super) fn run_in_eval_sandbox<T>(run: impl FnOnce() -> Result<T>) -> Result<
     let result =
         crate::db::core::with_data_dir(&data_dir, || crate::log::with_log_dir(&data_dir, run));
     cleanup_data_dir_after_eval(&data_dir, result)
-}
-
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 struct EnvRestore {
