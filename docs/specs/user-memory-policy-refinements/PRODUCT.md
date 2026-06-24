@@ -151,8 +151,9 @@ Acceptance:
 - The output has stable sections and stable ordering.
 - The output clearly says it is a derived snapshot.
 - The default output contains only active, default-eligible user context.
-- `--include-sensitive`, `--include-suppressed`, `--include-inactive`, and
-  `--include-deleted` are explicit audit modes.
+- `--include-sensitive`, `--include-suppressed`, `--include-inactive`,
+  `--include-deleted`, and `--include-manual-summaries` are explicit audit
+  modes.
 - Tests prove unrelated-owner, suppressed, deleted, expired, future, personal,
   sensitive, and restricted claims are excluded by default.
 
@@ -178,8 +179,8 @@ Acceptance:
 - The extraction prompt contains the non-retention blocklist.
 - Parser/store behavior still fails closed on malformed output.
 - Tests prove the prompt includes the blocklist.
-- Tests prove secret-like blocklisted content is rejected or redacted before
-  candidate insertion, role-play and hypothetical examples create no candidate,
+- Tests prove secret-like blocklisted content creates no candidate before
+  insertion, role-play and hypothetical examples create no candidate,
   and approved third-party examples stay pending review instead of
   auto-promoting.
 

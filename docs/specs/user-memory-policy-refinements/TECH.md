@@ -46,13 +46,13 @@ This spec builds on the current user-context layer:
 Preferred command:
 
 ```text
-remem user profile export --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive] [--include-inactive] [--include-deleted]
+remem user profile export --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive] [--include-inactive] [--include-deleted] [--include-manual-summaries]
 ```
 
 Acceptable first slice if command surface should stay smaller:
 
 ```text
-remem user summary show --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive] [--include-inactive] [--include-deleted]
+remem user summary show --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive] [--include-inactive] [--include-deleted] [--include-manual-summaries]
 ```
 
 The first implementation should choose one command shape and document it in
@@ -137,9 +137,10 @@ Profile summaries require provenance labels:
   `provenance: source-supported`;
 - manually edited summaries using `model='manual-edit'` must appear as
   `provenance: manual-edit` and show the preserved source ids separately only
-  when an audit flag requests manual summary text. Default snapshots must omit
-  or redact manual summary text because the row has no sensitivity field and the
-  preserved source ids do not prove every edited sentence is source-supported;
+  when `--include-manual-summaries` requests manual summary text. Default
+  snapshots must omit or redact manual summary text because the row has no
+  sensitivity field and the preserved source ids do not prove every edited
+  sentence is source-supported;
 - summaries with empty source ids must appear as `provenance: unsourced` and
   must not render summary text by default or be presented as source-supported
   profile truth;
@@ -151,19 +152,25 @@ Profile summaries require provenance labels:
 Audit output may include excluded rows only when explicitly requested:
 
 - `--include-suppressed` includes suppressed and policy-suppressed claims with
-  reason labels;
+  reason labels, and includes suppressed summaries as excluded-summary audit
+  entries instead of silently omitting them;
 - `--include-sensitive` includes personal, sensitive, and restricted claims with
   sensitivity labels;
 - `--include-inactive` includes expired, future, stale, and superseded claims
   with validity/status labels;
-- `--include-deleted` includes soft-deleted rows with `status:deleted` labels.
+- `--include-deleted` includes soft-deleted rows with `status:deleted` labels;
+- `--include-manual-summaries` includes manual or unsourced summary text with
+  provenance labels and source-id caveats. It must not present that text as
+  source-supported profile truth.
 
-Audit flags are cumulative gates, not bypass switches. A row with multiple
-exclusion reasons may render only when every applicable exclusion is explicitly
-allowed, or when the renderer redacts the blocked text and labels all remaining
-reasons. For example, a deleted sensitive claim must not expose its text with
-`--include-deleted` alone; it also requires `--include-sensitive`, or it must be
-redacted.
+Audit flags are cumulative gates, not bypass switches. A claim or summary with
+multiple exclusion reasons may render text only when every applicable exclusion
+is explicitly allowed, or when the renderer redacts the blocked text and labels
+all remaining reasons. For example, a deleted sensitive claim must not expose
+its text with `--include-deleted` alone; it also requires
+`--include-sensitive`, or it must be redacted. A suppressed manual summary
+requires both `--include-suppressed` and `--include-manual-summaries` to render
+manual text; otherwise the snapshot may show only an excluded-summary marker.
 
 Deleted rows must never appear in default output. If a future hard-purge command
 physically removes deleted rows, the snapshot should report that purged rows are
@@ -190,7 +197,8 @@ Required tests:
 
 - active summary and active normal claims render in stable order;
 - suppressed/deleted/expired/future/restricted claims are excluded by default;
-- `--include-suppressed` labels suppressed claims and does not make them active;
+- `--include-suppressed` labels suppressed claims and suppressed summaries and
+  does not make them active;
 - `--include-sensitive` labels personal/sensitive/restricted claims;
 - combined audit flags do not bypass sensitivity gating for suppressed,
   inactive, or deleted sensitive claims;
@@ -275,8 +283,10 @@ candidate store.
 
 Required insertion/promotion gates:
 
-- credentials/secrets must be rejected or redacted before candidate insert,
-  including `claim_text` and `source_preview`;
+- credentials/secrets must create no candidate. Deterministic scanning may
+  record only a non-sensitive aggregate block reason; it must not retain a
+  redacted candidate such as "API key is [REDACTED]" in `claim_text`,
+  `source_preview`, or review metadata;
 - temporary state, world knowledge, general technical facts, role-play,
   fiction, jokes, sarcasm, hypothetical identities, illegal claims, harmful
   claims, clearly false claims, unsupported assistant-authored claims, and
@@ -298,10 +308,15 @@ Required tests:
 
 - prompt JSON contains the full non-retention blocklist;
 - malformed model output still creates no candidates;
-- secret-like candidate text and previews are rejected or redacted before
-  insertion;
+- secret-like candidate text and previews create no candidate before insertion;
 - joke/role-play/hypothetical, illegal, harmful, and clearly false candidate
   text creates no candidate even when the model labels it low-risk;
+- temporary state and one-off circumstances create no candidate;
+- world knowledge, project-independent facts, and general technical facts create
+  no candidate;
+- unsupported assistant-authored claims about the user create no candidate;
+- claims derived from files or external sources without explicit user approval
+  create no candidate;
 - third-party candidate text stays pending review unless explicitly approved by
   review flow.
 
