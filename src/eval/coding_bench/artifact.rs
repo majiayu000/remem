@@ -207,7 +207,19 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     condition.name
                 );
             }
-            if !run.task_success && run.task_failure_reason.is_none() {
+            if run.task_success && run.task_failure_reason.is_some() {
+                bail!(
+                    "coding bench run {}#{} has task_success=true with stale task_failure_reason",
+                    run.task_id,
+                    run.run_index
+                );
+            }
+            if !run.task_success
+                && run
+                    .task_failure_reason
+                    .as_deref()
+                    .is_none_or(|reason| reason.trim().is_empty())
+            {
                 bail!(
                     "coding bench run {}#{} failed task without task_failure_reason",
                     run.task_id,
@@ -229,6 +241,7 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                 );
             }
             validate_token_accounting(run)?;
+            validate_required_run_metrics(run)?;
 
             match run.condition {
                 CodingBenchCondition::Remem => validate_remem_run_contract(run)?,
@@ -281,7 +294,20 @@ fn validate_token_accounting(run: &CodingBenchRunReport) -> Result<()> {
     let has_unsupported_reason = unsupported_reason.is_some_and(|reason| !reason.is_empty());
 
     match (token_fields_present, has_unsupported_reason) {
-        (3, false) => Ok(()),
+        (3, false) => {
+            let input = run.metrics.tokens_input.unwrap_or_default();
+            let output = run.metrics.tokens_output.unwrap_or_default();
+            let total = run.metrics.tokens_total.unwrap_or_default();
+            if input.saturating_add(output) != total {
+                bail!(
+                    "coding bench run {}#{} tokens_total={} does not equal tokens_input + tokens_output ({input} + {output})",
+                    run.task_id,
+                    run.run_index,
+                    total
+                );
+            }
+            Ok(())
+        }
         (3, true) => bail!(
             "coding bench run {}#{} has token metrics and token_accounting_unsupported_reason",
             run.task_id,
@@ -301,6 +327,24 @@ fn validate_token_accounting(run: &CodingBenchRunReport) -> Result<()> {
     }
 }
 
+fn validate_required_run_metrics(run: &CodingBenchRunReport) -> Result<()> {
+    if run.metrics.turns.is_none() {
+        bail!(
+            "coding bench run {}#{} is missing turns",
+            run.task_id,
+            run.run_index
+        );
+    }
+    if run.metrics.wall_time_ms.is_none() {
+        bail!(
+            "coding bench run {}#{} is missing wall_time_ms",
+            run.task_id,
+            run.run_index
+        );
+    }
+    Ok(())
+}
+
 fn validate_remem_run_contract(run: &CodingBenchRunReport) -> Result<()> {
     let snapshot = run.remem_contract_snapshot.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
@@ -309,7 +353,20 @@ fn validate_remem_run_contract(run: &CodingBenchRunReport) -> Result<()> {
             run.run_index
         )
     })?;
-    let contract_failed = !snapshot.contract_health.all_checks_passed;
+    let embedded_contract_passed = snapshot.current_memory_contracts.metrics.all_checks_passed
+        && snapshot
+            .current_memory_contracts
+            .failing_examples
+            .is_empty()
+        && !snapshot.current_memory_contracts.metadata.real_db_touched;
+    if snapshot.contract_health.all_checks_passed != embedded_contract_passed {
+        bail!(
+            "remem run {}#{} contract_health does not match embedded current_memory_contracts",
+            run.task_id,
+            run.run_index
+        );
+    }
+    let contract_failed = !embedded_contract_passed;
     let expected_status = if contract_failed {
         CodingBenchMemoryContractStatus::Failed
     } else {

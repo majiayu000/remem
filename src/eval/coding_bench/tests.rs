@@ -146,6 +146,23 @@ fn validator_rejects_stale_runtime_contract_failure_reason() -> Result<()> {
 }
 
 #[test]
+fn validator_rejects_stale_task_failure_reason_on_resolved_run() -> Result<()> {
+    let contract_report =
+        crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
+    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let mut run = remem_run(snapshot);
+    run.task_success = true;
+    run.task_failure_reason = Some("stale task failure".to_string());
+    let report = report_with_run(run);
+
+    assert!(validate_contract_snapshots(&report)
+        .unwrap_err()
+        .to_string()
+        .contains("stale task_failure_reason"));
+    Ok(())
+}
+
+#[test]
 fn validator_requires_token_accounting_or_unsupported_provider_note() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
@@ -169,7 +186,7 @@ fn validator_requires_token_accounting_or_unsupported_provider_note() -> Result<
         Some("provider does not expose token usage for coding-bench runs".to_string());
     validate_contract_snapshots(&report_with_run(unsupported_provider))?;
 
-    let mut partial_tokens = remem_run(snapshot);
+    let mut partial_tokens = remem_run(snapshot.clone());
     partial_tokens.metrics.tokens_output = None;
     assert!(
         validate_contract_snapshots(&report_with_run(partial_tokens))
@@ -177,6 +194,54 @@ fn validator_requires_token_accounting_or_unsupported_provider_note() -> Result<
             .to_string()
             .contains("complete token accounting")
     );
+
+    let mut mismatched_total = remem_run(snapshot);
+    mismatched_total.metrics.tokens_total = Some(126);
+    assert!(
+        validate_contract_snapshots(&report_with_run(mismatched_total))
+            .unwrap_err()
+            .to_string()
+            .contains("tokens_total=126 does not equal tokens_input + tokens_output")
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_requires_turns_and_wall_time_metrics() -> Result<()> {
+    let contract_report =
+        crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
+    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+
+    let mut missing_turns = remem_run(snapshot.clone());
+    missing_turns.metrics.turns = None;
+    assert!(validate_contract_snapshots(&report_with_run(missing_turns))
+        .unwrap_err()
+        .to_string()
+        .contains("missing turns"));
+
+    let mut missing_wall_time = remem_run(snapshot);
+    missing_wall_time.metrics.wall_time_ms = None;
+    assert!(
+        validate_contract_snapshots(&report_with_run(missing_wall_time))
+            .unwrap_err()
+            .to_string()
+            .contains("missing wall_time_ms")
+    );
+    Ok(())
+}
+
+#[test]
+fn validator_derives_contract_health_from_embedded_report() -> Result<()> {
+    let contract_report =
+        crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
+    let mut snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    snapshot.current_memory_contracts.metrics.all_checks_passed = false;
+    let report = report_with_run(remem_run(snapshot));
+
+    assert!(validate_contract_snapshots(&report)
+        .unwrap_err()
+        .to_string()
+        .contains("contract_health does not match embedded current_memory_contracts"));
     Ok(())
 }
 
