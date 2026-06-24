@@ -237,9 +237,14 @@ fn render_claim(
     } else {
         "[redacted]".to_string()
     };
+    let claim_key = if render_text {
+        compact_snapshot_line(&claim.claim_key)
+    } else {
+        "[redacted]".to_string()
+    };
     output.push_str(&format!(
         "- [claim:{}] {}:{} - {}\n",
-        claim.id, claim.claim_type, claim.claim_key, text
+        claim.id, claim.claim_type, claim_key, text
     ));
     output.push_str(&format!(
         "  - owner: {}:{}\n",
@@ -303,26 +308,30 @@ fn load_snapshot_claims(
                 valid_from_epoch, valid_to_epoch, updated_at_epoch
          FROM user_context_claims
          WHERE ((owner_scope = ?1 AND owner_key = ?2)
+            OR (owner_scope = 'user' AND owner_key = ?4)
             OR (owner_scope = 'repo' AND owner_key = ?3))
          ORDER BY owner_scope ASC, owner_key ASC, claim_type ASC, claim_key ASC, id ASC",
     )?;
-    let rows = stmt.query_map(params![owner.scope, owner.key, project], |row| {
-        Ok(SnapshotClaim {
-            id: row.get(0)?,
-            claim_type: row.get(1)?,
-            claim_key: row.get(2)?,
-            claim_text: row.get(3)?,
-            owner_scope: row.get(4)?,
-            owner_key: row.get(5)?,
-            sensitivity: row.get(6)?,
-            source_kind: row.get(7)?,
-            source_refs_json: row.get(8)?,
-            status: row.get(9)?,
-            valid_from_epoch: row.get(10)?,
-            valid_to_epoch: row.get(11)?,
-            updated_at_epoch: row.get(12)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        params![owner.scope, owner.key, project, DEFAULT_OWNER_KEY],
+        |row| {
+            Ok(SnapshotClaim {
+                id: row.get(0)?,
+                claim_type: row.get(1)?,
+                claim_key: row.get(2)?,
+                claim_text: row.get(3)?,
+                owner_scope: row.get(4)?,
+                owner_key: row.get(5)?,
+                sensitivity: row.get(6)?,
+                source_kind: row.get(7)?,
+                source_refs_json: row.get(8)?,
+                status: row.get(9)?,
+                valid_from_epoch: row.get(10)?,
+                valid_to_epoch: row.get(11)?,
+                updated_at_epoch: row.get(12)?,
+            })
+        },
+    )?;
     crate::db::query::collect_rows(rows)
 }
 

@@ -60,9 +60,14 @@ fn write_snapshot_output(markdown: &str, output: Option<&Path>) -> Result<()> {
 }
 
 fn write_new_file(path: &Path, contents: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(path)
         .with_context(|| format!("create profile snapshot {}", path.display()))?;
     file.write_all(contents)
@@ -94,7 +99,13 @@ mod tests {
 
         write_snapshot_output("snapshot", Some(&path))?;
 
-        assert_eq!(std::fs::read_to_string(path)?, "snapshot");
+        assert_eq!(std::fs::read_to_string(&path)?, "snapshot");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
         Ok(())
     }
 }

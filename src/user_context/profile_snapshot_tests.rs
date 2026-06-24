@@ -106,7 +106,7 @@ fn profile_snapshot_excludes_non_default_claims_and_redacts_until_all_audit_flag
     let sensitive = create_claim(
         &conn,
         "Sensitive suppressed claim",
-        "sensitive",
+        "medical-location-account",
         UserContextSensitivity::Sensitive,
     )?;
     create_suppression(
@@ -145,9 +145,10 @@ fn profile_snapshot_excludes_non_default_claims_and_redacts_until_all_audit_flag
     let mut suppressed_only = snapshot_request("/repo", db_path.as_path());
     suppressed_only.include_suppressed = true;
     let output = render_markdown_profile_snapshot(&conn, &suppressed_only)?;
-    assert!(output.contains("preference:sensitive - [redacted]"));
+    assert!(output.contains("preference:[redacted] - [redacted]"));
     assert!(output.contains("reason: sensitivity:sensitive, suppressed"));
     assert!(!output.contains("Sensitive suppressed claim"));
+    assert!(!output.contains("preference:medical-location-account"));
 
     let db_path = data_dir.db_path();
     let mut full_audit = snapshot_request("/repo", db_path.as_path());
@@ -326,6 +327,45 @@ fn profile_snapshot_inactive_audit_excludes_unapproved_statuses() -> Result<()> 
     Ok(())
 }
 
+#[test]
+fn profile_snapshot_scoped_export_includes_default_user_and_repo_claims() -> Result<()> {
+    let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-scoped");
+    let conn = db::open_db()?;
+    create_claim(
+        &conn,
+        "Default user claim",
+        "default-user",
+        UserContextSensitivity::Normal,
+    )?;
+    create_claim_for_owner(
+        &conn,
+        "Repo claim",
+        "repo-claim",
+        UserContextSensitivity::Normal,
+        Some("repo"),
+        Some("/repo"),
+    )?;
+    create_claim_for_owner(
+        &conn,
+        "Workspace scoped claim",
+        "workspace-claim",
+        UserContextSensitivity::Normal,
+        Some("workspace"),
+        Some("workspace-a"),
+    )?;
+
+    let db_path = data_dir.db_path();
+    let mut req = snapshot_request("/repo", db_path.as_path());
+    req.owner_scope = "workspace";
+    req.owner_key = Some("workspace-a");
+    let output = render_markdown_profile_snapshot(&conn, &req)?;
+
+    assert!(output.contains("Default user claim"));
+    assert!(output.contains("Repo claim"));
+    assert!(output.contains("Workspace scoped claim"));
+    Ok(())
+}
+
 fn snapshot_request<'a>(project: &'a str, source_of_truth: &'a Path) -> ProfileSnapshotRequest<'a> {
     ProfileSnapshotRequest {
         project,
@@ -346,12 +386,23 @@ fn create_claim(
     key: &str,
     sensitivity: UserContextSensitivity,
 ) -> Result<UserContextClaim> {
+    create_claim_for_owner(conn, text, key, sensitivity, None, None)
+}
+
+fn create_claim_for_owner(
+    conn: &Connection,
+    text: &str,
+    key: &str,
+    sensitivity: UserContextSensitivity,
+    owner_scope: Option<&str>,
+    owner_key: Option<&str>,
+) -> Result<UserContextClaim> {
     create_manual_claim(
         conn,
         &ManualClaimRequest {
             text,
-            owner_scope: None,
-            owner_key: None,
+            owner_scope,
+            owner_key,
             claim_type: UserContextClaimType::Preference,
             claim_key: Some(key),
             confidence: 1.0,
