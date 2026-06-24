@@ -140,9 +140,12 @@ fn persist_candidates(
 ) -> Result<PersistSummary> {
     let mut summary = PersistSummary::default();
     for candidate in parsed {
-        let source_preview = source::source_preview(batch, candidate);
+        let source_evidence = source::source_evidence_text(batch, candidate);
+        let source_preview = source_evidence
+            .as_deref()
+            .map(|preview| crate::db::truncate_str(preview, 500).to_string());
         if let Some(reason) =
-            non_retention_block_reason(candidate, batch, source_preview.as_deref())
+            non_retention_block_reason(candidate, batch, source_evidence.as_deref())
         {
             summary.blocked += 1;
             crate::log::info(
@@ -199,16 +202,73 @@ fn non_retention_block_reason(
         &candidate.source_kind,
     )
     .or_else(|| {
-        (candidate.source_kind == "third_party_statement"
+        (requires_third_party_framing(candidate)
             && !is_supported_third_party_candidate(candidate, batch))
         .then_some("unframed_third_party_detail")
     })
     .or_else(|| {
-        (candidate.source_kind != "third_party_statement"
+        (!requires_third_party_framing(candidate)
             && !is_supported_for_candidate_queue(candidate, batch))
         .then_some("no_supporting_user_source_event")
     })
 }
+
+fn requires_third_party_framing(candidate: &ParsedUserContextCandidate) -> bool {
+    candidate.source_kind == "third_party_statement"
+        || candidate.claim_type == super::claims::UserContextClaimType::Relationship
+        || claim_text_describes_third_party_fact(&candidate.claim_text)
+}
+
+fn claim_text_describes_third_party_fact(text: &str) -> bool {
+    let tokens = short_support_tokens(text);
+    claim_has_likely_third_party_subject(text) || claim_has_user_owned_third_party_role(&tokens)
+}
+
+fn claim_has_likely_third_party_subject(text: &str) -> bool {
+    let mut words = text
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '\'' || ch == '-'))
+        .filter(|word| !word.is_empty());
+    let first = match words.next() {
+        Some("The" | "the") => words.next(),
+        other => other,
+    };
+    first.is_some_and(is_likely_third_party_name)
+}
+
+fn is_likely_third_party_name(word: &str) -> bool {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_uppercase() || !chars.any(|ch| ch.is_ascii_lowercase()) {
+        return false;
+    }
+    !NON_THIRD_PARTY_NAME_SUBJECTS.contains(&format!("|{}|", word.to_ascii_lowercase()))
+}
+
+const NON_THIRD_PARTY_NAME_SUBJECTS: &str = "|api|cargo|claude|codebase|codex|github|gitlab|javascript|json|linux|macos|mcp|node|npm|openai|project|python|readme|repo|repository|rust|sqlite|sql|the|toml|typescript|user|windows|workspace|yaml|";
+
+fn claim_has_user_owned_third_party_role(tokens: &[String]) -> bool {
+    has_user_owned_subject(tokens) && has_third_party_role_token(tokens)
+}
+
+fn has_user_owned_subject(tokens: &[String]) -> bool {
+    tokens
+        .first()
+        .is_some_and(|token| matches!(token.as_str(), "my" | "our"))
+        || tokens.windows(2).any(|window| window == ["user", "s"])
+        || tokens
+            .windows(3)
+            .any(|window| window == ["the", "user", "s"])
+}
+
+fn has_third_party_role_token(tokens: &[String]) -> bool {
+    tokens
+        .iter()
+        .any(|token| THIRD_PARTY_ROLE_TOKENS.contains(&format!("|{token}|")))
+}
+
+const THIRD_PARTY_ROLE_TOKENS: &str = "|approver|client|colleague|collaborator|coworker|family|father|friend|husband|manager|mentor|mother|partner|reviewer|sibling|spouse|stakeholder|teammate|vendor|wife|";
 
 fn is_supported_third_party_candidate(
     candidate: &ParsedUserContextCandidate,
@@ -219,8 +279,12 @@ fn is_supported_third_party_candidate(
         .into_iter()
         .filter(|event| batch.event_is_user_authored(event.id))
         .any(|event| {
-            has_user_context_framing(&event.content)
-                && has_third_party_fact_token_support(&candidate.claim_text, &event.content)
+            source::evidence_segments(&event.content)
+                .into_iter()
+                .any(|segment| {
+                    has_user_context_framing(&segment)
+                        && has_third_party_fact_token_support(&candidate.claim_text, &segment)
+                })
         })
 }
 
@@ -230,9 +294,35 @@ fn has_third_party_fact_token_support(claim_text: &str, source_text: &str) -> bo
         return false;
     }
     let source_tokens = short_support_tokens(source_text);
+    if third_party_fact_is_negated(&claim_tokens, &source_tokens) {
+        return false;
+    }
     claim_tokens
         .iter()
         .all(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn third_party_fact_is_negated(claim_tokens: &[String], source_tokens: &[String]) -> bool {
+    let positions = claim_tokens
+        .iter()
+        .filter_map(|claim| source_tokens.iter().position(|source| source == claim))
+        .collect::<Vec<_>>();
+    if positions.len() != claim_tokens.len() {
+        return false;
+    }
+    let start = positions
+        .iter()
+        .min()
+        .copied()
+        .unwrap_or(0)
+        .saturating_sub(1);
+    let end = positions.iter().max().copied().unwrap_or(0);
+    source_tokens[start..=end].iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "cannot" | "cant" | "doesn" | "don" | "isn" | "never" | "no" | "not"
+        )
+    })
 }
 
 fn third_party_fact_tokens(text: &str) -> Vec<String> {
@@ -295,8 +385,13 @@ fn has_durable_third_party_context_token(tokens: &[String]) -> bool {
                 | "colleague"
                 | "collaborator"
                 | "coworker"
+                | "family"
+                | "father"
+                | "friend"
+                | "husband"
                 | "manager"
                 | "mentor"
+                | "mother"
                 | "owner"
                 | "partner"
                 | "qa"
@@ -304,10 +399,13 @@ fn has_durable_third_party_context_token(tokens: &[String]) -> bool {
                 | "repo"
                 | "review"
                 | "reviewer"
+                | "sibling"
+                | "spouse"
                 | "stakeholder"
                 | "team"
                 | "teammate"
                 | "vendor"
+                | "wife"
                 | "workflow"
         )
     })
@@ -325,6 +423,7 @@ fn should_auto_promote(
         && candidate.sensitivity == super::claims::UserContextSensitivity::Normal
         && candidate.confidence >= 0.9
         && candidate.source_kind == "explicit_user_statement"
+        && !requires_third_party_framing(candidate)
         && candidate
             .source_event_ids
             .iter()
@@ -336,7 +435,7 @@ fn auto_promote_block_reason(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> &'static str {
-    if candidate.source_kind == "third_party_statement" {
+    if requires_third_party_framing(candidate) {
         return "third_party_requires_review";
     }
     if !matches!(
@@ -389,8 +488,10 @@ fn has_behavior_source_evidence(
     batch
         .events_for_candidate(candidate)
         .into_iter()
-        .any(|event| !event.content.trim().is_empty())
-        && source::source_preview(batch, candidate).is_some()
+        .any(|event| {
+            source::is_behavior_source_event(event)
+                && source::source_preview_for_event(event, candidate).is_some()
+        })
 }
 
 fn is_supported_by_user_source_event(
@@ -438,9 +539,13 @@ fn is_supported_negative_user_constraint(
         .into_iter()
         .any(|event| {
             batch.event_is_user_authored(event.id)
-                && variants.iter().any(|variant| {
-                    has_short_exact_source_support_allowing_risk(variant, &event.content)
-                })
+                && source::evidence_segments(&event.content)
+                    .into_iter()
+                    .any(|segment| {
+                        variants.iter().any(|variant| {
+                            has_short_exact_source_support_allowing_risk(variant, &segment)
+                        })
+                    })
         })
 }
 

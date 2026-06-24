@@ -253,7 +253,12 @@ fn render_claim(
     output.push_str(&format!("  - sensitivity: {}\n", claim.sensitivity));
     output.push_str(&format!("  - status: {}\n", claim.status));
     output.push_str(&format!("  - source: {}\n", claim.source_kind));
-    output.push_str(&format!("  - source_refs: {}\n", claim.source_refs_json));
+    let source_refs = if render_text {
+        claim.source_refs_json.as_str()
+    } else {
+        "[redacted]"
+    };
+    output.push_str(&format!("  - source_refs: {source_refs}\n"));
     output.push_str(&format!(
         "  - updated: {}\n",
         format_snapshot_epoch(claim.updated_at_epoch)
@@ -518,6 +523,7 @@ fn summary_text_allowed(req: &ProfileSnapshotRequest<'_>, reasons: &[String]) ->
 
 fn reason_allowed(req: &ProfileSnapshotRequest<'_>, reason: &str) -> bool {
     match reason {
+        "source:missing" => req.include_manual_summaries,
         "suppressed" | "status:suppressed" => req.include_suppressed,
         "status:deleted" => req.include_deleted,
         reason if reason.starts_with("sensitivity:") => req.include_sensitive,
@@ -529,6 +535,7 @@ fn reason_allowed(req: &ProfileSnapshotRequest<'_>, reason: &str) -> bool {
 
 fn reason_allowed_by_some_flag(req: &ProfileSnapshotRequest<'_>, reason: &str) -> bool {
     match reason {
+        "source:missing" => req.include_manual_summaries,
         "suppressed" | "status:suppressed" => req.include_suppressed,
         "status:deleted" => req.include_deleted,
         reason if reason.starts_with("sensitivity:") => req.include_sensitive,

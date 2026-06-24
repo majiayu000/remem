@@ -121,6 +121,15 @@ fn profile_snapshot_excludes_non_default_claims_and_redacts_until_all_audit_flag
             actor: Some("test"),
         },
     )?;
+    conn.execute(
+        "UPDATE user_context_claims
+         SET source_refs_json = ?1
+         WHERE id = ?2",
+        rusqlite::params![
+            r#"[{"kind":"manual_cli","path":"/private/medical-location-account.txt"}]"#,
+            sensitive.id
+        ],
+    )?;
     let deleted = create_claim(
         &conn,
         "Deleted claim should stay hidden",
@@ -147,8 +156,10 @@ fn profile_snapshot_excludes_non_default_claims_and_redacts_until_all_audit_flag
     let output = render_markdown_profile_snapshot(&conn, &suppressed_only)?;
     assert!(output.contains("preference:[redacted] - [redacted]"));
     assert!(output.contains("reason: sensitivity:sensitive, suppressed"));
+    assert!(output.contains("source_refs: [redacted]"));
     assert!(!output.contains("Sensitive suppressed claim"));
     assert!(!output.contains("preference:medical-location-account"));
+    assert!(!output.contains("medical-location-account.txt"));
 
     let db_path = data_dir.db_path();
     let mut full_audit = snapshot_request("/repo", db_path.as_path());
@@ -163,6 +174,7 @@ fn profile_snapshot_excludes_non_default_claims_and_redacts_until_all_audit_flag
     assert!(output.contains("Expired claim should stay hidden"));
     assert!(output.contains("Sensitive suppressed claim"));
     assert!(output.contains("Deleted claim should stay hidden"));
+    assert!(output.contains("medical-location-account.txt"));
     assert!(output.contains("reason: status:deleted"));
     Ok(())
 }
@@ -355,6 +367,45 @@ fn profile_snapshot_suppressed_summary_still_requires_hidden_source_flags() -> R
     let output = render_markdown_profile_snapshot(&conn, &full_audit)?;
     assert!(output.contains("Suppressed summary sensitive source claim"));
     assert!(output.contains("reason: suppressed, sensitivity:sensitive"));
+    Ok(())
+}
+
+#[test]
+fn profile_snapshot_missing_summary_source_is_visible_to_provenance_audit() -> Result<()> {
+    let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-missing-source");
+    let conn = db::open_db()?;
+    let source = create_claim(
+        &conn,
+        "Claim source that will be repaired away",
+        "missing-summary-source",
+        UserContextSensitivity::Normal,
+    )?;
+    let summary = refresh_summary(
+        &conn,
+        &SummaryRequest {
+            owner_scope: None,
+            owner_key: None,
+            project: "/repo",
+        },
+    )?;
+    conn.execute("DELETE FROM user_context_claims WHERE id = ?1", [source.id])?;
+
+    let default_output = render_markdown_profile_snapshot(
+        &conn,
+        &snapshot_request("/repo", data_dir.db_path().as_path()),
+    )?;
+    assert!(default_output.contains("No default-eligible active summary text."));
+    assert!(!default_output.contains("## Excluded Summary"));
+    assert!(!default_output.contains("source:missing"));
+
+    let db_path = data_dir.db_path();
+    let mut audit = snapshot_request("/repo", db_path.as_path());
+    audit.include_manual_summaries = true;
+    let output = render_markdown_profile_snapshot(&conn, &audit)?;
+    assert!(output.contains("## Excluded Summary"));
+    assert!(output.contains("reason: source:missing"));
+    assert!(output.contains(&format!("source_claim_ids: [{}]", source.id)));
+    assert!(output.contains(&format!("summary:{}", summary.id)));
     Ok(())
 }
 
