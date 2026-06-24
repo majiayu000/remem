@@ -42,10 +42,13 @@ SET identity_key = 'ws_' || id
 WHERE identity_key IS NULL;
 
 WITH alias_input AS (
+    -- SQL seeds one alias row per existing workstream. The v053 Rust
+    -- post-migration hook rewrites normalized_title with the runtime
+    -- workstream normalizer so Unicode case folding matches future writes.
     SELECT
         id,
         title,
-        lower(trim(title)) AS normalized_title,
+        trim(title) AS normalized_title,
         created_at_epoch,
         updated_at_epoch
     FROM workstreams

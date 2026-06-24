@@ -145,6 +145,30 @@ pub(super) fn ensure_workstream_alias(
     Ok(())
 }
 
+pub(crate) fn backfill_workstream_alias_normalized_titles(conn: &Connection) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title
+         FROM workstream_aliases
+         ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let aliases = crate::db::query::collect_rows(rows)?;
+
+    let mut updated = 0usize;
+    for (alias_id, title) in aliases {
+        let normalized_title = normalize_title(&title);
+        updated += conn.execute(
+            "UPDATE workstream_aliases
+             SET normalized_title = ?1
+             WHERE id = ?2 AND normalized_title != ?1",
+            params![normalized_title, alias_id],
+        )?;
+    }
+    Ok(updated)
+}
+
 pub(super) fn has_continuity_alias(
     conn: &Connection,
     workstream_id: i64,

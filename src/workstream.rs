@@ -8,6 +8,7 @@ mod tests;
 mod types;
 mod write;
 
+pub(crate) use identity::backfill_workstream_alias_normalized_titles;
 pub use lifecycle::{
     auto_abandon_all_inactive, auto_abandon_all_inactive_at, auto_abandon_inactive,
     auto_pause_all_inactive, auto_pause_all_inactive_at, auto_pause_inactive,

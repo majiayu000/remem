@@ -99,7 +99,7 @@ fn find_linked_workstream(
     memory_session_id: &str,
     title: &str,
 ) -> Result<Option<WorkStreamMatch>> {
-    if !memory_session_id_maps_to_unique_content_session(conn, memory_session_id)? {
+    if !memory_session_id_maps_to_unique_content_session(conn, project, memory_session_id)? {
         crate::log::warn(
             "workstream",
             &format!("session_link_collision project={project} session={memory_session_id}"),
@@ -163,6 +163,7 @@ fn find_linked_workstream(
 
 fn memory_session_id_maps_to_unique_content_session(
     conn: &Connection,
+    project: &str,
     memory_session_id: &str,
 ) -> Result<bool> {
     if !crate::retrieval::temporal::sqlite_table_exists(conn, "sdk_sessions")? {
@@ -172,8 +173,9 @@ fn memory_session_id_maps_to_unique_content_session(
     let content_session_count: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT content_session_id)
          FROM sdk_sessions
-         WHERE memory_session_id = ?1",
-        params![memory_session_id],
+         WHERE project = ?1
+           AND memory_session_id = ?2",
+        params![project, memory_session_id],
         |row| row.get(0),
     )?;
     Ok(content_session_count <= 1)

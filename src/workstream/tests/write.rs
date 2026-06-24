@@ -181,6 +181,47 @@ fn session_link_requires_unique_content_session_id() {
 }
 
 #[test]
+fn session_link_collision_check_is_project_scoped() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    conn.execute(
+        "INSERT INTO sdk_sessions (content_session_id, memory_session_id, project)
+         VALUES (?1, 'mem-collide', 'test/proj'), (?2, 'mem-collide', 'other/proj')",
+        params!["abcdefgh-first", "abcdefgh-other"],
+    )
+    .unwrap();
+
+    let first = ParsedWorkStream {
+        title: Some("flowguard Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let first_id = upsert_workstream(&conn, "test/proj", "mem-collide", &first).unwrap();
+
+    let renamed = ParsedWorkStream {
+        title: Some("flowguard / run-guard Skill 生命周期工作流".to_string()),
+        progress: Some("same project rename".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let renamed_result =
+        upsert_workstream_with_match(&conn, "test/proj", "mem-collide", &renamed).unwrap();
+
+    assert_eq!(renamed_result.id, first_id);
+    assert_eq!(renamed_result.match_reason, "session_link");
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(
+        workstreams[0].progress.as_deref(),
+        Some("same project rename")
+    );
+}
+
+#[test]
 fn manual_merge_accepts_rows_visible_through_owner_scope() {
     let conn = Connection::open_in_memory().unwrap();
     setup_workstream_schema(&conn);
