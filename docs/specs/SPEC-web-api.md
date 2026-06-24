@@ -71,7 +71,8 @@ features.
     "candidate_rows": true,
     "candidate_review": true,
     "graph": true,
-    "user_recall": true
+    "user_recall": true,
+    "user_recall_usage_policy": true
   },
   "endpoints": {
     "health": "/api/v1/health",
@@ -91,7 +92,10 @@ features.
 ```
 
 Feature flags are the client gate. A web client should not infer support from
-package metadata alone.
+package metadata alone. Clients that render user-recall usage-policy guidance
+must require `features.user_recall_usage_policy`, not only
+`features.user_recall`, because remem `0.5.114` through `0.5.122` expose user
+recall without returning `usage_policy`.
 
 ## Response Contracts
 
@@ -344,7 +348,9 @@ must gate the UI on `capabilities.features.user_recall` and call
 `POST /api/v1/user/recall` instead of widening SessionStart context.
 
 For user recall usage-policy guidance, the release target is `remem 0.5.123`.
-Clients should treat `usage_policy` as response metadata for non-empty recall
+Clients must gate usage-policy guidance on
+`capabilities.features.user_recall_usage_policy`. When that flag is present,
+clients should treat `usage_policy` as response metadata for non-empty recall
 results and should not count it against the recalled context budget.
 
 ## Smoke Test
