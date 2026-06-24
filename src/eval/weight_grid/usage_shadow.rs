@@ -132,9 +132,10 @@ fn run_usage_shadow_candidate(
 
         let result_ids = results.iter().map(|memory| memory.id).collect::<Vec<_>>();
         let usage_scores_by_memory_id = if weights.usage > 0.0 {
+            let candidate_ids = usage_shadow_candidate_ids(conn, query, fetch_limit)?;
             crate::retrieval::search::usage_hits_for_retrieved_candidates(
                 conn,
-                &result_ids,
+                &candidate_ids,
                 weights,
             )?
             .into_iter()
@@ -158,6 +159,32 @@ fn run_usage_shadow_candidate(
         abstention_passed,
         queries: query_snapshots,
     })
+}
+
+fn usage_shadow_candidate_ids(
+    conn: &Connection,
+    query: &golden::GoldenQuery,
+    fetch_limit: i64,
+) -> Result<Vec<i64>> {
+    let (_results, explain) = crate::retrieval::search::search_with_branch_explain(
+        conn,
+        Some(&query.query),
+        query.project.as_deref(),
+        query.memory_type.as_deref(),
+        fetch_limit,
+        0,
+        false,
+        query.branch.as_deref(),
+    )?;
+    let mut ids = explain
+        .into_iter()
+        .flat_map(|explain| explain.channels)
+        .filter(|channel| channel.enabled && channel.name != "usage")
+        .flat_map(|channel| channel.hits.into_iter().map(|hit| hit.memory_id))
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
 }
 
 fn compare_usage_shadow_runs(
@@ -323,6 +350,65 @@ mod tests {
             strongest.baseline_scored_queries,
             strongest.candidate_scored_queries
         );
+        Ok(())
+    }
+
+    #[test]
+    fn usage_shadow_counts_usage_scores_before_final_pagination() -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let corpus = (0..12)
+            .map(|index| GoldenMemory {
+                project: "/repo".to_string(),
+                topic_key: Some(format!("sqlite-timeout-{index:02}")),
+                title: format!("SQLite timeout candidate {index:02}"),
+                content: "SQLite timeout fix should update busy_timeout in the connection setup."
+                    .to_string(),
+                memory_type: "decision".to_string(),
+                branch: None,
+                scope: "project".to_string(),
+                status: "active".to_string(),
+                files: None,
+                created_at_epoch: Some(100 + index as i64),
+                access_count: Some((index + 1) as i64),
+                last_accessed_epoch: Some(now),
+            })
+            .collect();
+        let dataset = GoldenDataset {
+            version: Some("usage-shadow-pre-pagination-test".to_string()),
+            description: None,
+            corpus,
+            queries: vec![GoldenQuery {
+                id: "q1".to_string(),
+                query: "SQLite timeout busy_timeout".to_string(),
+                category: "retrieval".to_string(),
+                slice: Some("usage-shadow".to_string()),
+                project: Some("/repo".to_string()),
+                branch: None,
+                memory_type: None,
+                relevant_ids: vec![],
+                evidence_refs: vec![EvidenceRef {
+                    topic_key: Some("sqlite-timeout-11".to_string()),
+                    ..EvidenceRef::default()
+                }],
+                expect_abstain: false,
+                false_premise: false,
+                notes: None,
+            }],
+        };
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        golden::run::seed_fixture_corpus(&conn, &dataset.corpus)?;
+
+        let report = build_usage_shadow_report(&conn, &dataset, 5)?;
+
+        let strongest = report
+            .comparisons
+            .iter()
+            .max_by(|left, right| left.usage_weight.total_cmp(&right.usage_weight))
+            .context("usage shadow comparisons should be present")?;
+        assert_eq!(strongest.usage_channel_queries, 1);
+        assert_eq!(strongest.usage_channel_hits, 12);
+        assert_eq!(strongest.usage_scored_results, 12);
         Ok(())
     }
 }
