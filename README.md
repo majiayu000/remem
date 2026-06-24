@@ -647,7 +647,7 @@ transactional auto-promotion conflict rechecks are tightened in source version
 `0.5.118`. User-context candidate extraction non-retention rules are tightened
 in source version `0.5.122`; transient, speculative, unsafe,
 assistant-authored, or unapproved external-source content does not enter the
-candidate queue. Source version `0.5.124` tightens post-review external-source
+candidate queue. Source version `0.5.125` tightens post-review external-source
 attribution and third-party subject edge cases while preserving valid
 user-stated workflow preferences.
 

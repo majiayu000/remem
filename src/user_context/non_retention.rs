@@ -221,7 +221,7 @@ fn contains_general_knowledge_content(text: &str) -> bool {
     text.lines().any(|line| {
         let tokens = lexical_tokens(line);
         contains_non_retention_pattern(line, GENERAL_KNOWLEDGE_PATTERNS)
-            && !has_user_context_reference(&tokens)
+            && !has_retainable_user_preference_context(&tokens)
             && !has_project_context_reference(&tokens)
     }) || contains_project_independent_fact_shape(text)
 }
@@ -263,6 +263,16 @@ fn has_project_context_reference(tokens: &[String]) -> bool {
             "codebase" | "project" | "repo" | "repository" | "workspace"
         )
     })
+}
+
+fn has_retainable_user_preference_context(tokens: &[String]) -> bool {
+    has_user_context_reference(tokens)
+        && tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "prefer" | "preferred" | "prefers" | "use" | "uses" | "work" | "works"
+            )
+        })
 }
 
 fn contains_illegal_or_harmful_content(text: &str) -> bool {
@@ -497,7 +507,11 @@ const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
     "external source",
     "file says",
     "files say",
+    "from browser page,",
+    "from the browser page,",
     "from the readme",
+    "from the web page,",
+    "from web page,",
     "readme says",
     "repository file says",
     "web page says",
@@ -747,6 +761,22 @@ mod tests {
                 "explicit_user_statement"
             ),
             None
+        );
+        assert_eq!(
+            block_reason(
+                "User lives in Paris.",
+                Some("From the web page, the user lives in Paris."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User thinks SQLite is a single-file database.",
+                Some("I think SQLite is a single-file database."),
+                "explicit_user_statement"
+            ),
+            Some("general_knowledge_content")
         );
     }
 }

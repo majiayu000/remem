@@ -266,7 +266,7 @@ fn claim_has_third_party_predicate(text: &str) -> bool {
     short_support_tokens(text).iter().any(|token| {
         matches!(
             token.as_str(),
-            "is" | "live" | "own" | "prefer" | "use" | "want" | "work"
+            "live" | "own" | "prefer" | "use" | "want" | "work"
         )
     })
 }
