@@ -73,6 +73,10 @@ fn remem_run_artifact_includes_current_memory_contract_snapshot() -> Result<()> 
         1.0
     );
     assert_eq!(
+        run["remem_contract_snapshot"]["staleness_handling"]["history_tracked"]["rate"],
+        1.0
+    );
+    assert_eq!(
         run["remem_contract_snapshot"]["temporal_fact_eligibility"]["invalidated_fact_exclusion"]
             ["rate"],
         1.0
@@ -157,4 +161,21 @@ fn validator_requires_snapshots_only_for_remem_runs() {
         .unwrap_err()
         .to_string()
         .contains("must not carry a remem contract snapshot"));
+
+    let non_remem_contract_failure = report_with_run(CodingBenchRunReport {
+        condition: CodingBenchCondition::CuratedFile,
+        task_id: "bad-curated-file".to_string(),
+        run_index: 0,
+        task_success: true,
+        task_failure_reason: None,
+        memory_contract_status: CodingBenchMemoryContractStatus::NotApplicable,
+        runtime_contract_failure: true,
+        runtime_contract_failure_reason: Some("current-memory contract failed".to_string()),
+        metrics: metrics(),
+        remem_contract_snapshot: None,
+    });
+    assert!(validate_contract_snapshots(&non_remem_contract_failure)
+        .unwrap_err()
+        .to_string()
+        .contains("must not report remem runtime contract failure"));
 }

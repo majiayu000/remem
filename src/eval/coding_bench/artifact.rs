@@ -94,6 +94,7 @@ pub struct RememContractWarning {
 pub struct RememStalenessHandlingSnapshot {
     pub tracked: CurrentMemoryContractRateMetric,
     pub untracked: CurrentMemoryContractRateMetric,
+    pub history_tracked: CurrentMemoryContractRateMetric,
     pub verify_before_trust: CurrentMemoryContractRateMetric,
     pub error: CurrentMemoryContractRateMetric,
 }
@@ -149,6 +150,7 @@ pub fn build_remem_contract_snapshot(
         staleness_handling: RememStalenessHandlingSnapshot {
             tracked: contract_report.metrics.staleness.tracked.clone(),
             untracked: contract_report.metrics.staleness.untracked.clone(),
+            history_tracked: contract_report.metrics.staleness.history_tracked.clone(),
             verify_before_trust: contract_report
                 .metrics
                 .staleness
@@ -232,6 +234,15 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     if run.remem_contract_snapshot.is_some() {
                         bail!(
                             "{:?} run {}#{} must not carry a remem contract snapshot",
+                            run.condition,
+                            run.task_id,
+                            run.run_index
+                        );
+                    }
+                    if run.runtime_contract_failure || run.runtime_contract_failure_reason.is_some()
+                    {
+                        bail!(
+                            "{:?} run {}#{} must not report remem runtime contract failure",
                             run.condition,
                             run.task_id,
                             run.run_index
