@@ -191,6 +191,14 @@ fn profile_snapshot_manual_summary_requires_audit_flag() -> Result<()> {
     assert!(!default_output.contains("provenance:manual-edit"));
 
     let db_path = data_dir.db_path();
+    let mut unrelated_audit = snapshot_request("/repo", db_path.as_path());
+    unrelated_audit.include_sensitive = true;
+    let output = render_markdown_profile_snapshot(&conn, &unrelated_audit)?;
+    assert!(output.contains("No default-eligible active summary text."));
+    assert!(!output.contains("Manual profile summary text"));
+    assert!(!output.contains("## Excluded Summary"));
+    assert!(!output.contains("provenance: manual-edit"));
+
     let mut audit = snapshot_request("/repo", db_path.as_path());
     audit.include_manual_summaries = true;
     let output = render_markdown_profile_snapshot(&conn, &audit)?;

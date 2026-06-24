@@ -104,7 +104,7 @@ fn render_summary_section(
         }
         Some(snapshot) => {
             output.push_str("No default-eligible active summary text.\n\n");
-            if any_audit_flag(req) {
+            if should_show_excluded_summary(req, &snapshot.reasons) {
                 output.push_str("## Excluded Summary\n\n");
                 if summary_text_allowed(req, &snapshot.reasons) {
                     output.push_str(&snapshot.summary.summary_text);
@@ -498,6 +498,13 @@ fn should_show_excluded_claim(req: &ProfileSnapshotRequest<'_>, reasons: &[Strin
             .any(|reason| reason_allowed_by_some_flag(req, reason))
 }
 
+fn should_show_excluded_summary(req: &ProfileSnapshotRequest<'_>, reasons: &[String]) -> bool {
+    any_audit_flag(req)
+        && reasons
+            .iter()
+            .any(|reason| summary_reason_allowed_by_some_flag(req, reason))
+}
+
 fn claim_text_allowed(req: &ProfileSnapshotRequest<'_>, reasons: &[String]) -> bool {
     reasons.iter().all(|reason| reason_allowed(req, reason))
 }
@@ -528,6 +535,13 @@ fn reason_allowed_by_some_flag(req: &ProfileSnapshotRequest<'_>, reason: &str) -
         reason if inactive_status_reason(reason) => req.include_inactive,
         reason if reason.starts_with("validity:") => req.include_inactive,
         _ => false,
+    }
+}
+
+fn summary_reason_allowed_by_some_flag(req: &ProfileSnapshotRequest<'_>, reason: &str) -> bool {
+    match reason {
+        reason if reason.starts_with("provenance:") => req.include_manual_summaries,
+        reason => reason_allowed_by_some_flag(req, reason),
     }
 }
 
