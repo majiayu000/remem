@@ -640,14 +640,14 @@ candidate extraction from session rollups is implemented in source version
 `0.5.116`; it creates review candidates from captured user conversations and
 session summaries, and auto-promotes only normal, low-risk explicit user
 preference or constraint statements cited to and supported by user-authored
-source events. The extractor also applies non-retention rules so transient,
-speculative, unsafe, assistant-authored, or unapproved external-source content
-does not enter the user-context candidate queue. Source capture, bounded
-rollup follow-up ranges, stale review
+source events. Source capture, bounded rollup follow-up ranges, stale review
 guards, edited candidate audit persistence, and claim-key conflict review gates
 are tightened in source version `0.5.117`. Failed bounded follow-up retries and
 transactional auto-promotion conflict rechecks are tightened in source version
-`0.5.118`.
+`0.5.118`. User-context candidate extraction non-retention rules are tightened
+in source version `0.5.122`; transient, speculative, unsafe,
+assistant-authored, or unapproved external-source content does not enter the
+candidate queue.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more

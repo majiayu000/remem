@@ -49,7 +49,8 @@ fn contains_secret_like_content(
             return true;
         }
     }
-    contains_non_retention_pattern(blob, SECRET_PATTERNS)
+    contains_secret_key_token(blob)
+        || contains_non_retention_pattern(blob, SECRET_PATTERNS)
         || (blob.contains("[redacted")
             && contains_non_retention_pattern(blob, SECRET_REDACTION_CONTEXT))
 }
@@ -66,6 +67,25 @@ fn normalized_redaction_compare(text: &str) -> String {
 
 fn contains_non_retention_pattern(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn contains_secret_key_token(text: &str) -> bool {
+    text.split(|ch: char| ch.is_ascii_whitespace() || matches!(ch, ',' | ';' | '"' | '\'' | '`'))
+        .map(|token| {
+            token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
+        })
+        .any(is_secret_key_token)
+}
+
+fn is_secret_key_token(token: &str) -> bool {
+    let Some(rest) = token.strip_prefix("sk-") else {
+        return false;
+    };
+    !rest.is_empty()
+        && rest
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        && (rest.len() >= 20 || (rest.len() >= 10 && rest.chars().any(|ch| ch.is_ascii_digit())))
 }
 
 const SECRET_PATTERNS: &[&str] = &[
@@ -92,7 +112,6 @@ const SECRET_PATTERNS: &[&str] = &[
     "secret key",
     "social security number",
     "ssn",
-    "sk-",
 ];
 
 const SECRET_REDACTION_CONTEXT: &[&str] = &[

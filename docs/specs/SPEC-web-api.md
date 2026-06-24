@@ -235,11 +235,18 @@ does not synthesize a generic profile:
   "included": [],
   "dropped": [],
   "diagnostics": {
+    "requested_limit": 6,
     "budget_chars": 4000,
     "used_chars": 0,
-    "candidate_count": 0,
-    "included_count": 0,
-    "dropped_count": 0
+    "candidate_counts": {
+      "summaries": 0,
+      "claims": 0,
+      "memories": 0,
+      "current_state": 0,
+      "workstreams": 0,
+      "sessions": 0,
+      "dropped": 0
+    }
   }
 }
 ```
@@ -252,22 +259,43 @@ Non-empty recall includes source-attributed context plus a separate
 {
   "empty": false,
   "context": "- user_claim#1 [active, low]: Prefers concise status reports.",
-  "usage_policy": "Use user context only when it materially improves the current answer. Prefer invisible adaptation over explicit memory narration. Limit explicit memory mentions to 0-1 per response. Do not say \"I remember you said\" or \"from previous conversations\" unless the user is discussing memory, provenance, or correction. Do not infer profile facts beyond the cited items. If no user context applies, do not invent a profile.",
+  "usage_policy": "Use user context only when it materially improves the current answer. Prefer invisible adaptation over explicit memory narration. Limit explicit memory prose mentions to 0-1 per response; required final citation lines are exempt. Do not say \"I remember you said\" or \"from previous conversations\" unless the user is discussing memory, provenance, or correction. Do not infer profile facts beyond the cited items. If no user context applies, do not invent a profile.",
   "included": [
     {
       "source_type": "user_claim",
-      "id": 1,
-      "source_id": "1",
-      "scope": "user",
-      "risk": "low",
-      "status": "active",
-      "label": "user_claim#1",
+      "source_id": 1,
       "text": "Prefers concise status reports.",
-      "score": 1.0,
-      "reason": "query"
+      "reason_codes": ["user_claim", "query_match"],
+      "source_refs": [
+        {
+          "kind": "manual_cli",
+          "ts": 1782291600
+        }
+      ]
     }
   ],
-  "dropped": []
+  "dropped": [
+    {
+      "source_type": "user_claim",
+      "source_id": 2,
+      "label": "Sensitive identity detail",
+      "reason_code": "sensitive_excluded"
+    }
+  ],
+  "diagnostics": {
+    "requested_limit": 6,
+    "budget_chars": 4000,
+    "used_chars": 64,
+    "candidate_counts": {
+      "summaries": 0,
+      "claims": 2,
+      "memories": 0,
+      "current_state": 0,
+      "workstreams": 0,
+      "sessions": 0,
+      "dropped": 1
+    }
+  }
 }
 ```
 
