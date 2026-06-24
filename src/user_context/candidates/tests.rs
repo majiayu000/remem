@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::*;
 use crate::user_context::claims::{create_manual_claim, ManualClaimRequest};
@@ -147,6 +147,54 @@ fn blocklisted_candidate_text_or_preview_is_rejected_before_insert() -> Result<(
             row.get(0)
         })?;
     assert_eq!(candidate_count, 1);
+    Ok(())
+}
+
+#[test]
+fn apply_rechecks_non_retention_policy_for_pending_candidates() -> Result<()> {
+    let conn = migrated_conn()?;
+    let mut legacy_req = candidate_request("Prefer concise review notes", false);
+    legacy_req.claim_key = Some("preference:review-style");
+    let legacy = create_candidate(&conn, &legacy_req)?.candidate;
+    conn.execute(
+        "UPDATE user_context_candidates
+         SET claim_text = ?1
+         WHERE id = ?2",
+        params!["User's API key is sk-testsecret123456.", legacy.id],
+    )?;
+
+    let approve_err = approve_candidate(&conn, legacy.id)
+        .expect_err("legacy secret-like candidate must not apply");
+    assert!(approve_err
+        .to_string()
+        .contains("blocked by non-retention policy"));
+    assert!(list_claims_for_text(&conn, "User's API key is sk-testsecret123456.")?.is_empty());
+    assert_eq!(
+        load_candidate(&conn, legacy.id)?.review_status,
+        "pending_review"
+    );
+
+    let mut edited_req = candidate_request("Prefer draft review notes", false);
+    edited_req.claim_key = Some("preference:draft-review-style");
+    let edited = create_candidate(&conn, &edited_req)?.candidate;
+    let edit_err = edit_candidate(
+        &conn,
+        edited.id,
+        &CandidateEditRequest {
+            text: "User's AWS access key ID is AKIAIOSFODNN7EXAMPLE.",
+            claim_type: Some(UserContextClaimType::Preference),
+            claim_key: Some("preference:draft-review-style"),
+            sensitivity: Some(UserContextSensitivity::Normal),
+            review_note: Some("unsafe edit"),
+        },
+    )
+    .expect_err("secret-like review edit must not apply");
+    assert!(edit_err
+        .to_string()
+        .contains("blocked by non-retention policy"));
+    let edited_after = load_candidate(&conn, edited.id)?;
+    assert_eq!(edited_after.review_status, "pending_review");
+    assert_eq!(edited_after.claim_text, "Prefer draft review notes");
     Ok(())
 }
 
