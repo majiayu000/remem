@@ -366,6 +366,95 @@ async fn source_preview_trims_unrelated_third_party_detail() -> Result<()> {
 }
 
 #[tokio::test]
+async fn non_retention_scan_uses_matched_source_preview_only() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-preview-blocklist-scope",
+        Some("user"),
+        "I prefer concise reviews. I had sushi for lunch today.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:review-style",
+            "User prefers concise reviews.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let source_preview: String = conn.query_row(
+        "SELECT source_preview FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(source_preview.contains("I prefer concise reviews."));
+    assert!(!source_preview.contains("sushi"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_preview_preserves_external_source_approval_context() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-readme-approval",
+        Some("user"),
+        "I work on remem from README. Please remember from README.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "project",
+            "project:remem-readme",
+            "User works on remem from README.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: event_id,
+        }
+    );
+    let (source_preview, reason): (String, Option<String>) = conn.query_row(
+        "SELECT source_preview, auto_promote_block_reason FROM user_context_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert!(source_preview.contains("Please remember from README."));
+    assert!(source_preview.contains("I work on remem from README."));
+    assert_eq!(reason.as_deref(), Some("claim_type_requires_review"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn assistant_sourced_explicit_statement_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -814,6 +903,92 @@ async fn unsupported_user_event_citation_creates_no_candidate() -> Result<()> {
             row.get(0)
         })?;
     assert_eq!(claim_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn support_matching_does_not_combine_separate_sentences() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-sentence-boundary",
+        Some("user"),
+        "I prefer concise reviews. Verbose release notes are hard to scan.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:release-notes",
+            "User prefers verbose release notes.",
+            0.96,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn inferred_behavior_source_stays_pending_review() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-behavior-source",
+        None,
+        "Ran cargo test for remem verification.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:remem-verification",
+            "User prefers cargo test for remem verification.",
+            0.93,
+            "normal",
+            "low",
+            "inferred_from_behavior",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: event_id,
+        }
+    );
+    let (status, reason): (String, Option<String>) = conn.query_row(
+        "SELECT review_status, auto_promote_block_reason FROM user_context_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(status, "pending_review");
+    assert_eq!(reason.as_deref(), Some("source_requires_review"));
     Ok(())
 }
 

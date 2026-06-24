@@ -182,17 +182,32 @@ fn evidence_preview_for_event(content: &str, claim_text: &str) -> Option<String>
     if claim_tokens.is_empty() {
         return None;
     }
-    let evidence = evidence_segments(content)
-        .into_iter()
+    let segments = evidence_segments(content);
+    let evidence = segments
+        .iter()
         .filter(|segment| segment_matches_claim(segment, &claim_tokens))
+        .cloned()
         .collect::<Vec<_>>();
     if evidence.is_empty() {
         return None;
     }
-    Some(evidence.join(" "))
+    let mut preview = Vec::new();
+    if preview_needs_external_source_approval(claim_text, &evidence) {
+        preview.extend(
+            segments
+                .iter()
+                .filter(|segment| {
+                    crate::user_context::non_retention::has_external_source_approval(segment)
+                        && !evidence.iter().any(|evidence| evidence == *segment)
+                })
+                .cloned(),
+        );
+    }
+    preview.extend(evidence);
+    Some(preview.join(" "))
 }
 
-fn evidence_segments(content: &str) -> Vec<String> {
+pub(super) fn evidence_segments(content: &str) -> Vec<String> {
     let mut segments = Vec::new();
     let mut start = 0;
     for (index, ch) in content.char_indices() {
@@ -210,6 +225,13 @@ fn evidence_segments(content: &str) -> Vec<String> {
         segments.push(tail.to_string());
     }
     segments
+}
+
+fn preview_needs_external_source_approval(claim_text: &str, evidence: &[String]) -> bool {
+    crate::user_context::non_retention::has_external_source_pattern(claim_text)
+        || evidence
+            .iter()
+            .any(|segment| crate::user_context::non_retention::has_external_source_pattern(segment))
 }
 
 fn segment_matches_claim(segment: &str, claim_tokens: &[String]) -> bool {

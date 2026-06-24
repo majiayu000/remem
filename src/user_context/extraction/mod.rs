@@ -140,7 +140,10 @@ fn persist_candidates(
 ) -> Result<PersistSummary> {
     let mut summary = PersistSummary::default();
     for candidate in parsed {
-        if let Some(reason) = non_retention_block_reason(candidate, batch) {
+        let source_preview = source::source_preview(batch, candidate);
+        if let Some(reason) =
+            non_retention_block_reason(candidate, batch, source_preview.as_deref())
+        {
             summary.blocked += 1;
             crate::log::info(
                 "user-context-candidate",
@@ -152,7 +155,6 @@ fn persist_candidates(
         if candidate_exists(conn, candidate, &source_refs_json)? {
             continue;
         }
-        let source_preview = source::source_preview(batch, candidate);
         let auto_promote = should_auto_promote(candidate, batch);
         let result = candidates::create_candidate(
             conn,
@@ -189,11 +191,11 @@ fn persist_candidates(
 fn non_retention_block_reason(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
+    source_preview: Option<&str>,
 ) -> Option<&'static str> {
-    let source_blob = candidate_source_blob(candidate, batch);
     crate::user_context::non_retention::block_reason(
         &candidate.claim_text,
-        source_blob.as_deref(),
+        source_preview,
         &candidate.source_kind,
     )
     .or_else(|| {
@@ -206,20 +208,6 @@ fn non_retention_block_reason(
             && !is_supported_for_candidate_queue(candidate, batch))
         .then_some("no_supporting_user_source_event")
     })
-}
-
-fn candidate_source_blob(
-    candidate: &ParsedUserContextCandidate,
-    batch: &CandidateSourceBatch,
-) -> Option<String> {
-    let parts = batch
-        .events_for_candidate(candidate)
-        .into_iter()
-        .map(|event| event.content.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>();
-    let blob = parts.join("\n");
-    (!blob.is_empty()).then_some(blob)
 }
 
 fn is_supported_third_party_candidate(
@@ -387,8 +375,22 @@ fn is_supported_for_candidate_queue(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> bool {
+    if candidate.source_kind == "inferred_from_behavior" {
+        return has_behavior_source_evidence(candidate, batch);
+    }
     is_supported_by_user_source_event(candidate, batch)
         || is_supported_negative_user_constraint(candidate, batch)
+}
+
+fn has_behavior_source_evidence(
+    candidate: &ParsedUserContextCandidate,
+    batch: &CandidateSourceBatch,
+) -> bool {
+    batch
+        .events_for_candidate(candidate)
+        .into_iter()
+        .any(|event| !event.content.trim().is_empty())
+        && source::source_preview(batch, candidate).is_some()
 }
 
 fn is_supported_by_user_source_event(
@@ -404,11 +406,15 @@ fn is_supported_by_user_source_event(
             if !batch.event_is_user_authored(event.id) {
                 return false;
             }
-            let event_text = normalize_support_text(&event.content);
-            has_conservative_source_support(&candidate_text, &event_text)
-                || short_variants
-                    .iter()
-                    .any(|variant| has_short_exact_source_support(variant, &event_text))
+            source::evidence_segments(&event.content)
+                .into_iter()
+                .any(|segment| {
+                    let segment_text = normalize_support_text(&segment);
+                    has_conservative_source_support(&candidate_text, &segment_text)
+                        || short_variants
+                            .iter()
+                            .any(|variant| has_short_exact_source_support(variant, &segment_text))
+                })
         })
 }
 
