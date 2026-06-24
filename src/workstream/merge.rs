@@ -51,13 +51,6 @@ pub fn merge_workstreams_manual(
         let duplicate = load_visible_merge_row(&tx, project, *duplicate_id)?.ok_or_else(|| {
             anyhow::anyhow!("No workstream found for id {duplicate_id} in project {project}")
         })?;
-        if duplicate.project != canonical.project {
-            bail!(
-                "workstream {duplicate_id} belongs to project {}, not {}",
-                duplicate.project,
-                canonical.project
-            );
-        }
         if duplicate.merged_into_workstream_id.is_some() {
             bail!("duplicate workstream {duplicate_id} is already merged");
         }
@@ -170,7 +163,6 @@ pub fn merge_workstreams_manual(
 
 #[derive(Debug)]
 struct MergeRow {
-    project: String,
     title: String,
     merged_into_workstream_id: Option<i64>,
 }
@@ -181,7 +173,7 @@ fn load_visible_merge_row(
     workstream_id: i64,
 ) -> Result<Option<MergeRow>> {
     conn.query_row(
-        "SELECT project, title, merged_into_workstream_id
+        "SELECT title, merged_into_workstream_id
            FROM workstreams
           WHERE id = ?1
             AND ((owner_scope = 'repo' AND owner_key = ?2)
@@ -191,9 +183,8 @@ fn load_visible_merge_row(
         params![workstream_id, project],
         |row| {
             Ok(MergeRow {
-                project: row.get(0)?,
-                title: row.get(1)?,
-                merged_into_workstream_id: row.get(2)?,
+                title: row.get(0)?,
+                merged_into_workstream_id: row.get(1)?,
             })
         },
     )

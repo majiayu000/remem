@@ -134,6 +134,40 @@ fn manual_merge_moves_sessions_and_aliases_to_canonical_workstream() {
 }
 
 #[test]
+fn manual_merge_accepts_rows_visible_through_owner_scope() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          owner_scope, owner_key, target_project)
+         VALUES ('legacy/canonical', 'Canonical Workstream', 'active', ?1, ?1,
+                 'repo', 'test/proj', 'test/proj')",
+        params![now],
+    )
+    .unwrap();
+    let canonical_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          owner_scope, owner_key, target_project)
+         VALUES ('legacy/duplicate', 'Duplicate Workstream', 'active', ?1, ?1,
+                 'repo', 'other/legacy-owner', 'test/proj')",
+        params![now],
+    )
+    .unwrap();
+    let duplicate_id = conn.last_insert_rowid();
+
+    let result =
+        merge_workstreams_manual(&conn, "test/proj", canonical_id, &[duplicate_id]).unwrap();
+
+    assert_eq!(result.canonical_id, canonical_id);
+    assert_eq!(result.merged_ids, vec![duplicate_id]);
+}
+
+#[test]
 fn manual_merge_rejects_cross_project_duplicates() {
     let conn = Connection::open_in_memory().unwrap();
     setup_workstream_schema(&conn);
