@@ -4,7 +4,14 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const packageJson = require("../package.json");
-const { BASE_URL, VERSION, resolveAsset } = require("./install");
+const {
+  BASE_URL,
+  VERSION,
+  codesignBinary,
+  resolveAsset,
+  shouldCodesign,
+  smokeBinary,
+} = require("./install");
 
 test("installer version follows package.json", () => {
   assert.equal(VERSION, packageJson.version);
@@ -98,4 +105,67 @@ test("resolveAsset rejects missing checksums", () => {
     () => resolveAsset(manifest, VERSION, "linux-x64"),
     /missing a valid sha256/
   );
+});
+
+test("codesign is required only for darwin arm64", () => {
+  assert.equal(shouldCodesign("darwin", "arm64"), true);
+  assert.equal(shouldCodesign("darwin", "x64"), false);
+  assert.equal(shouldCodesign("linux", "arm64"), false);
+  assert.equal(shouldCodesign("linux", "x64"), false);
+});
+
+test("codesignBinary skips non-darwin-arm64 platforms", () => {
+  let called = false;
+  assert.equal(
+    codesignBinary("/tmp/remem", {
+      platform: "linux",
+      arch: "x64",
+      spawnSync: () => {
+        called = true;
+        return { status: 0 };
+      },
+    }),
+    false
+  );
+  assert.equal(called, false);
+});
+
+test("codesignBinary invokes ad-hoc signing on darwin arm64", () => {
+  const calls = [];
+  assert.equal(
+    codesignBinary("/tmp/remem", {
+      platform: "darwin",
+      arch: "arm64",
+      spawnSync: (cmd, args, options) => {
+        calls.push({ cmd, args, options });
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    }),
+    true
+  );
+  assert.deepEqual(calls[0].cmd, "codesign");
+  assert.deepEqual(calls[0].args, ["--force", "--sign", "-", "/tmp/remem"]);
+});
+
+test("codesignBinary fails closed on darwin arm64 signing failure", () => {
+  assert.throws(
+    () =>
+      codesignBinary("/tmp/remem", {
+        platform: "darwin",
+        arch: "arm64",
+        spawnSync: () => ({ status: 1, stdout: "", stderr: "rejected" }),
+      }),
+    /codesign failed.*rejected/
+  );
+});
+
+test("smokeBinary runs remem --version", () => {
+  const output = smokeBinary("/tmp/remem", {
+    spawnSync: (cmd, args) => {
+      assert.equal(cmd, "/tmp/remem");
+      assert.deepEqual(args, ["--version"]);
+      return { status: 0, stdout: "remem 1.2.3 (schema v34)\n", stderr: "" };
+    },
+  });
+  assert.equal(output, "remem 1.2.3 (schema v34)");
 });
