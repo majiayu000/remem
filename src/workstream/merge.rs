@@ -140,6 +140,7 @@ pub fn merge_workstreams_manual(
         tx.execute(
             "UPDATE workstreams
                 SET merged_into_workstream_id = ?1,
+                    status = 'abandoned',
                     updated_at_epoch = ?2
               WHERE id = ?3",
             params![canonical_id, now, duplicate_id],

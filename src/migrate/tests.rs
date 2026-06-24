@@ -286,7 +286,7 @@ fn workstream_identity_migration_collapses_alias_whitespace_like_runtime() -> Re
         "INSERT INTO workstreams
          (project, title, status, created_at_epoch, updated_at_epoch,
           source_project, target_project, owner_scope, owner_key)
-         VALUES ('test/proj', 'flowguard / run-guard Skill 生命周期工作流', 'active',
+         VALUES ('test/proj', 'flowguard|run-guard {Skill}<生命周期工作流>', 'active',
                  1700000000, 1700000100, 'test/proj', 'test/proj', 'repo', 'test/proj')",
         [],
     )?;

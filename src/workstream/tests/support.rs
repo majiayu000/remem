@@ -2,7 +2,13 @@ use rusqlite::Connection;
 
 pub(super) fn setup_workstream_schema(conn: &Connection) {
     conn.execute_batch(
-        "CREATE TABLE workstreams (
+        "CREATE TABLE sdk_sessions (
+            id INTEGER PRIMARY KEY,
+            content_session_id TEXT UNIQUE NOT NULL,
+            memory_session_id TEXT NOT NULL,
+            project TEXT
+        );
+        CREATE TABLE workstreams (
             id INTEGER PRIMARY KEY,
             project TEXT NOT NULL,
             title TEXT NOT NULL,

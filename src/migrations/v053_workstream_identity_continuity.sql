@@ -41,6 +41,66 @@ UPDATE workstreams
 SET identity_key = 'ws_' || id
 WHERE identity_key IS NULL;
 
+WITH alias_input AS (
+    SELECT
+        id,
+        title,
+        lower(trim(title)) AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM workstreams
+    WHERE title IS NOT NULL AND trim(title) <> ''
+),
+separator_pass_1 AS (
+    SELECT
+        id,
+        title,
+        replace(replace(replace(replace(replace(normalized_title,
+            '/', ' '), '\', ' '), '-', ' '), '_', ' '), ':', ' ') AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM alias_input
+),
+separator_pass_2 AS (
+    SELECT
+        id,
+        title,
+        replace(replace(replace(replace(replace(replace(normalized_title,
+            ';', ' '), ',', ' '), '.', ' '), '(', ' '), ')', ' '), '[', ' ') AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM separator_pass_1
+),
+separator_pass_3 AS (
+    SELECT
+        id,
+        title,
+        replace(replace(replace(replace(replace(replace(normalized_title,
+            ']', ' '), '{', ' '), '}', ' '), '<', ' '), '>', ' '), '|', ' ') AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM separator_pass_2
+),
+space_pass_1 AS (
+    SELECT
+        id,
+        title,
+        replace(replace(replace(replace(normalized_title,
+            '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' ') AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM separator_pass_3
+),
+space_pass_2 AS (
+    SELECT
+        id,
+        title,
+        replace(replace(replace(replace(normalized_title,
+            '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' ') AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM space_pass_1
+)
 INSERT OR IGNORE INTO workstream_aliases (
     workstream_id,
     title,
@@ -51,16 +111,10 @@ INSERT OR IGNORE INTO workstream_aliases (
 SELECT
     id,
     title,
-    replace(replace(replace(replace(replace(replace(replace(replace(
-        lower(trim(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(title,
-        '/', ' '), '\', ' '), '-', ' '), '_', ' '), ':', ' '), ';', ' '), ',', ' '), '.', ' '),
-        '(', ' '), ')', ' '), '[', ' '), ']', ' '))),
-        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),
-        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),
+    trim(normalized_title),
     created_at_epoch,
     updated_at_epoch
-FROM workstreams
-WHERE title IS NOT NULL AND trim(title) <> '';
+FROM space_pass_2;
 
 INSERT INTO workstream_alias_sources (
     alias_id,
@@ -82,10 +136,5 @@ SELECT
 FROM workstreams ws
 JOIN workstream_aliases wa
   ON wa.workstream_id = ws.id
- AND wa.normalized_title = replace(replace(replace(replace(replace(replace(replace(replace(
-        lower(trim(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(ws.title,
-        '/', ' '), '\', ' '), '-', ' '), '_', ' '), ':', ' '), ';', ' '), ',', ' '), '.', ' '),
-        '(', ' '), ')', ' '), '[', ' '), ']', ' '))),
-        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' '),
-        '  ', ' '), '  ', ' '), '  ', ' '), '  ', ' ')
+ AND wa.title = ws.title
 WHERE ws.title IS NOT NULL AND trim(ws.title) <> '';

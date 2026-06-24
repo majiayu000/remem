@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use super::support::setup_workstream_schema;
 use crate::workstream::{
     merge_workstreams_manual, query_active_workstreams, query_workstreams,
-    update_workstream_manual, upsert_workstream, ParsedWorkStream,
+    update_workstream_manual, upsert_workstream, upsert_workstream_with_match, ParsedWorkStream,
 };
 
 #[test]
@@ -121,6 +121,14 @@ fn manual_merge_moves_sessions_and_aliases_to_canonical_workstream() {
         )
         .unwrap();
     assert_eq!(duplicate_sessions, 0);
+    let duplicate_status: String = conn
+        .query_row(
+            "SELECT status FROM workstreams WHERE id = ?1",
+            params![duplicate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(duplicate_status, "abandoned");
 
     let later_repeat = ParsedWorkStream {
         title: Some("Renamed Duplicate Workstream".to_string()),
@@ -131,6 +139,45 @@ fn manual_merge_moves_sessions_and_aliases_to_canonical_workstream() {
     };
     let later_id = upsert_workstream(&conn, "test/proj", "mem-later", &later_repeat).unwrap();
     assert_eq!(later_id, canonical_id);
+}
+
+#[test]
+fn session_link_requires_unique_content_session_id() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    conn.execute(
+        "INSERT INTO sdk_sessions (content_session_id, memory_session_id, project)
+         VALUES (?1, 'mem-collide', 'test/proj'), (?2, 'mem-collide', 'test/proj')",
+        params!["abcdefgh-first", "abcdefgh-second"],
+    )
+    .unwrap();
+
+    let first = ParsedWorkStream {
+        title: Some("flowguard Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let first_id = upsert_workstream(&conn, "test/proj", "mem-collide", &first).unwrap();
+
+    let collided = ParsedWorkStream {
+        title: Some("flowguard / run-guard Skill 生命周期工作流".to_string()),
+        progress: Some("different content session".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let collided_result =
+        upsert_workstream_with_match(&conn, "test/proj", "mem-collide", &collided).unwrap();
+
+    assert_ne!(collided_result.id, first_id);
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 2);
+    assert!(workstreams
+        .iter()
+        .any(|workstream| workstream.title == "flowguard Skill 生命周期工作流"));
 }
 
 #[test]

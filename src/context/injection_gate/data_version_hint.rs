@@ -487,6 +487,7 @@ fn push_workstream_signal(
                 blockers, created_at_epoch, updated_at_epoch, completed_at_epoch
          FROM workstreams
          WHERE status = 'active'
+           AND merged_into_workstream_id IS NULL
            AND ((owner_scope = 'repo' AND owner_key = ?1)
                 OR (owner_scope = 'repo' AND target_project = ?1)
                 OR (owner_scope = 'workstream' AND target_project = ?1)
