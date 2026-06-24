@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::eval::current_memory_contracts::{
     CurrentMemoryContractEvalReport, CurrentMemoryContractRateMetric,
@@ -7,12 +8,19 @@ use crate::eval::current_memory_contracts::{
 
 pub const CODING_AGENT_AB_SPEC_PATH: &str = "docs/specs/issue385-coding-agent-ab/TECH.md";
 pub const CURRENT_MEMORY_CONTRACT_SPEC_PATH: &str = "docs/specs/current-memory-contracts/TECH.md";
+pub const MIN_RUNS_PER_CONDITION: usize = 3;
+const REQUIRED_CONDITIONS: [CodingBenchCondition; 3] = [
+    CodingBenchCondition::Remem,
+    CodingBenchCondition::NoMemory,
+    CodingBenchCondition::CuratedFile,
+];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct CodingBenchReport {
     pub schema_version: u32,
     pub benchmark_spec_path: &'static str,
     pub current_memory_contract_spec_path: &'static str,
+    pub runs_per_condition: usize,
     pub conditions: Vec<CodingBenchConditionReport>,
 }
 
@@ -34,8 +42,26 @@ pub struct CodingBenchRunReport {
     pub memory_contract_status: CodingBenchMemoryContractStatus,
     pub runtime_contract_failure: bool,
     pub runtime_contract_failure_reason: Option<String>,
+    pub score: CodingBenchRunScoreEvidence,
     pub metrics: CodingBenchRunMetrics,
+    pub final_head_sha: Option<String>,
+    pub patch_artifact_path: Option<String>,
+    pub unauthorized_path_changes: Vec<String>,
     pub remem_contract_snapshot: Option<RememContractSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CodingBenchRunScoreEvidence {
+    pub commands: Vec<CodingBenchScoreCommandEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CodingBenchScoreCommandEvidence {
+    pub command: Vec<String>,
+    pub exit_code: i32,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub output_artifact_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -48,7 +74,7 @@ pub struct CodingBenchRunMetrics {
     pub wall_time_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum CodingBenchCondition {
     NoMemory,
@@ -196,6 +222,8 @@ pub fn build_remem_contract_snapshot(
 }
 
 pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
+    validate_condition_matrix(report)?;
+
     for condition in &report.conditions {
         for run in &condition.runs {
             if run.condition != condition.name {
@@ -226,7 +254,12 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     run.run_index
                 );
             }
-            if run.runtime_contract_failure && run.runtime_contract_failure_reason.is_none() {
+            if run.runtime_contract_failure
+                && run
+                    .runtime_contract_failure_reason
+                    .as_deref()
+                    .is_none_or(|reason| reason.trim().is_empty())
+            {
                 bail!(
                     "coding bench run {}#{} has runtime contract failure without reason",
                     run.task_id,
@@ -240,6 +273,7 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     run.run_index
                 );
             }
+            validate_score_and_patch_evidence(run)?;
             validate_token_accounting(run)?;
             validate_required_run_metrics(run)?;
 
@@ -276,6 +310,173 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn validate_condition_matrix(report: &CodingBenchReport) -> Result<()> {
+    if report.runs_per_condition < MIN_RUNS_PER_CONDITION {
+        bail!(
+            "coding bench report runs_per_condition={} is below required minimum {MIN_RUNS_PER_CONDITION}",
+            report.runs_per_condition
+        );
+    }
+
+    let mut reports_by_condition = BTreeMap::new();
+    for condition in &report.conditions {
+        if reports_by_condition
+            .insert(condition.name, condition)
+            .is_some()
+        {
+            bail!(
+                "coding bench report contains duplicate {:?} condition",
+                condition.name
+            );
+        }
+    }
+    for required in REQUIRED_CONDITIONS {
+        if !reports_by_condition.contains_key(&required) {
+            bail!(
+                "coding bench report missing required {:?} condition",
+                required
+            );
+        }
+    }
+    if reports_by_condition.len() != REQUIRED_CONDITIONS.len() {
+        bail!(
+            "coding bench report condition count={} does not match required condition count={}",
+            reports_by_condition.len(),
+            REQUIRED_CONDITIONS.len()
+        );
+    }
+
+    let mut task_ids = BTreeSet::new();
+    for condition in reports_by_condition.values() {
+        for run in &condition.runs {
+            task_ids.insert(run.task_id.clone());
+        }
+    }
+    if task_ids.is_empty() {
+        bail!("coding bench report has no task runs");
+    }
+
+    for required in REQUIRED_CONDITIONS {
+        let Some(condition) = reports_by_condition.get(&required) else {
+            bail!(
+                "coding bench report missing required {:?} condition",
+                required
+            );
+        };
+        let mut seen = BTreeSet::new();
+        for run in &condition.runs {
+            if run.run_index >= report.runs_per_condition {
+                bail!(
+                    "{:?} run {}#{} is outside runs_per_condition={}",
+                    required,
+                    run.task_id,
+                    run.run_index,
+                    report.runs_per_condition
+                );
+            }
+            if !seen.insert((run.task_id.clone(), run.run_index)) {
+                bail!(
+                    "{:?} condition repeats run {}#{}",
+                    required,
+                    run.task_id,
+                    run.run_index
+                );
+            }
+        }
+        for task_id in &task_ids {
+            for run_index in 0..report.runs_per_condition {
+                if !seen.contains(&(task_id.clone(), run_index)) {
+                    bail!(
+                        "{:?} condition missing run {}#{}",
+                        required,
+                        task_id,
+                        run_index
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_score_and_patch_evidence(run: &CodingBenchRunReport) -> Result<()> {
+    if run.score.commands.is_empty() {
+        bail!(
+            "coding bench run {}#{} is missing score command evidence",
+            run.task_id,
+            run.run_index
+        );
+    }
+    for (command_index, command) in run.score.commands.iter().enumerate() {
+        if command.command.is_empty() || command.command.iter().any(|part| part.trim().is_empty()) {
+            bail!(
+                "coding bench run {}#{} score command {command_index} has blank command argv",
+                run.task_id,
+                run.run_index
+            );
+        }
+        let has_inline_output = command
+            .stdout
+            .as_deref()
+            .is_some_and(|stdout| !stdout.trim().is_empty())
+            || command
+                .stderr
+                .as_deref()
+                .is_some_and(|stderr| !stderr.trim().is_empty());
+        let has_output_artifact = command
+            .output_artifact_path
+            .as_deref()
+            .is_some_and(|path| !path.trim().is_empty());
+        if !has_inline_output && !has_output_artifact {
+            bail!(
+                "coding bench run {}#{} score command {command_index} has no output evidence",
+                run.task_id,
+                run.run_index
+            );
+        }
+    }
+
+    let has_final_head_sha = run
+        .final_head_sha
+        .as_deref()
+        .is_some_and(|sha| !sha.trim().is_empty());
+    let has_patch_artifact = run
+        .patch_artifact_path
+        .as_deref()
+        .is_some_and(|path| !path.trim().is_empty());
+    if !has_final_head_sha && !has_patch_artifact {
+        bail!(
+            "coding bench run {}#{} is missing final_head_sha or patch_artifact_path",
+            run.task_id,
+            run.run_index
+        );
+    }
+    if let Some(sha) = run.final_head_sha.as_deref() {
+        let sha = sha.trim();
+        if sha.len() != 40 || !sha.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            bail!(
+                "coding bench run {}#{} final_head_sha is not a full git SHA",
+                run.task_id,
+                run.run_index
+            );
+        }
+    }
+    if run
+        .unauthorized_path_changes
+        .iter()
+        .any(|path| path.trim().is_empty())
+    {
+        bail!(
+            "coding bench run {}#{} has blank unauthorized path change",
+            run.task_id,
+            run.run_index
+        );
+    }
+
     Ok(())
 }
 
