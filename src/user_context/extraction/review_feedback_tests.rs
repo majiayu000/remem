@@ -248,3 +248,111 @@ async fn ordinary_web_page_preference_is_not_external_source() -> Result<()> {
     assert_eq!(candidate_count(&conn)?, 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn unapproved_web_page_attribution_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-review-web-page-attribution",
+        Some("user"),
+        "From the web page, the user lives in Paris.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "identity",
+            "identity:location",
+            "User lives in Paris.",
+            0.93,
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    assert_eq!(candidate_count(&conn)?, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn lowercase_tool_subject_preference_is_not_third_party() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-review-lowercase-tool-subject",
+        Some("user"),
+        "Playwright is my preferred layout test runner.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:layout-test-runner",
+            "playwright is the user's preferred layout test runner.",
+            0.93,
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    assert_eq!(candidate_count(&conn)?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_framed_general_technical_fact_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-review-user-framed-general-fact",
+        Some("user"),
+        "I think SQLite is a single-file database.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:sqlite-fact",
+            "User thinks SQLite is a single-file database.",
+            0.93,
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    assert_eq!(candidate_count(&conn)?, 0);
+    Ok(())
+}
