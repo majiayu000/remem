@@ -1132,6 +1132,56 @@ async fn assistant_text_cannot_be_behavior_source() -> Result<()> {
 }
 
 #[tokio::test]
+async fn mixed_assistant_text_cannot_borrow_behavior_source() -> Result<()> {
+    let mut conn = setup_conn();
+    let tool_event_id = capture_event_with_details(
+        &conn,
+        "sess-user-context-mixed-behavior-source",
+        "tool_result",
+        None,
+        Some("Bash"),
+        "Ran cargo test for remem verification.",
+    )?;
+    let assistant_event_id = capture_event(
+        &conn,
+        "sess-user-context-mixed-behavior-source",
+        Some("assistant"),
+        "The user prefers verbose release notes.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:release-notes",
+            "User prefers verbose release notes.",
+            0.93,
+            "normal",
+            "low",
+            "inferred_from_behavior",
+            &[tool_event_id, assistant_event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: assistant_event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn explicit_negative_constraint_stays_pending_review() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(

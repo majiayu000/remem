@@ -178,10 +178,31 @@ pub(super) fn source_preview(
     let parts = batch
         .events_for_candidate(candidate)
         .into_iter()
+        .filter(|event| {
+            candidate.source_kind != "inferred_from_behavior" || is_behavior_source_event(event)
+        })
         .filter_map(|event| evidence_preview_for_event(&event.content, &candidate.claim_text))
         .collect::<Vec<_>>();
     let preview = parts.join("\n");
     (!preview.is_empty()).then(|| crate::db::truncate_str(&preview, 500).to_string())
+}
+
+pub(super) fn source_preview_for_event(
+    event: &SourceEvent,
+    candidate: &ParsedUserContextCandidate,
+) -> Option<String> {
+    evidence_preview_for_event(&event.content, &candidate.claim_text)
+}
+
+pub(super) fn is_behavior_source_event(event: &SourceEvent) -> bool {
+    event
+        .tool_name
+        .as_deref()
+        .is_some_and(|tool_name| !tool_name.trim().is_empty())
+        || matches!(
+            event.event_type.as_str(),
+            "bash" | "bash_run" | "file_edit" | "file_read" | "file_write" | "tool_result"
+        )
 }
 
 fn evidence_preview_for_event(content: &str, claim_text: &str) -> Option<String> {
