@@ -553,7 +553,11 @@ non-sensitive claims, repo memory, explicitly requested current-state keys,
 active workstreams, and recent sessions into compact source-attributed context.
 Default recall excludes suppressed, rejected, deleted, expired, future,
 personal, sensitive, and restricted claims. Use `--include-sensitive` and
-`--include-suppressed` only for explicit audit.
+`--include-suppressed` only for explicit audit. Non-empty recall output includes
+a usage policy telling agents to apply user context only when it materially
+improves the answer, prefer invisible adaptation over memory narration, avoid
+uncited profile inferences, and avoid inventing a profile when no context
+applies.
 
 `remem user review ...` governs review-gated user-context candidates before
 they become active claims. `inbox` shows pending candidates with risk,
@@ -588,7 +592,7 @@ is set:
 | `remem user summary show --json` | `found`, `summary` |
 | `remem user summary refresh --json` / `edit --json` | `status`, `summary` |
 | `remem user summary sources --json` | `summary`, `included_claims`, `included_memories`, `included_activity_refs`, `dropped_claims` |
-| `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `included`, `dropped`, `diagnostics` |
+| `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `usage_policy`, `included`, `dropped`, `diagnostics` |
 | `remem user review inbox --json` | `count`, `candidates` |
 | `remem user review approve <id> --json` / `edit <id> --json` | `status`, `action`, `candidate`, `claim` |
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |

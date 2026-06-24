@@ -10,7 +10,8 @@ The complete web read-model surface is implemented in source version
 `0.5.109`. Fast health checks and cached status metadata are implemented in
 source version `0.5.112`. Suppression audit opt-in is implemented in source
 version `0.5.113`. Task-aware user recall is implemented in source version
-`0.5.114`. remem-web should require a published release with the specific
+`0.5.114`. User recall usage-policy guidance is implemented in source version
+`0.5.123`. remem-web should require a published release with the specific
 capability it needs before directing installed-binary users to that surface.
 Clients should call `GET /api/v1/capabilities` before enabling optional UI
 features.
@@ -199,6 +200,77 @@ All normal control-flow errors use:
 Candidate review errors include `not_found`, `candidate_not_pending`,
 `candidate_edit_invalid`, and `candidate_review_failed`.
 
+`POST /api/v1/user/recall` accepts:
+
+```json
+{
+  "query": "current task",
+  "project": "/repo/path",
+  "cwd": "/repo/path",
+  "task_intent": "optional task intent",
+  "current_files": ["src/lib.rs"],
+  "host": "codex",
+  "owner_scope": "user",
+  "owner_key": null,
+  "state_keys": ["current-memory-preferences"],
+  "include_sensitive": false,
+  "include_suppressed": false,
+  "limit": 6,
+  "budget_chars": 4000
+}
+```
+
+`query` and either `project` or `cwd` are required. Empty recall is explicit and
+does not synthesize a generic profile:
+
+```json
+{
+  "query": "current task",
+  "project": "/repo/path",
+  "task_intent": null,
+  "host": "codex",
+  "empty": true,
+  "context": "",
+  "usage_policy": null,
+  "included": [],
+  "dropped": [],
+  "diagnostics": {
+    "budget_chars": 4000,
+    "used_chars": 0,
+    "candidate_count": 0,
+    "included_count": 0,
+    "dropped_count": 0
+  }
+}
+```
+
+Non-empty recall includes source-attributed context plus a separate
+`usage_policy` string. Clients must not concatenate `usage_policy` into
+`context` before enforcing the context budget:
+
+```json
+{
+  "empty": false,
+  "context": "- user_claim#1 [active, low]: Prefers concise status reports.",
+  "usage_policy": "Use user context only when it materially improves the current answer. Prefer invisible adaptation over explicit memory narration. Limit explicit memory mentions to 0-1 per response. Do not say \"I remember you said\" or \"from previous conversations\" unless the user is discussing memory, provenance, or correction. Do not infer profile facts beyond the cited items. If no user context applies, do not invent a profile.",
+  "included": [
+    {
+      "source_type": "user_claim",
+      "id": 1,
+      "source_id": "1",
+      "scope": "user",
+      "risk": "low",
+      "status": "active",
+      "label": "user_claim#1",
+      "text": "Prefers concise status reports.",
+      "score": 1.0,
+      "reason": "query"
+    }
+  ],
+  "dropped": []
+}
+```
+
 ## Security And Side Effects
 
 - API binds only to `127.0.0.1`.
@@ -242,6 +314,10 @@ read surfaces must continue excluding suppressed memories unless
 For task-aware user recall, the release target is `remem 0.5.114`. Clients
 must gate the UI on `capabilities.features.user_recall` and call
 `POST /api/v1/user/recall` instead of widening SessionStart context.
+
+For user recall usage-policy guidance, the release target is `remem 0.5.123`.
+Clients should treat `usage_policy` as response metadata for non-empty recall
+results and should not count it against the recalled context budget.
 
 ## Smoke Test
 
