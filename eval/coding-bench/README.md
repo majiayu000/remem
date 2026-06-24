@@ -8,11 +8,15 @@ Manual benchmark for issue #385. It compares the same coding tasks under:
 
 The first fixture is intentionally small and deterministic. It borrows the scoring shape of SWE-bench style patch tasks, but uses an inline repository so the harness can run from a clean checkout without Docker or external issue data. It should be expanded later with pinned real-repo tasks.
 
-## Latest Baseline
+## Draft Baseline
 
 Generated: 2026-06-25 01:44 CST
 
 Runner: `codex-cli 0.142.0`, model `gpt-5.5`, `runs_per_condition=3`, 5 tasks, 45 total agent runs.
+
+This run was generated before the runner started ignoring host Codex config,
+rules, hooks, and session persistence. Treat it as report-shape evidence only
+until it is regenerated with the isolated runner.
 
 | Condition | Resolved | Resolution | Mean tokens | Mean wall time |
 |---|---:|---:|---:|---:|
@@ -20,12 +24,22 @@ Runner: `codex-cli 0.142.0`, model `gpt-5.5`, `runs_per_condition=3`, 5 tasks, 4
 | `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
 | `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
 
-Interpretation: remem now reaches the curated-file control's resolution rate on this fixture and strongly beats no-memory. It does not beat the curated file on token cost, so the stop-loss control remains active: the next benchmark slice should add broader real-repo tasks before making stronger product claims.
+Interpretation: do not use this draft run for public product claims until the
+isolated-runner baseline is regenerated. The stop-loss control remains active:
+the next benchmark slice should add broader real-repo tasks before making
+stronger product claims.
 
 Reports:
 
 - `eval/coding-bench/reports/baseline.json`
 - `eval/coding-bench/reports/fix-remem-smoke.json`
+
+The JSON reports are the only benchmark outputs intended for source control.
+Raw per-run `runner.stdout`, `runner.stderr`, score outputs, and `final.diff`
+files are generated under `eval/coding-bench/reports/artifacts/` for local
+audit and are intentionally ignored. Those files can include local runner paths
+or host-specific tool output, so rerun the benchmark to regenerate them instead
+of committing them.
 
 ## Commands
 
@@ -71,6 +85,10 @@ cargo run -- eval-coding-bench \
 ## Current Caveat
 
 Codex non-interactive MCP calls can be cancelled by the host. To keep the `remem` condition faithful but runnable, the harness still seeds a temporary remem database and uses the production SessionStart render path, then appends full seeded memory details to `REMEM_CONTEXT.md` as preloaded `get_observations` details. This avoids undercounting remem because of host MCP approval behavior rather than memory quality.
+
+The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,
+and `--disable hooks` so benchmark agents do not inherit the host's MCP servers,
+hooks, user rules, or session log persistence.
 
 ## Expansion Targets
 

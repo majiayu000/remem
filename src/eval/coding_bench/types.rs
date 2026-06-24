@@ -104,7 +104,11 @@ pub struct CodingBenchReport {
     pub schema_version: u32,
     pub generated_at_epoch: i64,
     pub fixture_path: String,
+    pub fixture_sha256: String,
     pub remem_rev: String,
+    pub source_dirty: Option<bool>,
+    pub command: Vec<String>,
+    pub artifact_policy: String,
     pub runner: RunnerReport,
     pub runs_per_condition: usize,
     pub ignore_budget: bool,
@@ -131,7 +135,7 @@ pub struct ConditionSummary {
     pub resolution_rate: f64,
     pub tokens_total_mean: f64,
     pub tokens_total_stddev: f64,
-    pub turns_mean: f64,
+    pub turns_mean: Option<f64>,
     pub wall_time_ms_mean: f64,
     pub wall_time_ms_p95: f64,
 }
@@ -144,7 +148,7 @@ pub struct RunReport {
     pub resolved: bool,
     pub failure_reason: Option<String>,
     pub usage: BenchTokenUsage,
-    pub turns: usize,
+    pub turns: Option<usize>,
     pub wall_time_ms: u128,
     pub final_head_sha: Option<String>,
     pub changed_paths: Vec<String>,
@@ -152,6 +156,7 @@ pub struct RunReport {
     pub runner_exit_code: Option<i32>,
     pub runner_timed_out: bool,
     pub score_commands: Vec<CommandReport>,
+    #[serde(skip)]
     pub artifacts: RunArtifacts,
     pub workdir: Option<String>,
 }
@@ -168,7 +173,9 @@ pub struct CommandReport {
     pub command: Vec<String>,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    #[serde(skip)]
     pub stdout_artifact: String,
+    #[serde(skip)]
     pub stderr_artifact: String,
 }
 

@@ -18,7 +18,7 @@
         "resolution_rate": 0.2,
         "tokens_total_mean": 390003.93333333335,
         "tokens_total_stddev": 75394.0822748193,
-        "turns_mean": 0.0,
+        "turns_mean": null,
         "wall_time_ms_mean": 133593.73333333334,
         "wall_time_ms_p95": 181443.0
       },
@@ -34,7 +34,7 @@
             "output_tokens": 3767,
             "total_tokens": 358696
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181350,
           "final_head_sha": "646d777e255930484e365e1aba265119b9f2ccdb",
           "changed_paths": [
@@ -53,16 +53,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -76,7 +69,7 @@
             "output_tokens": 3819,
             "total_tokens": 453705
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 108751,
           "final_head_sha": "96e5cf2ce40406fe1ae657f20578772fe609bb61",
           "changed_paths": [
@@ -95,16 +88,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -118,7 +104,7 @@
             "output_tokens": 3605,
             "total_tokens": 358682
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 101865,
           "final_head_sha": "1f755997e74eb727224347c391ad6402f646183b",
           "changed_paths": [
@@ -137,16 +123,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-ticket-key-memory-convention-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -160,7 +139,7 @@
             "output_tokens": 4430,
             "total_tokens": 490077
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181355,
           "final_head_sha": "4bf06cf0a3332943b3b5f0d9fde06e6bfc1f3388",
           "changed_paths": [
@@ -178,16 +157,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -201,7 +173,7 @@
             "output_tokens": 3153,
             "total_tokens": 409892
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181287,
           "final_head_sha": "0d15c17bc71cc2260eb0b07f3dc0cccc5f7d9ce7",
           "changed_paths": [
@@ -219,16 +191,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -242,7 +207,7 @@
             "output_tokens": 4170,
             "total_tokens": 562010
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181341,
           "final_head_sha": "c85f57428b12295e83b299e3924fbca5d92dbc1f",
           "changed_paths": [
@@ -261,16 +226,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-retention-window-memory-policy-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -284,7 +242,7 @@
             "output_tokens": 3284,
             "total_tokens": 425242
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 95641,
           "final_head_sha": "3eeea07247080c4714c5bd84e9b4b07d5afa082a",
           "changed_paths": [
@@ -303,16 +261,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -326,7 +277,7 @@
             "output_tokens": 3253,
             "total_tokens": 296328
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 92168,
           "final_head_sha": "5467548c2363750b2576acd743401adde98c8a17",
           "changed_paths": [
@@ -345,16 +296,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -368,7 +312,7 @@
             "output_tokens": 3125,
             "total_tokens": 330317
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 95843,
           "final_head_sha": "2a0883cc1190676aab31ab2ae707f464e138974a",
           "changed_paths": [
@@ -387,16 +331,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-slug-normalizer-contract-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -410,7 +347,7 @@
             "output_tokens": 2698,
             "total_tokens": 247783
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 76110,
           "final_head_sha": "09175a2e7cfd79709591983b215a0ea3cdf589cf",
           "changed_paths": [
@@ -429,16 +366,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -452,7 +382,7 @@
             "output_tokens": 2641,
             "total_tokens": 338584
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 74191,
           "final_head_sha": "80e4e0e4ee705bed53c1a799eb40102e8f2bee8a",
           "changed_paths": [
@@ -471,16 +401,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -494,7 +417,7 @@
             "output_tokens": 3238,
             "total_tokens": 359397
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181339,
           "final_head_sha": "1fd8bfbf0400d38ce7da6bcf225b7d51e623b84c",
           "changed_paths": [
@@ -513,16 +436,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-session-budget-footer-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -536,7 +452,7 @@
             "output_tokens": 3886,
             "total_tokens": 428887
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181280,
           "final_head_sha": "d593fa25ed7b649ded4a76a052fb261856de91ed",
           "changed_paths": [
@@ -555,16 +471,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -578,7 +487,7 @@
             "output_tokens": 2869,
             "total_tokens": 407378
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 181443,
           "final_head_sha": "a96a4ea05f98972bbe3dced03c54641a3a61db50",
           "changed_paths": [
@@ -597,16 +506,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -620,7 +522,7 @@
             "output_tokens": 2599,
             "total_tokens": 383081
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 89942,
           "final_head_sha": "0d576a0a36a5f60ba7bfcb7f7d023c21f89705f3",
           "changed_paths": [
@@ -639,16 +541,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 1,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/no_memory-context-visibility-policy-3/final.diff"
-          },
           "workdir": null
         }
       ]
@@ -659,7 +554,7 @@
         "resolution_rate": 1.0,
         "tokens_total_mean": 170284.6,
         "tokens_total_stddev": 42436.24709891298,
-        "turns_mean": 0.0,
+        "turns_mean": null,
         "wall_time_ms_mean": 62245.666666666664,
         "wall_time_ms_p95": 97957.0
       },
@@ -675,7 +570,7 @@
             "output_tokens": 3718,
             "total_tokens": 262218
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 97957,
           "final_head_sha": "a96c63524d02aac9ebce11807471cc8f72bf7711",
           "changed_paths": [
@@ -694,16 +589,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -717,7 +605,7 @@
             "output_tokens": 2852,
             "total_tokens": 207801
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 77008,
           "final_head_sha": "13da01f4d62ce57cd822ea26fcd4fc95c547997a",
           "changed_paths": [
@@ -736,16 +624,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -759,7 +640,7 @@
             "output_tokens": 3534,
             "total_tokens": 214242
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 91703,
           "final_head_sha": "dbf5896fc2358684faa6d1bb037df4e0d86e506e",
           "changed_paths": [
@@ -778,16 +659,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-ticket-key-memory-convention-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -801,7 +675,7 @@
             "output_tokens": 1671,
             "total_tokens": 129039
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 55335,
           "final_head_sha": "82b373c052eb6fb9c05ac5d3b3e55a7841d43de1",
           "changed_paths": [
@@ -819,16 +693,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -842,7 +709,7 @@
             "output_tokens": 1358,
             "total_tokens": 107602
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 42866,
           "final_head_sha": "ca947378f31d979fdab5147df79b3f0db9f651c4",
           "changed_paths": [
@@ -860,16 +727,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -883,7 +743,7 @@
             "output_tokens": 2251,
             "total_tokens": 179254
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 63003,
           "final_head_sha": "44f4f466c3314f02bc3e524c7b8d72876177ca75",
           "changed_paths": [
@@ -901,16 +761,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-retention-window-memory-policy-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -924,7 +777,7 @@
             "output_tokens": 2197,
             "total_tokens": 154276
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 57366,
           "final_head_sha": "05c8d9fdcb8aef54769cf5a7ff8f2d9a4b9076a0",
           "changed_paths": [
@@ -943,16 +796,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -966,7 +812,7 @@
             "output_tokens": 2098,
             "total_tokens": 178313
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 62826,
           "final_head_sha": "626aa5daa3bab17836e4909ca44b423151de3002",
           "changed_paths": [
@@ -985,16 +831,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1008,7 +847,7 @@
             "output_tokens": 1493,
             "total_tokens": 128335
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 42588,
           "final_head_sha": "4a40b66dc380c51ca441b86010d7a6a70b5d7a41",
           "changed_paths": [
@@ -1027,16 +866,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-slug-normalizer-contract-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1050,7 +882,7 @@
             "output_tokens": 2095,
             "total_tokens": 177869
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 59498,
           "final_head_sha": "59513448b6546e498768a540a49c7be9c88a09df",
           "changed_paths": [
@@ -1069,16 +901,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1092,7 +917,7 @@
             "output_tokens": 2303,
             "total_tokens": 201404
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 65991,
           "final_head_sha": "6941b0522d782d919bb3594c312114d52e3845c8",
           "changed_paths": [
@@ -1111,16 +936,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1134,7 +952,7 @@
             "output_tokens": 2359,
             "total_tokens": 200478
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 65486,
           "final_head_sha": "49ee1a1fc601a33da8849c3ddd173c271687f327",
           "changed_paths": [
@@ -1153,16 +971,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-session-budget-footer-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1176,7 +987,7 @@
             "output_tokens": 1604,
             "total_tokens": 108250
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 46975,
           "final_head_sha": "916c408a4a44ea6fd43999fa5fbf5829b8b9ea3a",
           "changed_paths": [
@@ -1195,16 +1006,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1218,7 +1022,7 @@
             "output_tokens": 1781,
             "total_tokens": 175155
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 57895,
           "final_head_sha": "14183afe3ff91a19d747f74817d8b0dd1b30de12",
           "changed_paths": [
@@ -1237,16 +1041,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1260,7 +1057,7 @@
             "output_tokens": 1600,
             "total_tokens": 130033
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 47188,
           "final_head_sha": "848da78f39c402a7a2f6af135504bbf97581ff40",
           "changed_paths": [
@@ -1279,16 +1076,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/remem-context-visibility-policy-3/final.diff"
-          },
           "workdir": null
         }
       ]
@@ -1299,7 +1089,7 @@
         "resolution_rate": 1.0,
         "tokens_total_mean": 146840.13333333333,
         "tokens_total_stddev": 28637.200642676107,
-        "turns_mean": 0.0,
+        "turns_mean": null,
         "wall_time_ms_mean": 60522.86666666667,
         "wall_time_ms_p95": 83959.0
       },
@@ -1315,7 +1105,7 @@
             "output_tokens": 2854,
             "total_tokens": 154238
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 74638,
           "final_head_sha": "77e8b9aad29223b3b688765ef3d57f6ba69fcb89",
           "changed_paths": [
@@ -1334,16 +1124,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1357,7 +1140,7 @@
             "output_tokens": 2473,
             "total_tokens": 130599
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 64767,
           "final_head_sha": "17c0b08d16f85fa86a2e1cc5b5d4115c1d999f67",
           "changed_paths": [
@@ -1376,16 +1159,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1399,7 +1175,7 @@
             "output_tokens": 3284,
             "total_tokens": 202901
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 83959,
           "final_head_sha": "c327610bdad5635dc7aa712130afeb271afe0c5e",
           "changed_paths": [
@@ -1418,16 +1194,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-ticket-key-memory-convention-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1441,7 +1210,7 @@
             "output_tokens": 1322,
             "total_tokens": 105591
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 42305,
           "final_head_sha": "0a151731ff2f0b0bbce8e68d02c32c0f31b0d9a7",
           "changed_paths": [
@@ -1459,16 +1228,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1482,7 +1244,7 @@
             "output_tokens": 2088,
             "total_tokens": 150493
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 56827,
           "final_head_sha": "b6803abc141bd7abf56f88b9f1d69eabc8fdba61",
           "changed_paths": [
@@ -1501,16 +1263,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1524,7 +1279,7 @@
             "output_tokens": 1229,
             "total_tokens": 104055
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 36298,
           "final_head_sha": "f37cfb07ea1e58aaf2154e0524fcea6d26970938",
           "changed_paths": [
@@ -1542,16 +1297,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-retention-window-memory-policy-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1565,7 +1313,7 @@
             "output_tokens": 1882,
             "total_tokens": 128064
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 51066,
           "final_head_sha": "4e295ec22e14527e4f9142b9292f123f1cf045d1",
           "changed_paths": [
@@ -1584,16 +1332,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1607,7 +1348,7 @@
             "output_tokens": 2453,
             "total_tokens": 174071
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 66267,
           "final_head_sha": "864e888db52707916f2fc1ccae56d59d9ed3ec97",
           "changed_paths": [
@@ -1626,16 +1367,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1649,7 +1383,7 @@
             "output_tokens": 1726,
             "total_tokens": 127536
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 50275,
           "final_head_sha": "22ab847fe84fab426e237f99929e21a7c6121225",
           "changed_paths": [
@@ -1668,16 +1402,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-slug-normalizer-contract-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1691,7 +1418,7 @@
             "output_tokens": 1779,
             "total_tokens": 148735
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 53368,
           "final_head_sha": "13c99542da2147ea8e041c272149ab3b37319574",
           "changed_paths": [
@@ -1710,16 +1437,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1733,7 +1453,7 @@
             "output_tokens": 2241,
             "total_tokens": 172167
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 70503,
           "final_head_sha": "564a715469cb16c91b391fe21637a8d68d7af4b4",
           "changed_paths": [
@@ -1752,16 +1472,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1775,7 +1488,7 @@
             "output_tokens": 2088,
             "total_tokens": 153379
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 74509,
           "final_head_sha": "8ff1e27865a8d18b4c102c4f21f8819797ab141e",
           "changed_paths": [
@@ -1794,16 +1507,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-session-budget-footer-3/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1817,7 +1523,7 @@
             "output_tokens": 1524,
             "total_tokens": 126713
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 54475,
           "final_head_sha": "4ffe8298e4c3979eda9b181376967a392a37b17e",
           "changed_paths": [
@@ -1836,16 +1542,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1859,7 +1558,7 @@
             "output_tokens": 2222,
             "total_tokens": 195746
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 70905,
           "final_head_sha": "c36161121c6be319d23cd1a0eaacd4778c934ea8",
           "changed_paths": [
@@ -1878,16 +1577,9 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-2/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-2/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-2/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-2/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-2/final.diff"
-          },
           "workdir": null
         },
         {
@@ -1901,7 +1593,7 @@
             "output_tokens": 1748,
             "total_tokens": 128314
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 57681,
           "final_head_sha": "6fc3874c9297100c77863ccd0ed598e804a362c2",
           "changed_paths": [
@@ -1920,19 +1612,32 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-3/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-3/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-3/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-3/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782319499/curated_file-context-visibility-policy-3/final.diff"
-          },
           "workdir": null
         }
       ]
     }
-  ]
+  ],
+  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
+  "source_dirty": true,
+  "command": [
+    "remem",
+    "eval-coding-bench",
+    "--fixture",
+    "eval/coding-bench/fixtures/tasks.json",
+    "--runs-per-condition",
+    "3",
+    "--runner",
+    "codex",
+    "--model",
+    "gpt-5.5",
+    "--reasoning-effort",
+    "medium",
+    "--json-out",
+    "eval/coding-bench/reports/baseline.json",
+    "--ignore-budget"
+  ],
+  "artifact_policy": "raw_artifacts_local_ignored"
 }

@@ -78,7 +78,7 @@ Each run gets isolated state:
 3. Apply the selected memory condition.
 4. Invoke the configured coding-agent runner with a bounded timeout.
 5. Run the task scoring oracle.
-6. Record artifacts and clean up unless `--keep-workdirs` is set.
+6. Record local artifacts and clean up unless `--keep-workdirs` is set.
 
 The runner must pass command arguments as arrays, not shell-concatenated strings.
 Any provider key must come from the environment or the provider's normal local
@@ -131,6 +131,12 @@ source evidence as the remem seed and reviewed as part of fixture changes.
 The `no_memory` condition must disable remem hooks, MCP registration, and native
 memory file injection for the temporary agent run.
 
+Codex runs must not inherit the host's normal Codex config, rules, hooks, MCP
+servers, or session persistence. The runner invokes `codex exec` with
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, and `--disable hooks`.
+The `remem` condition is represented by a temporary remem database plus the
+production SessionStart render path written into `REMEM_CONTEXT.md`.
+
 ## Report Schema
 
 `baseline.json` must include:
@@ -139,8 +145,12 @@ memory file injection for the temporary agent run.
 {
   "schema_version": 1,
   "generated_at_epoch": 0,
-  "repo_rev": "fixed-sha",
+  "fixture_path": "eval/coding-bench/fixtures/tasks.json",
+  "fixture_sha256": "fixture-sha256",
   "remem_rev": "current-sha",
+  "source_dirty": false,
+  "command": ["remem", "eval-coding-bench", "..."],
+  "artifact_policy": "raw_artifacts_local_ignored",
   "runner": {
     "provider": "codex-cli",
     "model": "example-model",
@@ -154,7 +164,7 @@ memory file injection for the temporary agent run.
         "resolution_rate": 0.0,
         "tokens_total_mean": 0.0,
         "tokens_total_stddev": 0.0,
-        "turns_mean": 0.0,
+        "turns_mean": null,
         "wall_time_ms_mean": 0.0,
         "wall_time_ms_p95": 0.0
       },
@@ -170,16 +180,19 @@ Each run entry records:
 - task id
 - run index
 - resolved boolean
-- score command outputs or references
+- score command status
 - token usage
-- turn count
+- turn count when supported, otherwise `null`
 - wall time
-- final head SHA or patch artifact
+- final head SHA
 - unauthorized path changes
 - failure reason
 
-Reports must not include full prompts containing secrets, provider API keys, or
-private user memory content.
+Committed reports must not include full prompts containing secrets, provider API
+keys, raw runner stdout/stderr, raw diffs, or private user memory content. The
+runner writes raw per-run artifacts under
+`eval/coding-bench/reports/artifacts/` for local audit only; that directory is
+ignored and must not be committed.
 
 ## Verification
 
@@ -214,10 +227,11 @@ dependent. If it later enters CI, CI should validate fixture parsing and schema
 stability by default, with full agent runs behind an explicit scheduled or
 maintainer-triggered workflow.
 
-## Latest Baseline
+## Draft Baseline
 
 Generated on 2026-06-25 with `codex-cli 0.142.0`, `gpt-5.5`,
-`runs_per_condition=3`, 5 tasks, and 45 total agent runs:
+`runs_per_condition=3`, 5 tasks, and 45 total agent runs before the Codex
+runner ignored host config, rules, hooks, and session persistence:
 
 | Condition | Resolved | Resolution | Mean tokens | Mean wall time |
 |---|---:|---:|---:|---:|
@@ -225,10 +239,9 @@ Generated on 2026-06-25 with `codex-cli 0.142.0`, `gpt-5.5`,
 | `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
 | `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
 
-Result: remem matches curated-file resolution and strongly beats no-memory on
-this fixture. Curated file remains cheaper, so this is not evidence that remem
-beats a carefully maintained `MEMORY.md`; it is evidence that remem's runtime
-path can deliver the same task-resolution rate on this memory-dependent fixture.
+Result: this draft run is report-shape evidence only and must be regenerated
+before publication or issue closure. It is not evidence that remem beats a
+carefully maintained `MEMORY.md`.
 
 ## Failure Handling
 

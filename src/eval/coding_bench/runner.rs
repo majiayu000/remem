@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
+use sha2::{Digest, Sha256};
 
 use super::condition::apply_condition;
 use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
@@ -54,6 +55,7 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
     let fixture = load_fixture(&options.fixture_path)?;
     let conditions = selected_conditions(options)?;
     let tasks = selected_tasks(&fixture, options)?;
+    let fixture_sha256 = file_sha256(&options.fixture_path)?;
     let generated_at_epoch = current_epoch();
     let artifact_root = report_artifact_root(&options.json_out, generated_at_epoch)?;
     let runner_version = runner_version(options);
@@ -94,7 +96,11 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
         schema_version: 1,
         generated_at_epoch,
         fixture_path: options.fixture_path.clone(),
+        fixture_sha256,
         remem_rev: current_git_rev(Path::new(".")).unwrap_or_else(|| "unknown".to_string()),
+        source_dirty: current_git_dirty(Path::new(".")),
+        command: report_command(options),
+        artifact_policy: "raw_artifacts_local_ignored".to_string(),
         runner: RunnerReport {
             provider: options
                 .provider
@@ -138,7 +144,7 @@ fn run_one(
     let (usage, turns) = if options.runner == "codex" {
         parse_codex_jsonl_usage(&runner_outcome.stdout)
     } else {
-        (BenchTokenUsage::default(), 0)
+        (BenchTokenUsage::default(), None)
     };
 
     let status = command_output("git", ["status", "--porcelain"], &repo_dir, &[], 30_000)?;
@@ -305,32 +311,7 @@ fn invoke_agent(
 ) -> Result<CommandOutcome> {
     match options.runner.as_str() {
         "codex" => {
-            let mut args = vec![
-                "exec".to_string(),
-                "--json".to_string(),
-                "--color".to_string(),
-                "never".to_string(),
-                "--cd".to_string(),
-                repo_dir.to_string_lossy().to_string(),
-                "--model".to_string(),
-                options.model.clone(),
-                "--sandbox".to_string(),
-                "danger-full-access".to_string(),
-                "--dangerously-bypass-approvals-and-sandbox".to_string(),
-                "--dangerously-bypass-hook-trust".to_string(),
-            ];
-            if !options.reasoning_effort.trim().is_empty() {
-                args.push("-c".to_string());
-                args.push(format!(
-                    "model_reasoning_effort=\"{}\"",
-                    toml_escape(&options.reasoning_effort)
-                ));
-            }
-            if let Some(provider) = options.provider.as_deref() {
-                args.push("-c".to_string());
-                args.push(format!("model_provider=\"{}\"", toml_escape(provider)));
-            }
-            args.push(prompt.to_string());
+            let args = build_codex_exec_args(options, repo_dir, prompt);
             command_output(
                 &options.codex_bin,
                 args.iter().map(String::as_str),
@@ -347,6 +328,44 @@ fn invoke_agent(
         }),
         other => bail!("unsupported coding benchmark runner: {other}"),
     }
+}
+
+fn build_codex_exec_args(
+    options: &CodingBenchOptions,
+    repo_dir: &Path,
+    prompt: &str,
+) -> Vec<String> {
+    let mut args = vec![
+        "exec".to_string(),
+        "--json".to_string(),
+        "--color".to_string(),
+        "never".to_string(),
+        "--ignore-user-config".to_string(),
+        "--ignore-rules".to_string(),
+        "--ephemeral".to_string(),
+        "--disable".to_string(),
+        "hooks".to_string(),
+        "--cd".to_string(),
+        repo_dir.to_string_lossy().to_string(),
+        "--model".to_string(),
+        options.model.clone(),
+        "--sandbox".to_string(),
+        "danger-full-access".to_string(),
+        "--dangerously-bypass-approvals-and-sandbox".to_string(),
+    ];
+    if !options.reasoning_effort.trim().is_empty() {
+        args.push("-c".to_string());
+        args.push(format!(
+            "model_reasoning_effort=\"{}\"",
+            toml_escape(&options.reasoning_effort)
+        ));
+    }
+    if let Some(provider) = options.provider.as_deref() {
+        args.push("-c".to_string());
+        args.push(format!("model_provider=\"{}\"", toml_escape(provider)));
+    }
+    args.push(prompt.to_string());
+    args
 }
 
 fn build_prompt(task: &CodingBenchTask, condition_note: Option<&str>) -> String {
@@ -504,6 +523,60 @@ fn runner_version(options: &CodingBenchOptions) -> Option<String> {
     (outcome.exit_code == Some(0)).then(|| outcome.stdout.trim().to_string())
 }
 
+fn file_sha256(path: &str) -> Result<String> {
+    let bytes = fs::read(path).with_context(|| format!("read fixture for sha256 {path}"))?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn current_git_dirty(cwd: &Path) -> Option<bool> {
+    let outcome = command_output("git", ["status", "--porcelain"], cwd, &[], 30_000).ok()?;
+    (outcome.exit_code == Some(0)).then(|| !outcome.stdout.trim().is_empty())
+}
+
+fn report_command(options: &CodingBenchOptions) -> Vec<String> {
+    let mut command = vec![
+        "remem".to_string(),
+        "eval-coding-bench".to_string(),
+        "--fixture".to_string(),
+        options.fixture_path.clone(),
+        "--runs-per-condition".to_string(),
+        options.runs_per_condition.to_string(),
+        "--runner".to_string(),
+        options.runner.clone(),
+        "--model".to_string(),
+        options.model.clone(),
+        "--reasoning-effort".to_string(),
+        options.reasoning_effort.clone(),
+        "--json-out".to_string(),
+        options.json_out.clone(),
+    ];
+    if options.codex_bin != "codex" {
+        command.push("--codex-bin".to_string());
+        command.push(options.codex_bin.clone());
+    }
+    if let Some(provider) = &options.provider {
+        command.push("--provider".to_string());
+        command.push(provider.clone());
+    }
+    if let Some(condition) = &options.condition {
+        command.push("--condition".to_string());
+        command.push(condition.clone());
+    }
+    if let Some(task) = &options.task {
+        command.push("--task".to_string());
+        command.push(task.clone());
+    }
+    if options.ignore_budget {
+        command.push("--ignore-budget".to_string());
+    }
+    if options.keep_workdirs {
+        command.push("--keep-workdirs".to_string());
+    }
+    command
+}
+
 fn failure_reason(
     score_failed: bool,
     unauthorized: &[String],
@@ -571,5 +644,33 @@ mod tests {
             45
         );
         Ok(())
+    }
+
+    #[test]
+    fn codex_runner_ignores_host_config_rules_hooks_and_session_files() {
+        let options = CodingBenchOptions {
+            fixture_path: "eval/coding-bench/fixtures/tasks.json".to_string(),
+            runs_per_condition: 1,
+            json_out: "/tmp/remem-coding-bench.json".to_string(),
+            condition: None,
+            task: None,
+            keep_workdirs: false,
+            dry_run: false,
+            runner: "codex".to_string(),
+            codex_bin: "codex".to_string(),
+            model: "gpt-5.5".to_string(),
+            provider: Some("codexapi".to_string()),
+            reasoning_effort: "medium".to_string(),
+            ignore_budget: true,
+        };
+        let args = build_codex_exec_args(&options, Path::new("/tmp/remem-bench-repo"), "prompt");
+
+        assert!(args.contains(&"--ignore-user-config".to_string()));
+        assert!(args.contains(&"--ignore-rules".to_string()));
+        assert!(args.contains(&"--ephemeral".to_string()));
+        assert!(args
+            .windows(2)
+            .any(|window| window == ["--disable", "hooks"]));
+        assert!(!args.contains(&"--dangerously-bypass-hook-trust".to_string()));
     }
 }

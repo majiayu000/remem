@@ -12,7 +12,10 @@ pub fn summarize_runs(runs: &[RunReport]) -> ConditionSummary {
         .iter()
         .map(|run| run.usage.total_tokens as f64)
         .collect::<Vec<_>>();
-    let turns = runs.iter().map(|run| run.turns as f64).collect::<Vec<_>>();
+    let turns = runs
+        .iter()
+        .filter_map(|run| run.turns.map(|turns| turns as f64))
+        .collect::<Vec<_>>();
     let wall = runs
         .iter()
         .map(|run| run.wall_time_ms as f64)
@@ -21,7 +24,7 @@ pub fn summarize_runs(runs: &[RunReport]) -> ConditionSummary {
         resolution_rate: resolved / n,
         tokens_total_mean: mean(&tokens),
         tokens_total_stddev: stddev(&tokens),
-        turns_mean: mean(&turns),
+        turns_mean: (!turns.is_empty()).then(|| mean(&turns)),
         wall_time_ms_mean: mean(&wall),
         wall_time_ms_p95: percentile(&wall, 0.95),
     }
@@ -73,7 +76,7 @@ pub fn unauthorized_paths(changed_paths: &[String], allowed_paths: &[String]) ->
         .collect()
 }
 
-pub fn parse_codex_jsonl_usage(stdout: &str) -> (BenchTokenUsage, usize) {
+pub fn parse_codex_jsonl_usage(stdout: &str) -> (BenchTokenUsage, Option<usize>) {
     let mut usage = BenchTokenUsage::default();
     let mut turns = 0;
     for line in stdout.lines() {
@@ -92,19 +95,14 @@ pub fn parse_codex_jsonl_usage(stdout: &str) -> (BenchTokenUsage, usize) {
             }
         }
     }
-    (usage, turns)
+    (usage, (turns > 0).then_some(turns))
 }
 
 fn event_counts_as_turn(value: &Value) -> bool {
     value
         .get("type")
         .and_then(Value::as_str)
-        .is_some_and(|event_type| {
-            matches!(
-                event_type,
-                "agent_message" | "assistant_message" | "message"
-            )
-        })
+        .is_some_and(|event_type| matches!(event_type, "turn.completed"))
 }
 
 fn usage_candidates(value: &Value) -> Vec<BenchTokenUsage> {
@@ -193,9 +191,17 @@ mod tests {
 
     #[test]
     fn parses_nested_codex_usage() {
-        let stdout = r#"{"type":"agent_message","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}"#;
+        let stdout = r#"{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}"#;
         let (usage, turns) = parse_codex_jsonl_usage(stdout);
         assert_eq!(usage.total_tokens, 15);
-        assert_eq!(turns, 1);
+        assert_eq!(turns, Some(1));
+    }
+
+    #[test]
+    fn leaves_turns_unknown_without_codex_turn_events() {
+        let stdout = r#"{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}"#;
+        let (usage, turns) = parse_codex_jsonl_usage(stdout);
+        assert_eq!(usage.total_tokens, 0);
+        assert_eq!(turns, None);
     }
 }

@@ -18,7 +18,7 @@
         "resolution_rate": 1.0,
         "tokens_total_mean": 149753.2,
         "tokens_total_stddev": 28780.23385172539,
-        "turns_mean": 0.0,
+        "turns_mean": null,
         "wall_time_ms_mean": 56666.2,
         "wall_time_ms_p95": 68583.0
       },
@@ -34,7 +34,7 @@
             "output_tokens": 2720,
             "total_tokens": 204448
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 68583,
           "final_head_sha": "af6157d5236f94b7c7b86c2785133396c610cb48",
           "changed_paths": [
@@ -53,16 +53,9 @@
                 "tests.test_ticket_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -76,7 +69,7 @@
             "output_tokens": 1770,
             "total_tokens": 129566
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 49741,
           "final_head_sha": "b6615106b50b5ccd11d9f7dae6d96c82c2bcde3a",
           "changed_paths": [
@@ -95,16 +88,9 @@
                 "tests.test_retention_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -118,7 +104,7 @@
             "output_tokens": 1843,
             "total_tokens": 130743
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 50062,
           "final_head_sha": "f9d77d2ae360a43a1036d689ff11a84760b8e7fa",
           "changed_paths": [
@@ -137,16 +123,9 @@
                 "tests.test_slug_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -160,7 +139,7 @@
             "output_tokens": 2195,
             "total_tokens": 153428
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 64516,
           "final_head_sha": "9c851d3df4065c73aa7871ed6248b3dd0ba7a544",
           "changed_paths": [
@@ -179,16 +158,9 @@
                 "tests.test_session_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/final.diff"
-          },
           "workdir": null
         },
         {
@@ -202,7 +174,7 @@
             "output_tokens": 1647,
             "total_tokens": 130581
           },
-          "turns": 0,
+          "turns": null,
           "wall_time_ms": 50429,
           "final_head_sha": "f3f32c0b9d2f9059206bbe9ee86d0db60a68d311",
           "changed_paths": [
@@ -221,19 +193,34 @@
                 "tests.test_visibility_hidden"
               ],
               "exit_code": 0,
-              "timed_out": false,
-              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/score-0.stdout",
-              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/score-0.stderr"
+              "timed_out": false
             }
           ],
-          "artifacts": {
-            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/runner.stdout",
-            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/runner.stderr",
-            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/final.diff"
-          },
           "workdir": null
         }
       ]
     }
-  ]
+  ],
+  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
+  "source_dirty": true,
+  "command": [
+    "remem",
+    "eval-coding-bench",
+    "--fixture",
+    "eval/coding-bench/fixtures/tasks.json",
+    "--runs-per-condition",
+    "1",
+    "--runner",
+    "codex",
+    "--model",
+    "gpt-5.5",
+    "--reasoning-effort",
+    "medium",
+    "--json-out",
+    "eval/coding-bench/reports/fix-remem-smoke.json",
+    "--condition",
+    "remem",
+    "--ignore-budget"
+  ],
+  "artifact_policy": "raw_artifacts_local_ignored"
 }

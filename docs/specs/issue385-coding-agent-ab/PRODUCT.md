@@ -52,7 +52,8 @@ and no material usability downside, the M6 roadmap must record that result as a
 stop-loss signal and pivot the next roadmap slice toward ergonomics instead of
 more retrieval machinery.
 
-Current baseline outcome, generated on 2026-06-25 with `gpt-5.5`:
+Draft baseline outcome, generated on 2026-06-25 with `gpt-5.5` before the
+runner ignored host Codex config, rules, hooks, and session persistence:
 
 | Condition | Resolved | Resolution | Mean tokens |
 |---|---:|---:|---:|
@@ -60,11 +61,10 @@ Current baseline outcome, generated on 2026-06-25 with `gpt-5.5`:
 | `remem` | 15/15 | 100.0% | 170,284 |
 | `curated_file` | 15/15 | 100.0% | 146,840 |
 
-Product interpretation: remem clearly beats no-memory and now ties the curated
-file on resolution for this small memory-dependent fixture. Curated file still
-uses fewer tokens, so the benchmark does not justify a claim that remem beats a
-carefully maintained `MEMORY.md`. The next product decision should expand task
-diversity before strengthening any public claim.
+Product interpretation: these numbers are report-shape evidence only until the
+baseline is regenerated with the isolated runner. They do not justify a public
+claim that remem beats a carefully maintained `MEMORY.md`. The next product
+decision should expand task diversity before strengthening any public claim.
 
 ## Benchmark Subject
 
@@ -115,7 +115,8 @@ Every run records:
 
 - `resolved`: whether the task passed its objective oracle
 - `tokens_input`, `tokens_output`, and `tokens_total`
-- `turns`
+- `turns`, when the runner exposes Codex `turn.completed` events; otherwise
+  `null`
 - `wall_time_ms`
 - `commands_run`
 - `final_head_sha` or patch artifact id
@@ -125,7 +126,7 @@ The report aggregates by condition:
 
 - resolution rate
 - mean and standard deviation for token usage
-- mean and standard deviation for turns
+- mean turn count when supported
 - mean and p95 wall time
 - per-task outcome table
 
@@ -139,8 +140,12 @@ The report aggregates by condition:
 - The curated-file control and stop-loss rule are documented in the harness
   README and baseline report.
 - Each task has an objective scoring oracle checked by the runner.
-- Result artifacts are committed as JSON and include enough environment metadata
-  to reproduce the run.
+- Aggregate result artifacts are committed as JSON and include enough
+  environment metadata to reproduce the run.
+- Raw runner stdout, stderr, score output, and final-diff artifacts are local
+  generated files only. They must not be committed because they can contain
+  local paths, host-specific tool output, or private memory/tool context from the
+  agent host.
 
 ## Open Product Decisions
 
