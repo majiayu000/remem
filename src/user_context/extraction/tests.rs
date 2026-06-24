@@ -1065,6 +1065,96 @@ async fn unframed_relationship_mislabeled_explicit_creates_no_candidate() -> Res
 }
 
 #[tokio::test]
+async fn unframed_third_party_preference_mislabeled_explicit_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-mislabeled-third-party-preference",
+        Some("user"),
+        "Alice prefers concise reviews.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:alice-review-style",
+            "Alice prefers concise reviews.",
+            0.92,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn framed_third_party_preference_mislabeled_explicit_stays_pending_review() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-framed-third-party-preference",
+        Some("user"),
+        "My teammate Alice prefers concise reviews for release QA.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:alice-review-style",
+            "Alice prefers concise reviews for release QA.",
+            0.92,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: event_id,
+        }
+    );
+    let reason: Option<String> = conn.query_row(
+        "SELECT auto_promote_block_reason FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(reason.as_deref(), Some("third_party_requires_review"));
+    let claim_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(claim_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn negated_third_party_relationship_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(

@@ -213,6 +213,108 @@ fn non_retention_block_reason(
 fn requires_third_party_framing(candidate: &ParsedUserContextCandidate) -> bool {
     candidate.source_kind == "third_party_statement"
         || candidate.claim_type == super::claims::UserContextClaimType::Relationship
+        || claim_text_describes_third_party_fact(&candidate.claim_text)
+}
+
+fn claim_text_describes_third_party_fact(text: &str) -> bool {
+    let tokens = short_support_tokens(text);
+    claim_has_likely_third_party_subject(text) || claim_has_user_owned_third_party_role(&tokens)
+}
+
+fn claim_has_likely_third_party_subject(text: &str) -> bool {
+    let mut words = text
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '\'' || ch == '-'))
+        .filter(|word| !word.is_empty());
+    let first = match words.next() {
+        Some("The" | "the") => words.next(),
+        other => other,
+    };
+    first.is_some_and(is_likely_third_party_name)
+}
+
+fn is_likely_third_party_name(word: &str) -> bool {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_uppercase() || !chars.any(|ch| ch.is_ascii_lowercase()) {
+        return false;
+    }
+    !matches!(
+        word.to_ascii_lowercase().as_str(),
+        "api"
+            | "cargo"
+            | "claude"
+            | "codebase"
+            | "codex"
+            | "github"
+            | "gitlab"
+            | "javascript"
+            | "json"
+            | "linux"
+            | "macos"
+            | "mcp"
+            | "node"
+            | "npm"
+            | "openai"
+            | "project"
+            | "python"
+            | "readme"
+            | "repo"
+            | "repository"
+            | "rust"
+            | "sqlite"
+            | "sql"
+            | "the"
+            | "toml"
+            | "typescript"
+            | "user"
+            | "windows"
+            | "workspace"
+            | "yaml"
+    )
+}
+
+fn claim_has_user_owned_third_party_role(tokens: &[String]) -> bool {
+    has_user_owned_subject(tokens) && has_third_party_role_token(tokens)
+}
+
+fn has_user_owned_subject(tokens: &[String]) -> bool {
+    tokens
+        .first()
+        .is_some_and(|token| matches!(token.as_str(), "my" | "our"))
+        || tokens.windows(2).any(|window| window == ["user", "s"])
+        || tokens
+            .windows(3)
+            .any(|window| window == ["the", "user", "s"])
+}
+
+fn has_third_party_role_token(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "approver"
+                | "client"
+                | "colleague"
+                | "collaborator"
+                | "coworker"
+                | "family"
+                | "father"
+                | "friend"
+                | "husband"
+                | "manager"
+                | "mentor"
+                | "mother"
+                | "partner"
+                | "reviewer"
+                | "sibling"
+                | "spouse"
+                | "stakeholder"
+                | "teammate"
+                | "vendor"
+                | "wife"
+        )
+    })
 }
 
 fn is_supported_third_party_candidate(
@@ -354,6 +456,7 @@ fn should_auto_promote(
         && candidate.sensitivity == super::claims::UserContextSensitivity::Normal
         && candidate.confidence >= 0.9
         && candidate.source_kind == "explicit_user_statement"
+        && !requires_third_party_framing(candidate)
         && candidate
             .source_event_ids
             .iter()
@@ -365,7 +468,7 @@ fn auto_promote_block_reason(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> &'static str {
-    if candidate.source_kind == "third_party_statement" {
+    if requires_third_party_framing(candidate) {
         return "third_party_requires_review";
     }
     if !matches!(
