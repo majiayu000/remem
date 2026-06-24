@@ -1,6 +1,6 @@
 # User Memory Policy Refinements Technical Spec
 
-Status: Proposed current contract
+Status: Current contract
 Date: 2026-06-24
 
 Tracking:
@@ -52,11 +52,14 @@ remem user profile export --format markdown [--output <path>] [--owner-scope use
 Acceptable first slice if command surface should stay smaller:
 
 ```text
-remem user summary show --format markdown [--output <path>]
+remem user summary show --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive] [--include-inactive] [--include-deleted]
 ```
 
 The first implementation should choose one command shape and document it in
 README. If both are supported, they must share one renderer.
+The smaller command shape only changes the command name. It must still expose
+the owner/project selection and audit flags above; otherwise it does not satisfy
+the snapshot audit contract.
 
 ### Output Contract
 
@@ -68,7 +71,7 @@ Default Markdown sections:
 Generated: 2026-06-24T00:00:00Z
 Effective owners: user:user:default, repo:/path/to/repo
 Project: /path/to/repo
-Source of truth: ~/.remem/remem.db
+Source of truth: <resolved db_path>
 Mode: default
 
 ## Active Summary
@@ -91,6 +94,10 @@ Mode: default
 
 No excluded items shown. Re-run with audit flags to inspect them.
 ```
+
+The source-of-truth path must be the resolved database path used by the running
+command, including `REMEM_DATA_DIR` overrides. Do not render a hard-coded
+default path.
 
 With audit flags, excluded items must include `reason`:
 
@@ -265,9 +272,12 @@ Required insertion/promotion gates:
 
 - credentials/secrets must be rejected or redacted before candidate insert,
   including `claim_text` and `source_preview`;
-- role-play, fiction, joke, sarcasm, and hypothetical markers must create no
-  candidate, or must force `auto_promote=false` before promotion if a safe
-  non-sensitive review artifact is intentionally retained;
+- temporary state, world knowledge, general technical facts, role-play,
+  fiction, jokes, sarcasm, hypothetical identities, illegal claims, harmful
+  claims, clearly false claims, unsupported assistant-authored claims, and
+  unapproved file/external-source claims must create no candidate. The only
+  allowed retained output for these classes is a non-sensitive aggregate block
+  reason that omits the blocked text;
 - third-party details must never auto-promote. If the user explicitly frames a
   third-party detail as relevant to their own durable context, create only a
   pending-review candidate with a block reason such as
@@ -285,8 +295,8 @@ Required tests:
 - malformed model output still creates no candidates;
 - secret-like candidate text and previews are rejected or redacted before
   insertion;
-- joke/role-play/hypothetical candidate text cannot auto-promote even when the
-  model labels it low-risk;
+- joke/role-play/hypothetical, illegal, harmful, and clearly false candidate
+  text creates no candidate even when the model labels it low-risk;
 - third-party candidate text stays pending review unless explicitly approved by
   review flow.
 

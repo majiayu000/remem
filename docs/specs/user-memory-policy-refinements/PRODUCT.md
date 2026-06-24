@@ -1,6 +1,6 @@
 # User Memory Policy Refinements Product Spec
 
-Status: Proposed current contract
+Status: Current contract
 Date: 2026-06-24
 
 Tracking:
@@ -178,8 +178,9 @@ Acceptance:
 - Parser/store behavior still fails closed on malformed output.
 - Tests prove the prompt includes the blocklist.
 - Tests prove secret-like blocklisted content is rejected or redacted before
-  candidate insertion, and role-play, hypothetical, and third-party examples
-  cannot auto-promote.
+  candidate insertion, role-play and hypothetical examples create no candidate,
+  and approved third-party examples stay pending review instead of
+  auto-promoting.
 
 ## Rollout
 
