@@ -1,6 +1,6 @@
 use super::query_types::{
-    UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg, UserClaimsAction,
-    UserReviewAction, UserSummaryAction,
+    ProfileSnapshotFormatArg, UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg,
+    UserClaimsAction, UserProfileAction, UserReviewAction, UserSummaryAction,
 };
 use super::types::{Cli, Commands, UserAction};
 use clap::Parser;
@@ -399,6 +399,63 @@ fn cli_parses_user_summary_commands() {
             assert!(json);
         }
         _ => panic!("expected user summary sources command"),
+    }
+}
+
+#[test]
+fn cli_parses_user_profile_export_command() {
+    let cli = Cli::parse_from([
+        "remem",
+        "user",
+        "profile",
+        "export",
+        "--format",
+        "markdown",
+        "--output",
+        "profile.md",
+        "--project",
+        "/repo",
+        "--owner-scope",
+        "repo",
+        "--owner-key",
+        "/repo",
+        "--include-suppressed",
+        "--include-sensitive",
+        "--include-inactive",
+        "--include-deleted",
+        "--include-manual-summaries",
+    ]);
+    match cli.command {
+        Commands::User {
+            action:
+                UserAction::Profile {
+                    action:
+                        UserProfileAction::Export {
+                            format,
+                            output,
+                            project,
+                            owner_scope,
+                            owner_key,
+                            include_suppressed,
+                            include_sensitive,
+                            include_inactive,
+                            include_deleted,
+                            include_manual_summaries,
+                        },
+                },
+        } => {
+            assert_eq!(format, ProfileSnapshotFormatArg::Markdown);
+            assert_eq!(output.as_deref(), Some(std::path::Path::new("profile.md")));
+            assert_eq!(project.as_deref(), Some("/repo"));
+            assert_eq!(owner_scope, UserClaimScopeArg::Repo);
+            assert_eq!(owner_key.as_deref(), Some("/repo"));
+            assert!(include_suppressed);
+            assert!(include_sensitive);
+            assert!(include_inactive);
+            assert!(include_deleted);
+            assert!(include_manual_summaries);
+        }
+        _ => panic!("expected user profile export command"),
     }
 }
 
