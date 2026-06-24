@@ -140,9 +140,12 @@ fn persist_candidates(
 ) -> Result<PersistSummary> {
     let mut summary = PersistSummary::default();
     for candidate in parsed {
-        let source_preview = source::source_preview(batch, candidate);
+        let source_evidence = source::source_evidence_text(batch, candidate);
+        let source_preview = source_evidence
+            .as_deref()
+            .map(|preview| crate::db::truncate_str(preview, 500).to_string());
         if let Some(reason) =
-            non_retention_block_reason(candidate, batch, source_preview.as_deref())
+            non_retention_block_reason(candidate, batch, source_evidence.as_deref())
         {
             summary.blocked += 1;
             crate::log::info(
@@ -240,40 +243,10 @@ fn is_likely_third_party_name(word: &str) -> bool {
     if !first.is_ascii_uppercase() || !chars.any(|ch| ch.is_ascii_lowercase()) {
         return false;
     }
-    !matches!(
-        word.to_ascii_lowercase().as_str(),
-        "api"
-            | "cargo"
-            | "claude"
-            | "codebase"
-            | "codex"
-            | "github"
-            | "gitlab"
-            | "javascript"
-            | "json"
-            | "linux"
-            | "macos"
-            | "mcp"
-            | "node"
-            | "npm"
-            | "openai"
-            | "project"
-            | "python"
-            | "readme"
-            | "repo"
-            | "repository"
-            | "rust"
-            | "sqlite"
-            | "sql"
-            | "the"
-            | "toml"
-            | "typescript"
-            | "user"
-            | "windows"
-            | "workspace"
-            | "yaml"
-    )
+    !NON_THIRD_PARTY_NAME_SUBJECTS.contains(&format!("|{}|", word.to_ascii_lowercase()))
 }
+
+const NON_THIRD_PARTY_NAME_SUBJECTS: &str = "|api|cargo|claude|codebase|codex|github|gitlab|javascript|json|linux|macos|mcp|node|npm|openai|project|python|readme|repo|repository|rust|sqlite|sql|the|toml|typescript|user|windows|workspace|yaml|";
 
 fn claim_has_user_owned_third_party_role(tokens: &[String]) -> bool {
     has_user_owned_subject(tokens) && has_third_party_role_token(tokens)
@@ -290,32 +263,12 @@ fn has_user_owned_subject(tokens: &[String]) -> bool {
 }
 
 fn has_third_party_role_token(tokens: &[String]) -> bool {
-    tokens.iter().any(|token| {
-        matches!(
-            token.as_str(),
-            "approver"
-                | "client"
-                | "colleague"
-                | "collaborator"
-                | "coworker"
-                | "family"
-                | "father"
-                | "friend"
-                | "husband"
-                | "manager"
-                | "mentor"
-                | "mother"
-                | "partner"
-                | "reviewer"
-                | "sibling"
-                | "spouse"
-                | "stakeholder"
-                | "teammate"
-                | "vendor"
-                | "wife"
-        )
-    })
+    tokens
+        .iter()
+        .any(|token| THIRD_PARTY_ROLE_TOKENS.contains(&format!("|{token}|")))
 }
+
+const THIRD_PARTY_ROLE_TOKENS: &str = "|approver|client|colleague|collaborator|coworker|family|father|friend|husband|manager|mentor|mother|partner|reviewer|sibling|spouse|stakeholder|teammate|vendor|wife|";
 
 fn is_supported_third_party_candidate(
     candidate: &ParsedUserContextCandidate,
@@ -341,7 +294,7 @@ fn has_third_party_fact_token_support(claim_text: &str, source_text: &str) -> bo
         return false;
     }
     let source_tokens = short_support_tokens(source_text);
-    if contains_third_party_negation(&source_tokens) {
+    if third_party_fact_is_negated(&claim_tokens, &source_tokens) {
         return false;
     }
     claim_tokens
@@ -349,8 +302,22 @@ fn has_third_party_fact_token_support(claim_text: &str, source_text: &str) -> bo
         .all(|token| source_tokens.iter().any(|source| source == token))
 }
 
-fn contains_third_party_negation(tokens: &[String]) -> bool {
-    tokens.iter().any(|token| {
+fn third_party_fact_is_negated(claim_tokens: &[String], source_tokens: &[String]) -> bool {
+    let positions = claim_tokens
+        .iter()
+        .filter_map(|claim| source_tokens.iter().position(|source| source == claim))
+        .collect::<Vec<_>>();
+    if positions.len() != claim_tokens.len() {
+        return false;
+    }
+    let start = positions
+        .iter()
+        .min()
+        .copied()
+        .unwrap_or(0)
+        .saturating_sub(1);
+    let end = positions.iter().max().copied().unwrap_or(0);
+    source_tokens[start..=end].iter().any(|token| {
         matches!(
             token.as_str(),
             "cannot" | "cant" | "doesn" | "don" | "isn" | "never" | "no" | "not"

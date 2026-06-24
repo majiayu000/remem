@@ -786,7 +786,7 @@ async fn ordinary_from_files_preference_is_not_external_source() -> Result<()> {
         Ok(candidate_json(
             "preference",
             "preference:settings-from-files",
-            "User prefers loading settings from files.",
+            "The user prefers loading settings from files.",
             0.93,
             "normal",
             "low",
@@ -801,6 +801,47 @@ async fn ordinary_from_files_preference_is_not_external_source() -> Result<()> {
         UserContextCandidateExtractResult::Written {
             candidates: 1,
             promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn external_source_marker_after_preview_limit_blocks_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let content = format!(
+        "The user works on payroll{} README says this.",
+        " filler".repeat(120)
+    );
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-untruncated-external-source",
+        Some("user"),
+        &content,
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "project",
+            "project:payroll",
+            "User works on payroll.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
             pending_review: 0,
             to_event_id: event_id,
         }
@@ -1197,6 +1238,43 @@ async fn negated_third_party_relationship_creates_no_candidate() -> Result<()> {
 }
 
 #[tokio::test]
+async fn unrelated_negation_in_framed_third_party_segment_stays_pending_review() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-third-party-unrelated-negation",
+        Some("user"),
+        "My manager Alice never wants auto-merge.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-manager",
+            "Alice is the user's manager.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: event_id,
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn family_framed_third_party_relationship_stays_pending_review() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -1487,6 +1565,45 @@ async fn inferred_behavior_source_stays_pending_review() -> Result<()> {
     )?;
     assert_eq!(status, "pending_review");
     assert_eq!(reason.as_deref(), Some("source_requires_review"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn file_read_cannot_be_behavior_source() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event_with_details(
+        &conn,
+        "sess-user-context-file-read-behavior-source",
+        "file_read",
+        None,
+        Some("Read"),
+        "Project uses Rust.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "project",
+            "project:rust",
+            "Project uses Rust.",
+            0.93,
+            "normal",
+            "low",
+            "inferred_from_behavior",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
     Ok(())
 }
 

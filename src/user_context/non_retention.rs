@@ -325,7 +325,6 @@ fn file_source_phrase_has_attribution_context(text: &str, start: usize, phrase_l
             "remember",
             "save",
             "source",
-            "the user",
             "without explicit user approval",
             "without user approval",
         ],
@@ -689,7 +688,7 @@ mod tests {
         );
         assert_eq!(
             block_reason(
-                "User prefers loading settings from files.",
+                "The user prefers loading settings from files.",
                 Some("I prefer loading settings from files."),
                 "explicit_user_statement"
             ),

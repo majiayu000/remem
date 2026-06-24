@@ -171,7 +171,7 @@ pub(super) fn source_refs_json(
     serde_json::to_string(&values).context("serialize user-context candidate source refs")
 }
 
-pub(super) fn source_preview(
+pub(super) fn source_evidence_text(
     batch: &CandidateSourceBatch,
     candidate: &ParsedUserContextCandidate,
 ) -> Option<String> {
@@ -184,7 +184,7 @@ pub(super) fn source_preview(
         .filter_map(|event| evidence_preview_for_event(&event.content, candidate))
         .collect::<Vec<_>>();
     let preview = parts.join("\n");
-    (!preview.is_empty()).then(|| crate::db::truncate_str(&preview, 500).to_string())
+    (!preview.is_empty()).then_some(preview)
 }
 
 pub(super) fn source_preview_for_event(
@@ -195,13 +195,16 @@ pub(super) fn source_preview_for_event(
 }
 
 pub(super) fn is_behavior_source_event(event: &SourceEvent) -> bool {
+    if event.event_type == "file_read" {
+        return false;
+    }
     event
         .tool_name
         .as_deref()
         .is_some_and(|tool_name| !tool_name.trim().is_empty())
         || matches!(
             event.event_type.as_str(),
-            "bash" | "bash_run" | "file_edit" | "file_read" | "file_write" | "tool_result"
+            "bash" | "bash_run" | "file_edit" | "file_write" | "tool_result"
         )
 }
 
