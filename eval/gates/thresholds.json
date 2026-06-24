@@ -26,6 +26,9 @@
     "current_memory_contracts.injection.audit_injected": {
       "max_drop": 0.0
     },
+    "current_memory_contracts.injection.output_gate_recorded": {
+      "max_drop": 0.0
+    },
     "current_memory_contracts.staleness.error": {
       "max_drop": 0.0
     },
@@ -51,6 +54,9 @@
       "max_drop": 0.0
     },
     "current_memory_contracts.usage.citation_event_matched": {
+      "max_drop": 0.0
+    },
+    "current_memory_contracts.usage.citation_event_no_citation": {
       "max_drop": 0.0
     },
     "current_memory_contracts.usage.usage_event_linked_to_injection_item": {

@@ -1,5 +1,7 @@
+mod case_queries;
 mod fixture;
 mod run;
+mod summary;
 #[cfg(test)]
 mod tests;
 mod types;
