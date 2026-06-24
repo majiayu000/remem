@@ -197,13 +197,14 @@ fn non_retention_block_reason(
         &candidate.source_kind,
     )
     .or_else(|| {
-        (!is_supported_by_user_source_event(candidate, batch))
-            .then_some("no_supporting_user_source_event")
-    })
-    .or_else(|| {
         (candidate.source_kind == "third_party_statement"
             && !is_user_framed_third_party_candidate(candidate, batch))
         .then_some("unframed_third_party_detail")
+    })
+    .or_else(|| {
+        (candidate.source_kind != "third_party_statement"
+            && !is_supported_for_candidate_queue(candidate, batch))
+        .then_some("no_supporting_user_source_event")
     })
 }
 
@@ -237,12 +238,43 @@ fn is_user_framed_third_party_candidate(
 
 fn has_user_context_framing(text: &str) -> bool {
     let tokens = short_support_tokens(text);
+    has_user_reference_token(&tokens) && has_durable_third_party_context_token(&tokens)
+}
+
+fn has_user_reference_token(tokens: &[String]) -> bool {
     tokens.iter().any(|token| {
         matches!(
             token.as_str(),
             "i" | "me" | "my" | "mine" | "our" | "ours" | "us" | "we"
         )
     }) || tokens.windows(2).any(|window| window == ["user", "s"])
+}
+
+fn has_durable_third_party_context_token(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "approver"
+                | "client"
+                | "colleague"
+                | "collaborator"
+                | "coworker"
+                | "manager"
+                | "mentor"
+                | "owner"
+                | "partner"
+                | "qa"
+                | "release"
+                | "repo"
+                | "review"
+                | "reviewer"
+                | "stakeholder"
+                | "team"
+                | "teammate"
+                | "vendor"
+                | "workflow"
+        )
+    })
 }
 
 fn should_auto_promote(
@@ -303,6 +335,14 @@ fn auto_promote_block_reason(
     "requires_review"
 }
 
+fn is_supported_for_candidate_queue(
+    candidate: &ParsedUserContextCandidate,
+    batch: &CandidateSourceBatch,
+) -> bool {
+    is_supported_by_user_source_event(candidate, batch)
+        || is_supported_negative_user_constraint(candidate, batch)
+}
+
 fn is_supported_by_user_source_event(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
@@ -322,6 +362,52 @@ fn is_supported_by_user_source_event(
                     .iter()
                     .any(|variant| has_short_exact_source_support(variant, &event_text))
         })
+}
+
+fn is_supported_negative_user_constraint(
+    candidate: &ParsedUserContextCandidate,
+    batch: &CandidateSourceBatch,
+) -> bool {
+    if candidate.source_kind != "explicit_user_statement"
+        || !matches!(
+            candidate.claim_type,
+            super::claims::UserContextClaimType::Preference
+                | super::claims::UserContextClaimType::Constraint
+        )
+        || !contains_negative_constraint_token(&short_support_tokens(&candidate.claim_text))
+    {
+        return false;
+    }
+    let variants = short_user_context_support_variants(&candidate.claim_text);
+    batch
+        .events_for_candidate(candidate)
+        .into_iter()
+        .any(|event| {
+            batch.event_is_user_authored(event.id)
+                && variants.iter().any(|variant| {
+                    has_short_exact_source_support_allowing_risk(variant, &event.content)
+                })
+        })
+}
+
+fn contains_negative_constraint_token(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "avoid"
+                | "cannot"
+                | "cant"
+                | "deny"
+                | "disable"
+                | "don"
+                | "never"
+                | "no"
+                | "not"
+                | "prevent"
+                | "skip"
+                | "without"
+        )
+    })
 }
 
 fn normalize_support_text(text: &str) -> String {
@@ -403,6 +489,19 @@ fn has_short_exact_source_support(candidate_tokens: &[String], source_text: &str
     if source_tokens.len() < candidate_tokens.len() || contains_short_support_risk(&source_tokens) {
         return false;
     }
+    source_tokens
+        .windows(candidate_tokens.len())
+        .any(|window| window == candidate_tokens)
+}
+
+fn has_short_exact_source_support_allowing_risk(
+    candidate_tokens: &[String],
+    source_text: &str,
+) -> bool {
+    if !(3..=10).contains(&candidate_tokens.len()) {
+        return false;
+    }
+    let source_tokens = short_support_tokens(source_text);
     source_tokens
         .windows(candidate_tokens.len())
         .any(|window| window == candidate_tokens)
