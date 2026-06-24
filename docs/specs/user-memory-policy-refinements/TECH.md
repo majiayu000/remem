@@ -46,7 +46,7 @@ This spec builds on the current user-context layer:
 Preferred command:
 
 ```text
-remem user profile export --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive]
+remem user profile export --format markdown [--output <path>] [--owner-scope user|workspace|repo|session] [--owner-key <key>] [--project <path>] [--include-suppressed] [--include-sensitive] [--include-inactive] [--include-deleted]
 ```
 
 Acceptable first slice if command surface should stay smaller:
@@ -66,7 +66,7 @@ Default Markdown sections:
 # remem User Profile Snapshot
 
 Generated: 2026-06-24T00:00:00Z
-Owner: user:user:default
+Effective owners: user:user:default, repo:/path/to/repo
 Project: /path/to/repo
 Source of truth: ~/.remem/remem.db
 Mode: default
@@ -78,6 +78,7 @@ Mode: default
 ## Active Claims
 
 - [claim:123] preference:review-style - Prefer concise code reviews.
+  - owner: user:user:default
   - sensitivity: normal
   - source: manual
   - updated: 2026-06-24T00:00:00Z
@@ -96,6 +97,7 @@ With audit flags, excluded items must include `reason`:
 ```markdown
 - [claim:124] identity:location - ...
   - reason: sensitivity:personal
+  - owner: user:user:default
 ```
 
 ### Data Selection
@@ -144,6 +146,13 @@ Audit output may include excluded rows only when explicitly requested:
   with validity/status labels;
 - `--include-deleted` includes soft-deleted rows with `status:deleted` labels.
 
+Audit flags are cumulative gates, not bypass switches. A row with multiple
+exclusion reasons may render only when every applicable exclusion is explicitly
+allowed, or when the renderer redacts the blocked text and labels all remaining
+reasons. For example, a deleted sensitive claim must not expose its text with
+`--include-deleted` alone; it also requires `--include-sensitive`, or it must be
+redacted.
+
 Deleted rows must never appear in default output. If a future hard-purge command
 physically removes deleted rows, the snapshot should report that purged rows are
 not recoverable instead of implying they are hidden.
@@ -171,6 +180,8 @@ Required tests:
 - suppressed/deleted/expired/future/restricted claims are excluded by default;
 - `--include-suppressed` labels suppressed claims and does not make them active;
 - `--include-sensitive` labels personal/sensitive/restricted claims;
+- combined audit flags do not bypass sensitivity gating for suppressed,
+  inactive, or deleted sensitive claims;
 - snapshot output says it is derived and names SQLite as source of truth;
 - CLI `--output` refuses to overwrite an existing file unless a future `--force`
   flag is added.
@@ -222,7 +233,8 @@ one-off circumstances.
 Do not create candidates for world knowledge, project-independent facts, or
 general technical facts.
 Do not create candidates for third-party details unless the user explicitly
-frames them as relevant to their own durable context.
+frames them as relevant to their own durable context; even then, keep them
+pending for human review and never auto-promote them.
 Do not create candidates from guesses, jokes, sarcasm, role-play, fiction, or
 hypothetical identities.
 Do not create candidates containing credentials, secrets, API keys, tokens,
@@ -253,10 +265,13 @@ Required insertion/promotion gates:
 
 - credentials/secrets must be rejected or redacted before candidate insert,
   including `claim_text` and `source_preview`;
-- role-play, fiction, joke, sarcasm, and hypothetical markers must force
-  `auto_promote=false` or an equivalent deterministic block before promotion;
-- third-party claims should require pending review unless explicitly phrased as
-  the user's own durable context.
+- role-play, fiction, joke, sarcasm, and hypothetical markers must create no
+  candidate, or must force `auto_promote=false` before promotion if a safe
+  non-sensitive review artifact is intentionally retained;
+- third-party details must never auto-promote. If the user explicitly frames a
+  third-party detail as relevant to their own durable context, create only a
+  pending-review candidate with a block reason such as
+  `third_party_requires_review`; otherwise create no candidate.
 
 Do not widen auto-promotion. Auto-promotion remains limited to normal,
 low-risk, high-confidence, explicit user-authored preferences or constraints

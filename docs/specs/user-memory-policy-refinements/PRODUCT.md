@@ -120,8 +120,8 @@ Do not retain:
 
 - temporary state, mood, fatigue, meals, weather, or one-off circumstances;
 - world knowledge, project-independent facts, or general technical facts;
-- third-party details unless the user explicitly frames them as relevant to
-  their own durable context;
+- third-party details, unless the user explicitly frames them as relevant to
+  their own durable context and the item is kept pending for human review;
 - guesses, jokes, sarcasm, role-play, fiction, or hypothetical identities;
 - credentials, secrets, API keys, tokens, passwords, account numbers, identity
   documents, or payment data;
@@ -130,9 +130,11 @@ Do not retain:
   cited user-authored event;
 - claims derived from files or external sources without explicit user approval.
 
-If the extractor sees useful but non-retainable content, it should return
-`no_candidates` or a review-gated candidate with an explicit block reason,
-depending on the source and risk.
+If the extractor sees non-retainable content, it must return `no_candidates`
+or a non-sensitive diagnostic such as an aggregate block reason. It must not
+persist the blocked text in `claim_text`, `source_preview`, summary inputs, or
+review-gated candidates. Review-gated candidates are only for uncertain but
+plausibly durable user context that is safe to persist for human review.
 
 ## User Stories
 
@@ -176,7 +178,8 @@ Acceptance:
 - Parser/store behavior still fails closed on malformed output.
 - Tests prove the prompt includes the blocklist.
 - Tests prove secret-like blocklisted content is rejected or redacted before
-  candidate insertion, and role-play/hypothetical examples cannot auto-promote.
+  candidate insertion, and role-play, hypothetical, and third-party examples
+  cannot auto-promote.
 
 ## Rollout
 
