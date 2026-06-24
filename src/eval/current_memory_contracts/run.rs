@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::fixture::{
-    insert_context_injection_item, insert_current_state_commit, insert_current_state_memory_at,
-    insert_fact, insert_state_key, link_current_state_commit, set_current_memory,
-    set_memory_files_raw, set_memory_source, setup_conn, ABSTAIN_SESSION, HOST, PROJECT,
-    PROMPT_PROJECT, PROMPT_SESSION,
+    insert_current_state_commit, insert_current_state_memory_at, insert_fact, insert_state_key,
+    link_current_state_commit, seed_prompt_memory, set_current_memory, set_memory_files_raw,
+    set_memory_source, setup_conn, ABSTAIN_PROJECT, ABSTAIN_SESSION, HOST, PROJECT, PROMPT_PROJECT,
+    PROMPT_SESSION,
 };
 use super::types::{
     CurrentMemoryContractCaseReport, CurrentMemoryContractEvalMetadata,
@@ -227,6 +227,17 @@ fn seed_current_state_fixture(conn: &Connection) -> Result<()> {
     )?;
     insert_current_state_memory_at(
         conn,
+        700,
+        70,
+        "Historical tracked memory",
+        "Previous tracked source anchor remains auditable in history.",
+        "stale",
+        690,
+        None,
+        None,
+    )?;
+    insert_current_state_memory_at(
+        conn,
         701,
         70,
         "Tracked current memory",
@@ -247,8 +258,17 @@ fn seed_current_state_fixture(conn: &Connection) -> Result<()> {
         None,
         None,
     )?;
+    set_memory_source(conn, 700, "eval-history-session", &["src/history.rs"])?;
     set_memory_source(conn, 701, "eval-tracked-session", &["src/tracked.rs"])?;
     set_memory_source(conn, 702, "eval-verify-session", &["src/verify.rs"])?;
+    link_current_state_commit(
+        conn,
+        1_000,
+        "history-source",
+        600,
+        &["src/history.rs"],
+        "eval-history-session",
+    )?;
     link_current_state_commit(
         conn,
         1_001,
@@ -266,6 +286,12 @@ fn seed_current_state_fixture(conn: &Connection) -> Result<()> {
         "eval-verify-session",
     )?;
     insert_current_state_commit(conn, 1_003, "verify-later", 650, &["src/verify.rs"])?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, reason, created_at_epoch)
+         VALUES ('supersedes', 700, 701, 70, 'tracked history replacement', 705)",
+        [],
+    )?;
     conn.execute(
         "INSERT INTO memory_edges
          (edge_type, from_memory_id, to_memory_id, state_key_id, reason, created_at_epoch)
@@ -441,6 +467,27 @@ fn evaluate_staleness_labels(
         tracked_label.clone(),
         tracked_label == "tracked",
     );
+    let history = staleness.history.first();
+    let history_actual = history
+        .map(|memory| {
+            format!(
+                "id={} relation={:?} source_anchor={}",
+                memory.id, memory.relation, memory.staleness.source_anchor
+            )
+        })
+        .unwrap_or_else(|| "missing".to_string());
+    push_case(
+        cases,
+        "staleness",
+        "history_tracked",
+        "history relation=supersedes and source_anchor=tracked",
+        history_actual,
+        history.is_some_and(|memory| {
+            memory.id == 700
+                && memory.relation.as_deref() == Some("supersedes")
+                && memory.staleness.source_anchor == "tracked"
+        }),
+    );
     let verify_label = staleness
         .conflicts
         .first()
@@ -477,39 +524,32 @@ fn evaluate_prompt_audit_and_usage(
     conn: &Connection,
     cases: &mut Vec<CurrentMemoryContractCaseReport>,
 ) -> Result<()> {
-    let memory_id = crate::memory::insert_memory(
+    let memory_id = seed_prompt_memory(conn)?;
+
+    let injected_output = crate::context::prompt_submit_additional_context(
         conn,
-        Some("eval-current-contract-prompt-seed"),
         PROMPT_PROJECT,
-        None,
+        PROMPT_PROJECT,
+        PROMPT_SESSION,
         "SQLCipher storage decision",
-        "Persist private data with SQLCipher encryption at rest.",
-        "decision",
-        None,
+        Some(HOST),
     )?;
-    let injected_item_id = insert_context_injection_item(
+    let injected_item_id = context_item_id(conn, PROMPT_SESSION, "injected", memory_id)?;
+    let dropped_output = crate::context::prompt_submit_additional_context(
         conn,
+        PROMPT_PROJECT,
+        PROMPT_PROJECT,
         PROMPT_SESSION,
-        Some(memory_id),
-        "injected",
-        None,
-        Some(1),
+        "SQLCipher storage decision",
+        Some(HOST),
     )?;
-    insert_context_injection_item(
+    let abstained_output = crate::context::prompt_submit_additional_context(
         conn,
-        PROMPT_SESSION,
-        Some(memory_id),
-        "dropped",
-        Some("section_budget"),
-        None,
-    )?;
-    insert_context_injection_item(
-        conn,
+        ABSTAIN_PROJECT,
+        ABSTAIN_PROJECT,
         ABSTAIN_SESSION,
-        None,
-        "abstained",
-        Some("prompt_submit_no_relevant_context"),
-        None,
+        "no matching memory should appear",
+        Some(HOST),
     )?;
 
     let injected_count = context_item_count(conn, PROMPT_SESSION, "injected")?;
@@ -518,8 +558,11 @@ fn evaluate_prompt_audit_and_usage(
         "injection",
         "audit_injected",
         "context injection audit has injected row",
-        format!("injected={injected_count} item_id={injected_item_id}"),
-        injected_count > 0,
+        format!(
+            "injected={injected_count} item_id={injected_item_id} output_present={}",
+            injected_output.is_some()
+        ),
+        injected_count > 0 && injected_output.is_some(),
     );
 
     let dropped_count = context_item_count(conn, PROMPT_SESSION, "dropped")?;
@@ -528,8 +571,11 @@ fn evaluate_prompt_audit_and_usage(
         "injection",
         "audit_dropped",
         "context injection audit has dropped row",
-        format!("dropped={dropped_count}"),
-        dropped_count > 0,
+        format!(
+            "dropped={dropped_count} output_present={}",
+            dropped_output.is_some()
+        ),
+        dropped_count > 0 && dropped_output.is_none(),
     );
 
     let abstained_count = context_item_count(conn, ABSTAIN_SESSION, "abstained")?;
@@ -538,8 +584,11 @@ fn evaluate_prompt_audit_and_usage(
         "injection",
         "audit_abstained",
         "context injection audit has abstained row",
-        format!("abstained={abstained_count}"),
-        abstained_count > 0,
+        format!(
+            "abstained={abstained_count} output_present={}",
+            abstained_output.is_some()
+        ),
+        abstained_count > 0 && abstained_output.is_none(),
     );
 
     let message_hash = "eval-current-contract-citation";
@@ -626,6 +675,31 @@ fn context_item_count(conn: &Connection, session_id: &str, status: &str) -> Resu
     .context("count context injection items")
 }
 
+fn context_item_id(
+    conn: &Connection,
+    session_id: &str,
+    status: &str,
+    memory_id: i64,
+) -> Result<i64> {
+    conn.query_row(
+        "SELECT id
+         FROM context_injection_items
+         WHERE session_id = ?1
+           AND status = ?2
+           AND memory_id = ?3
+         ORDER BY id DESC
+         LIMIT 1",
+        params![session_id, status, memory_id],
+        |row| row.get(0),
+    )
+    .optional()?
+    .with_context(|| {
+        format!(
+            "load context injection item for session={session_id} status={status} memory_id={memory_id}"
+        )
+    })
+}
+
 fn usage_event_count(
     conn: &Connection,
     message_hash: &str,
@@ -662,6 +736,7 @@ fn summarize_contract_metrics(
         staleness: StalenessContractMetrics {
             tracked: rate(cases, "staleness", &["tracked"]),
             untracked: rate(cases, "staleness", &["untracked"]),
+            history_tracked: rate(cases, "staleness", &["history_tracked"]),
             verify_before_trust: rate(cases, "staleness", &["verify_before_trust"]),
             error: rate(cases, "staleness", &["error"]),
         },

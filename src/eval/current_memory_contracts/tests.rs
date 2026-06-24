@@ -7,7 +7,7 @@ fn builtin_current_memory_contracts_score_all_acceptance_points() {
 
     assert!(report.metrics.all_checks_passed);
     assert!(report.failing_examples.is_empty());
-    assert_eq!(report.cases.len(), 16);
+    assert_eq!(report.cases.len(), 17);
     assert_eq!(
         report.metrics.current_state.current,
         CurrentMemoryContractRateMetric::new(1, 1)
@@ -42,6 +42,10 @@ fn builtin_current_memory_contracts_score_all_acceptance_points() {
     );
     assert_eq!(
         report.metrics.staleness.untracked,
+        CurrentMemoryContractRateMetric::new(1, 1)
+    );
+    assert_eq!(
+        report.metrics.staleness.history_tracked,
         CurrentMemoryContractRateMetric::new(1, 1)
     );
     assert_eq!(

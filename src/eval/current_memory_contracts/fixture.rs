@@ -188,44 +188,17 @@ pub(super) fn insert_fact(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn insert_context_injection_item(
-    conn: &Connection,
-    session_id: &str,
-    memory_id: Option<i64>,
-    status: &str,
-    drop_reason: Option<&str>,
-    render_order: Option<i64>,
-) -> Result<i64> {
-    let item_id = memory_id;
-    let title = match status {
-        "abstained" => "prompt context abstained",
-        "dropped" => "Dropped SQLCipher storage decision",
-        _ => "SQLCipher storage decision",
-    };
+pub(super) fn seed_prompt_memory(conn: &Connection) -> Result<i64> {
+    let now = chrono::Utc::now().timestamp();
     conn.execute(
-        "INSERT INTO context_injection_items
-         (injection_run_id, host, project, session_id, injection_key, output_mode, decision,
-          item_kind, item_id, memory_id, channel, render_order, status, drop_reason, title,
-          provenance, staleness, injected_at_epoch)
-         VALUES ('current-contract-run', ?1, ?2, ?3, 'current-contract-key', 'prompt_submit',
-                 'prompt_submit', 'memory', ?4, ?5, 'prompt_submit', ?6, ?7, ?8, ?9,
-                 'src=memory', 'status=active; staleness=fresh; source_anchor=untracked', 1000)",
-        params![
-            HOST,
-            if session_id == ABSTAIN_SESSION {
-                ABSTAIN_PROJECT
-            } else {
-                PROMPT_PROJECT
-            },
-            session_id,
-            item_id,
-            memory_id,
-            render_order,
-            status,
-            drop_reason,
-            title
-        ],
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES ('eval-current-contract-prompt-seed', ?1, 'sqlcipher-storage',
+                 'SQLCipher storage decision',
+                 'Persist private data with SQLCipher encryption at rest.',
+                 'decision', NULL, ?2, ?2, 'active', NULL, 'project')",
+        params![PROMPT_PROJECT, now],
     )?;
     Ok(conn.last_insert_rowid())
 }

@@ -49,6 +49,7 @@ pub struct TemporalContractMetrics {
 pub struct StalenessContractMetrics {
     pub tracked: CurrentMemoryContractRateMetric,
     pub untracked: CurrentMemoryContractRateMetric,
+    pub history_tracked: CurrentMemoryContractRateMetric,
     pub verify_before_trust: CurrentMemoryContractRateMetric,
     pub error: CurrentMemoryContractRateMetric,
 }
