@@ -60,6 +60,14 @@ eval/public/
     reports/
       memory-report-v1.json
       memory-report-v1.md
+    artifacts/
+      <run_id>/
+        remem.db.snapshot.tar.zst
+        reader_input.txt
+        retrieved_evidence.json
+        answer.json
+        score.json
+        diagnosis.json
   coding/
     suites/
       issue385-v1/
@@ -206,7 +214,90 @@ Required behavior:
 }
 ```
 
-### Run Artifact
+### Memory Run Artifact
+
+`schemas/memory-run.schema.json` validates memory-system capability runs. It
+must not require coding-agent fields such as `resolved`, patch/test logs, or
+`repo_base_commit`.
+
+```json
+{
+  "schema_version": 1,
+  "benchmark_version": "remem-code-memory-v1",
+  "layer": "memory_system_capability",
+  "suite": "remem-code-memory",
+  "condition": "remem_default",
+  "task_id": "state-key-stale-api-001",
+  "run_index": 2,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "provider": "openai",
+    "model": "gpt-5.2",
+    "temperature": 0,
+    "prompt_hash": "sha256:..."
+  },
+  "environment": {
+    "os": "linux",
+    "arch": "x86_64",
+    "docker_image_digest": "sha256:...",
+    "remem_commit": "...",
+    "fixture_revision": "remem-code-memory-v1"
+  },
+  "answer": {
+    "text": "The v2 API is current as of the reference time.",
+    "abstained": false,
+    "score": 1.0,
+    "score_method": "rubric",
+    "temporal_as_of_correct": true,
+    "no_answer_correct": null
+  },
+  "retrieval": {
+    "retrieved_memory_ids": [101, 104],
+    "retrieved_supporting_evidence_ids": ["prior-001:e17"],
+    "gold_supporting_event_ids": ["prior-001:e17", "prior-001:e22"],
+    "support_coverage": 0.5,
+    "missing_supporting_evidence_ids": ["prior-001:e22"],
+    "irrelevant_memory_count": 1
+  },
+  "evidence": {
+    "cited_memory_ids": [101],
+    "cited_event_ids": ["prior-001:e17"],
+    "citation_precision": 1.0,
+    "citation_recall": 0.5,
+    "source_anchor_staleness": {
+      "prior-001:e17": "tracked"
+    }
+  },
+  "metrics": {
+    "ingest_tokens": 12345,
+    "query_tokens": 1200,
+    "reader_tokens": 2400,
+    "retrieval_latency_ms": 82,
+    "end_to_end_latency_ms": 2100,
+    "rows_written": 14
+  },
+  "diagnosis": {
+    "write_side_gap": false,
+    "retrieval_side_gap": true,
+    "reader_gap": false,
+    "policy_abstention": false,
+    "notes": ["one required evidence ID was not retrieved"]
+  },
+  "artifacts": {
+    "reader_input": "artifacts/.../reader_input.txt",
+    "retrieved_evidence": "artifacts/.../retrieved_evidence.json",
+    "answer": "artifacts/.../answer.json",
+    "score": "artifacts/.../score.json",
+    "diagnosis": "artifacts/.../diagnosis.json",
+    "remem_db_snapshot": "artifacts/.../remem.db.snapshot.tar.zst"
+  }
+}
+```
+
+### Coding Run Artifact
+
+`schemas/coding-run.schema.json` validates #385 coding-agent outcome runs and
+retains coding-specific oracle, patch, test, and repository fields.
 
 ```json
 {
@@ -328,8 +419,15 @@ The verifier must fail on:
 - missing patch/test logs for coding runs;
 - missing supporting evidence IDs for memory runs;
 - unknown failure reason enums;
-- reports that mix memory capability and coding outcome metrics without a
-  `layer` field.
+- reports that mix memory capability and coding outcome metrics in one metric
+  table, aggregate, or artifact list even if they include a `layer` field.
+
+Reports must be either single-layer, with one top-level `layer` and only that
+layer's schemas and metrics, or multi-section with separate per-layer sections.
+Each per-layer section must carry its own `layer` tag, schema references, run
+artifact list, aggregate metrics, claim level, and verifier result. A top-level
+summary may link the sections but must not merge memory-system and
+coding-outcome metrics into one claimed result.
 
 ## External Dataset Adapters
 

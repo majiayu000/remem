@@ -354,9 +354,19 @@ Required evidence:
 - claim wording names the benchmark and condition. It must not generalize to all
   long-term memory or all coding agents.
 
-### Stop-Loss Gate
+### Coding Outcome Stop-Loss Gate
 
-`remem-public-claim` passes only if all are true:
+The stop-loss gate applies to README, release, marketing, or roadmap claims
+that remem improves coding-agent outcomes, beats a maintained context file, or
+is broadly superior for coding workflows. It does not gate scoped
+memory-system capability claims. Level 1 memory-system claims and Level 3
+memory-benchmark claims may pass on their own reproducible memory evidence,
+artifact verifier result, and claim-level requirements without waiting for #385
+coding deltas. If a Level 3 claim is about coding-agent outcomes rather than a
+memory benchmark, this coding outcome gate still applies.
+
+For coding-outcome superiority claims, `remem-public-coding-claim` passes only
+if all are true:
 
 1. remem beats `no_memory` on coding-agent resolved rate by at least 10
    percentage points, or by a statistically credible positive bootstrap
@@ -403,8 +413,10 @@ oracles and at least three runs per condition before publication.
 Issues: #637, #638
 
 Publish the directional report and enforce public claim policy. README and
-release wording must remain conservative until artifacts pass the stop-loss
-gate.
+release coding-outcome or broad superiority wording must remain conservative
+until artifacts pass the coding outcome stop-loss gate. Scoped memory-system
+benchmark wording may use the relevant memory claim level once its memory
+artifacts pass verification.
 
 ### Phase 5: External Reproduction Package
 
@@ -421,8 +433,8 @@ the full benchmark may require manual budget approval.
 - The #385 benchmark remains the source of truth for coding-agent outcome.
 - Artifacts include enough metadata to reproduce results without private memory.
 - Every public claim links to the report and claim level it satisfies.
-- Unsupported SOTA or coding-task superiority wording is forbidden in README or
-  release docs.
+- Unsupported SOTA, broad superiority, or coding-task superiority wording is
+  forbidden in README or release docs.
 
 ## Open Product Decisions
 
