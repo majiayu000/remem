@@ -569,6 +569,43 @@ async fn paraphrased_user_framed_third_party_relationship_stays_pending_review()
 }
 
 #[tokio::test]
+async fn assistant_only_framed_third_party_detail_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-third-party-assistant-only",
+        Some("assistant"),
+        "Alice owns release QA for the user's workflow.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-release-qa",
+            "Alice owns release QA for the user's workflow.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn unframed_third_party_detail_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
