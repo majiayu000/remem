@@ -30,7 +30,7 @@ pub fn load_active_summary(
     }
 }
 
-fn load_active_summary_unfiltered(
+pub(crate) fn load_active_summary_unfiltered(
     conn: &Connection,
     req: &SummaryRequest<'_>,
 ) -> Result<Option<UserContextSummary>> {
@@ -243,7 +243,10 @@ fn summary_sources_are_visible(conn: &Connection, summary: &UserContextSummary) 
     Ok(true)
 }
 
-fn summary_is_policy_suppressed(conn: &Connection, summary: &UserContextSummary) -> Result<bool> {
+pub(crate) fn summary_is_policy_suppressed(
+    conn: &Connection,
+    summary: &UserContextSummary,
+) -> Result<bool> {
     let summary_id = summary.id.to_string();
     let count: i64 = conn.query_row(
         "SELECT COUNT(*)

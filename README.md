@@ -514,6 +514,7 @@ remem user summary show
 remem user summary refresh
 remem user summary edit --text "updated profile summary"
 remem user summary sources
+remem user profile export --format markdown --output profile.md
 remem user recall "review the remem user context design"
 remem user review inbox
 remem user review approve <id>
@@ -535,6 +536,18 @@ repo-scoped coding memories. Manual claims default to `owner_scope=user`,
 and delete commands change status without hard-deleting the audit row; default
 claim lists exclude suppressed, deleted, expired, not-yet-valid, and restricted
 claims.
+
+`remem user profile export --format markdown` writes a derived, read-only
+snapshot of the user profile remem would use. Without `--output` it prints to
+stdout; with `--output profile.md` it creates a new file and refuses to
+overwrite existing content. The snapshot names the SQLite database as the
+source of truth, includes owner/project metadata, active summary provenance,
+source ids, and active default-eligible claims. Default output excludes
+suppressed, deleted, expired, future, personal, sensitive, and restricted
+claims. Use `--include-suppressed`, `--include-sensitive`, `--include-inactive`,
+`--include-deleted`, and `--include-manual-summaries` only for explicit audit;
+audit rows are labeled with exclusion reasons and text remains redacted unless
+all applicable audit gates are enabled.
 
 `remem memory suppress` applies a default-read policy without deleting the
 source row. Targets can be `memory:<id>`, `claim:<id>`, `topic:<key>`,
