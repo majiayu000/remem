@@ -30,7 +30,7 @@ pub(crate) fn block_reason(
 pub(crate) fn has_external_source_pattern(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     contains_non_retention_pattern(&text, EXTERNAL_SOURCE_PATTERNS)
-        || contains_contextual_file_source_phrase(&text)
+        || contains_contextual_external_source_phrase(&text)
 }
 
 pub(crate) fn has_external_source_approval(text: &str) -> bool {
@@ -218,8 +218,12 @@ fn contains_current_weather_content(text: &str) -> bool {
 }
 
 fn contains_general_knowledge_content(text: &str) -> bool {
-    contains_non_retention_pattern(text, GENERAL_KNOWLEDGE_PATTERNS)
-        || contains_project_independent_fact_shape(text)
+    text.lines().any(|line| {
+        let tokens = lexical_tokens(line);
+        contains_non_retention_pattern(line, GENERAL_KNOWLEDGE_PATTERNS)
+            && !has_retainable_user_preference_context(&tokens)
+            && !has_project_context_reference(&tokens)
+    }) || contains_project_independent_fact_shape(text)
 }
 
 fn contains_project_independent_fact_shape(text: &str) -> bool {
@@ -247,7 +251,7 @@ fn contains_project_independent_fact_shape(text: &str) -> bool {
         });
         has_topic
             && has_factual_verb
-            && !has_user_context_reference(&tokens)
+            && !has_retainable_user_preference_context(&tokens)
             && !has_project_context_reference(&tokens)
     })
 }
@@ -261,6 +265,16 @@ fn has_project_context_reference(tokens: &[String]) -> bool {
     })
 }
 
+fn has_retainable_user_preference_context(tokens: &[String]) -> bool {
+    has_user_context_reference(tokens)
+        && tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "prefer" | "preferred" | "prefers" | "use" | "uses" | "work" | "works"
+            )
+        })
+}
+
 fn contains_illegal_or_harmful_content(text: &str) -> bool {
     contains_non_retention_pattern(text, ILLEGAL_OR_HARMFUL_PATTERNS)
         || (contains_bounded_phrase(text, "exfiltrate")
@@ -272,18 +286,21 @@ fn contains_external_source_approval(text: &str) -> bool {
         "please remember from file",
         "please remember from files",
         "please remember from readme",
+        "please remember from the readme",
         "please remember from website",
         "please remember from web page",
         "please remember from browser page",
         "remember from file",
         "remember from files",
         "remember from readme",
+        "remember from the readme",
         "remember from website",
         "remember from web page",
         "remember from browser page",
         "save from file",
         "save from files",
         "save from readme",
+        "save from the readme",
         "save from website",
         "save from web page",
         "save from browser page",
@@ -292,24 +309,32 @@ fn contains_external_source_approval(text: &str) -> bool {
     .any(|phrase| contains_non_negated_bounded_phrase(text, phrase))
 }
 
-fn contains_contextual_file_source_phrase(text: &str) -> bool {
+fn contains_contextual_external_source_phrase(text: &str) -> bool {
     [
         "from a file",
         "from a readme",
+        "from browser page",
         "from file",
         "from files",
         "from readme",
+        "from the browser page",
+        "from the web page",
+        "from web page",
     ]
     .iter()
     .any(|phrase| {
         text.match_indices(phrase).any(|(start, _)| {
             bounded_phrase_at(text, phrase, start)
-                && file_source_phrase_has_attribution_context(text, start, phrase.len())
+                && external_source_phrase_has_attribution_context(text, start, phrase.len())
         })
     })
 }
 
-fn file_source_phrase_has_attribution_context(text: &str, start: usize, phrase_len: usize) -> bool {
+fn external_source_phrase_has_attribution_context(
+    text: &str,
+    start: usize,
+    phrase_len: usize,
+) -> bool {
     let end = start + phrase_len;
     let before = text[..start].chars().rev().take(64).collect::<String>();
     let before = before.chars().rev().collect::<String>();
@@ -479,14 +504,25 @@ const ILLEGAL_OR_HARMFUL_PATTERNS: &[&str] = &[
 ];
 
 const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
-    "browser page",
+    "according to browser page",
+    "according to readme",
+    "according to the browser page",
+    "according to the readme",
+    "according to the web page",
+    "according to web page",
+    "browser page says",
     "derived from file",
     "external source",
     "file says",
     "files say",
+    "from browser page,",
+    "from the browser page,",
+    "from the readme",
+    "from the web page,",
+    "from web page,",
     "readme says",
     "repository file says",
-    "web page",
+    "web page says",
     "website says",
     "without explicit user approval",
     "without user approval",
@@ -680,6 +716,22 @@ mod tests {
         );
         assert_eq!(
             block_reason(
+                "User works on internal payroll.",
+                Some("According to the README, the user works on internal payroll."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User works on internal payroll.",
+                Some("From the README, the user works on internal payroll."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
                 "User lives in Paris.",
                 Some("Website says the user lives in Paris. Please remember from website."),
                 "explicit_user_statement"
@@ -693,6 +745,46 @@ mod tests {
                 "explicit_user_statement"
             ),
             None
+        );
+        assert_eq!(
+            block_reason(
+                "User prefers Rust.",
+                Some("I prefer Rust because Rust ownership prevents data races."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "User prefers testing web page layouts in Playwright.",
+                Some("I prefer testing web page layouts in Playwright."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "User prefers deriving selectors from web page text.",
+                Some("I prefer deriving selectors from web page text."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "User lives in Paris.",
+                Some("From the web page, the user lives in Paris."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User thinks SQLite is a single-file database.",
+                Some("I think SQLite is a single-file database."),
+                "explicit_user_statement"
+            ),
+            Some("general_knowledge_content")
         );
     }
 }
