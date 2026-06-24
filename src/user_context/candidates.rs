@@ -108,6 +108,11 @@ pub fn create_candidate(
     let host = normalized_optional(req.host);
     let session_id = normalized_optional(req.session_id);
     let source_preview = normalized_optional(req.source_preview);
+    if let Some(reason) =
+        crate::user_context::non_retention::block_reason(text, source_preview, source_kind)
+    {
+        bail!("user-context candidate blocked by non-retention policy: {reason}");
+    }
     let now = chrono::Utc::now().timestamp();
     let allowed = auto_promote_allowed(req, source_kind);
     let block_reason = if allowed {
@@ -584,6 +589,9 @@ fn auto_promote_allowed(req: &CandidateCreateRequest<'_>, source_kind: &str) -> 
 fn auto_promote_block_reason(req: &CandidateCreateRequest<'_>, source_kind: &str) -> &'static str {
     if !req.auto_promote {
         return "requires_review";
+    }
+    if source_kind == "third_party_statement" {
+        return "third_party_requires_review";
     }
     if req.risk_class != UserContextCandidateRisk::Low {
         return "risk_requires_review";

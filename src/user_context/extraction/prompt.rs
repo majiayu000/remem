@@ -6,6 +6,17 @@ use super::source::{CandidateSourceBatch, SessionSummarySource, SourceEvent};
 
 const EVENT_CONTENT_BUDGET_BYTES: usize = 8 * 1024;
 
+pub(super) const NON_RETENTION_POLICY: &[&str] = &[
+    "Do not create candidates for temporary state, mood, fatigue, meals, weather, or one-off circumstances.",
+    "Do not create candidates for world knowledge, project-independent facts, or general technical facts.",
+    "Do not create candidates for third-party details unless the user explicitly frames them as relevant to their own durable context; even then, keep them pending for human review and never auto-promote them.",
+    "Do not create candidates from guesses, jokes, sarcasm, role-play, fiction, or hypothetical identities.",
+    "Do not create candidates containing credentials, secrets, API keys, tokens, passwords, account numbers, identity documents, or payment data.",
+    "Do not create candidates for illegal, harmful, or clearly false claims.",
+    "Do not create assistant-authored claims about the user unless directly supported by cited user-authored events.",
+    "Do not create claims derived from files or external sources without explicit user approval.",
+];
+
 pub(super) fn build_candidate_prompt(
     task: &db::ExtractionTask,
     batch: &CandidateSourceBatch,
@@ -41,6 +52,7 @@ pub(super) fn build_candidate_prompt(
                 }
             }
         },
+        "non_retention_policy": NON_RETENTION_POLICY,
         "quality_gates": [
             "source_event_ids must cite provided event ids that directly evidence the claim.",
             "Use explicit_user_statement only for user role or user_prompt_submit events.",

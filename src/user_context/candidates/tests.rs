@@ -110,6 +110,34 @@ fn candidates_require_non_empty_source_refs() -> Result<()> {
 }
 
 #[test]
+fn blocklisted_candidate_text_or_preview_is_rejected_before_insert() -> Result<()> {
+    let conn = migrated_conn()?;
+    let secret_text = create_candidate(
+        &conn,
+        &candidate_request("User's API key is sk-testsecret123456.", false),
+    )
+    .expect_err("secret-like candidate text should be rejected before insert");
+    assert!(secret_text
+        .to_string()
+        .contains("blocked by non-retention policy"));
+
+    let mut preview_secret = candidate_request("Prefer concise review notes", false);
+    preview_secret.source_preview = Some("authorization=Bearer tiny-token");
+    let preview_err = create_candidate(&conn, &preview_secret)
+        .expect_err("secret-like source preview should be rejected before insert");
+    assert!(preview_err
+        .to_string()
+        .contains("blocked by non-retention policy"));
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[test]
 fn sensitive_or_high_risk_candidates_stay_pending_with_block_reason() -> Result<()> {
     let conn = migrated_conn()?;
     let mut sensitive = candidate_request("Sensitive identity detail", true);
@@ -159,6 +187,26 @@ fn sensitive_or_high_risk_candidates_stay_pending_with_block_reason() -> Result<
             .auto_promote_block_reason
             .as_deref(),
         Some("manual_source_review")
+    );
+    Ok(())
+}
+
+#[test]
+fn third_party_candidates_never_auto_promote() -> Result<()> {
+    let conn = migrated_conn()?;
+    let mut req = candidate_request("Alice owns release QA for the user's workflow", true);
+    req.claim_type = UserContextClaimType::Relationship;
+    req.claim_key = Some("relationship:alice-release-qa");
+    req.source_kind = "third_party_statement";
+
+    let result = create_candidate(&conn, &req)?;
+
+    assert_eq!(result.action, "pending_review");
+    assert!(result.claim.is_none());
+    assert_eq!(result.candidate.review_status, "pending_review");
+    assert_eq!(
+        result.candidate.auto_promote_block_reason.as_deref(),
+        Some("third_party_requires_review")
     );
     Ok(())
 }

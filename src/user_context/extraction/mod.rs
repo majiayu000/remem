@@ -129,6 +129,7 @@ struct PersistSummary {
     candidates: usize,
     promoted: usize,
     pending_review: usize,
+    blocked: usize,
 }
 
 fn persist_candidates(
@@ -139,10 +140,19 @@ fn persist_candidates(
 ) -> Result<PersistSummary> {
     let mut summary = PersistSummary::default();
     for candidate in parsed {
+        if let Some(reason) = non_retention_block_reason(candidate, batch) {
+            summary.blocked += 1;
+            crate::log::info(
+                "user-context-candidate",
+                &format!("blocked non-retention candidate reason={reason}"),
+            );
+            continue;
+        }
         let source_refs_json = source::source_refs_json(batch, candidate)?;
         if candidate_exists(conn, candidate, &source_refs_json)? {
             continue;
         }
+        let source_preview = source::source_preview(batch, candidate);
         let auto_promote = should_auto_promote(candidate, batch);
         let result = candidates::create_candidate(
             conn,
@@ -160,7 +170,7 @@ fn persist_candidates(
                 risk_class: candidate.risk_class,
                 source_kind: &candidate.source_kind,
                 source_refs_json: &source_refs_json,
-                source_preview: source::source_preview(batch, candidate).as_deref(),
+                source_preview: source_preview.as_deref(),
                 auto_promote,
                 auto_promote_block_reason: (!auto_promote)
                     .then(|| auto_promote_block_reason(candidate, batch)),
@@ -174,6 +184,50 @@ fn persist_candidates(
         }
     }
     Ok(summary)
+}
+
+fn non_retention_block_reason(
+    candidate: &ParsedUserContextCandidate,
+    batch: &CandidateSourceBatch,
+) -> Option<&'static str> {
+    let source_blob = candidate_source_blob(candidate, batch);
+    crate::user_context::non_retention::block_reason(
+        &candidate.claim_text,
+        source_blob.as_deref(),
+        &candidate.source_kind,
+    )
+    .or_else(|| {
+        crate::user_context::non_retention::unsupported_assistant_claim_reason(
+            &candidate.source_kind,
+            candidate
+                .source_event_ids
+                .iter()
+                .any(|id| batch.event_is_user_authored(*id)),
+        )
+    })
+}
+
+fn candidate_source_blob(
+    candidate: &ParsedUserContextCandidate,
+    batch: &CandidateSourceBatch,
+) -> Option<String> {
+    let mut parts = batch
+        .events_for_candidate(candidate)
+        .into_iter()
+        .map(|event| event.content.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>();
+    if let Some(summary) = &batch.summary {
+        if let Some(text) = summary
+            .summary_text
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+        {
+            parts.push(text.trim());
+        }
+    }
+    let blob = parts.join("\n");
+    (!blob.is_empty()).then_some(blob)
 }
 
 fn should_auto_promote(
@@ -199,6 +253,9 @@ fn auto_promote_block_reason(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> &'static str {
+    if candidate.source_kind == "third_party_statement" {
+        return "third_party_requires_review";
+    }
     if !matches!(
         candidate.claim_type,
         super::claims::UserContextClaimType::Preference

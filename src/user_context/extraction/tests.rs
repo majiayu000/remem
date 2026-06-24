@@ -114,6 +114,33 @@ fn malformed_output_fails_closed() {
         .contains("source_event_ids must not be empty"));
 }
 
+#[test]
+fn prompt_json_contains_non_retention_blocklist() -> Result<()> {
+    let mut conn = setup_conn();
+    capture_event(
+        &conn,
+        "sess-user-context-prompt-policy",
+        Some("user"),
+        "I prefer concise code reviews.",
+    )?;
+    let task = claim_task(&mut conn)?;
+    let batch = source::load_source_batch(&conn, &task)?.expect("source batch should load");
+
+    let prompt = prompt::build_candidate_prompt(&task, &batch)?;
+    let value: serde_json::Value = serde_json::from_str(&prompt)?;
+    let policy = value["non_retention_policy"]
+        .as_array()
+        .expect("prompt should include non_retention_policy");
+
+    for expected in prompt::NON_RETENTION_POLICY {
+        assert!(
+            policy.iter().any(|item| item.as_str() == Some(*expected)),
+            "missing non-retention rule: {expected}"
+        );
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn low_risk_user_event_auto_promotes_to_active_claim() -> Result<()> {
     let mut conn = setup_conn();
@@ -167,7 +194,7 @@ async fn low_risk_user_event_auto_promotes_to_active_claim() -> Result<()> {
 }
 
 #[tokio::test]
-async fn assistant_sourced_explicit_statement_stays_pending_review() -> Result<()> {
+async fn assistant_sourced_explicit_statement_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
         &conn,
@@ -194,6 +221,108 @@ async fn assistant_sourced_explicit_statement_stays_pending_review() -> Result<(
     assert_eq!(
         result,
         UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    let claim_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(claim_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn secret_like_candidate_output_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "My API key is sk-testsecret123456.",
+        "User's API key is sk-testsecret123456.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn roleplay_hypothetical_candidate_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "As a joke, pretend I am the CEO of Example Corp.",
+        "User is hypothetically the CEO of Example Corp.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn temporary_state_candidate_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "I am tired today after lunch.",
+        "User is tired today after lunch.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn general_technical_fact_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "Rust ownership prevents data races.",
+        "Rust ownership prevents data races.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn unapproved_file_derived_claim_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("assistant"),
+        "From README files, the user works on internal payroll systems.",
+        "User works on internal payroll systems from files without user approval.",
+        "session_summary",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn user_framed_third_party_candidate_stays_pending_review() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-third-party",
+        Some("user"),
+        "My teammate Alice owns release QA for my remem workflow.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-release-qa",
+            "Alice owns release QA for the user's remem workflow.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
             candidates: 1,
             promoted: 0,
             pending_review: 1,
@@ -206,7 +335,7 @@ async fn assistant_sourced_explicit_statement_stays_pending_review() -> Result<(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     assert_eq!(status, "pending_review");
-    assert_eq!(reason.as_deref(), Some("source_not_user_authored"));
+    assert_eq!(reason.as_deref(), Some("third_party_requires_review"));
     let claim_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
             row.get(0)
@@ -264,6 +393,52 @@ async fn unsupported_user_event_citation_stays_pending_review() -> Result<()> {
     Ok(())
 }
 
+async fn blocked_candidate_creates_no_rows(
+    role: Option<&str>,
+    event_content: &str,
+    candidate_text: &str,
+    source_kind: &str,
+) -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(&conn, "sess-user-context-blocked", role, event_content)?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:blocked",
+            candidate_text,
+            0.95,
+            "normal",
+            "low",
+            source_kind,
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let claim_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    assert_eq!(claim_count, 0);
+    Ok(())
+}
+
 #[tokio::test]
 async fn replayed_candidate_output_does_not_duplicate_candidate() -> Result<()> {
     let mut conn = setup_conn();
@@ -306,7 +481,7 @@ async fn replayed_candidate_output_does_not_duplicate_candidate() -> Result<()> 
 }
 
 #[tokio::test]
-async fn speculative_candidate_remains_pending_review() -> Result<()> {
+async fn speculative_candidate_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
         &conn,
@@ -316,7 +491,7 @@ async fn speculative_candidate_remains_pending_review() -> Result<()> {
     )?;
     let task = claim_task(&mut conn)?;
 
-    process_with_generator(&mut conn, &task, |_prompt| async move {
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
         Ok(candidate_json(
             "skill",
             "skill:rust",
@@ -330,13 +505,20 @@ async fn speculative_candidate_remains_pending_review() -> Result<()> {
     })
     .await?;
 
-    let (status, reason): (String, Option<String>) = conn.query_row(
-        "SELECT review_status, auto_promote_block_reason FROM user_context_candidates",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    assert_eq!(status, "pending_review");
-    assert_eq!(reason.as_deref(), Some("claim_type_requires_review"));
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
     Ok(())
 }
 
