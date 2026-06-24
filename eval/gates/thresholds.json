@@ -29,6 +29,9 @@
     "current_memory_contracts.staleness.error": {
       "max_drop": 0.0
     },
+    "current_memory_contracts.staleness.history_tracked": {
+      "max_drop": 0.0
+    },
     "current_memory_contracts.staleness.tracked": {
       "max_drop": 0.0
     },

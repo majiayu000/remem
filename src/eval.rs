@@ -249,6 +249,14 @@ pub mod gates {
             current_memory_contracts.metrics.staleness.untracked.rate,
         );
         metrics.insert(
+            "current_memory_contracts.staleness.history_tracked".to_string(),
+            current_memory_contracts
+                .metrics
+                .staleness
+                .history_tracked
+                .rate,
+        );
+        metrics.insert(
             "current_memory_contracts.staleness.verify_before_trust".to_string(),
             current_memory_contracts
                 .metrics

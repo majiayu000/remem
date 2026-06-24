@@ -10,6 +10,7 @@
     "current_memory_contracts.injection.audit_dropped": 1.0,
     "current_memory_contracts.injection.audit_injected": 1.0,
     "current_memory_contracts.staleness.error": 1.0,
+    "current_memory_contracts.staleness.history_tracked": 1.0,
     "current_memory_contracts.staleness.tracked": 1.0,
     "current_memory_contracts.staleness.untracked": 1.0,
     "current_memory_contracts.staleness.verify_before_trust": 1.0,
