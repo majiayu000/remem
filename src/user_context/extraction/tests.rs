@@ -739,6 +739,17 @@ async fn secret_like_candidate_output_creates_no_candidate() -> Result<()> {
 }
 
 #[tokio::test]
+async fn standalone_secret_value_candidate_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "My GitHub secret is abc123.",
+        "User's GitHub secret is abc123.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
 async fn account_number_candidate_output_creates_no_candidate() -> Result<()> {
     blocked_candidate_creates_no_rows(
         Some("user"),
@@ -747,6 +758,54 @@ async fn account_number_candidate_output_creates_no_candidate() -> Result<()> {
         "explicit_user_statement",
     )
     .await
+}
+
+#[tokio::test]
+async fn driver_license_candidate_output_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "My driver license number is D1234567.",
+        "User's driver license number is D1234567.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn ordinary_from_files_preference_is_not_external_source() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-from-files-preference",
+        Some("user"),
+        "I prefer loading settings from files.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:settings-from-files",
+            "User prefers loading settings from files.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    Ok(())
 }
 
 #[tokio::test]
