@@ -238,6 +238,7 @@ fn claim_has_likely_third_party_subject(text: &str) -> bool {
         is_likely_third_party_name(word)
             || (is_likely_lowercase_third_party_subject(word)
                 && claim_has_third_party_predicate(text))
+                && !claim_is_user_preferred_subject_statement(text)
     })
 }
 
@@ -269,6 +270,20 @@ fn claim_has_third_party_predicate(text: &str) -> bool {
             "live" | "own" | "prefer" | "use" | "want" | "work"
         )
     })
+}
+
+fn claim_is_user_preferred_subject_statement(text: &str) -> bool {
+    let tokens = short_support_tokens(text);
+    let has_user_subject = tokens
+        .iter()
+        .any(|token| matches!(token.as_str(), "user" | "my"));
+    let has_preference = tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "favorite" | "favourite" | "prefer" | "preferred"
+        )
+    });
+    has_user_subject && has_preference
 }
 
 const NON_THIRD_PARTY_NAME_SUBJECTS: &str = "|api|browser|cargo|claude|code|codebase|codex|github|gitlab|javascript|json|linux|macos|mcp|node|npm|openai|page|project|python|readme|repo|repository|review|reviews|rust|setting|settings|sqlite|sql|task|test|testing|the|toml|typescript|user|web|windows|workspace|yaml|";

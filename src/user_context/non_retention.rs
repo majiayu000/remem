@@ -30,7 +30,7 @@ pub(crate) fn block_reason(
 pub(crate) fn has_external_source_pattern(text: &str) -> bool {
     let text = text.to_ascii_lowercase();
     contains_non_retention_pattern(&text, EXTERNAL_SOURCE_PATTERNS)
-        || contains_contextual_file_source_phrase(&text)
+        || contains_contextual_external_source_phrase(&text)
 }
 
 pub(crate) fn has_external_source_approval(text: &str) -> bool {
@@ -251,7 +251,7 @@ fn contains_project_independent_fact_shape(text: &str) -> bool {
         });
         has_topic
             && has_factual_verb
-            && !has_user_context_reference(&tokens)
+            && !has_retainable_user_preference_context(&tokens)
             && !has_project_context_reference(&tokens)
     })
 }
@@ -309,24 +309,32 @@ fn contains_external_source_approval(text: &str) -> bool {
     .any(|phrase| contains_non_negated_bounded_phrase(text, phrase))
 }
 
-fn contains_contextual_file_source_phrase(text: &str) -> bool {
+fn contains_contextual_external_source_phrase(text: &str) -> bool {
     [
         "from a file",
         "from a readme",
+        "from browser page",
         "from file",
         "from files",
         "from readme",
+        "from the browser page",
+        "from the web page",
+        "from web page",
     ]
     .iter()
     .any(|phrase| {
         text.match_indices(phrase).any(|(start, _)| {
             bounded_phrase_at(text, phrase, start)
-                && file_source_phrase_has_attribution_context(text, start, phrase.len())
+                && external_source_phrase_has_attribution_context(text, start, phrase.len())
         })
     })
 }
 
-fn file_source_phrase_has_attribution_context(text: &str, start: usize, phrase_len: usize) -> bool {
+fn external_source_phrase_has_attribution_context(
+    text: &str,
+    start: usize,
+    phrase_len: usize,
+) -> bool {
     let end = start + phrase_len;
     let before = text[..start].chars().rev().take(64).collect::<String>();
     let before = before.chars().rev().collect::<String>();
