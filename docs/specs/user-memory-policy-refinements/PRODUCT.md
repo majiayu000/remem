@@ -101,7 +101,8 @@ Rules for agents consuming user context:
 
 - Use only source-attributed facts returned by remem. Do not infer profile data.
 - Prefer invisible adaptation over explicit memory narration.
-- Limit explicit memory mentions to 0-1 per response by default.
+- Limit explicit memory prose mentions to 0-1 per response by default; required
+  final citation lines are exempt.
 - Avoid phrases like "I remember you said" or "from previous conversations"
   unless the user is explicitly discussing memory, provenance, or correction.
 - If user-context data is irrelevant, do not mention it.

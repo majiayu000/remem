@@ -34,6 +34,7 @@ pub struct UserRecallResult {
     pub host: Option<String>,
     pub empty: bool,
     pub context: String,
+    pub usage_policy: Option<&'static str>,
     pub included: Vec<UserRecallItem>,
     pub dropped: Vec<UserRecallDroppedItem>,
     pub diagnostics: UserRecallDiagnostics,

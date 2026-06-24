@@ -517,6 +517,51 @@ fn empty_context_marks_compact_reload_visibly() {
     assert!(output.contains("├─ source: compact"));
     assert!(output.contains("Codex compacted the chat, so remem refreshed memory context."));
     assert!(output.contains("No previous sessions found."));
+    assert!(!output.contains(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY));
+}
+
+#[test]
+fn non_empty_compact_context_includes_user_context_usage_policy_once() {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-usage-policy");
+    let project = data_dir.path.to_string_lossy().to_string();
+    let conn = crate::db::test_support::runtime_connection().unwrap();
+    insert_memory(
+        &conn,
+        1,
+        &project,
+        Some("usage-policy-memory"),
+        "decision",
+        "Usage policy memory",
+        "Non-empty context should include the user-context usage policy.",
+        chrono::Utc::now().timestamp(),
+    );
+    drop(conn);
+
+    let rendered = render_context_output(
+        &ContextRequest {
+            cwd: project.clone(),
+            project,
+            session_id: Some("sess-usage-policy".to_string()),
+            hook_source: Some("compact".to_string()),
+            current_branch: Some("main".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+        },
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        rendered
+            .output
+            .matches(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY)
+            .count(),
+        1
+    );
+    assert!(rendered.output.contains("Usage policy memory"));
+    assert!(rendered
+        .output
+        .contains("Codex compacted the chat, so remem refreshed memory context."));
 }
 
 #[test]
