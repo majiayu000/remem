@@ -79,7 +79,7 @@ pub(super) fn title_has_continuity(left: &str, right: &str) -> bool {
         .iter()
         .filter(|token| left_tokens.iter().any(|candidate| candidate == *token))
         .collect::<Vec<_>>();
-    shared.len() >= 2
+    shared.len() >= 3
         || shared
             .iter()
             .any(|token| token_is_strong_continuity_anchor(token))
@@ -205,6 +205,10 @@ mod tests {
         assert!(!title_has_continuity(
             "billing import cleanup",
             "billing dashboard rollout"
+        ));
+        assert!(!title_has_continuity(
+            "OAuth login cleanup",
+            "OAuth login rollout"
         ));
     }
 }

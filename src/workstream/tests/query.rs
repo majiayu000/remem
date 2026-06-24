@@ -192,6 +192,48 @@ fn same_session_titles_sharing_one_domain_token_do_not_merge() {
 }
 
 #[test]
+fn same_session_multiple_workstreams_match_unique_continuity_candidate() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let first = ParsedWorkStream {
+        title: Some("flowguard Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let first_id = upsert_workstream(&conn, "test/proj", "mem-shared", &first).unwrap();
+    let unrelated = ParsedWorkStream {
+        title: Some("billing dashboard rollout".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    upsert_workstream(&conn, "test/proj", "mem-shared", &unrelated).unwrap();
+
+    let renamed = ParsedWorkStream {
+        title: Some("flowguard / run-guard Skill 生命周期工作流".to_string()),
+        progress: Some("renamed first task".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let result = upsert_workstream_with_match(&conn, "test/proj", "mem-shared", &renamed).unwrap();
+
+    assert_eq!(result.id, first_id);
+    assert_eq!(result.match_reason, "session_link");
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 2);
+    assert!(workstreams.iter().any(|workstream| {
+        workstream.id == first_id
+            && workstream.title == "flowguard / run-guard Skill 生命周期工作流"
+            && workstream.progress.as_deref() == Some("renamed first task")
+    }));
+}
+
+#[test]
 fn alias_exact_match_updates_canonical_workstream_from_later_session() {
     let conn = Connection::open_in_memory().unwrap();
     setup_workstream_schema(&conn);

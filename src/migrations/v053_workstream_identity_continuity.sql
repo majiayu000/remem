@@ -51,6 +51,16 @@ WITH alias_input AS (
     FROM workstreams
     WHERE title IS NOT NULL AND trim(title) <> ''
 ),
+whitespace_pass AS (
+    SELECT
+        id,
+        title,
+        replace(replace(replace(replace(replace(normalized_title,
+            char(9), ' '), char(10), ' '), char(11), ' '), char(12), ' '), char(13), ' ') AS normalized_title,
+        created_at_epoch,
+        updated_at_epoch
+    FROM alias_input
+),
 separator_pass_1 AS (
     SELECT
         id,
@@ -59,7 +69,7 @@ separator_pass_1 AS (
             '/', ' '), '\', ' '), '-', ' '), '_', ' '), ':', ' ') AS normalized_title,
         created_at_epoch,
         updated_at_epoch
-    FROM alias_input
+    FROM whitespace_pass
 ),
 separator_pass_2 AS (
     SELECT

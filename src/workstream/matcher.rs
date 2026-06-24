@@ -125,12 +125,29 @@ fn find_linked_workstream(
     let rows = stmt.query_map(params![project, memory_session_id], map_workstream_row)?;
     let candidates = crate::db::query::collect_rows(rows)?;
 
-    let [candidate] = candidates.as_slice() else {
-        if candidates.len() > 1 {
+    let mut continuity_candidates = Vec::new();
+    for candidate in &candidates {
+        if title_has_continuity(&candidate.title, title)
+            || has_continuity_alias(conn, candidate.id, title)?
+        {
+            continuity_candidates.push(candidate);
+        }
+    }
+
+    let [candidate] = continuity_candidates.as_slice() else {
+        if continuity_candidates.len() > 1 {
             crate::log::warn(
                 "workstream",
                 &format!(
                     "session_link_ambiguous project={project} session={memory_session_id} candidates={}",
+                    continuity_candidates.len()
+                ),
+            );
+        } else if !candidates.is_empty() {
+            crate::log::warn(
+                "workstream",
+                &format!(
+                    "session_link_without_continuity project={project} session={memory_session_id} candidates={}",
                     candidates.len()
                 ),
             );
@@ -138,23 +155,10 @@ fn find_linked_workstream(
         return Ok(None);
     };
 
-    if title_has_continuity(&candidate.title, title)
-        || has_continuity_alias(conn, candidate.id, title)?
-    {
-        return Ok(Some(WorkStreamMatch {
-            workstream: candidate.clone(),
-            reason: MATCH_REASON_SESSION_LINK,
-        }));
-    }
-
-    crate::log::warn(
-        "workstream",
-        &format!(
-            "session_link_without_continuity project={project} session={memory_session_id} workstream_id={}",
-            candidate.id
-        ),
-    );
-    Ok(None)
+    Ok(Some(WorkStreamMatch {
+        workstream: (*candidate).clone(),
+        reason: MATCH_REASON_SESSION_LINK,
+    }))
 }
 
 fn memory_session_id_maps_to_unique_content_session(
