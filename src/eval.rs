@@ -293,11 +293,27 @@ pub mod gates {
                 .rate,
         );
         metrics.insert(
+            "current_memory_contracts.injection.output_gate_recorded".to_string(),
+            current_memory_contracts
+                .metrics
+                .injection
+                .output_gate_recorded
+                .rate,
+        );
+        metrics.insert(
             "current_memory_contracts.usage.citation_event_matched".to_string(),
             current_memory_contracts
                 .metrics
                 .usage
                 .citation_event_matched
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.usage.citation_event_no_citation".to_string(),
+            current_memory_contracts
+                .metrics
+                .usage
+                .citation_event_no_citation
                 .rate,
         );
         metrics.insert(

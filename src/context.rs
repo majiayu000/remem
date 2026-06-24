@@ -31,3 +31,74 @@ pub(crate) use prompt_submit::prompt_submit_additional_context;
 pub(crate) use render::governance_eval_snapshot;
 pub(crate) use render::session_start_eval_snapshot;
 pub use render::{generate_context, generate_context_from_cli};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContextOutputGateContractSnapshot {
+    pub(crate) injection_key: String,
+    pub(crate) output_mode: String,
+    pub(crate) emit_count: i64,
+    pub(crate) suppress_count: i64,
+    pub(crate) first_output_present: bool,
+    pub(crate) second_output_present: bool,
+}
+
+pub(crate) fn output_gate_contract_snapshot(
+    conn: &rusqlite::Connection,
+    project: &str,
+    session_id: &str,
+    host_arg: &str,
+    output: &str,
+) -> anyhow::Result<ContextOutputGateContractSnapshot> {
+    let invocation = invocation::ContextInvocation {
+        cwd: project.to_string(),
+        project: project.to_string(),
+        session_id: Some(session_id.to_string()),
+        transcript_path: None,
+        source: Some("compact".to_string()),
+        host: host::resolve_host_kind(Some(host_arg)),
+        use_colors: false,
+        debug: false,
+        force: false,
+        gate_mode: Some("auto".to_string()),
+    };
+    let first = injection_gate::apply_context_gate_with_data_version(
+        conn,
+        &invocation,
+        output.to_string(),
+        Some("eval-output-gate"),
+    );
+    let second = injection_gate::apply_context_gate_with_data_version(
+        conn,
+        &invocation,
+        output.to_string(),
+        Some("eval-output-gate"),
+    );
+    let injection_key = first
+        .key
+        .clone()
+        .or_else(|| second.key.clone())
+        .ok_or_else(|| anyhow::anyhow!("output gate did not return an injection key"))?;
+    let (output_mode, emit_count, suppress_count) = conn.query_row(
+        "SELECT output_mode, emit_count, suppress_count
+         FROM context_injections
+         WHERE host = ?1
+           AND injection_key = ?2",
+        rusqlite::params![invocation.host.as_env_value(), &injection_key],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+
+    Ok(ContextOutputGateContractSnapshot {
+        injection_key,
+        output_mode,
+        emit_count,
+        suppress_count,
+        first_output_present: !first.output.is_empty(),
+        second_output_present: !second.output.is_empty(),
+    })
+}

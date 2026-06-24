@@ -1,17 +1,21 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::Connection;
 
+use super::case_queries::{
+    citation_event_status, context_abstention_row, context_item_count,
+    context_item_drop_reason_for_memory, context_item_id, current_state_result, fact_objects,
+    usage_event_count,
+};
 use super::fixture::{
     insert_current_state_commit, insert_current_state_memory_at, insert_fact, insert_state_key,
     link_current_state_commit, seed_prompt_memory, set_current_memory, set_memory_files_raw,
-    set_memory_source, setup_conn, ABSTAIN_PROJECT, ABSTAIN_SESSION, HOST, PROJECT, PROMPT_PROJECT,
-    PROMPT_SESSION,
+    set_memory_source, setup_conn, ABSTAIN_PROJECT, ABSTAIN_SESSION, HOST, OUTPUT_GATE_SESSION,
+    PROJECT, PROMPT_PROJECT, PROMPT_SESSION,
 };
+use super::summary::{push_case, summarize_contract_metrics};
 use super::types::{
     CurrentMemoryContractCaseReport, CurrentMemoryContractEvalMetadata,
-    CurrentMemoryContractEvalReport, CurrentMemoryContractMetricSummary,
-    CurrentMemoryContractRateMetric, CurrentStateContractMetrics, InjectionAuditContractMetrics,
-    StalenessContractMetrics, TemporalContractMetrics, UsageContractMetrics,
+    CurrentMemoryContractEvalReport,
 };
 
 const CORPUS_NAME: &str = "builtin-current-memory-contracts-v1";
@@ -355,20 +359,35 @@ fn evaluate_current_state_statuses(
     );
 
     let conflict = current_state_result(conn, "deploy-conflict", None)?;
+    let conflict_ref = conflict.conflicts.first();
+    let conflict_actual = conflict_ref
+        .map(|memory| {
+            format!(
+                "id={} relation={:?} reason={:?}",
+                memory.id, memory.relation, memory.reason
+            )
+        })
+        .unwrap_or_else(|| "missing".to_string());
     push_case(
         cases,
         "current_state",
         "unresolved_conflict",
-        "status=unresolved_conflict with one conflict",
-        format!(
-            "status={} conflicts={}",
-            conflict.status,
-            conflict.conflicts.len()
-        ),
-        conflict.status == "unresolved_conflict" && conflict.conflicts.len() == 1,
+        "status=unresolved_conflict with conflict relation evidence",
+        format!("status={} {conflict_actual}", conflict.status),
+        conflict.status == "unresolved_conflict"
+            && conflict_ref.is_some_and(|memory| {
+                memory.id == 302
+                    && memory.relation.as_deref() == Some("conflicts")
+                    && memory.reason.as_deref() == Some("contract conflict")
+            }),
     );
 
     let ambiguous = current_state_result(conn, "deploy-ambiguous", None)?;
+    let owner_pairs = ambiguous
+        .matches
+        .iter()
+        .map(|state| format!("{}:{}", state.owner_scope, state.owner_key))
+        .collect::<Vec<_>>();
     push_case(
         cases,
         "current_state",
@@ -377,9 +396,13 @@ fn evaluate_current_state_statuses(
         format!(
             "status={} matches={}",
             ambiguous.status,
-            ambiguous.matches.len()
+            owner_pairs.join(",")
         ),
-        ambiguous.status == "ambiguous" && ambiguous.matches.len() == 2,
+        ambiguous.status == "ambiguous"
+            && owner_pairs
+                .iter()
+                .any(|owner| owner == &format!("repo:{PROJECT}"))
+            && owner_pairs.iter().any(|owner| owner == "user:user:default"),
     );
 
     Ok(())
@@ -503,18 +526,32 @@ fn evaluate_staleness_labels(
     );
 
     let error = current_state_result(conn, "staleness-error", None)?;
-    let error_label = error
-        .current
-        .as_ref()
-        .map(|memory| memory.staleness.source_anchor.clone())
+    let error_label = error.current.as_ref().map(|memory| &memory.staleness);
+    let error_actual = error_label
+        .map(|label| {
+            format!(
+                "source_anchor={} error_present={}",
+                label.source_anchor,
+                label
+                    .error
+                    .as_ref()
+                    .is_some_and(|message| !message.is_empty())
+            )
+        })
         .unwrap_or_else(|| "missing".to_string());
     push_case(
         cases,
         "staleness",
         "error",
-        "source_anchor=error",
-        error_label.clone(),
-        error_label == "error",
+        "source_anchor=error with non-empty error payload",
+        error_actual,
+        error_label.is_some_and(|label| {
+            label.source_anchor == "error"
+                && label
+                    .error
+                    .as_ref()
+                    .is_some_and(|message| !message.is_empty())
+        }),
     );
 
     Ok(())
@@ -552,43 +589,83 @@ fn evaluate_prompt_audit_and_usage(
         Some(HOST),
     )?;
 
+    let output_gate = crate::context::output_gate_contract_snapshot(
+        conn,
+        PROMPT_PROJECT,
+        OUTPUT_GATE_SESSION,
+        HOST,
+        "Current memory context payload for output gate auditing.",
+    )?;
+    push_case(
+        cases,
+        "injection",
+        "output_gate_recorded",
+        "context_injections records one emit and one suppress row update",
+        format!(
+            "key={} mode={} emit={} suppress={} first_output_present={} second_output_present={}",
+            output_gate.injection_key,
+            output_gate.output_mode,
+            output_gate.emit_count,
+            output_gate.suppress_count,
+            output_gate.first_output_present,
+            output_gate.second_output_present
+        ),
+        output_gate.output_mode == "suppressed"
+            && output_gate.emit_count == 1
+            && output_gate.suppress_count == 1
+            && output_gate.first_output_present
+            && !output_gate.second_output_present,
+    );
+
+    let rendered_citation_contract = injected_output.as_deref().is_some_and(|output| {
+        output.contains("Memory citations:") && output.contains(&format!("memory:#{memory_id}"))
+    });
     let injected_count = context_item_count(conn, PROMPT_SESSION, "injected")?;
     push_case(
         cases,
         "injection",
         "audit_injected",
-        "context injection audit has injected row",
+        "context injection audit has injected row and rendered citation contract",
         format!(
-            "injected={injected_count} item_id={injected_item_id} output_present={}",
-            injected_output.is_some()
+            "injected={injected_count} item_id={injected_item_id} output_present={} citation_contract={rendered_citation_contract}",
+            injected_output.is_some(),
         ),
-        injected_count > 0 && injected_output.is_some(),
+        injected_count > 0 && injected_output.is_some() && rendered_citation_contract,
     );
 
     let dropped_count = context_item_count(conn, PROMPT_SESSION, "dropped")?;
+    let dropped_reason = context_item_drop_reason_for_memory(conn, PROMPT_SESSION, memory_id)?;
     push_case(
         cases,
         "injection",
         "audit_dropped",
-        "context injection audit has dropped row",
+        "context injection audit has dropped row for already injected memory",
         format!(
-            "dropped={dropped_count} output_present={}",
-            dropped_output.is_some()
+            "dropped={dropped_count} reason={dropped_reason:?} output_present={}",
+            dropped_output.is_some(),
         ),
-        dropped_count > 0 && dropped_output.is_none(),
+        dropped_count > 0
+            && dropped_output.is_none()
+            && dropped_reason.as_deref() == Some("already_injected"),
     );
 
     let abstained_count = context_item_count(conn, ABSTAIN_SESSION, "abstained")?;
+    let abstention = context_abstention_row(conn, ABSTAIN_SESSION)?;
     push_case(
         cases,
         "injection",
         "audit_abstained",
-        "context injection audit has abstained row",
+        "context injection audit has abstained row with prompt-submit reason",
         format!(
-            "abstained={abstained_count} output_present={}",
-            abstained_output.is_some()
+            "abstained={abstained_count} abstention={abstention:?} output_present={}",
+            abstained_output.is_some(),
         ),
-        abstained_count > 0 && abstained_output.is_none(),
+        abstained_count > 0
+            && abstained_output.is_none()
+            && abstention.is_some_and(|(memory_id, reason)| {
+                memory_id.is_none()
+                    && reason.as_deref() == Some("prompt_submit_no_relevant_context")
+            }),
     );
 
     let message_hash = "eval-current-contract-citation";
@@ -600,16 +677,7 @@ fn evaluate_prompt_audit_and_usage(
         message_hash,
         &format!("Used the injected memory.\nMemory citations: memory:#{memory_id}"),
     )?;
-    let citation_status: Option<String> = conn
-        .query_row(
-            "SELECT status
-             FROM memory_citation_events
-             WHERE message_hash = ?1
-             LIMIT 1",
-            [message_hash],
-            |row| row.get(0),
-        )
-        .optional()?;
+    let citation_status = citation_event_status(conn, message_hash)?;
     push_case(
         cases,
         "usage",
@@ -624,6 +692,36 @@ fn evaluate_prompt_audit_and_usage(
             && citation_status.as_deref() == Some("matched"),
     );
 
+    let no_citation_hash = "eval-current-contract-no-citation";
+    let no_citation_report = crate::memory::usage::record_stop_memory_citations(
+        conn,
+        HOST,
+        PROMPT_PROJECT,
+        PROMPT_SESSION,
+        no_citation_hash,
+        "No injected memory was needed.",
+    )?;
+    let no_citation_status = citation_event_status(conn, no_citation_hash)?;
+    push_case(
+        cases,
+        "usage",
+        "citation_event_no_citation",
+        "stop citation event status=no_citation when citation line is missing",
+        format!(
+            "report parsed={} matched={} inserted={} duplicate={} status={:?}",
+            no_citation_report.parsed_count,
+            no_citation_report.matched_count,
+            no_citation_report.inserted_count,
+            no_citation_report.duplicate_event,
+            no_citation_status
+        ),
+        no_citation_report.parsed_count == 0
+            && no_citation_report.matched_count == 0
+            && no_citation_report.inserted_count == 0
+            && !no_citation_report.duplicate_event
+            && no_citation_status.as_deref() == Some("no_citation"),
+    );
+
     let usage_linked = usage_event_count(conn, message_hash, memory_id, injected_item_id)?;
     push_case(
         cases,
@@ -635,157 +733,4 @@ fn evaluate_prompt_audit_and_usage(
     );
 
     Ok(())
-}
-
-fn current_state_result(
-    conn: &Connection,
-    state_key: &str,
-    as_of_epoch: Option<i64>,
-) -> Result<crate::memory::current_state::CurrentStateResult> {
-    crate::memory::current_state::current_state(
-        conn,
-        &crate::memory::current_state::CurrentStateRequest {
-            state_key: state_key.to_string(),
-            project: Some(PROJECT.to_string()),
-            memory_type: Some("decision".to_string()),
-            as_of_epoch,
-            include_history: true,
-            ..Default::default()
-        },
-    )
-}
-
-fn fact_objects(result: &crate::memory::current_state::CurrentStateResult) -> Vec<String> {
-    result
-        .facts
-        .iter()
-        .map(|fact| fact.object.clone())
-        .collect()
-}
-
-fn context_item_count(conn: &Connection, session_id: &str, status: &str) -> Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*)
-         FROM context_injection_items
-         WHERE session_id = ?1
-           AND status = ?2",
-        params![session_id, status],
-        |row| row.get(0),
-    )
-    .context("count context injection items")
-}
-
-fn context_item_id(
-    conn: &Connection,
-    session_id: &str,
-    status: &str,
-    memory_id: i64,
-) -> Result<i64> {
-    conn.query_row(
-        "SELECT id
-         FROM context_injection_items
-         WHERE session_id = ?1
-           AND status = ?2
-           AND memory_id = ?3
-         ORDER BY id DESC
-         LIMIT 1",
-        params![session_id, status, memory_id],
-        |row| row.get(0),
-    )
-    .optional()?
-    .with_context(|| {
-        format!(
-            "load context injection item for session={session_id} status={status} memory_id={memory_id}"
-        )
-    })
-}
-
-fn usage_event_count(
-    conn: &Connection,
-    message_hash: &str,
-    memory_id: i64,
-    context_injection_item_id: i64,
-) -> Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*)
-         FROM memory_usage_events
-         WHERE message_hash = ?1
-           AND memory_id = ?2
-           AND context_injection_item_id = ?3",
-        params![message_hash, memory_id, context_injection_item_id],
-        |row| row.get(0),
-    )
-    .context("count linked memory usage events")
-}
-
-fn summarize_contract_metrics(
-    cases: &[CurrentMemoryContractCaseReport],
-) -> CurrentMemoryContractMetricSummary {
-    CurrentMemoryContractMetricSummary {
-        current_state: CurrentStateContractMetrics {
-            current: rate(cases, "current_state", &["current"]),
-            no_current: rate(cases, "current_state", &["no_current"]),
-            unresolved_conflict: rate(cases, "current_state", &["unresolved_conflict"]),
-            ambiguous: rate(cases, "current_state", &["ambiguous"]),
-        },
-        temporal: TemporalContractMetrics {
-            invalidated_fact_exclusion: rate(cases, "temporal", &["invalidated_fact_exclusion"]),
-            expired_fact_exclusion: rate(cases, "temporal", &["expired_fact_exclusion"]),
-            as_of_fact_retrieval: rate(cases, "temporal", &["as_of_fact_retrieval"]),
-        },
-        staleness: StalenessContractMetrics {
-            tracked: rate(cases, "staleness", &["tracked"]),
-            untracked: rate(cases, "staleness", &["untracked"]),
-            history_tracked: rate(cases, "staleness", &["history_tracked"]),
-            verify_before_trust: rate(cases, "staleness", &["verify_before_trust"]),
-            error: rate(cases, "staleness", &["error"]),
-        },
-        injection: InjectionAuditContractMetrics {
-            audit_injected: rate(cases, "injection", &["audit_injected"]),
-            audit_dropped: rate(cases, "injection", &["audit_dropped"]),
-            audit_abstained: rate(cases, "injection", &["audit_abstained"]),
-        },
-        usage: UsageContractMetrics {
-            citation_event_matched: rate(cases, "usage", &["citation_event_matched"]),
-            usage_event_linked_to_injection_item: rate(
-                cases,
-                "usage",
-                &["usage_event_linked_to_injection_item"],
-            ),
-        },
-        all_checks_passed: cases.iter().all(|case| case.pass),
-    }
-}
-
-fn rate(
-    cases: &[CurrentMemoryContractCaseReport],
-    category: &str,
-    ids: &[&str],
-) -> CurrentMemoryContractRateMetric {
-    let passed = ids
-        .iter()
-        .filter(|id| {
-            cases
-                .iter()
-                .any(|case| case.category == category && case.id == **id && case.pass)
-        })
-        .count();
-    CurrentMemoryContractRateMetric::new(passed, ids.len())
-}
-
-fn push_case(
-    cases: &mut Vec<CurrentMemoryContractCaseReport>,
-    category: &str,
-    id: &str,
-    expected: impl Into<String>,
-    actual: impl Into<String>,
-    pass: bool,
-) {
-    cases.push(CurrentMemoryContractCaseReport {
-        id: id.to_string(),
-        category: category.to_string(),
-        expected: expected.into(),
-        actual: actual.into(),
-        pass,
-    });
 }

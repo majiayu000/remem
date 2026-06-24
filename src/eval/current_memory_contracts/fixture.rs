@@ -7,6 +7,7 @@ pub(super) const ABSTAIN_PROJECT: &str = "/tmp/remem-current-contract-eval/absta
 pub(super) const HOST: &str = "claude-code";
 pub(super) const PROMPT_SESSION: &str = "eval-current-contract-prompt";
 pub(super) const ABSTAIN_SESSION: &str = "eval-current-contract-abstain";
+pub(super) const OUTPUT_GATE_SESSION: &str = "eval-current-contract-output-gate";
 
 pub(super) fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;

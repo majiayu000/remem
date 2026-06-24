@@ -59,11 +59,13 @@ pub struct InjectionAuditContractMetrics {
     pub audit_injected: CurrentMemoryContractRateMetric,
     pub audit_dropped: CurrentMemoryContractRateMetric,
     pub audit_abstained: CurrentMemoryContractRateMetric,
+    pub output_gate_recorded: CurrentMemoryContractRateMetric,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct UsageContractMetrics {
     pub citation_event_matched: CurrentMemoryContractRateMetric,
+    pub citation_event_no_citation: CurrentMemoryContractRateMetric,
     pub usage_event_linked_to_injection_item: CurrentMemoryContractRateMetric,
 }
 
