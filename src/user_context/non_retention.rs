@@ -21,12 +21,18 @@ pub(crate) fn block_reason(
     if contains_illegal_or_harmful_content(&blob) {
         return Some("illegal_or_harmful_content");
     }
-    if contains_non_retention_pattern(&blob, EXTERNAL_SOURCE_PATTERNS)
-        && !contains_external_source_approval(&blob)
-    {
+    if has_external_source_pattern(&blob) && !has_external_source_approval(&blob) {
         return Some("unapproved_external_source");
     }
     None
+}
+
+pub(crate) fn has_external_source_pattern(text: &str) -> bool {
+    contains_non_retention_pattern(&text.to_ascii_lowercase(), EXTERNAL_SOURCE_PATTERNS)
+}
+
+pub(crate) fn has_external_source_approval(text: &str) -> bool {
+    contains_external_source_approval(&text.to_ascii_lowercase())
 }
 
 fn normalized_blob(claim_text: &str, source_preview: Option<&str>) -> String {
