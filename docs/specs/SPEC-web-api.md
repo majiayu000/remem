@@ -56,8 +56,8 @@ features.
 
 ```json
 {
-  "version": "0.5.114",
-  "schema_version": 51,
+  "version": "0.5.123",
+  "schema_version": 52,
   "api_version": 1,
   "features": {
     "health": true,
@@ -106,9 +106,9 @@ returns:
 ```json
 {
   "ok": true,
-  "version": "0.5.114",
+  "version": "0.5.123",
   "api_version": 1,
-  "schema_version": 51
+  "schema_version": 52
 }
 ```
 
@@ -262,14 +262,19 @@ Non-empty recall includes source-attributed context plus a separate
 ```json
 {
   "empty": false,
-  "context": "- user_claim#1 [active, low]: Prefers concise status reports.",
+  "context": "- [user_claim:1] preference:status_reports: Prefers concise status reports.",
   "usage_policy": "Use user context only when it materially improves the current answer. Prefer invisible adaptation over explicit memory narration. Limit explicit memory prose mentions to 0-1 per response; required final citation lines are exempt. Do not say \"I remember you said\" or \"from previous conversations\" unless the user is discussing memory, provenance, or correction. Do not infer profile facts beyond the cited items. If no user context applies, do not invent a profile.",
   "included": [
     {
       "source_type": "user_claim",
       "source_id": 1,
+      "title": "preference:status_reports",
       "text": "Prefers concise status reports.",
-      "reason_codes": ["user_claim", "query_match"],
+      "reason_codes": [
+        "active_user_claim",
+        "query_match",
+        "owner:user:default"
+      ],
       "source_refs": [
         {
           "kind": "manual_cli",
@@ -283,7 +288,7 @@ Non-empty recall includes source-attributed context plus a separate
       "source_type": "user_claim",
       "source_id": 2,
       "label": "Sensitive identity detail",
-      "reason_code": "sensitive_excluded"
+      "reason_code": "sensitivity:sensitive"
     }
   ],
   "diagnostics": {
@@ -302,6 +307,13 @@ Non-empty recall includes source-attributed context plus a separate
   }
 }
 ```
+
+`included[].reason_codes` are emitted as machine strings from the recall source
+collector. User-claim rows include `active_user_claim`, `query_match`, and an
+`owner:<scope>:<key>` marker. `dropped[].reason_code` is also an exact machine
+string; common values include `status:<status>`, `sensitivity:<classification>`,
+`not_yet_valid`, `expired`, `policy_suppressed`, `not_relevant`, and
+`budget_exceeded`.
 
 ## Security And Side Effects
 
