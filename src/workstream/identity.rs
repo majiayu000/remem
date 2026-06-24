@@ -173,7 +173,7 @@ fn meaningful_tokens(normalized: &str) -> Vec<&str> {
 }
 
 fn token_is_strong_continuity_anchor(token: &str) -> bool {
-    token.chars().any(|ch| !ch.is_ascii()) && token.chars().count() >= 4
+    !token.is_ascii() && token.chars().count() >= 4
 }
 
 #[cfg(test)]
