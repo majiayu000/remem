@@ -28,7 +28,9 @@ pub(crate) fn block_reason(
 }
 
 pub(crate) fn has_external_source_pattern(text: &str) -> bool {
-    contains_non_retention_pattern(&text.to_ascii_lowercase(), EXTERNAL_SOURCE_PATTERNS)
+    let text = text.to_ascii_lowercase();
+    contains_non_retention_pattern(&text, EXTERNAL_SOURCE_PATTERNS)
+        || contains_contextual_file_source_phrase(&text)
 }
 
 pub(crate) fn has_external_source_approval(text: &str) -> bool {
@@ -83,28 +85,9 @@ fn contains_non_retention_pattern(haystack: &str, needles: &[&str]) -> bool {
 }
 
 fn contains_bounded_phrase(haystack: &str, needle: &str) -> bool {
-    haystack.match_indices(needle).any(|(start, _)| {
-        let end = start + needle.len();
-        let left_ok = !needle
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric())
-            || start == 0
-            || !haystack[..start]
-                .chars()
-                .next_back()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric());
-        let right_ok = !needle
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric())
-            || end >= haystack.len()
-            || !haystack[end..]
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric());
-        left_ok && right_ok
-    })
+    haystack
+        .match_indices(needle)
+        .any(|(start, _)| bounded_phrase_at(haystack, needle, start))
 }
 
 fn contains_secret_key_token(text: &str) -> bool {
@@ -129,7 +112,7 @@ fn is_secret_key_token(token: &str) -> bool {
 fn contains_token_secret_phrase(text: &str) -> bool {
     let tokens = lexical_tokens(text);
     tokens.iter().enumerate().any(|(index, token)| {
-        if token != "token" {
+        if !matches!(token.as_str(), "secret" | "token") {
             return false;
         }
         match (tokens.get(index + 1), tokens.get(index + 2)) {
@@ -262,7 +245,19 @@ fn contains_project_independent_fact_shape(text: &str) -> bool {
                 "are" | "is" | "prevents" | "stores" | "supports" | "uses"
             )
         });
-        has_topic && has_factual_verb && !has_user_context_reference(&tokens)
+        has_topic
+            && has_factual_verb
+            && !has_user_context_reference(&tokens)
+            && !has_project_context_reference(&tokens)
+    })
+}
+
+fn has_project_context_reference(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "codebase" | "project" | "repo" | "repository" | "workspace"
+        )
     })
 }
 
@@ -277,15 +272,101 @@ fn contains_external_source_approval(text: &str) -> bool {
         "please remember from file",
         "please remember from files",
         "please remember from readme",
+        "please remember from website",
+        "please remember from web page",
+        "please remember from browser page",
         "remember from file",
         "remember from files",
         "remember from readme",
+        "remember from website",
+        "remember from web page",
+        "remember from browser page",
         "save from file",
         "save from files",
         "save from readme",
+        "save from website",
+        "save from web page",
+        "save from browser page",
     ]
     .iter()
-    .any(|phrase| contains_bounded_phrase(text, phrase))
+    .any(|phrase| contains_non_negated_bounded_phrase(text, phrase))
+}
+
+fn contains_contextual_file_source_phrase(text: &str) -> bool {
+    [
+        "from a file",
+        "from a readme",
+        "from file",
+        "from files",
+        "from readme",
+    ]
+    .iter()
+    .any(|phrase| {
+        text.match_indices(phrase).any(|(start, _)| {
+            bounded_phrase_at(text, phrase, start)
+                && file_source_phrase_has_attribution_context(text, start, phrase.len())
+        })
+    })
+}
+
+fn file_source_phrase_has_attribution_context(text: &str, start: usize, phrase_len: usize) -> bool {
+    let end = start + phrase_len;
+    let before = text[..start].chars().rev().take(64).collect::<String>();
+    let before = before.chars().rev().collect::<String>();
+    let after = text[end..].chars().take(96).collect::<String>();
+    let window = format!("{before}{after}");
+    contains_non_retention_pattern(
+        &window,
+        &[
+            "according to",
+            "derived",
+            "extracted",
+            "inferred",
+            "remember",
+            "save",
+            "source",
+            "without explicit user approval",
+            "without user approval",
+        ],
+    )
+}
+
+fn contains_non_negated_bounded_phrase(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, _)| {
+        bounded_phrase_at(haystack, needle, start) && !is_negated_before(haystack, start)
+    })
+}
+
+fn bounded_phrase_at(haystack: &str, needle: &str, start: usize) -> bool {
+    let end = start + needle.len();
+    let left_ok = !needle
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        || start == 0
+        || !haystack[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric());
+    let right_ok = !needle
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        || end >= haystack.len()
+        || !haystack[end..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric());
+    left_ok && right_ok
+}
+
+fn is_negated_before(text: &str, start: usize) -> bool {
+    let tokens = lexical_tokens(&text[..start]);
+    tokens
+        .iter()
+        .rev()
+        .take(3)
+        .any(|token| matches!(token.as_str(), "not" | "don't" | "dont" | "never" | "no"))
 }
 
 fn has_user_context_reference(tokens: &[String]) -> bool {
@@ -317,6 +398,7 @@ const SECRET_PATTERNS: &[&str] = &[
     "client secret",
     "credit card",
     "credential is",
+    "driver license",
     "driver's license",
     "drivers license",
     "identity document",
@@ -400,11 +482,9 @@ const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
     "browser page",
     "derived from file",
     "external source",
-    "from a file",
-    "from a readme",
-    "from file",
-    "from files",
-    "from readme",
+    "file says",
+    "files say",
+    "readme says",
     "repository file says",
     "web page",
     "website says",
@@ -429,6 +509,14 @@ mod tests {
         assert_eq!(
             block_reason(
                 "User's API key is sk-testsecret123456.",
+                None,
+                "explicit_user_statement"
+            ),
+            Some("secret_like_content")
+        );
+        assert_eq!(
+            block_reason(
+                "User's GitHub secret is abc123.",
                 None,
                 "explicit_user_statement"
             ),
@@ -506,6 +594,14 @@ mod tests {
             ),
             Some("secret_like_content")
         );
+        assert_eq!(
+            block_reason(
+                "User's driver license number is D1234567.",
+                None,
+                "explicit_user_statement"
+            ),
+            Some("secret_like_content")
+        );
     }
 
     #[test]
@@ -525,6 +621,18 @@ mod tests {
                 "explicit_user_statement"
             ),
             Some("general_knowledge_content")
+        );
+        assert_eq!(
+            block_reason("Project uses Rust.", None, "explicit_user_statement"),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "Repo stores data in SQLite.",
+                None,
+                "explicit_user_statement"
+            ),
+            None
         );
         assert_eq!(
             block_reason(
@@ -553,6 +661,38 @@ mod tests {
                 "explicit_user_statement"
             ),
             Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User works on remem from README.",
+                Some("Do not remember from README. I work on remem from README."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User works on internal payroll.",
+                Some("README says the user works on internal payroll."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User lives in Paris.",
+                Some("Website says the user lives in Paris. Please remember from website."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "The user prefers loading settings from files.",
+                Some("I prefer loading settings from files."),
+                "explicit_user_statement"
+            ),
+            None
         );
     }
 }
