@@ -7,6 +7,13 @@ use crate::db;
 
 use super::ParsedUserContextCandidate;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ExternalSourceLabel {
+    File,
+    Readme,
+    Website,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SourceEvent {
     pub(super) id: i64,
@@ -192,12 +199,14 @@ fn evidence_preview_for_event(content: &str, claim_text: &str) -> Option<String>
         return None;
     }
     let mut preview = Vec::new();
-    if preview_needs_external_source_approval(claim_text, &evidence) {
+    let source_labels = preview_external_source_labels(claim_text, &evidence);
+    if !source_labels.is_empty() {
         preview.extend(
             segments
                 .iter()
                 .filter(|segment| {
                     crate::user_context::non_retention::has_external_source_approval(segment)
+                        && source_labels_overlap(&source_labels, &external_source_labels(segment))
                         && !evidence.iter().any(|evidence| evidence == *segment)
                 })
                 .cloned(),
@@ -227,11 +236,42 @@ pub(super) fn evidence_segments(content: &str) -> Vec<String> {
     segments
 }
 
-fn preview_needs_external_source_approval(claim_text: &str, evidence: &[String]) -> bool {
-    crate::user_context::non_retention::has_external_source_pattern(claim_text)
-        || evidence
-            .iter()
-            .any(|segment| crate::user_context::non_retention::has_external_source_pattern(segment))
+fn preview_external_source_labels(
+    claim_text: &str,
+    evidence: &[String],
+) -> BTreeSet<ExternalSourceLabel> {
+    let mut labels = external_source_labels(claim_text);
+    for segment in evidence {
+        labels.extend(external_source_labels(segment));
+    }
+    labels
+}
+
+fn source_labels_overlap(
+    left: &BTreeSet<ExternalSourceLabel>,
+    right: &BTreeSet<ExternalSourceLabel>,
+) -> bool {
+    left.iter().any(|label| right.contains(label))
+}
+
+fn external_source_labels(text: &str) -> BTreeSet<ExternalSourceLabel> {
+    let lower = text.to_ascii_lowercase();
+    let tokens = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<BTreeSet<_>>();
+    let mut labels = BTreeSet::new();
+    if tokens.contains("readme") {
+        labels.insert(ExternalSourceLabel::Readme);
+        labels.insert(ExternalSourceLabel::File);
+    }
+    if tokens.contains("file") || tokens.contains("files") {
+        labels.insert(ExternalSourceLabel::File);
+    }
+    if lower.contains("website") || lower.contains("web page") || lower.contains("browser page") {
+        labels.insert(ExternalSourceLabel::Website);
+    }
+    labels
 }
 
 fn segment_matches_claim(segment: &str, claim_tokens: &[String]) -> bool {

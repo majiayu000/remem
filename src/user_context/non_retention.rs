@@ -83,28 +83,9 @@ fn contains_non_retention_pattern(haystack: &str, needles: &[&str]) -> bool {
 }
 
 fn contains_bounded_phrase(haystack: &str, needle: &str) -> bool {
-    haystack.match_indices(needle).any(|(start, _)| {
-        let end = start + needle.len();
-        let left_ok = !needle
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric())
-            || start == 0
-            || !haystack[..start]
-                .chars()
-                .next_back()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric());
-        let right_ok = !needle
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric())
-            || end >= haystack.len()
-            || !haystack[end..]
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric());
-        left_ok && right_ok
-    })
+    haystack
+        .match_indices(needle)
+        .any(|(start, _)| bounded_phrase_at(haystack, needle, start))
 }
 
 fn contains_secret_key_token(text: &str) -> bool {
@@ -285,7 +266,45 @@ fn contains_external_source_approval(text: &str) -> bool {
         "save from readme",
     ]
     .iter()
-    .any(|phrase| contains_bounded_phrase(text, phrase))
+    .any(|phrase| contains_non_negated_bounded_phrase(text, phrase))
+}
+
+fn contains_non_negated_bounded_phrase(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, _)| {
+        bounded_phrase_at(haystack, needle, start) && !is_negated_before(haystack, start)
+    })
+}
+
+fn bounded_phrase_at(haystack: &str, needle: &str, start: usize) -> bool {
+    let end = start + needle.len();
+    let left_ok = !needle
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        || start == 0
+        || !haystack[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric());
+    let right_ok = !needle
+        .chars()
+        .next_back()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        || end >= haystack.len()
+        || !haystack[end..]
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric());
+    left_ok && right_ok
+}
+
+fn is_negated_before(text: &str, start: usize) -> bool {
+    let tokens = lexical_tokens(&text[..start]);
+    tokens
+        .iter()
+        .rev()
+        .take(3)
+        .any(|token| matches!(token.as_str(), "not" | "don't" | "dont" | "never" | "no"))
 }
 
 fn has_user_context_reference(tokens: &[String]) -> bool {
@@ -405,6 +424,9 @@ const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
     "from file",
     "from files",
     "from readme",
+    "file says",
+    "files say",
+    "readme says",
     "repository file says",
     "web page",
     "website says",
@@ -550,6 +572,22 @@ mod tests {
             block_reason(
                 "User works on remem from README.",
                 Some("The assistant inferred this from README."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User works on remem from README.",
+                Some("Do not remember from README. I work on remem from README."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User works on internal payroll.",
+                Some("README says the user works on internal payroll."),
                 "explicit_user_statement"
             ),
             Some("unapproved_external_source")

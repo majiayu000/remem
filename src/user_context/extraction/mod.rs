@@ -219,8 +219,12 @@ fn is_supported_third_party_candidate(
         .into_iter()
         .filter(|event| batch.event_is_user_authored(event.id))
         .any(|event| {
-            has_user_context_framing(&event.content)
-                && has_third_party_fact_token_support(&candidate.claim_text, &event.content)
+            source::evidence_segments(&event.content)
+                .into_iter()
+                .any(|segment| {
+                    has_user_context_framing(&segment)
+                        && has_third_party_fact_token_support(&candidate.claim_text, &segment)
+                })
         })
 }
 
@@ -389,8 +393,19 @@ fn has_behavior_source_evidence(
     batch
         .events_for_candidate(candidate)
         .into_iter()
-        .any(|event| !event.content.trim().is_empty())
+        .any(|event| is_behavior_source_event(event) && !event.content.trim().is_empty())
         && source::source_preview(batch, candidate).is_some()
+}
+
+fn is_behavior_source_event(event: &source::SourceEvent) -> bool {
+    event
+        .tool_name
+        .as_deref()
+        .is_some_and(|tool_name| !tool_name.trim().is_empty())
+        || matches!(
+            event.event_type.as_str(),
+            "bash" | "bash_run" | "file_edit" | "file_read" | "file_write" | "tool_result"
+        )
 }
 
 fn is_supported_by_user_source_event(

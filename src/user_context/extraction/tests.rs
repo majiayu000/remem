@@ -20,6 +20,17 @@ fn capture_event(
     role: Option<&str>,
     content: &str,
 ) -> Result<i64> {
+    capture_event_with_details(conn, session_id, "message", role, None, content)
+}
+
+fn capture_event_with_details(
+    conn: &Connection,
+    session_id: &str,
+    event_type: &str,
+    role: Option<&str>,
+    tool_name: Option<&str>,
+    content: &str,
+) -> Result<i64> {
     let outcome = record_captured_event(
         conn,
         &CaptureEventInput {
@@ -27,9 +38,9 @@ fn capture_event(
             session_id,
             project: "/tmp/remem",
             cwd: None,
-            event_type: "message",
+            event_type,
             role,
-            tool_name: None,
+            tool_name,
             content,
             task_kind: Some(ExtractionTaskKind::UserContextCandidate),
         },
@@ -455,6 +466,48 @@ async fn source_preview_preserves_external_source_approval_context() -> Result<(
 }
 
 #[tokio::test]
+async fn external_source_approval_must_match_evidence_source() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-source-approval-mismatch",
+        Some("user"),
+        "Please remember from README that I work on remem. The website says the user lives in Paris.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "identity",
+            "identity:location",
+            "User lives in Paris.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn assistant_sourced_explicit_statement_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -744,6 +797,48 @@ async fn user_framed_third_party_candidate_with_changed_fact_creates_no_candidat
 }
 
 #[tokio::test]
+async fn third_party_framing_must_share_evidence_segment() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-third-party-cross-sentence",
+        Some("user"),
+        "My manager is Alice. Bob owns release QA.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:bob-release-qa",
+            "Bob owns release QA.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn assistant_only_framed_third_party_detail_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -951,10 +1046,12 @@ async fn support_matching_does_not_combine_separate_sentences() -> Result<()> {
 #[tokio::test]
 async fn inferred_behavior_source_stays_pending_review() -> Result<()> {
     let mut conn = setup_conn();
-    let event_id = capture_event(
+    let event_id = capture_event_with_details(
         &conn,
         "sess-user-context-behavior-source",
+        "tool_result",
         None,
+        Some("Bash"),
         "Ran cargo test for remem verification.",
     )?;
     let task = claim_task(&mut conn)?;
@@ -989,6 +1086,48 @@ async fn inferred_behavior_source_stays_pending_review() -> Result<()> {
     )?;
     assert_eq!(status, "pending_review");
     assert_eq!(reason.as_deref(), Some("source_requires_review"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn assistant_text_cannot_be_behavior_source() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-assistant-behavior-source",
+        Some("assistant"),
+        "The user prefers verbose release notes.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:release-notes",
+            "User prefers verbose release notes.",
+            0.93,
+            "normal",
+            "low",
+            "inferred_from_behavior",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
     Ok(())
 }
 
