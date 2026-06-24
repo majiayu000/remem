@@ -168,21 +168,12 @@ pub(super) fn source_preview(
     batch: &CandidateSourceBatch,
     candidate: &ParsedUserContextCandidate,
 ) -> Option<String> {
-    let mut parts = batch
+    let parts = batch
         .events_for_candidate(candidate)
         .into_iter()
         .map(|event| event.content.trim())
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
-    if let Some(summary) = &batch.summary {
-        if let Some(text) = summary
-            .summary_text
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-        {
-            parts.push(text.trim());
-        }
-    }
     let preview = parts.join("\n");
     (!preview.is_empty()).then(|| crate::db::truncate_str(&preview, 500).to_string())
 }

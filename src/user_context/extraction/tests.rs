@@ -194,6 +194,97 @@ async fn low_risk_user_event_auto_promotes_to_active_claim() -> Result<()> {
 }
 
 #[tokio::test]
+async fn source_whitespace_normalization_does_not_trigger_secret_block() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-whitespace",
+        Some("user"),
+        "I prefer   concise\tcode reviews.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:review-style",
+            "User prefers concise code reviews.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn summary_blocklist_text_does_not_block_direct_candidate_evidence() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-direct-evidence",
+        Some("user"),
+        "I prefer concise code reviews.",
+    )?;
+    let task = claim_task(&mut conn)?;
+    insert_summary_for_task_with_text(
+        &conn,
+        &task,
+        "Unrelated range note: user is tired and mentioned an API key.",
+    )?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:review-style",
+            "User prefers concise code reviews.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let source_preview: String = conn.query_row(
+        "SELECT source_preview FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(source_preview.contains("I prefer concise code reviews."));
+    assert!(!source_preview.contains("API key"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn assistant_sourced_explicit_statement_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -241,11 +332,70 @@ async fn assistant_sourced_explicit_statement_creates_no_candidate() -> Result<(
 }
 
 #[tokio::test]
+async fn mixed_assistant_claim_with_unrelated_user_source_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let user_event_id = capture_event(
+        &conn,
+        "sess-user-context-mixed-source",
+        Some("user"),
+        "I prefer concise code reviews.",
+    )?;
+    let assistant_event_id = capture_event(
+        &conn,
+        "sess-user-context-mixed-source",
+        Some("assistant"),
+        "The user prefers verbose release notes.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:release-notes",
+            "User prefers verbose release notes.",
+            0.93,
+            "normal",
+            "low",
+            "session_summary",
+            &[user_event_id, assistant_event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: assistant_event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn secret_like_candidate_output_creates_no_candidate() -> Result<()> {
     blocked_candidate_creates_no_rows(
         Some("user"),
         "My API key is sk-testsecret123456.",
         "User's API key is sk-testsecret123456.",
+        "explicit_user_statement",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn account_number_candidate_output_creates_no_candidate() -> Result<()> {
+    blocked_candidate_creates_no_rows(
+        Some("user"),
+        "My bank account number is 123456789.",
+        "User's bank account number is 123456789.",
         "explicit_user_statement",
     )
     .await
@@ -345,7 +495,49 @@ async fn user_framed_third_party_candidate_stays_pending_review() -> Result<()> 
 }
 
 #[tokio::test]
-async fn unsupported_user_event_citation_stays_pending_review() -> Result<()> {
+async fn unframed_third_party_detail_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-unframed-third-party",
+        Some("user"),
+        "Alice lives in Boston.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-location",
+            "Alice lives in Boston.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn unsupported_user_event_citation_creates_no_candidate() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
         &conn,
@@ -372,19 +564,17 @@ async fn unsupported_user_event_citation_stays_pending_review() -> Result<()> {
     assert_eq!(
         result,
         UserContextCandidateExtractResult::Written {
-            candidates: 1,
+            candidates: 0,
             promoted: 0,
-            pending_review: 1,
+            pending_review: 0,
             to_event_id: event_id,
         }
     );
-    let (status, reason): (String, Option<String>) = conn.query_row(
-        "SELECT review_status, auto_promote_block_reason FROM user_context_candidates",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    assert_eq!(status, "pending_review");
-    assert_eq!(reason.as_deref(), Some("no_supporting_source_event"));
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
     let claim_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
             row.get(0)
@@ -663,6 +853,14 @@ async fn contradictory_candidate_supersedes_existing_claim_by_stable_key() -> Re
 }
 
 fn insert_summary_for_task(conn: &Connection, task: &db::ExtractionTask) -> Result<()> {
+    insert_summary_for_task_with_text(conn, task, "User prefers concise code reviews.")
+}
+
+fn insert_summary_for_task_with_text(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    summary_text: &str,
+) -> Result<()> {
     let session_row_id = task.session_row_id.expect("task should have session row");
     let to_event_id = task
         .high_watermark_event_id
@@ -673,13 +871,14 @@ fn insert_summary_for_task(conn: &Connection, task: &db::ExtractionTask) -> Resu
           discovery_tokens, host_id, project_id, session_row_id, summary_text,
           covered_from_event_id, covered_to_event_id)
          VALUES (?1, ?2, 'Captured event range', 'User preference summary', '2026-06-20T00:00:00Z',
-                 1782000000, 4, ?3, ?4, ?5, 'User prefers concise code reviews.', ?6, ?7)",
+                 1782000000, 4, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             "capture-rollup-test",
             task.project,
             task.host_id,
             task.project_id,
             session_row_id,
+            summary_text,
             to_event_id,
             to_event_id
         ],

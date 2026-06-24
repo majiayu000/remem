@@ -121,6 +121,15 @@ fn blocklisted_candidate_text_or_preview_is_rejected_before_insert() -> Result<(
         .to_string()
         .contains("blocked by non-retention policy"));
 
+    let account_number = create_candidate(
+        &conn,
+        &candidate_request("User's bank account number is 123456789.", false),
+    )
+    .expect_err("account numbers should be rejected before insert");
+    assert!(account_number
+        .to_string()
+        .contains("blocked by non-retention policy"));
+
     let mut preview_secret = candidate_request("Prefer concise review notes", false);
     preview_secret.source_preview = Some("authorization=Bearer tiny-token");
     let preview_err = create_candidate(&conn, &preview_secret)
@@ -129,11 +138,15 @@ fn blocklisted_candidate_text_or_preview_is_rejected_before_insert() -> Result<(
         .to_string()
         .contains("blocked by non-retention policy"));
 
+    let mut whitespace_only_preview = candidate_request("Prefer concise review notes", false);
+    whitespace_only_preview.source_preview = Some("The user prefers   concise\treview notes.");
+    create_candidate(&conn, &whitespace_only_preview)?;
+
     let candidate_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
             row.get(0)
         })?;
-    assert_eq!(candidate_count, 0);
+    assert_eq!(candidate_count, 1);
     Ok(())
 }
 

@@ -27,16 +27,6 @@ pub(crate) fn block_reason(
     None
 }
 
-pub(crate) fn unsupported_assistant_claim_reason(
-    _source_kind: &str,
-    has_user_authored_source: bool,
-) -> Option<&'static str> {
-    if has_user_authored_source {
-        return None;
-    }
-    Some("unsupported_assistant_authored_claim")
-}
-
 fn normalized_blob(claim_text: &str, source_preview: Option<&str>) -> String {
     let mut blob = claim_text.to_ascii_lowercase();
     if let Some(preview) = source_preview {
@@ -51,17 +41,27 @@ fn contains_secret_like_content(
     claim_text: &str,
     source_preview: Option<&str>,
 ) -> bool {
-    if crate::adapter::common::redact_sensitive_text(claim_text) != claim_text {
+    if redaction_changed_sensitive_content(claim_text) {
         return true;
     }
     if let Some(preview) = source_preview {
-        if crate::adapter::common::redact_sensitive_text(preview) != preview {
+        if redaction_changed_sensitive_content(preview) {
             return true;
         }
     }
     contains_non_retention_pattern(blob, SECRET_PATTERNS)
         || (blob.contains("[redacted")
             && contains_non_retention_pattern(blob, SECRET_REDACTION_CONTEXT))
+}
+
+fn redaction_changed_sensitive_content(text: &str) -> bool {
+    let redacted = crate::adapter::common::redact_sensitive_text(text);
+    redacted.contains("[REDACTED]")
+        && normalized_redaction_compare(&redacted) != normalized_redaction_compare(text)
+}
+
+fn normalized_redaction_compare(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn contains_non_retention_pattern(haystack: &str, needles: &[&str]) -> bool {
@@ -74,7 +74,9 @@ const SECRET_PATTERNS: &[&str] = &[
     "api_key",
     "api token",
     "access token",
+    "account number",
     "auth token",
+    "bank account",
     "bearer ",
     "client secret",
     "credit card",
@@ -86,7 +88,9 @@ const SECRET_PATTERNS: &[&str] = &[
     "passport",
     "payment card",
     "private key",
+    "routing number",
     "secret key",
+    "social security number",
     "ssn",
     "sk-",
 ];

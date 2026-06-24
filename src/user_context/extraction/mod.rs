@@ -197,13 +197,13 @@ fn non_retention_block_reason(
         &candidate.source_kind,
     )
     .or_else(|| {
-        crate::user_context::non_retention::unsupported_assistant_claim_reason(
-            &candidate.source_kind,
-            candidate
-                .source_event_ids
-                .iter()
-                .any(|id| batch.event_is_user_authored(*id)),
-        )
+        (!is_supported_by_user_source_event(candidate, batch))
+            .then_some("no_supporting_user_source_event")
+    })
+    .or_else(|| {
+        (candidate.source_kind == "third_party_statement"
+            && !is_user_framed_third_party_candidate(candidate, batch))
+        .then_some("unframed_third_party_detail")
     })
 }
 
@@ -211,23 +211,38 @@ fn candidate_source_blob(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> Option<String> {
-    let mut parts = batch
+    let parts = batch
         .events_for_candidate(candidate)
         .into_iter()
         .map(|event| event.content.trim())
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
-    if let Some(summary) = &batch.summary {
-        if let Some(text) = summary
-            .summary_text
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-        {
-            parts.push(text.trim());
-        }
-    }
     let blob = parts.join("\n");
     (!blob.is_empty()).then_some(blob)
+}
+
+fn is_user_framed_third_party_candidate(
+    candidate: &ParsedUserContextCandidate,
+    batch: &CandidateSourceBatch,
+) -> bool {
+    if has_user_context_framing(&candidate.claim_text) {
+        return true;
+    }
+    batch
+        .events_for_candidate(candidate)
+        .into_iter()
+        .filter(|event| batch.event_is_user_authored(event.id))
+        .any(|event| has_user_context_framing(&event.content))
+}
+
+fn has_user_context_framing(text: &str) -> bool {
+    let tokens = short_support_tokens(text);
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "i" | "me" | "my" | "mine" | "our" | "ours" | "us" | "we"
+        )
+    }) || tokens.windows(2).any(|window| window == ["user", "s"])
 }
 
 fn should_auto_promote(
@@ -310,10 +325,49 @@ fn is_supported_by_user_source_event(
 }
 
 fn normalize_support_text(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
+    let raw_tokens = text
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut tokens = Vec::with_capacity(raw_tokens.len());
+    let mut index = 0;
+    while index < raw_tokens.len() {
+        if raw_tokens.get(index).is_some_and(|token| token == "the")
+            && raw_tokens
+                .get(index + 1)
+                .is_some_and(|token| token == "user")
+            && raw_tokens.get(index + 2).is_some_and(|token| token == "s")
+        {
+            tokens.push("my".to_string());
+            index += 3;
+            continue;
+        }
+        if raw_tokens.get(index).is_some_and(|token| token == "user")
+            && raw_tokens.get(index + 1).is_some_and(|token| token == "s")
+        {
+            tokens.push("my".to_string());
+            index += 2;
+            continue;
+        }
+        if raw_tokens.get(index).is_some_and(|token| token == "the")
+            && raw_tokens
+                .get(index + 1)
+                .is_some_and(|token| token == "user")
+        {
+            tokens.push("i".to_string());
+            index += 2;
+            continue;
+        }
+        if raw_tokens.get(index).is_some_and(|token| token == "user") {
+            tokens.push("i".to_string());
+            index += 1;
+            continue;
+        }
+        tokens.push(raw_tokens[index].clone());
+        index += 1;
+    }
+    tokens.join(" ")
 }
 
 fn short_user_context_support_variants(text: &str) -> Vec<Vec<String>> {
