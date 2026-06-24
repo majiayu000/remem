@@ -243,7 +243,19 @@ fn contains_project_independent_fact_shape(text: &str) -> bool {
                 "are" | "is" | "prevents" | "stores" | "supports" | "uses"
             )
         });
-        has_topic && has_factual_verb && !has_user_context_reference(&tokens)
+        has_topic
+            && has_factual_verb
+            && !has_user_context_reference(&tokens)
+            && !has_project_context_reference(&tokens)
+    })
+}
+
+fn has_project_context_reference(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "codebase" | "project" | "repo" | "repository" | "workspace"
+        )
     })
 }
 
@@ -258,12 +270,21 @@ fn contains_external_source_approval(text: &str) -> bool {
         "please remember from file",
         "please remember from files",
         "please remember from readme",
+        "please remember from website",
+        "please remember from web page",
+        "please remember from browser page",
         "remember from file",
         "remember from files",
         "remember from readme",
+        "remember from website",
+        "remember from web page",
+        "remember from browser page",
         "save from file",
         "save from files",
         "save from readme",
+        "save from website",
+        "save from web page",
+        "save from browser page",
     ]
     .iter()
     .any(|phrase| contains_non_negated_bounded_phrase(text, phrase))
@@ -549,6 +570,18 @@ mod tests {
             Some("general_knowledge_content")
         );
         assert_eq!(
+            block_reason("Project uses Rust.", None, "explicit_user_statement"),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "Repo stores data in SQLite.",
+                None,
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
             block_reason(
                 "User wants to exfiltrate credentials.",
                 None,
@@ -591,6 +624,14 @@ mod tests {
                 "explicit_user_statement"
             ),
             Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User lives in Paris.",
+                Some("Website says the user lives in Paris. Please remember from website."),
+                "explicit_user_statement"
+            ),
+            None
         );
     }
 }

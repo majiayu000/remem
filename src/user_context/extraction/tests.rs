@@ -247,6 +247,43 @@ async fn source_whitespace_normalization_does_not_trigger_secret_block() -> Resu
 }
 
 #[tokio::test]
+async fn dotted_version_evidence_stays_in_one_segment() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-dotted-version",
+        Some("user"),
+        "I prefer Python 3.11 for scripts.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:python-version",
+            "User prefers Python 3.11 for scripts.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn task_specific_low_risk_words_do_not_trigger_secret_block() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
@@ -373,6 +410,50 @@ async fn source_preview_trims_unrelated_third_party_detail() -> Result<()> {
     )?;
     assert!(source_preview.contains("I prefer concise code reviews."));
     assert!(!source_preview.contains("Alice lives in Boston"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_preview_requires_user_subject_for_user_claims() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-preview-user-subject",
+        Some("user"),
+        "I prefer concise reviews. Alice prefers concise reviews in Boston.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:review-style",
+            "User prefers concise reviews.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 1,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let source_preview: String = conn.query_row(
+        "SELECT source_preview FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(source_preview.contains("I prefer concise reviews."));
+    assert!(!source_preview.contains("Alice prefers concise reviews"));
     Ok(())
 }
 
@@ -504,6 +585,50 @@ async fn external_source_approval_must_match_evidence_source() -> Result<()> {
             row.get(0)
         })?;
     assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn website_source_approval_allows_review_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-website-approval",
+        Some("user"),
+        "The website says the user lives in Paris. Please remember from website.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "identity",
+            "identity:location",
+            "User lives in Paris.",
+            0.93,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: event_id,
+        }
+    );
+    let source_preview: String = conn.query_row(
+        "SELECT source_preview FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(source_preview.contains("Please remember from website."));
+    assert!(source_preview.contains("website says the user lives in Paris"));
     Ok(())
 }
 
@@ -835,6 +960,133 @@ async fn third_party_framing_must_share_evidence_segment() -> Result<()> {
             row.get(0)
         })?;
     assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn unframed_relationship_mislabeled_explicit_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-mislabeled-third-party",
+        Some("user"),
+        "Alice lives in Boston.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-location",
+            "Alice lives in Boston.",
+            0.92,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn negated_third_party_relationship_creates_no_candidate() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-negated-third-party",
+        Some("user"),
+        "My manager is not Alice.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-manager",
+            "Alice is the user's manager.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn family_framed_third_party_relationship_stays_pending_review() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-family-third-party",
+        Some("user"),
+        "My wife is Alice.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "relationship",
+            "relationship:alice-wife",
+            "Alice is the user's wife.",
+            0.92,
+            "normal",
+            "low",
+            "third_party_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: event_id,
+        }
+    );
+    let reason: Option<String> = conn.query_row(
+        "SELECT auto_promote_block_reason FROM user_context_candidates",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(reason.as_deref(), Some("third_party_requires_review"));
     Ok(())
 }
 
@@ -1221,6 +1473,48 @@ async fn explicit_negative_constraint_stays_pending_review() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(reason.as_deref(), Some("no_supporting_source_event"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn negative_constraint_fallback_does_not_cross_segments() -> Result<()> {
+    let mut conn = setup_conn();
+    let event_id = capture_event(
+        &conn,
+        "sess-user-context-negative-constraint-cross-segment",
+        Some("user"),
+        "I never want auto-merge. Enabled feature flags are okay.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "constraint",
+            "constraint:auto-merge-enabled-disabled",
+            "User never wants auto-merge enabled.",
+            0.94,
+            "normal",
+            "low",
+            "explicit_user_statement",
+            &[event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 0,
+            promoted: 0,
+            pending_review: 0,
+            to_event_id: event_id,
+        }
+    );
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 0);
     Ok(())
 }
 

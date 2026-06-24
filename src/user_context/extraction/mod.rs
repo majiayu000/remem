@@ -199,15 +199,20 @@ fn non_retention_block_reason(
         &candidate.source_kind,
     )
     .or_else(|| {
-        (candidate.source_kind == "third_party_statement"
+        (requires_third_party_framing(candidate)
             && !is_supported_third_party_candidate(candidate, batch))
         .then_some("unframed_third_party_detail")
     })
     .or_else(|| {
-        (candidate.source_kind != "third_party_statement"
+        (!requires_third_party_framing(candidate)
             && !is_supported_for_candidate_queue(candidate, batch))
         .then_some("no_supporting_user_source_event")
     })
+}
+
+fn requires_third_party_framing(candidate: &ParsedUserContextCandidate) -> bool {
+    candidate.source_kind == "third_party_statement"
+        || candidate.claim_type == super::claims::UserContextClaimType::Relationship
 }
 
 fn is_supported_third_party_candidate(
@@ -234,9 +239,21 @@ fn has_third_party_fact_token_support(claim_text: &str, source_text: &str) -> bo
         return false;
     }
     let source_tokens = short_support_tokens(source_text);
+    if contains_third_party_negation(&source_tokens) {
+        return false;
+    }
     claim_tokens
         .iter()
         .all(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn contains_third_party_negation(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "cannot" | "cant" | "doesn" | "don" | "isn" | "never" | "no" | "not"
+        )
+    })
 }
 
 fn third_party_fact_tokens(text: &str) -> Vec<String> {
@@ -299,8 +316,13 @@ fn has_durable_third_party_context_token(tokens: &[String]) -> bool {
                 | "colleague"
                 | "collaborator"
                 | "coworker"
+                | "family"
+                | "father"
+                | "friend"
+                | "husband"
                 | "manager"
                 | "mentor"
+                | "mother"
                 | "owner"
                 | "partner"
                 | "qa"
@@ -308,10 +330,13 @@ fn has_durable_third_party_context_token(tokens: &[String]) -> bool {
                 | "repo"
                 | "review"
                 | "reviewer"
+                | "sibling"
+                | "spouse"
                 | "stakeholder"
                 | "team"
                 | "teammate"
                 | "vendor"
+                | "wife"
                 | "workflow"
         )
     })
@@ -444,9 +469,13 @@ fn is_supported_negative_user_constraint(
         .into_iter()
         .any(|event| {
             batch.event_is_user_authored(event.id)
-                && variants.iter().any(|variant| {
-                    has_short_exact_source_support_allowing_risk(variant, &event.content)
-                })
+                && source::evidence_segments(&event.content)
+                    .into_iter()
+                    .any(|segment| {
+                        variants.iter().any(|variant| {
+                            has_short_exact_source_support_allowing_risk(variant, &segment)
+                        })
+                    })
         })
 }
 

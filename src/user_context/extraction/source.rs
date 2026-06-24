@@ -181,7 +181,7 @@ pub(super) fn source_preview(
         .filter(|event| {
             candidate.source_kind != "inferred_from_behavior" || is_behavior_source_event(event)
         })
-        .filter_map(|event| evidence_preview_for_event(&event.content, &candidate.claim_text))
+        .filter_map(|event| evidence_preview_for_event(&event.content, candidate))
         .collect::<Vec<_>>();
     let preview = parts.join("\n");
     (!preview.is_empty()).then(|| crate::db::truncate_str(&preview, 500).to_string())
@@ -191,7 +191,7 @@ pub(super) fn source_preview_for_event(
     event: &SourceEvent,
     candidate: &ParsedUserContextCandidate,
 ) -> Option<String> {
-    evidence_preview_for_event(&event.content, &candidate.claim_text)
+    evidence_preview_for_event(&event.content, candidate)
 }
 
 pub(super) fn is_behavior_source_event(event: &SourceEvent) -> bool {
@@ -205,22 +205,25 @@ pub(super) fn is_behavior_source_event(event: &SourceEvent) -> bool {
         )
 }
 
-fn evidence_preview_for_event(content: &str, claim_text: &str) -> Option<String> {
-    let claim_tokens = preview_match_tokens(claim_text);
+fn evidence_preview_for_event(
+    content: &str,
+    candidate: &ParsedUserContextCandidate,
+) -> Option<String> {
+    let claim_tokens = preview_match_tokens(&candidate.claim_text);
     if claim_tokens.is_empty() {
         return None;
     }
     let segments = evidence_segments(content);
     let evidence = segments
         .iter()
-        .filter(|segment| segment_matches_claim(segment, &claim_tokens))
+        .filter(|segment| segment_matches_claim(segment, candidate, &claim_tokens))
         .cloned()
         .collect::<Vec<_>>();
     if evidence.is_empty() {
         return None;
     }
     let mut preview = Vec::new();
-    let source_labels = preview_external_source_labels(claim_text, &evidence);
+    let source_labels = preview_external_source_labels(&candidate.claim_text, &evidence);
     if !source_labels.is_empty() {
         preview.extend(
             segments
@@ -241,7 +244,7 @@ pub(super) fn evidence_segments(content: &str) -> Vec<String> {
     let mut segments = Vec::new();
     let mut start = 0;
     for (index, ch) in content.char_indices() {
-        if matches!(ch, '.' | '?' | '!' | '\n' | ';') {
+        if is_evidence_segment_boundary(content, index, ch) {
             let end = index + ch.len_utf8();
             let segment = content[start..end].trim();
             if !segment.is_empty() {
@@ -255,6 +258,19 @@ pub(super) fn evidence_segments(content: &str) -> Vec<String> {
         segments.push(tail.to_string());
     }
     segments
+}
+
+fn is_evidence_segment_boundary(content: &str, index: usize, ch: char) -> bool {
+    if matches!(ch, '?' | '!' | '\n' | ';') {
+        return true;
+    }
+    if ch != '.' {
+        return false;
+    }
+    let prev = content[..index].chars().next_back();
+    let next = content[index + ch.len_utf8()..].chars().next();
+    !(prev.is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && next.is_some_and(|ch| ch.is_ascii_alphanumeric()))
 }
 
 fn preview_external_source_labels(
@@ -295,7 +311,17 @@ fn external_source_labels(text: &str) -> BTreeSet<ExternalSourceLabel> {
     labels
 }
 
-fn segment_matches_claim(segment: &str, claim_tokens: &[String]) -> bool {
+fn segment_matches_claim(
+    segment: &str,
+    candidate: &ParsedUserContextCandidate,
+    claim_tokens: &[String],
+) -> bool {
+    if candidate.source_kind != "inferred_from_behavior"
+        && claim_requires_user_subject_support(&candidate.claim_text)
+        && !segment_has_user_subject_support(segment)
+    {
+        return false;
+    }
     let segment_tokens = preview_match_tokens(segment);
     if segment_tokens.is_empty() {
         return false;
@@ -309,6 +335,24 @@ fn segment_matches_claim(segment: &str, claim_tokens: &[String]) -> bool {
         })
         .count();
     matches >= claim_tokens.len().min(2)
+}
+
+fn claim_requires_user_subject_support(claim_text: &str) -> bool {
+    segment_has_user_subject_support(claim_text)
+}
+
+fn segment_has_user_subject_support(segment: &str) -> bool {
+    let lower = segment.to_ascii_lowercase();
+    let tokens = lower
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '\''))
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "i" | "me" | "my" | "mine" | "our" | "ours" | "us" | "we" | "user" | "user's"
+        )
+    }) || tokens.windows(2).any(|window| window == ["the", "user"])
 }
 
 fn preview_match_tokens(text: &str) -> Vec<String> {
