@@ -12,6 +12,7 @@ use super::fixture::{
     set_memory_source, setup_conn, ABSTAIN_PROJECT, ABSTAIN_SESSION, HOST, OUTPUT_GATE_SESSION,
     PROJECT, PROMPT_PROJECT, PROMPT_SESSION,
 };
+use super::sandbox::run_in_eval_sandbox;
 use super::summary::{push_case, summarize_contract_metrics};
 use super::types::{
     CurrentMemoryContractCaseReport, CurrentMemoryContractEvalMetadata,
@@ -19,8 +20,13 @@ use super::types::{
 };
 
 const CORPUS_NAME: &str = "builtin-current-memory-contracts-v1";
+const CURRENT_FACT_VALIDITY_SECS: i64 = 10 * 365 * 24 * 60 * 60;
 
 pub fn run_current_memory_contracts_eval() -> Result<CurrentMemoryContractEvalReport> {
+    run_in_eval_sandbox(run_current_memory_contracts_eval_inner)
+}
+
+fn run_current_memory_contracts_eval_inner() -> Result<CurrentMemoryContractEvalReport> {
     let conn = setup_conn().context("setup current-memory-contract eval database")?;
     seed_current_state_fixture(&conn).context("seed current-state contract fixture")?;
 
@@ -181,7 +187,7 @@ fn seed_current_state_fixture(conn: &Connection) -> Result<()> {
         502,
         "production",
         Some(now - 100),
-        Some(now + 100),
+        Some(now + CURRENT_FACT_VALIDITY_SECS),
         now - 90,
         "active",
         None,

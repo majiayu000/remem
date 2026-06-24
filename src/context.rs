@@ -23,6 +23,8 @@ mod render_inputs;
 mod sections;
 mod style;
 
+use std::ffi::OsString;
+
 #[cfg(test)]
 mod tests;
 mod types;
@@ -61,6 +63,8 @@ pub(crate) fn output_gate_contract_snapshot(
         force: false,
         gate_mode: Some("auto".to_string()),
     };
+    let _gated_hosts_restore =
+        EnvRestore::set("REMEM_CONTEXT_GATE_HOSTS", invocation.host.as_env_value());
     let first = injection_gate::apply_context_gate_with_data_version(
         conn,
         &invocation,
@@ -101,4 +105,27 @@ pub(crate) fn output_gate_contract_snapshot(
         first_output_present: !first.output.is_empty(),
         second_output_present: !second.output.is_empty(),
     })
+}
+
+struct EnvRestore {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvRestore {
+    fn set(key: &'static str, value: impl Into<OsString>) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value.into());
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.as_ref() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
 }
