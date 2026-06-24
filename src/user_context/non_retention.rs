@@ -497,11 +497,7 @@ const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
     "external source",
     "file says",
     "files say",
-    "from browser page",
-    "from the browser page",
     "from the readme",
-    "from the web page",
-    "from web page",
     "readme says",
     "repository file says",
     "web page says",
@@ -740,6 +736,14 @@ mod tests {
             block_reason(
                 "User prefers testing web page layouts in Playwright.",
                 Some("I prefer testing web page layouts in Playwright."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "User prefers deriving selectors from web page text.",
+                Some("I prefer deriving selectors from web page text."),
                 "explicit_user_statement"
             ),
             None
