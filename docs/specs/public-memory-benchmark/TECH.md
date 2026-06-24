@@ -316,7 +316,9 @@ All benchmark runs must prove:
 - no real project memory was imported;
 - workdir is clean or intentionally preserved after failure;
 - Docker image digest or equivalent environment lock is recorded;
-- external dataset revision and checksum are recorded.
+- fixture revision is recorded for remem-native suites;
+- external dataset revision and checksum are recorded only when
+  `source_policy.external_dataset_revision` is non-null.
 
 The verifier must fail on:
 
@@ -409,7 +411,7 @@ Markdown report must include:
 - layer;
 - conditions;
 - model/provider;
-- dataset revisions;
+- dataset or fixture revisions;
 - environment locks;
 - aggregate metrics;
 - per-category memory table;
