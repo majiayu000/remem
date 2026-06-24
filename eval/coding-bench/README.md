@@ -15,3 +15,8 @@ coverage, temporal fact eligibility, and staleness/source-anchor handling.
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must
 preserve both facts instead of merging them into one failure reason.
+
+Each run serializes the task outcome as `resolved` and unresolved task evidence
+as `failure_reason`. Token metrics must include `tokens_input`, `tokens_output`,
+and `tokens_total`, unless `token_accounting_unsupported_reason` explains that
+the runner provider cannot expose token accounting.

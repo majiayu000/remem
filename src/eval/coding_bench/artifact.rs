@@ -27,7 +27,9 @@ pub struct CodingBenchRunReport {
     pub condition: CodingBenchCondition,
     pub task_id: String,
     pub run_index: usize,
+    #[serde(rename = "resolved")]
     pub task_success: bool,
+    #[serde(rename = "failure_reason")]
     pub task_failure_reason: Option<String>,
     pub memory_contract_status: CodingBenchMemoryContractStatus,
     pub runtime_contract_failure: bool,
@@ -41,6 +43,7 @@ pub struct CodingBenchRunMetrics {
     pub tokens_input: Option<u64>,
     pub tokens_output: Option<u64>,
     pub tokens_total: Option<u64>,
+    pub token_accounting_unsupported_reason: Option<String>,
     pub turns: Option<u64>,
     pub wall_time_ms: Option<u64>,
 }
@@ -218,6 +221,14 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     run.run_index
                 );
             }
+            if !run.runtime_contract_failure && run.runtime_contract_failure_reason.is_some() {
+                bail!(
+                    "coding bench run {}#{} has runtime_contract_failure=false with stale runtime_contract_failure_reason",
+                    run.task_id,
+                    run.run_index
+                );
+            }
+            validate_token_accounting(run)?;
 
             match run.condition {
                 CodingBenchCondition::Remem => validate_remem_run_contract(run)?,
@@ -253,6 +264,41 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_token_accounting(run: &CodingBenchRunReport) -> Result<()> {
+    let token_fields = [
+        run.metrics.tokens_input,
+        run.metrics.tokens_output,
+        run.metrics.tokens_total,
+    ];
+    let token_fields_present = token_fields.iter().filter(|value| value.is_some()).count();
+    let unsupported_reason = run
+        .metrics
+        .token_accounting_unsupported_reason
+        .as_deref()
+        .map(str::trim);
+    let has_unsupported_reason = unsupported_reason.is_some_and(|reason| !reason.is_empty());
+
+    match (token_fields_present, has_unsupported_reason) {
+        (3, false) => Ok(()),
+        (3, true) => bail!(
+            "coding bench run {}#{} has token metrics and token_accounting_unsupported_reason",
+            run.task_id,
+            run.run_index
+        ),
+        (0, true) => Ok(()),
+        (0, false) => bail!(
+            "coding bench run {}#{} is missing token accounting without token_accounting_unsupported_reason",
+            run.task_id,
+            run.run_index
+        ),
+        (_, _) => bail!(
+            "coding bench run {}#{} must record complete token accounting or token_accounting_unsupported_reason",
+            run.task_id,
+            run.run_index
+        ),
+    }
 }
 
 fn validate_remem_run_contract(run: &CodingBenchRunReport) -> Result<()> {

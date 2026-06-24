@@ -174,7 +174,8 @@ Each run entry records:
 - `memory_contract_status`: `passed`, `failed`, or `not_applicable`
 - `runtime_contract_failure` and `runtime_contract_failure_reason`
 - score command outputs or references
-- token usage
+- token usage, or `token_accounting_unsupported_reason` when the provider cannot
+  expose token accounting
 - turn count
 - wall time
 - final head SHA or patch artifact
@@ -199,7 +200,7 @@ remem runtime evidence.
 
 Task failure and runtime contract failure are separate outcome dimensions. A
 coding task can pass while the remem runtime contract fails; that run must set
-`task_success=true` and `runtime_contract_failure=true` instead of hiding the
+`resolved=true` and `runtime_contract_failure=true` instead of hiding the
 contract failure inside a generic task failure reason.
 
 Reports must not include full prompts containing secrets, provider API keys, or
