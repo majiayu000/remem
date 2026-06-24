@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use chrono::{SecondsFormat, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
     claims::DEFAULT_OWNER_KEY,
@@ -281,10 +281,7 @@ fn load_snapshot_summary(
     if suppressed {
         push_reason(&mut reasons, "suppressed");
     }
-    let visible = summary::load_active_summary(conn, &summary_req)?;
-    if !suppressed && visible.as_ref().map(|item| item.id) != Some(summary.id) {
-        push_reason(&mut reasons, "source:not-default-visible");
-    }
+    push_summary_source_reasons(conn, &summary, &mut reasons)?;
     if summary.model.as_deref() == Some("manual-edit") {
         push_reason(&mut reasons, "provenance:manual-edit");
     }
@@ -295,6 +292,115 @@ fn load_snapshot_summary(
         push_reason(&mut reasons, "provenance:unsourced");
     }
     Ok(Some(SnapshotSummary { summary, reasons }))
+}
+
+fn push_summary_source_reasons(
+    conn: &Connection,
+    summary: &UserContextSummary,
+    reasons: &mut Vec<String>,
+) -> Result<()> {
+    let now = Utc::now().timestamp();
+    for claim_id in &summary.source_claim_ids {
+        if let Some(claim) = load_snapshot_claim_by_id(conn, *claim_id)? {
+            for reason in claim_exclusion_reasons(conn, &claim, now)? {
+                push_reason(reasons, &reason);
+            }
+        } else {
+            push_reason(reasons, "source:missing");
+        }
+    }
+    for memory_id in &summary.source_memory_ids {
+        for reason in memory_source_exclusion_reasons(conn, *memory_id)? {
+            push_reason(reasons, &reason);
+        }
+    }
+    Ok(())
+}
+
+fn load_snapshot_claim_by_id(conn: &Connection, id: i64) -> Result<Option<SnapshotClaim>> {
+    conn.query_row(
+        "SELECT id, claim_type, claim_key, claim_text, owner_scope, owner_key,
+                sensitivity, source_kind, source_refs_json, status,
+                valid_from_epoch, valid_to_epoch, updated_at_epoch
+         FROM user_context_claims
+         WHERE id = ?1",
+        [id],
+        |row| {
+            Ok(SnapshotClaim {
+                id: row.get(0)?,
+                claim_type: row.get(1)?,
+                claim_key: row.get(2)?,
+                claim_text: row.get(3)?,
+                owner_scope: row.get(4)?,
+                owner_key: row.get(5)?,
+                sensitivity: row.get(6)?,
+                source_kind: row.get(7)?,
+                source_refs_json: row.get(8)?,
+                status: row.get(9)?,
+                valid_from_epoch: row.get(10)?,
+                valid_to_epoch: row.get(11)?,
+                updated_at_epoch: row.get(12)?,
+            })
+        },
+    )
+    .optional()
+    .context("load user-context summary source claim")
+}
+
+fn memory_source_exclusion_reasons(conn: &Connection, memory_id: i64) -> Result<Vec<String>> {
+    let Some((status, expires_at_epoch)) = conn
+        .query_row(
+            "SELECT status, expires_at_epoch
+             FROM memories
+             WHERE id = ?1",
+            [memory_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()
+        .context("load user-context summary source memory")?
+    else {
+        return Ok(vec!["source:missing".to_string()]);
+    };
+    let mut reasons = Vec::new();
+    match status.as_str() {
+        "active" => {}
+        "deleted" => push_reason(&mut reasons, "status:deleted"),
+        other => push_reason(&mut reasons, &format!("status:{other}")),
+    }
+    if expires_at_epoch.is_some_and(|epoch| epoch <= Utc::now().timestamp()) {
+        push_reason(&mut reasons, "validity:expired");
+    }
+    if memory_source_is_superseded(conn, memory_id)? {
+        push_reason(&mut reasons, "status:superseded");
+    }
+    if memory_source_is_policy_suppressed(conn, memory_id)? {
+        push_reason(&mut reasons, "suppressed");
+    }
+    Ok(reasons)
+}
+
+fn memory_source_is_superseded(conn: &Connection, memory_id: i64) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_edges
+         WHERE edge_type = 'supersedes'
+           AND from_memory_id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn memory_source_is_policy_suppressed(conn: &Connection, memory_id: i64) -> Result<bool> {
+    let sql = format!(
+        "SELECT COUNT(*)
+         FROM memories
+         WHERE id = ?1
+           AND {}",
+        crate::memory::suppression::memory_policy_filter_sql("memories"),
+    );
+    let visible_count: i64 = conn.query_row(&sql, [memory_id], |row| row.get(0))?;
+    Ok(visible_count == 0)
 }
 
 fn load_snapshot_claims(
@@ -398,15 +504,8 @@ fn claim_text_allowed(req: &ProfileSnapshotRequest<'_>, reasons: &[String]) -> b
 
 fn summary_text_allowed(req: &ProfileSnapshotRequest<'_>, reasons: &[String]) -> bool {
     reasons.iter().all(|reason| match reason.as_str() {
-        "suppressed" => req.include_suppressed,
         reason if reason.starts_with("provenance:") => req.include_manual_summaries,
-        "source:not-default-visible" => {
-            req.include_suppressed
-                && req.include_sensitive
-                && req.include_inactive
-                && req.include_deleted
-        }
-        _ => false,
+        reason => reason_allowed(req, reason),
     })
 }
 

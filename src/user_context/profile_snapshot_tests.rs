@@ -252,6 +252,105 @@ fn profile_snapshot_suppressed_summary_requires_only_suppressed_audit_flag() -> 
 }
 
 #[test]
+fn profile_snapshot_summary_hidden_by_sensitive_source_requires_only_sensitive_flag() -> Result<()>
+{
+    let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-sensitive-summary");
+    let conn = db::open_db()?;
+    let source = create_claim(
+        &conn,
+        "Sensitive source-backed summary claim",
+        "summary-sensitive-source",
+        UserContextSensitivity::Normal,
+    )?;
+    refresh_summary(
+        &conn,
+        &SummaryRequest {
+            owner_scope: None,
+            owner_key: None,
+            project: "/repo",
+        },
+    )?;
+    conn.execute(
+        "UPDATE user_context_claims
+         SET sensitivity = 'sensitive'
+         WHERE id = ?1",
+        [source.id],
+    )?;
+
+    let default_output = render_markdown_profile_snapshot(
+        &conn,
+        &snapshot_request("/repo", data_dir.db_path().as_path()),
+    )?;
+    assert!(default_output.contains("No default-eligible active summary text."));
+    assert!(!default_output.contains("Sensitive source-backed summary claim"));
+
+    let db_path = data_dir.db_path();
+    let mut audit = snapshot_request("/repo", db_path.as_path());
+    audit.include_sensitive = true;
+    let output = render_markdown_profile_snapshot(&conn, &audit)?;
+    assert!(output.contains("Sensitive source-backed summary claim"));
+    assert!(output.contains("reason: sensitivity:sensitive"));
+    assert!(!output.contains("source:not-default-visible"));
+    Ok(())
+}
+
+#[test]
+fn profile_snapshot_suppressed_summary_still_requires_hidden_source_flags() -> Result<()> {
+    let data_dir =
+        db::test_support::ScopedTestDataDir::new("profile-snapshot-suppressed-sensitive-summary");
+    let conn = db::open_db()?;
+    let source = create_claim(
+        &conn,
+        "Suppressed summary sensitive source claim",
+        "summary-suppressed-sensitive-source",
+        UserContextSensitivity::Normal,
+    )?;
+    let summary = refresh_summary(
+        &conn,
+        &SummaryRequest {
+            owner_scope: None,
+            owner_key: None,
+            project: "/repo",
+        },
+    )?;
+    conn.execute(
+        "UPDATE user_context_claims
+         SET sensitivity = 'sensitive'
+         WHERE id = ?1",
+        [source.id],
+    )?;
+    create_suppression(
+        &conn,
+        &SuppressRequest {
+            target: SuppressionTarget {
+                kind: "summary".to_string(),
+                id: Some(summary.id),
+                value: None,
+            },
+            reason: Some("summary audit"),
+            actor: Some("test"),
+        },
+    )?;
+
+    let db_path = data_dir.db_path();
+    let mut suppressed_only = snapshot_request("/repo", db_path.as_path());
+    suppressed_only.include_suppressed = true;
+    let output = render_markdown_profile_snapshot(&conn, &suppressed_only)?;
+    assert!(output.contains("text redacted"));
+    assert!(output.contains("reason: suppressed, sensitivity:sensitive"));
+    assert!(!output.contains("Suppressed summary sensitive source claim"));
+    assert!(!output.contains("source:not-default-visible"));
+
+    let mut full_audit = snapshot_request("/repo", db_path.as_path());
+    full_audit.include_suppressed = true;
+    full_audit.include_sensitive = true;
+    let output = render_markdown_profile_snapshot(&conn, &full_audit)?;
+    assert!(output.contains("Suppressed summary sensitive source claim"));
+    assert!(output.contains("reason: suppressed, sensitivity:sensitive"));
+    Ok(())
+}
+
+#[test]
 fn profile_snapshot_claim_limit_applies_after_default_filtering() -> Result<()> {
     let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-filter-cap");
     let conn = db::open_db()?;
