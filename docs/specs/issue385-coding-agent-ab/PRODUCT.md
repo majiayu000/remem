@@ -52,6 +52,20 @@ and no material usability downside, the M6 roadmap must record that result as a
 stop-loss signal and pivot the next roadmap slice toward ergonomics instead of
 more retrieval machinery.
 
+Current baseline outcome, generated on 2026-06-25 with `gpt-5.5`:
+
+| Condition | Resolved | Resolution | Mean tokens |
+|---|---:|---:|---:|
+| `no_memory` | 3/15 | 20.0% | 390,003 |
+| `remem` | 15/15 | 100.0% | 170,284 |
+| `curated_file` | 15/15 | 100.0% | 146,840 |
+
+Product interpretation: remem clearly beats no-memory and now ties the curated
+file on resolution for this small memory-dependent fixture. Curated file still
+uses fewer tokens, so the benchmark does not justify a claim that remem beats a
+carefully maintained `MEMORY.md`. The next product decision should expand task
+diversity before strengthening any public claim.
+
 ## Benchmark Subject
 
 The fixture should use a small, deterministic software repository or pinned

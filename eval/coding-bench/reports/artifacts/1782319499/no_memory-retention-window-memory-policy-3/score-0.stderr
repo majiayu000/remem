@@ -1,0 +1,13 @@
+F
+======================================================================
+FAIL: test_named_policy_windows (tests.test_retention_hidden.RetentionHiddenTests.test_named_policy_windows)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/h2/29bv07g91nqd40ybjj_vb6nm0000gn/T/remem-coding-bench-no_memory-retention-window-memory-policy-3-66770-1782320254218958000/repo/tests/test_retention_hidden.py", line 8, in test_named_policy_windows
+    self.assertEqual(retention_days("audit_log"), 365)
+AssertionError: 30 != 365
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (failures=1)

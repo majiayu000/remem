@@ -1,0 +1,37 @@
+diff --git a/memory_demo/tickets.py b/memory_demo/tickets.py
+index c0ddf5e..1a8498f 100644
+--- a/memory_demo/tickets.py
++++ b/memory_demo/tickets.py
+@@ -1,3 +1,6 @@
++import re
++
++
+ def normalize_ticket_key(value):
+-    cleaned = str(value).strip().replace("_", "-").replace(" ", "-")
+-    return cleaned.upper()
++    cleaned = str(value).strip().upper()
++    return re.sub(r"[^A-Z0-9]+", "-", cleaned).strip("-")
+diff --git a/tests/test_visible.py b/tests/test_visible.py
+index 682586e..3d14d85 100644
+--- a/tests/test_visible.py
++++ b/tests/test_visible.py
+@@ -2,6 +2,7 @@ import unittest
+ 
+ from memory_demo.slug import normalize_slug
+ from memory_demo.retention import retention_days
++from memory_demo.tickets import normalize_ticket_key
+ 
+ 
+ class VisibleTests(unittest.TestCase):
+@@ -11,6 +12,11 @@ class VisibleTests(unittest.TestCase):
+     def test_default_retention(self):
+         self.assertEqual(retention_days("unknown"), 30)
+ 
++    def test_ticket_key_normalization(self):
++        self.assertEqual(normalize_ticket_key(" abc_123 "), "ABC-123")
++        self.assertEqual(normalize_ticket_key("abc / 123"), "ABC-123")
++        self.assertEqual(normalize_ticket_key("--abc...123--"), "ABC-123")
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

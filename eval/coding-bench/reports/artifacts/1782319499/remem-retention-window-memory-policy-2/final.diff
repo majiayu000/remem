@@ -1,0 +1,14 @@
+diff --git a/memory_demo/retention.py b/memory_demo/retention.py
+index 05e890f..03dd8d8 100644
+--- a/memory_demo/retention.py
++++ b/memory_demo/retention.py
+@@ -1,2 +1,8 @@
+ def retention_days(policy_name):
+-    return 30
++    policy_windows = {
++        "default": 30,
++        "audit_log": 365,
++        "ephemeral": 7,
++        "disabled": 0,
++    }
++    return policy_windows.get(policy_name, 30)

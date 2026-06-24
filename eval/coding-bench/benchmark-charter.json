@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "status": "baseline_complete",
+  "issue": "#385",
+  "generated_at": "2026-06-25T01:44:00+08:00",
+  "runner": {
+    "name": "codex",
+    "version": "codex-cli 0.142.0",
+    "model": "gpt-5.5",
+    "reasoning_effort": "medium"
+  },
+  "fixture": {
+    "path": "eval/coding-bench/fixtures/tasks.json",
+    "tasks": 5,
+    "runs_per_condition": 3,
+    "total_runs": 45,
+    "task_timeout_ms": 180000
+  },
+  "command": "cargo run -- eval-coding-bench --fixture eval/coding-bench/fixtures/tasks.json --runs-per-condition 3 --runner codex --model gpt-5.5 --reasoning-effort medium --ignore-budget --json-out eval/coding-bench/reports/baseline.json",
+  "reports": {
+    "baseline": "eval/coding-bench/reports/baseline.json",
+    "remem_smoke": "eval/coding-bench/reports/fix-remem-smoke.json"
+  },
+  "resolution": {
+    "no_memory": {
+      "resolved": 3,
+      "total": 15,
+      "rate": 0.2,
+      "tokens_total_mean": 390003.93333333335,
+      "wall_time_ms_mean": 133593.73333333334
+    },
+    "remem": {
+      "resolved": 15,
+      "total": 15,
+      "rate": 1.0,
+      "tokens_total_mean": 170284.6,
+      "wall_time_ms_mean": 62245.666666666664
+    },
+    "curated_file": {
+      "resolved": 15,
+      "total": 15,
+      "rate": 1.0,
+      "tokens_total_mean": 146840.13333333333,
+      "wall_time_ms_mean": 60522.86666666667
+    }
+  },
+  "interpretation": "remem matches curated_file resolution and strongly beats no_memory on the first small memory-dependent fixture; curated_file remains cheaper, so this does not prove remem beats a carefully maintained MEMORY.md.",
+  "caveats": [
+    "This fixture is small and synthetic; it is directional evidence only.",
+    "Codex non-interactive MCP calls can be cancelled by the host, so remem preloads full seeded memory details into REMEM_CONTEXT.md after using the production SessionStart render path.",
+    "The next benchmark version should add pinned real-repo tasks inspired by SWE-bench style issue patching and LiveCodeBench style fresh/self-repair tasks."
+  ]
+}

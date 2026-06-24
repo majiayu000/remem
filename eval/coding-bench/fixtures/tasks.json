@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "repo": {
+    "kind": "inline_python",
+    "files": {
+      "README.md": "# Memory Demo\n\nSmall deterministic fixture repository for remem coding-agent A/B tests.\n",
+      "memory_demo/__init__.py": "",
+      "memory_demo/tickets.py": "def normalize_ticket_key(value):\n    cleaned = str(value).strip().replace(\"_\", \"-\").replace(\" \", \"-\")\n    return cleaned.upper()\n",
+      "memory_demo/retention.py": "def retention_days(policy_name):\n    return 30\n",
+      "memory_demo/slug.py": "import re\n\n\ndef normalize_slug(value):\n    slug = re.sub(r\"[^a-z0-9]+\", \"-\", str(value).lower()).strip(\"-\")\n    return slug[:32]\n",
+      "memory_demo/session.py": "def render_session_footer(title, budget_label):\n    return f\"{title}\\n\\u2514\\u2500 Budget: {budget_label}\"\n",
+      "memory_demo/visibility.py": "def visible_context_sections(sections):\n    return [section for section in sections if section.get(\"status\") != \"suppressed\"]\n",
+      "tests/__init__.py": "",
+      "tests/test_visible.py": "import unittest\n\nfrom memory_demo.slug import normalize_slug\nfrom memory_demo.retention import retention_days\n\n\nclass VisibleTests(unittest.TestCase):\n    def test_slug_basic(self):\n        self.assertEqual(normalize_slug(\"Hello, World!\"), \"hello-world\")\n\n    def test_default_retention(self):\n        self.assertEqual(retention_days(\"unknown\"), 30)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "curated_context": "# Curated Project Memory\n\n- Ticket keys normalize to uppercase PREFIX-digits. Accept spaces, underscores, hyphens, and leading #. If input has only digits, use default prefix MEM.\n- Retention policy names map to days: default or unknown = 30, audit_log = 365, ephemeral = 7, disabled = 0.\n- Slug normalization returns lowercase ASCII words joined by hyphen, trims boundary hyphens, limits output to 32 characters without a trailing hyphen, and returns `untitled` when the cleaned slug is empty.\n- SessionStart budget footer must render as `Budget: <label>` only when a nonblank budget label exists. Do not render tree glyphs such as `\\u2514\\u2500` in the budget line.\n- Context visibility lists must exclude sections with status `suppressed` or `terminal`; keep active and stale sections in original order.\n",
+  "tasks": [
+    {
+      "id": "ticket-key-memory-convention",
+      "prompt": "Fix ticket key normalization. The repository has only a weak visible test; use project memory/context for the durable ticket key convention.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/tickets.py", "tests"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_ticket_hidden"]],
+        "hidden_files": {
+          "tests/test_ticket_hidden.py": "import unittest\n\nfrom memory_demo.tickets import normalize_ticket_key\n\n\nclass TicketHiddenTests(unittest.TestCase):\n    def test_prefix_digits_contract(self):\n        self.assertEqual(normalize_ticket_key(\"#remem 42\"), \"REMEM-42\")\n        self.assertEqual(normalize_ticket_key(\"ab_7\"), \"AB-7\")\n        self.assertEqual(normalize_ticket_key(\"385\"), \"MEM-385\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "memories": [
+        {
+          "title": "Ticket key memory convention",
+          "text": "Ticket keys normalize to uppercase PREFIX-digits. Inputs may contain spaces, underscores, hyphens, or a leading #. If the input contains only digits, use default prefix MEM.",
+          "memory_type": "procedure",
+          "topic_key": "ticket-key-convention",
+          "files": ["memory_demo/tickets.py"]
+        }
+      ]
+    },
+    {
+      "id": "retention-window-memory-policy",
+      "prompt": "Implement the retention window mapping. The visible test only proves the default; use project memory/context for the named policy windows.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/retention.py", "tests"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_retention_hidden"]],
+        "hidden_files": {
+          "tests/test_retention_hidden.py": "import unittest\n\nfrom memory_demo.retention import retention_days\n\n\nclass RetentionHiddenTests(unittest.TestCase):\n    def test_named_policy_windows(self):\n        self.assertEqual(retention_days(\"audit_log\"), 365)\n        self.assertEqual(retention_days(\"ephemeral\"), 7)\n        self.assertEqual(retention_days(\"disabled\"), 0)\n        self.assertEqual(retention_days(\"unknown\"), 30)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "memories": [
+        {
+          "title": "Retention window memory policy",
+          "text": "Retention policy names map to days: default or unknown = 30, audit_log = 365, ephemeral = 7, disabled = 0.",
+          "memory_type": "decision",
+          "topic_key": "retention-window-policy",
+          "files": ["memory_demo/retention.py"]
+        }
+      ]
+    },
+    {
+      "id": "slug-normalizer-contract",
+      "prompt": "Fix the slug normalizer edge cases. The hidden oracle checks the durable empty-output and truncation contract from project memory/context.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/slug.py", "tests"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_slug_hidden"]],
+        "hidden_files": {
+          "tests/test_slug_hidden.py": "import unittest\n\nfrom memory_demo.slug import normalize_slug\n\n\nclass SlugHiddenTests(unittest.TestCase):\n    def test_empty_and_truncation_contract(self):\n        self.assertEqual(normalize_slug(\"\"), \"untitled\")\n        self.assertEqual(normalize_slug(\"----\"), \"untitled\")\n        slug = normalize_slug(\"hello \" * 20)\n        self.assertLessEqual(len(slug), 32)\n        self.assertFalse(slug.endswith(\"-\"))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "memories": [
+        {
+          "title": "Slug normalizer contract",
+          "text": "Slug normalization returns lowercase ASCII words joined by hyphen, trims boundary hyphens, limits output to 32 characters without a trailing hyphen, and returns `untitled` when the cleaned slug is empty.",
+          "memory_type": "procedure",
+          "topic_key": "slug-normalizer-contract",
+          "files": ["memory_demo/slug.py"]
+        }
+      ]
+    },
+    {
+      "id": "session-budget-footer",
+      "prompt": "Fix SessionStart footer rendering for the budget label. Use project memory/context for the exact footer contract.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/session.py", "tests"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_session_hidden"]],
+        "hidden_files": {
+          "tests/test_session_hidden.py": "import unittest\n\nfrom memory_demo.session import render_session_footer\n\n\nclass SessionHiddenTests(unittest.TestCase):\n    def test_budget_footer_contract(self):\n        footer = render_session_footer(\"SessionStart\", \"medium\")\n        self.assertIn(\"Budget: medium\", footer)\n        self.assertNotIn(\"\\u2514\", footer)\n        self.assertEqual(render_session_footer(\"SessionStart\", \"\"), \"SessionStart\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "memories": [
+        {
+          "title": "SessionStart budget footer contract",
+          "text": "SessionStart budget footer must render as `Budget: <label>` only when a nonblank budget label exists. Do not render tree glyphs such as `\\u2514\\u2500` in the budget line.",
+          "memory_type": "procedure",
+          "topic_key": "session-budget-footer",
+          "files": ["memory_demo/session.py"]
+        }
+      ]
+    },
+    {
+      "id": "context-visibility-policy",
+      "prompt": "Fix context visibility filtering. Use project memory/context for which statuses must be excluded.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/visibility.py", "tests"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_visibility_hidden"]],
+        "hidden_files": {
+          "tests/test_visibility_hidden.py": "import unittest\n\nfrom memory_demo.visibility import visible_context_sections\n\n\nclass VisibilityHiddenTests(unittest.TestCase):\n    def test_terminal_and_suppressed_excluded(self):\n        sections = [\n            {\"name\": \"core\", \"status\": \"active\"},\n            {\"name\": \"session\", \"status\": \"terminal\"},\n            {\"name\": \"old\", \"status\": \"suppressed\"},\n            {\"name\": \"stale\", \"status\": \"stale\"},\n        ]\n        self.assertEqual(\n            [section[\"name\"] for section in visible_context_sections(sections)],\n            [\"core\", \"stale\"],\n        )\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "memories": [
+        {
+          "title": "Context visibility status policy",
+          "text": "Context visibility lists must exclude sections with status `suppressed` or `terminal`; keep active and stale sections in original order.",
+          "memory_type": "decision",
+          "topic_key": "context-visibility-status-policy",
+          "files": ["memory_demo/visibility.py"]
+        }
+      ]
+    }
+  ]
+}

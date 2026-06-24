@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1782318110,
+  "fixture_path": "eval/coding-bench/fixtures/tasks.json",
+  "remem_rev": "15467327d6078cb40d15142b9cad81f65ca00786",
+  "runner": {
+    "provider": "codex",
+    "model": "gpt-5.5",
+    "runner": "codex",
+    "version": "codex-cli 0.142.0"
+  },
+  "runs_per_condition": 1,
+  "ignore_budget": true,
+  "conditions": [
+    {
+      "name": "remem",
+      "summary": {
+        "resolution_rate": 1.0,
+        "tokens_total_mean": 149753.2,
+        "tokens_total_stddev": 28780.23385172539,
+        "turns_mean": 0.0,
+        "wall_time_ms_mean": 56666.2,
+        "wall_time_ms_p95": 68583.0
+      },
+      "runs": [
+        {
+          "condition": "remem",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 201728,
+            "output_tokens": 2720,
+            "total_tokens": 204448
+          },
+          "turns": 0,
+          "wall_time_ms": 68583,
+          "final_head_sha": "af6157d5236f94b7c7b86c2785133396c610cb48",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/score-0.stdout",
+              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/score-0.stderr"
+            }
+          ],
+          "artifacts": {
+            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/runner.stdout",
+            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/runner.stderr",
+            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-ticket-key-memory-convention-1/final.diff"
+          },
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 127796,
+            "output_tokens": 1770,
+            "total_tokens": 129566
+          },
+          "turns": 0,
+          "wall_time_ms": 49741,
+          "final_head_sha": "b6615106b50b5ccd11d9f7dae6d96c82c2bcde3a",
+          "changed_paths": [
+            "memory_demo/retention.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/score-0.stdout",
+              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/score-0.stderr"
+            }
+          ],
+          "artifacts": {
+            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/runner.stdout",
+            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/runner.stderr",
+            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-retention-window-memory-policy-1/final.diff"
+          },
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 128900,
+            "output_tokens": 1843,
+            "total_tokens": 130743
+          },
+          "turns": 0,
+          "wall_time_ms": 50062,
+          "final_head_sha": "f9d77d2ae360a43a1036d689ff11a84760b8e7fa",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/score-0.stdout",
+              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/score-0.stderr"
+            }
+          ],
+          "artifacts": {
+            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/runner.stdout",
+            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/runner.stderr",
+            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-slug-normalizer-contract-1/final.diff"
+          },
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "session-budget-footer",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 151233,
+            "output_tokens": 2195,
+            "total_tokens": 153428
+          },
+          "turns": 0,
+          "wall_time_ms": 64516,
+          "final_head_sha": "9c851d3df4065c73aa7871ed6248b3dd0ba7a544",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/score-0.stdout",
+              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/score-0.stderr"
+            }
+          ],
+          "artifacts": {
+            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/runner.stdout",
+            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/runner.stderr",
+            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-session-budget-footer-1/final.diff"
+          },
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "context-visibility-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 128934,
+            "output_tokens": 1647,
+            "total_tokens": 130581
+          },
+          "turns": 0,
+          "wall_time_ms": 50429,
+          "final_head_sha": "f3f32c0b9d2f9059206bbe9ee86d0db60a68d311",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "stdout_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/score-0.stdout",
+              "stderr_artifact": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/score-0.stderr"
+            }
+          ],
+          "artifacts": {
+            "runner_stdout": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/runner.stdout",
+            "runner_stderr": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/runner.stderr",
+            "final_diff": "eval/coding-bench/reports/artifacts/1782318110/remem-context-visibility-policy-1/final.diff"
+          },
+          "workdir": null
+        }
+      ]
+    }
+  ]
+}

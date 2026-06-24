@@ -23,7 +23,6 @@ outcomes, not only whether a memory result was retrieved.
 ```text
 src/eval/coding_bench.rs
 src/eval/coding_bench/
-  artifact.rs
   condition.rs
   fixture.rs
   runner.rs
@@ -33,15 +32,13 @@ eval/coding-bench/
   README.md
   fixtures/
     tasks.json
-    curated-context.md
-    seed-events.json
   reports/
     baseline.json
 ```
 
-If the first implementation needs a smaller slice, `eval/coding-bench/README.md`
-and the JSON schema may land before the Rust runner, but the issue is not
-complete until the command produces a baseline report from a clean checkout.
+Implemented status: the native Rust runner and the first committed baseline are
+present. The first fixture uses an inline Python repository for deterministic
+clean-checkout runs; later versions should add pinned real-repo fixtures.
 
 ## CLI Contract
 
@@ -103,7 +100,7 @@ configuration. No secrets may be stored in fixtures or reports.
     {
       "id": "fix-parser-edge-case",
       "prompt": "Fix the parser edge case and add the focused regression test.",
-      "timeout_ms": 900000,
+      "timeout_ms": 180000,
       "allowed_paths": ["src/parser.rs", "tests/parser.rs"],
       "score": {
         "commands": [["cargo", "test", "--test", "parser"]]
@@ -113,21 +110,23 @@ configuration. No secrets may be stored in fixtures or reports.
 }
 ```
 
-The fixture format must support objective scoring commands and path constraints.
-Path constraints are not a sandbox boundary; they are evaluated after the run to
-detect whether the agent touched unauthorized files.
+The current fixture format supports objective scoring commands, hidden files
+written after the agent run, and path constraints. Path constraints are not a
+sandbox boundary; they are evaluated after the run to detect whether the agent
+touched unauthorized files. Generated Python cache paths are ignored.
 
 ## Memory Seeding
 
 The `remem` condition seeds a temporary database from committed fixture evidence,
-not from private user memory. The first implementation may seed memories through
-public CLI or MCP surfaces; direct database writes are allowed only for fixture
-setup code that already goes through migration-managed schemas and is documented
-as test data loading.
+not from private user memory. The implementation uses `save_memory` against a
+temporary `REMEM_DATA_DIR`, then renders the production SessionStart context.
+Because Codex non-interactive MCP detail calls can be cancelled by the host, the
+benchmark appends full seeded memory details to `REMEM_CONTEXT.md` as preloaded
+`get_observations` details.
 
-The `curated_file` condition uses `fixtures/curated-context.md`. That file must
-be derived from the same source evidence as the remem seed and reviewed as part
-of fixture changes.
+The `curated_file` condition uses the fixture's `curated_context` text and writes
+it to `MEMORY.md` in the temporary repository. It must be derived from the same
+source evidence as the remem seed and reviewed as part of fixture changes.
 
 The `no_memory` condition must disable remem hooks, MCP registration, and native
 memory file injection for the temporary agent run.
@@ -195,6 +194,10 @@ remem eval-coding-bench --dry-run \
 remem eval-coding-bench \
   --fixture eval/coding-bench/fixtures/tasks.json \
   --runs-per-condition 3 \
+  --runner codex \
+  --model gpt-5.5 \
+  --reasoning-effort medium \
+  --ignore-budget \
   --json-out eval/coding-bench/reports/baseline.json
 ```
 
@@ -210,6 +213,22 @@ The first benchmark runner may be manual-only because it can be slow and model
 dependent. If it later enters CI, CI should validate fixture parsing and schema
 stability by default, with full agent runs behind an explicit scheduled or
 maintainer-triggered workflow.
+
+## Latest Baseline
+
+Generated on 2026-06-25 with `codex-cli 0.142.0`, `gpt-5.5`,
+`runs_per_condition=3`, 5 tasks, and 45 total agent runs:
+
+| Condition | Resolved | Resolution | Mean tokens | Mean wall time |
+|---|---:|---:|---:|---:|
+| `no_memory` | 3/15 | 20.0% | 390,003 | 133.6s |
+| `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
+| `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
+
+Result: remem matches curated-file resolution and strongly beats no-memory on
+this fixture. Curated file remains cheaper, so this is not evidence that remem
+beats a carefully maintained `MEMORY.md`; it is evidence that remem's runtime
+path can deliver the same task-resolution rate on this memory-dependent fixture.
 
 ## Failure Handling
 

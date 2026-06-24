@@ -1,0 +1,26 @@
+F
+======================================================================
+FAIL: test_terminal_and_suppressed_excluded (tests.test_visibility_hidden.VisibilityHiddenTests.test_terminal_and_suppressed_excluded)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/h2/29bv07g91nqd40ybjj_vb6nm0000gn/T/remem-coding-bench-no_memory-context-visibility-policy-2-66770-1782321232146696000/repo/tests/test_visibility_hidden.py", line 14, in test_terminal_and_suppressed_excluded
+    self.assertEqual(
+AssertionError: Lists differ: ['core', 'session', 'stale'] != ['core', 'stale']
+
+First differing element 1:
+'session'
+'stale'
+
+First list contains 1 additional elements.
+First extra element 2:
+'stale'
+
+- ['core', 'session', 'stale']
+?          -----------
+
++ ['core', 'stale']
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (failures=1)

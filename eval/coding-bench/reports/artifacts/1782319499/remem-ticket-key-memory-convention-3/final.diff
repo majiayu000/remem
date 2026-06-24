@@ -1,0 +1,52 @@
+diff --git a/memory_demo/tickets.py b/memory_demo/tickets.py
+index c0ddf5e..8a582e3 100644
+--- a/memory_demo/tickets.py
++++ b/memory_demo/tickets.py
+@@ -1,3 +1,21 @@
++import re
++
++
++_TICKET_KEY_RE = re.compile(r"^([A-Za-z]+)[\s_-]*(\d+)$")
++
++
+ def normalize_ticket_key(value):
+-    cleaned = str(value).strip().replace("_", "-").replace(" ", "-")
+-    return cleaned.upper()
++    cleaned = str(value).strip()
++    if cleaned.startswith("#"):
++        cleaned = cleaned[1:].strip()
++
++    digits_only = re.sub(r"[\s_-]+", "", cleaned)
++    if digits_only.isdigit():
++        return f"MEM-{digits_only}"
++
++    match = _TICKET_KEY_RE.fullmatch(cleaned)
++    if match is None:
++        raise ValueError("ticket key must be PREFIX-digits or digits only")
++
++    prefix, digits = match.groups()
++    return f"{prefix.upper()}-{digits}"
+diff --git a/tests/test_visible.py b/tests/test_visible.py
+index 682586e..7753a7f 100644
+--- a/tests/test_visible.py
++++ b/tests/test_visible.py
+@@ -2,6 +2,7 @@ import unittest
+ 
+ from memory_demo.slug import normalize_slug
+ from memory_demo.retention import retention_days
++from memory_demo.tickets import normalize_ticket_key
+ 
+ 
+ class VisibleTests(unittest.TestCase):
+@@ -11,6 +12,11 @@ class VisibleTests(unittest.TestCase):
+     def test_default_retention(self):
+         self.assertEqual(retention_days("unknown"), 30)
+ 
++    def test_ticket_key_normalization(self):
++        self.assertEqual(normalize_ticket_key("#mem_123"), "MEM-123")
++        self.assertEqual(normalize_ticket_key("ops 42"), "OPS-42")
++        self.assertEqual(normalize_ticket_key("77"), "MEM-77")
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

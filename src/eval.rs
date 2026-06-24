@@ -1,3 +1,4 @@
+pub mod coding_bench;
 pub mod e2e;
 pub mod extraction;
 pub mod gates {

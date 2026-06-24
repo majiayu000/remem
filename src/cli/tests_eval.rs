@@ -122,3 +122,54 @@ fn cli_parses_eval_weight_grid_options() {
         _ => panic!("expected eval-weight-grid command"),
     }
 }
+
+#[test]
+fn cli_parses_eval_coding_bench_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-coding-bench",
+        "--fixture",
+        "eval/coding-bench/fixtures/tasks.json",
+        "--runs-per-condition",
+        "3",
+        "--json-out",
+        "eval/coding-bench/reports/baseline.json",
+        "--condition",
+        "remem",
+        "--task",
+        "slug-normalizer-contract",
+        "--runner",
+        "codex",
+        "--codex-bin",
+        "/usr/bin/false",
+        "--model",
+        "gpt-5.5",
+        "--provider",
+        "codexapi",
+        "--reasoning-effort",
+        "medium",
+        "--ignore-budget",
+        "--keep-workdirs",
+    ]);
+
+    match cli.command {
+        Commands::EvalCodingBench(args) => {
+            assert_eq!(args.fixture, "eval/coding-bench/fixtures/tasks.json");
+            assert_eq!(args.runs_per_condition, 3);
+            assert_eq!(
+                args.json_out.as_deref(),
+                Some("eval/coding-bench/reports/baseline.json")
+            );
+            assert_eq!(args.condition.as_deref(), Some("remem"));
+            assert_eq!(args.task.as_deref(), Some("slug-normalizer-contract"));
+            assert_eq!(args.runner, "codex");
+            assert_eq!(args.codex_bin, "/usr/bin/false");
+            assert_eq!(args.model, "gpt-5.5");
+            assert_eq!(args.provider.as_deref(), Some("codexapi"));
+            assert_eq!(args.reasoning_effort, "medium");
+            assert!(args.ignore_budget);
+            assert!(args.keep_workdirs);
+        }
+        _ => panic!("expected eval-coding-bench command"),
+    }
+}

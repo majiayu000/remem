@@ -5,6 +5,8 @@ use anyhow::{bail, Context, Result};
 
 use crate::db;
 
+use crate::cli::eval_types::EvalCodingBenchArgs;
+
 pub(in crate::cli) fn run_eval_local() -> Result<()> {
     let conn = db::open_db()?;
     let report = crate::eval::local::run_eval(&conn)?;
@@ -172,5 +174,46 @@ pub(in crate::cli) fn run_eval_weight_grid(
     } else {
         print!("{report}");
     }
+    Ok(())
+}
+
+pub(in crate::cli) fn run_eval_coding_bench(args: EvalCodingBenchArgs) -> Result<()> {
+    let options = crate::eval::coding_bench::CodingBenchOptions {
+        fixture_path: args.fixture,
+        runs_per_condition: args.runs_per_condition,
+        json_out: args.json_out.unwrap_or_default(),
+        condition: args.condition,
+        task: args.task,
+        keep_workdirs: args.keep_workdirs,
+        dry_run: args.dry_run,
+        runner: args.runner,
+        codex_bin: args.codex_bin,
+        model: args.model,
+        provider: args.provider,
+        reasoning_effort: args.reasoning_effort,
+        ignore_budget: args.ignore_budget,
+    };
+    if options.dry_run {
+        println!("{}", crate::eval::coding_bench::dry_run_plan(&options)?);
+        return Ok(());
+    }
+    if options.json_out.trim().is_empty() {
+        bail!("eval-coding-bench requires --json-out unless --dry-run is set");
+    }
+    let report = crate::eval::coding_bench::run_coding_bench(&options)?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(&options.json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create coding benchmark report directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    fs::write(&options.json_out, &report_json)
+        .with_context(|| format!("write coding benchmark report {}", options.json_out))?;
+    println!("{report_json}");
     Ok(())
 }

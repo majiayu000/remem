@@ -1,0 +1,41 @@
+diff --git a/memory_demo/session.py b/memory_demo/session.py
+index 4f6d28a..ac95e6b 100644
+--- a/memory_demo/session.py
++++ b/memory_demo/session.py
+@@ -1,2 +1,5 @@
+ def render_session_footer(title, budget_label):
+-    return f"{title}\n\u2514\u2500 Budget: {budget_label}"
++    budget_label = "" if budget_label is None else str(budget_label).strip()
++    if not budget_label:
++        return title
++    return f"{title}\nBudget: {budget_label}"
+diff --git a/tests/test_visible.py b/tests/test_visible.py
+index 682586e..f7595e1 100644
+--- a/tests/test_visible.py
++++ b/tests/test_visible.py
+@@ -2,6 +2,7 @@ import unittest
+ 
+ from memory_demo.slug import normalize_slug
+ from memory_demo.retention import retention_days
++from memory_demo.session import render_session_footer
+ 
+ 
+ class VisibleTests(unittest.TestCase):
+@@ -11,6 +12,17 @@ class VisibleTests(unittest.TestCase):
+     def test_default_retention(self):
+         self.assertEqual(retention_days("unknown"), 30)
+ 
++    def test_session_footer_budget_label(self):
++        self.assertEqual(
++            render_session_footer("SessionStart", "812 chars"),
++            "SessionStart\nBudget: 812 chars",
++        )
++
++    def test_session_footer_omits_blank_budget_label(self):
++        self.assertEqual(render_session_footer("SessionStart", ""), "SessionStart")
++        self.assertEqual(render_session_footer("SessionStart", "   "), "SessionStart")
++        self.assertEqual(render_session_footer("SessionStart", None), "SessionStart")
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

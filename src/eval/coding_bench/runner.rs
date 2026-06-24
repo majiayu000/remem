@@ -1,0 +1,575 @@
+use std::ffi::OsStr;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use anyhow::{bail, Context, Result};
+
+use super::condition::apply_condition;
+use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
+use super::score::{
+    parse_changed_paths, parse_codex_jsonl_usage, summarize_runs, unauthorized_paths,
+};
+use super::types::{
+    BenchCondition, BenchTokenUsage, CodingBenchFixture, CodingBenchOptions, CodingBenchReport,
+    CodingBenchTask, CommandReport, ConditionReport, RunArtifacts, RunReport, RunnerReport,
+};
+
+pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
+    let fixture = load_fixture(&options.fixture_path)?;
+    let conditions = selected_conditions(options)?;
+    let tasks = selected_tasks(&fixture, options)?;
+    let total = conditions.len() * tasks.len() * options.runs_per_condition;
+    let mut output = String::new();
+    output.push_str("coding benchmark dry run\n");
+    output.push_str(&format!("fixture: {}\n", options.fixture_path));
+    output.push_str(&format!(
+        "runs_per_condition: {}\n",
+        options.runs_per_condition
+    ));
+    output.push_str(&format!(
+        "runner: {} model: {}\n",
+        options.runner, options.model
+    ));
+    output.push_str(&format!("planned_runs: {total}\n"));
+    for condition in &conditions {
+        for task in &tasks {
+            output.push_str(&format!(
+                "- {} {} x{}\n",
+                condition.as_str(),
+                task.id,
+                options.runs_per_condition
+            ));
+        }
+    }
+    Ok(output)
+}
+
+pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchReport> {
+    if options.runs_per_condition == 0 {
+        bail!("--runs-per-condition must be greater than zero");
+    }
+    let fixture = load_fixture(&options.fixture_path)?;
+    let conditions = selected_conditions(options)?;
+    let tasks = selected_tasks(&fixture, options)?;
+    let generated_at_epoch = current_epoch();
+    let artifact_root = report_artifact_root(&options.json_out, generated_at_epoch)?;
+    let runner_version = runner_version(options);
+    let mut condition_reports = Vec::new();
+
+    for condition in conditions {
+        let mut runs = Vec::new();
+        for task in &tasks {
+            for run_index in 1..=options.runs_per_condition {
+                let run = run_one(
+                    options,
+                    &fixture,
+                    condition,
+                    task,
+                    run_index,
+                    &artifact_root,
+                )?;
+                eprintln!(
+                    "[coding-bench] {} {} run {}: resolved={} tokens={}",
+                    condition.as_str(),
+                    task.id,
+                    run_index,
+                    run.resolved,
+                    run.usage.total_tokens
+                );
+                runs.push(run);
+            }
+        }
+        let summary = summarize_runs(&runs);
+        condition_reports.push(ConditionReport {
+            name: condition,
+            summary,
+            runs,
+        });
+    }
+
+    Ok(CodingBenchReport {
+        schema_version: 1,
+        generated_at_epoch,
+        fixture_path: options.fixture_path.clone(),
+        remem_rev: current_git_rev(Path::new(".")).unwrap_or_else(|| "unknown".to_string()),
+        runner: RunnerReport {
+            provider: options
+                .provider
+                .clone()
+                .unwrap_or_else(|| options.runner.clone()),
+            model: options.model.clone(),
+            runner: options.runner.clone(),
+            version: runner_version,
+        },
+        runs_per_condition: options.runs_per_condition,
+        ignore_budget: options.ignore_budget,
+        conditions: condition_reports,
+    })
+}
+
+fn run_one(
+    options: &CodingBenchOptions,
+    fixture: &CodingBenchFixture,
+    condition: BenchCondition,
+    task: &CodingBenchTask,
+    run_index: usize,
+    artifact_root: &Path,
+) -> Result<RunReport> {
+    let start = Instant::now();
+    let run_root = unique_temp_dir(condition, &task.id, run_index);
+    let repo_dir = run_root.join("repo");
+    let data_dir = run_root.join("remem-data");
+    let artifact_dir =
+        artifact_root.join(format!("{}-{}-{}", condition.as_str(), task.id, run_index));
+    fs::create_dir_all(&artifact_dir)
+        .with_context(|| format!("create artifact dir {}", artifact_dir.display()))?;
+    prepare_repo(fixture, &repo_dir)?;
+    let setup = apply_condition(condition, fixture, task, &repo_dir, &data_dir)?;
+    commit_condition_inputs(&repo_dir)?;
+    let prompt = build_prompt(task, setup.prompt_note.as_deref());
+
+    let runner_outcome = invoke_agent(options, &repo_dir, &setup.env, &prompt, task.timeout_ms)
+        .context("invoke coding-agent runner")?;
+    let runner_stdout = write_artifact(&artifact_dir, "runner.stdout", &runner_outcome.stdout)?;
+    let runner_stderr = write_artifact(&artifact_dir, "runner.stderr", &runner_outcome.stderr)?;
+    let (usage, turns) = if options.runner == "codex" {
+        parse_codex_jsonl_usage(&runner_outcome.stdout)
+    } else {
+        (BenchTokenUsage::default(), 0)
+    };
+
+    let status = command_output("git", ["status", "--porcelain"], &repo_dir, &[], 30_000)?;
+    let changed_paths = parse_changed_paths(&status.stdout);
+    let unauthorized = unauthorized_paths(&changed_paths, &task.allowed_paths);
+    let diff = command_output("git", ["diff", "--binary"], &repo_dir, &[], 30_000)?;
+    let final_diff = write_artifact(&artifact_dir, "final.diff", &diff.stdout)?;
+    write_hidden_files(task, &repo_dir)?;
+
+    let mut score_commands = Vec::new();
+    let mut score_failed = false;
+    for (index, command) in task.score.commands.iter().enumerate() {
+        let (program, args) = command
+            .split_first()
+            .context("score command unexpectedly empty after validation")?;
+        let outcome = command_output(
+            program,
+            args.iter().map(String::as_str),
+            &repo_dir,
+            &[],
+            120_000,
+        )
+        .with_context(|| format!("run score command {:?}", command))?;
+        if outcome.exit_code != Some(0) || outcome.timed_out {
+            score_failed = true;
+        }
+        let stdout_artifact = write_artifact(
+            &artifact_dir,
+            &format!("score-{index}.stdout"),
+            &outcome.stdout,
+        )?;
+        let stderr_artifact = write_artifact(
+            &artifact_dir,
+            &format!("score-{index}.stderr"),
+            &outcome.stderr,
+        )?;
+        score_commands.push(CommandReport {
+            command: command.clone(),
+            exit_code: outcome.exit_code,
+            timed_out: outcome.timed_out,
+            stdout_artifact,
+            stderr_artifact,
+        });
+    }
+
+    let final_head_sha = current_git_rev(&repo_dir);
+    let failure_reason = failure_reason(
+        score_failed,
+        &unauthorized,
+        runner_outcome.timed_out,
+        runner_outcome.exit_code,
+    );
+    let resolved = failure_reason.is_none();
+    if !options.keep_workdirs {
+        let _ = fs::remove_dir_all(&run_root);
+    }
+
+    Ok(RunReport {
+        condition,
+        task_id: task.id.clone(),
+        run_index,
+        resolved,
+        failure_reason,
+        usage,
+        turns,
+        wall_time_ms: start.elapsed().as_millis(),
+        final_head_sha,
+        changed_paths,
+        unauthorized_path_changes: unauthorized,
+        runner_exit_code: runner_outcome.exit_code,
+        runner_timed_out: runner_outcome.timed_out,
+        score_commands,
+        artifacts: RunArtifacts {
+            runner_stdout,
+            runner_stderr,
+            final_diff,
+        },
+        workdir: options
+            .keep_workdirs
+            .then(|| run_root.to_string_lossy().to_string()),
+    })
+}
+
+fn prepare_repo(fixture: &CodingBenchFixture, repo_dir: &Path) -> Result<()> {
+    fs::create_dir_all(repo_dir)
+        .with_context(|| format!("create repo dir {}", repo_dir.display()))?;
+    for (path, content) in &fixture.repo.files {
+        write_relative_file(repo_dir, path, content)?;
+    }
+    let init = command_output("git", ["init", "-b", "main"], repo_dir, &[], 30_000)?;
+    if init.exit_code != Some(0) {
+        let fallback = command_output("git", ["init"], repo_dir, &[], 30_000)?;
+        ensure_success("git init", &fallback)?;
+        ensure_success(
+            "git checkout -b main",
+            &command_output("git", ["checkout", "-b", "main"], repo_dir, &[], 30_000)?,
+        )?;
+    }
+    ensure_success(
+        "git config user.email",
+        &command_output(
+            "git",
+            ["config", "user.email", "coding-bench@example.invalid"],
+            repo_dir,
+            &[],
+            30_000,
+        )?,
+    )?;
+    ensure_success(
+        "git config user.name",
+        &command_output(
+            "git",
+            ["config", "user.name", "remem coding bench"],
+            repo_dir,
+            &[],
+            30_000,
+        )?,
+    )?;
+    ensure_success(
+        "git add",
+        &command_output("git", ["add", "."], repo_dir, &[], 30_000)?,
+    )?;
+    ensure_success(
+        "git commit",
+        &command_output(
+            "git",
+            ["commit", "-m", "initial fixture"],
+            repo_dir,
+            &[],
+            30_000,
+        )?,
+    )?;
+    Ok(())
+}
+
+fn commit_condition_inputs(repo_dir: &Path) -> Result<()> {
+    let status = command_output("git", ["status", "--porcelain"], repo_dir, &[], 30_000)?;
+    if status.stdout.trim().is_empty() {
+        return Ok(());
+    }
+    ensure_success(
+        "git add condition inputs",
+        &command_output("git", ["add", "."], repo_dir, &[], 30_000)?,
+    )?;
+    ensure_success(
+        "git commit condition inputs",
+        &command_output(
+            "git",
+            ["commit", "-m", "condition inputs"],
+            repo_dir,
+            &[],
+            30_000,
+        )?,
+    )?;
+    Ok(())
+}
+
+fn invoke_agent(
+    options: &CodingBenchOptions,
+    repo_dir: &Path,
+    env: &[(String, String)],
+    prompt: &str,
+    timeout_ms: u64,
+) -> Result<CommandOutcome> {
+    match options.runner.as_str() {
+        "codex" => {
+            let mut args = vec![
+                "exec".to_string(),
+                "--json".to_string(),
+                "--color".to_string(),
+                "never".to_string(),
+                "--cd".to_string(),
+                repo_dir.to_string_lossy().to_string(),
+                "--model".to_string(),
+                options.model.clone(),
+                "--sandbox".to_string(),
+                "danger-full-access".to_string(),
+                "--dangerously-bypass-approvals-and-sandbox".to_string(),
+                "--dangerously-bypass-hook-trust".to_string(),
+            ];
+            if !options.reasoning_effort.trim().is_empty() {
+                args.push("-c".to_string());
+                args.push(format!(
+                    "model_reasoning_effort=\"{}\"",
+                    toml_escape(&options.reasoning_effort)
+                ));
+            }
+            if let Some(provider) = options.provider.as_deref() {
+                args.push("-c".to_string());
+                args.push(format!("model_provider=\"{}\"", toml_escape(provider)));
+            }
+            args.push(prompt.to_string());
+            command_output(
+                &options.codex_bin,
+                args.iter().map(String::as_str),
+                repo_dir,
+                env,
+                timeout_ms,
+            )
+        }
+        "noop" => Ok(CommandOutcome {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            timed_out: false,
+        }),
+        other => bail!("unsupported coding benchmark runner: {other}"),
+    }
+}
+
+fn build_prompt(task: &CodingBenchTask, condition_note: Option<&str>) -> String {
+    let mut prompt = String::new();
+    prompt.push_str("You are running an isolated coding benchmark task.\n");
+    if let Some(note) = condition_note {
+        prompt.push_str(note);
+        prompt.push('\n');
+    }
+    prompt.push_str("Modify the repository to satisfy the task. Do not inspect or depend on hidden tests. Keep edits scoped to the task.\n\n");
+    prompt.push_str("Task:\n");
+    prompt.push_str(&task.prompt);
+    prompt.push('\n');
+    prompt
+}
+
+fn write_hidden_files(task: &CodingBenchTask, repo_dir: &Path) -> Result<()> {
+    for (path, content) in &task.score.hidden_files {
+        write_relative_file(repo_dir, path, content)?;
+    }
+    Ok(())
+}
+
+fn write_relative_file(root: &Path, relative: &str, content: &str) -> Result<()> {
+    validate_relative_path(relative)?;
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create parent directory {}", parent.display()))?;
+    }
+    fs::write(&path, content).with_context(|| format!("write {}", path.display()))
+}
+
+fn command_output<I, S>(
+    program: &str,
+    args: I,
+    cwd: &Path,
+    env: &[(String, String)],
+    timeout_ms: u64,
+) -> Result<CommandOutcome>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("REMEM_DATA_DIR")
+        .env_remove("REMEM_CIPHER_KEY")
+        .env_remove("REMEM_DISABLE_HOOKS")
+        .env_remove("REMEM_ALLOW_PLAINTEXT_DB");
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("spawn command {program}"))?;
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut timed_out = false;
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("wait for command {program}"))?;
+    Ok(CommandOutcome {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        exit_code: output.status.code(),
+        timed_out,
+    })
+}
+
+fn ensure_success(label: &str, outcome: &CommandOutcome) -> Result<()> {
+    if outcome.exit_code == Some(0) && !outcome.timed_out {
+        return Ok(());
+    }
+    bail!(
+        "{label} failed with exit={:?} timed_out={} stderr={}",
+        outcome.exit_code,
+        outcome.timed_out,
+        outcome.stderr
+    )
+}
+
+fn write_artifact(dir: &Path, name: &str, content: &str) -> Result<String> {
+    let path = dir.join(name);
+    let mut file =
+        fs::File::create(&path).with_context(|| format!("create artifact {}", path.display()))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("write artifact {}", path.display()))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn report_artifact_root(json_out: &str, epoch: i64) -> Result<PathBuf> {
+    let parent = Path::new(json_out)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let path = parent.join("artifacts").join(epoch.to_string());
+    fs::create_dir_all(&path)
+        .with_context(|| format!("create artifact root {}", path.display()))?;
+    Ok(path)
+}
+
+fn unique_temp_dir(condition: BenchCondition, task_id: &str, run_index: usize) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "remem-coding-bench-{}-{}-{}-{}-{}",
+        condition.as_str(),
+        task_id,
+        run_index,
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
+fn current_epoch() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn current_git_rev(cwd: &Path) -> Option<String> {
+    let outcome = command_output("git", ["rev-parse", "HEAD"], cwd, &[], 30_000).ok()?;
+    (outcome.exit_code == Some(0)).then(|| outcome.stdout.trim().to_string())
+}
+
+fn runner_version(options: &CodingBenchOptions) -> Option<String> {
+    if options.runner != "codex" {
+        return None;
+    }
+    let outcome = command_output(
+        &options.codex_bin,
+        ["--version"],
+        Path::new("."),
+        &[],
+        30_000,
+    )
+    .ok()?;
+    (outcome.exit_code == Some(0)).then(|| outcome.stdout.trim().to_string())
+}
+
+fn failure_reason(
+    score_failed: bool,
+    unauthorized: &[String],
+    runner_timed_out: bool,
+    runner_exit_code: Option<i32>,
+) -> Option<String> {
+    if runner_timed_out {
+        return Some("runner timed out".to_string());
+    }
+    if !unauthorized.is_empty() {
+        return Some(format!(
+            "unauthorized path changes: {}",
+            unauthorized.join(", ")
+        ));
+    }
+    if score_failed {
+        return Some("score command failed".to_string());
+    }
+    if runner_exit_code.is_none() {
+        return Some("runner terminated by signal".to_string());
+    }
+    None
+}
+
+fn toml_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[derive(Debug)]
+struct CommandOutcome {
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+    timed_out: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_expanded_default_matrix() -> Result<()> {
+        let fixture = load_fixture("eval/coding-bench/fixtures/tasks.json")?;
+        let options = CodingBenchOptions {
+            fixture_path: "eval/coding-bench/fixtures/tasks.json".to_string(),
+            runs_per_condition: 3,
+            json_out: "/tmp/remem-coding-bench.json".to_string(),
+            condition: None,
+            task: None,
+            keep_workdirs: false,
+            dry_run: true,
+            runner: "noop".to_string(),
+            codex_bin: "codex".to_string(),
+            model: "gpt-5.5".to_string(),
+            provider: None,
+            reasoning_effort: "medium".to_string(),
+            ignore_budget: false,
+        };
+        let conditions = selected_conditions(&options)?;
+        let tasks = selected_tasks(&fixture, &options)?;
+        assert_eq!(conditions.len(), 3);
+        assert!(tasks.len() >= 5);
+        assert_eq!(
+            conditions.len() * tasks.len() * options.runs_per_condition,
+            45
+        );
+        Ok(())
+    }
+}
