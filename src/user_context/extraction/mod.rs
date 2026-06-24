@@ -11,6 +11,8 @@ use super::claims::{DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE};
 
 mod parse;
 mod prompt;
+#[cfg(test)]
+mod review_feedback_tests;
 mod source;
 #[cfg(test)]
 mod tests;
@@ -232,7 +234,11 @@ fn claim_has_likely_third_party_subject(text: &str) -> bool {
         Some("The" | "the") => words.next(),
         other => other,
     };
-    first.is_some_and(is_likely_third_party_name)
+    first.is_some_and(|word| {
+        is_likely_third_party_name(word)
+            || (is_likely_lowercase_third_party_subject(word)
+                && claim_has_third_party_predicate(text))
+    })
 }
 
 fn is_likely_third_party_name(word: &str) -> bool {
@@ -246,7 +252,26 @@ fn is_likely_third_party_name(word: &str) -> bool {
     !NON_THIRD_PARTY_NAME_SUBJECTS.contains(&format!("|{}|", word.to_ascii_lowercase()))
 }
 
-const NON_THIRD_PARTY_NAME_SUBJECTS: &str = "|api|cargo|claude|codebase|codex|github|gitlab|javascript|json|linux|macos|mcp|node|npm|openai|project|python|readme|repo|repository|rust|sqlite|sql|the|toml|typescript|user|windows|workspace|yaml|";
+fn is_likely_lowercase_third_party_subject(word: &str) -> bool {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_lowercase()
+        && chars.any(|ch| ch.is_ascii_lowercase())
+        && !NON_THIRD_PARTY_NAME_SUBJECTS.contains(&format!("|{}|", word.to_ascii_lowercase()))
+}
+
+fn claim_has_third_party_predicate(text: &str) -> bool {
+    short_support_tokens(text).iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "is" | "live" | "own" | "prefer" | "use" | "want" | "work"
+        )
+    })
+}
+
+const NON_THIRD_PARTY_NAME_SUBJECTS: &str = "|api|browser|cargo|claude|code|codebase|codex|github|gitlab|javascript|json|linux|macos|mcp|node|npm|openai|page|project|python|readme|repo|repository|review|reviews|rust|setting|settings|sqlite|sql|task|test|testing|the|toml|typescript|user|web|windows|workspace|yaml|";
 
 fn claim_has_user_owned_third_party_role(tokens: &[String]) -> bool {
     has_user_owned_subject(tokens) && has_third_party_role_token(tokens)

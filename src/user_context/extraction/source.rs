@@ -303,7 +303,6 @@ fn external_source_labels(text: &str) -> BTreeSet<ExternalSourceLabel> {
     let mut labels = BTreeSet::new();
     if tokens.contains("readme") {
         labels.insert(ExternalSourceLabel::Readme);
-        labels.insert(ExternalSourceLabel::File);
     }
     if tokens.contains("file") || tokens.contains("files") {
         labels.insert(ExternalSourceLabel::File);
