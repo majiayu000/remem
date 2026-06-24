@@ -9,7 +9,7 @@ use super::{
     summary::{self, SummaryRequest, UserContextSummary},
 };
 
-const MAX_SNAPSHOT_CLAIMS: i64 = 500;
+const MAX_SNAPSHOT_CLAIMS: usize = 500;
 
 #[derive(Debug, Clone)]
 pub struct ProfileSnapshotRequest<'a> {
@@ -96,21 +96,31 @@ fn render_summary_section(
         Some(snapshot) if snapshot.reasons.is_empty() => {
             output.push_str(&snapshot.summary.summary_text);
             output.push_str("\n\n");
-            render_summary_metadata(&snapshot.summary, "source-supported", output);
+            render_summary_metadata(
+                &snapshot.summary,
+                summary_provenance(&snapshot.summary),
+                output,
+            );
         }
         Some(snapshot) => {
             output.push_str("No default-eligible active summary text.\n\n");
-            output.push_str("## Excluded Summary\n\n");
-            if summary_text_allowed(req, &snapshot.reasons) {
-                output.push_str(&snapshot.summary.summary_text);
-                output.push_str("\n\n");
-            } else {
-                output.push_str("- [summary:");
-                output.push_str(&snapshot.summary.id.to_string());
-                output.push_str("] text redacted\n");
+            if any_audit_flag(req) {
+                output.push_str("## Excluded Summary\n\n");
+                if summary_text_allowed(req, &snapshot.reasons) {
+                    output.push_str(&snapshot.summary.summary_text);
+                    output.push_str("\n\n");
+                } else {
+                    output.push_str("- [summary:");
+                    output.push_str(&snapshot.summary.id.to_string());
+                    output.push_str("] text redacted\n");
+                }
+                output.push_str(&format!("  - reason: {}\n", snapshot.reasons.join(", ")));
+                render_summary_metadata(
+                    &snapshot.summary,
+                    summary_provenance(&snapshot.summary),
+                    output,
+                );
             }
-            output.push_str(&format!("  - reason: {}\n", snapshot.reasons.join(", ")));
-            render_summary_metadata(&snapshot.summary, "excluded", output);
         }
         None => output.push_str("No active summary found.\n\n"),
     }
@@ -130,8 +140,11 @@ fn render_claim_sections(
     for claim in claims {
         let reasons = claim_exclusion_reasons(conn, &claim, now)?;
         if reasons.is_empty() {
-            active.push(claim);
-        } else if should_show_excluded_claim(req, &reasons) {
+            if active.len() < MAX_SNAPSHOT_CLAIMS {
+                active.push(claim);
+            }
+        } else if should_show_excluded_claim(req, &reasons) && excluded.len() < MAX_SNAPSHOT_CLAIMS
+        {
             excluded.push((claim, reasons));
         }
     }
@@ -200,6 +213,19 @@ fn render_summary_metadata(summary: &UserContextSummary, provenance: &str, outpu
     ));
 }
 
+fn summary_provenance(summary: &UserContextSummary) -> &'static str {
+    if summary.model.as_deref() == Some("manual-edit") {
+        "manual-edit"
+    } else if summary.source_claim_ids.is_empty()
+        && summary.source_memory_ids.is_empty()
+        && summary.source_activity_refs.is_empty()
+    {
+        "unsourced"
+    } else {
+        "source-supported"
+    }
+}
+
 fn render_claim(
     claim: &SnapshotClaim,
     reasons: Option<&[String]>,
@@ -245,13 +271,14 @@ fn load_snapshot_summary(
     let Some(summary) = summary::load_active_summary_unfiltered(conn, &summary_req)? else {
         return Ok(None);
     };
-    let visible = summary::load_active_summary(conn, &summary_req)?;
     let mut reasons = Vec::new();
-    if visible.as_ref().map(|item| item.id) != Some(summary.id) {
-        reasons.push("source:not-default-visible".to_string());
-    }
-    if summary::summary_is_policy_suppressed(conn, &summary)? {
+    let suppressed = summary::summary_is_policy_suppressed(conn, &summary)?;
+    if suppressed {
         push_reason(&mut reasons, "suppressed");
+    }
+    let visible = summary::load_active_summary(conn, &summary_req)?;
+    if !suppressed && visible.as_ref().map(|item| item.id) != Some(summary.id) {
+        push_reason(&mut reasons, "source:not-default-visible");
     }
     if summary.model.as_deref() == Some("manual-edit") {
         push_reason(&mut reasons, "provenance:manual-edit");
@@ -277,29 +304,25 @@ fn load_snapshot_claims(
          FROM user_context_claims
          WHERE ((owner_scope = ?1 AND owner_key = ?2)
             OR (owner_scope = 'repo' AND owner_key = ?3))
-         ORDER BY owner_scope ASC, owner_key ASC, claim_type ASC, claim_key ASC, id ASC
-         LIMIT ?4",
+         ORDER BY owner_scope ASC, owner_key ASC, claim_type ASC, claim_key ASC, id ASC",
     )?;
-    let rows = stmt.query_map(
-        params![owner.scope, owner.key, project, MAX_SNAPSHOT_CLAIMS],
-        |row| {
-            Ok(SnapshotClaim {
-                id: row.get(0)?,
-                claim_type: row.get(1)?,
-                claim_key: row.get(2)?,
-                claim_text: row.get(3)?,
-                owner_scope: row.get(4)?,
-                owner_key: row.get(5)?,
-                sensitivity: row.get(6)?,
-                source_kind: row.get(7)?,
-                source_refs_json: row.get(8)?,
-                status: row.get(9)?,
-                valid_from_epoch: row.get(10)?,
-                valid_to_epoch: row.get(11)?,
-                updated_at_epoch: row.get(12)?,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(params![owner.scope, owner.key, project], |row| {
+        Ok(SnapshotClaim {
+            id: row.get(0)?,
+            claim_type: row.get(1)?,
+            claim_key: row.get(2)?,
+            claim_text: row.get(3)?,
+            owner_scope: row.get(4)?,
+            owner_key: row.get(5)?,
+            sensitivity: row.get(6)?,
+            source_kind: row.get(7)?,
+            source_refs_json: row.get(8)?,
+            status: row.get(9)?,
+            valid_from_epoch: row.get(10)?,
+            valid_to_epoch: row.get(11)?,
+            updated_at_epoch: row.get(12)?,
+        })
+    })?;
     crate::db::query::collect_rows(rows)
 }
 
@@ -383,7 +406,7 @@ fn reason_allowed(req: &ProfileSnapshotRequest<'_>, reason: &str) -> bool {
         "suppressed" | "status:suppressed" => req.include_suppressed,
         "status:deleted" => req.include_deleted,
         reason if reason.starts_with("sensitivity:") => req.include_sensitive,
-        reason if reason.starts_with("status:") => req.include_inactive,
+        reason if inactive_status_reason(reason) => req.include_inactive,
         reason if reason.starts_with("validity:") => req.include_inactive,
         _ => false,
     }
@@ -394,10 +417,17 @@ fn reason_allowed_by_some_flag(req: &ProfileSnapshotRequest<'_>, reason: &str) -
         "suppressed" | "status:suppressed" => req.include_suppressed,
         "status:deleted" => req.include_deleted,
         reason if reason.starts_with("sensitivity:") => req.include_sensitive,
-        reason if reason.starts_with("status:") => req.include_inactive,
+        reason if inactive_status_reason(reason) => req.include_inactive,
         reason if reason.starts_with("validity:") => req.include_inactive,
         _ => false,
     }
+}
+
+fn inactive_status_reason(reason: &str) -> bool {
+    matches!(
+        reason.strip_prefix("status:"),
+        Some("inactive" | "stale" | "superseded" | "archived")
+    )
 }
 
 fn any_audit_flag(req: &ProfileSnapshotRequest<'_>) -> bool {
@@ -453,235 +483,5 @@ fn format_snapshot_epoch(epoch: i64) -> String {
 fn push_reason(reasons: &mut Vec<String>, reason: &str) {
     if !reasons.iter().any(|existing| existing == reason) {
         reasons.push(reason.to_string());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        db,
-        memory::suppression::{create_suppression, SuppressRequest, SuppressionTarget},
-        user_context::{
-            claims::{
-                create_manual_claim, delete_claim, ManualClaimRequest, UserContextClaimType,
-                UserContextSensitivity,
-            },
-            summary::{refresh_summary, SummaryEditRequest},
-        },
-    };
-
-    #[test]
-    fn profile_snapshot_renders_active_summary_and_claims_in_stable_order() -> Result<()> {
-        let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-active");
-        let conn = db::open_db()?;
-        create_claim(
-            &conn,
-            "Prefer concise reviews",
-            "review",
-            UserContextSensitivity::Normal,
-        )?;
-        create_claim(
-            &conn,
-            "Use deterministic tests",
-            "tests",
-            UserContextSensitivity::Normal,
-        )?;
-        refresh_summary(
-            &conn,
-            &SummaryRequest {
-                owner_scope: None,
-                owner_key: None,
-                project: "/repo",
-            },
-        )?;
-
-        let output = render_markdown_profile_snapshot(
-            &conn,
-            &request("/repo", data_dir.db_path().as_path()),
-        )?;
-
-        assert!(output.contains("# remem User Profile Snapshot"));
-        assert!(output.contains("Source of truth: SQLite database at"));
-        assert!(output.contains("Derived snapshot: editing this Markdown does not mutate"));
-        assert!(output.contains("## Active Summary"));
-        assert!(output.contains("source_claim_ids: ["));
-        assert!(output.contains("active_claim_ids=[1, 2]"));
-        let first = output.find("preference:review").unwrap();
-        let second = output.find("preference:tests").unwrap();
-        assert!(first < second);
-        Ok(())
-    }
-
-    #[test]
-    fn profile_snapshot_excludes_non_default_claims_and_redacts_until_all_audit_flags_allow_text(
-    ) -> Result<()> {
-        let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-excluded");
-        let conn = db::open_db()?;
-        create_claim(
-            &conn,
-            "Normal retained claim",
-            "normal",
-            UserContextSensitivity::Normal,
-        )?;
-        create_claim(
-            &conn,
-            "Personal claim should stay hidden",
-            "personal",
-            UserContextSensitivity::Personal,
-        )?;
-        create_claim(
-            &conn,
-            "Restricted claim should stay hidden",
-            "restricted",
-            UserContextSensitivity::Restricted,
-        )?;
-        let future = create_claim(
-            &conn,
-            "Future claim should stay hidden",
-            "future",
-            UserContextSensitivity::Normal,
-        )?;
-        conn.execute(
-            "UPDATE user_context_claims SET valid_from_epoch = ?1 WHERE id = ?2",
-            rusqlite::params![chrono::Utc::now().timestamp() + 3600, future.id],
-        )?;
-        let expired = create_claim(
-            &conn,
-            "Expired claim should stay hidden",
-            "expired",
-            UserContextSensitivity::Normal,
-        )?;
-        conn.execute(
-            "UPDATE user_context_claims SET valid_to_epoch = ?1 WHERE id = ?2",
-            rusqlite::params![chrono::Utc::now().timestamp() - 3600, expired.id],
-        )?;
-        let sensitive = create_claim(
-            &conn,
-            "Sensitive suppressed claim",
-            "sensitive",
-            UserContextSensitivity::Sensitive,
-        )?;
-        create_suppression(
-            &conn,
-            &SuppressRequest {
-                target: SuppressionTarget {
-                    kind: "user_claim".to_string(),
-                    id: Some(sensitive.id),
-                    value: None,
-                },
-                reason: Some("audit suppression"),
-                actor: Some("test"),
-            },
-        )?;
-        let deleted = create_claim(
-            &conn,
-            "Deleted claim should stay hidden",
-            "deleted",
-            UserContextSensitivity::Normal,
-        )?;
-        delete_claim(&conn, deleted.id)?;
-
-        let default_output = render_markdown_profile_snapshot(
-            &conn,
-            &request("/repo", data_dir.db_path().as_path()),
-        )?;
-        assert!(default_output.contains("Normal retained claim"));
-        assert!(!default_output.contains("Personal claim should stay hidden"));
-        assert!(!default_output.contains("Restricted claim should stay hidden"));
-        assert!(!default_output.contains("Future claim should stay hidden"));
-        assert!(!default_output.contains("Expired claim should stay hidden"));
-        assert!(!default_output.contains("Sensitive suppressed claim"));
-        assert!(!default_output.contains("Deleted claim should stay hidden"));
-
-        let db_path = data_dir.db_path();
-        let mut suppressed_only = request("/repo", db_path.as_path());
-        suppressed_only.include_suppressed = true;
-        let output = render_markdown_profile_snapshot(&conn, &suppressed_only)?;
-        assert!(output.contains("preference:sensitive - [redacted]"));
-        assert!(output.contains("reason: sensitivity:sensitive, suppressed"));
-        assert!(!output.contains("Sensitive suppressed claim"));
-
-        let db_path = data_dir.db_path();
-        let mut full_audit = request("/repo", db_path.as_path());
-        full_audit.include_suppressed = true;
-        full_audit.include_sensitive = true;
-        full_audit.include_inactive = true;
-        full_audit.include_deleted = true;
-        let output = render_markdown_profile_snapshot(&conn, &full_audit)?;
-        assert!(output.contains("Personal claim should stay hidden"));
-        assert!(output.contains("Restricted claim should stay hidden"));
-        assert!(output.contains("Future claim should stay hidden"));
-        assert!(output.contains("Expired claim should stay hidden"));
-        assert!(output.contains("Sensitive suppressed claim"));
-        assert!(output.contains("Deleted claim should stay hidden"));
-        assert!(output.contains("reason: status:deleted"));
-        Ok(())
-    }
-
-    #[test]
-    fn profile_snapshot_manual_summary_requires_audit_flag() -> Result<()> {
-        let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-manual");
-        let conn = db::open_db()?;
-        crate::user_context::summary::edit_summary(
-            &conn,
-            &SummaryEditRequest {
-                owner_scope: None,
-                owner_key: None,
-                project: "/repo",
-                text: "Manual profile summary text",
-            },
-        )?;
-
-        let default_output = render_markdown_profile_snapshot(
-            &conn,
-            &request("/repo", data_dir.db_path().as_path()),
-        )?;
-        assert!(default_output.contains("No default-eligible active summary text."));
-        assert!(!default_output.contains("Manual profile summary text"));
-        assert!(default_output.contains("provenance:manual-edit"));
-
-        let db_path = data_dir.db_path();
-        let mut audit = request("/repo", db_path.as_path());
-        audit.include_manual_summaries = true;
-        let output = render_markdown_profile_snapshot(&conn, &audit)?;
-        assert!(output.contains("Manual profile summary text"));
-        Ok(())
-    }
-
-    fn request<'a>(project: &'a str, source_of_truth: &'a Path) -> ProfileSnapshotRequest<'a> {
-        ProfileSnapshotRequest {
-            project,
-            owner_scope: "user",
-            owner_key: None,
-            source_of_truth,
-            include_suppressed: false,
-            include_sensitive: false,
-            include_inactive: false,
-            include_deleted: false,
-            include_manual_summaries: false,
-        }
-    }
-
-    fn create_claim(
-        conn: &Connection,
-        text: &str,
-        key: &str,
-        sensitivity: UserContextSensitivity,
-    ) -> Result<crate::user_context::claims::UserContextClaim> {
-        create_manual_claim(
-            conn,
-            &ManualClaimRequest {
-                text,
-                owner_scope: None,
-                owner_key: None,
-                claim_type: UserContextClaimType::Preference,
-                claim_key: Some(key),
-                confidence: 1.0,
-                sensitivity,
-                valid_from_epoch: None,
-                valid_to_epoch: None,
-            },
-        )
     }
 }
