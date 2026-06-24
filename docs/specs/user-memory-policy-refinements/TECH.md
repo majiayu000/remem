@@ -136,12 +136,17 @@ Profile summaries require provenance labels:
 - deterministic summaries with non-empty source ids may appear as
   `provenance: source-supported`;
 - manually edited summaries using `model='manual-edit'` must appear as
-  `provenance: manual-edit` and show the preserved source ids separately;
+  `provenance: manual-edit` and show the preserved source ids separately only
+  when an audit flag requests manual summary text. Default snapshots must omit
+  or redact manual summary text because the row has no sensitivity field and the
+  preserved source ids do not prove every edited sentence is source-supported;
 - summaries with empty source ids must appear as `provenance: unsourced` and
-  must not be presented as source-supported profile truth;
+  must not render summary text by default or be presented as source-supported
+  profile truth;
 - if a manual edit changes text beyond the cited sources, the snapshot must
-  still render it as manual user-authored summary text, not as a claim backed by
-  the old source ids.
+  render only an excluded-summary marker by default. Audit output may render the
+  manual user-authored summary text with `reason: provenance:manual-edit`, but
+  not as a claim backed by the old source ids.
 
 Audit output may include excluded rows only when explicitly requested:
 

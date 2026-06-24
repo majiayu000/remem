@@ -82,11 +82,12 @@ The snapshot should answer:
   restricted, when an audit flag requests them?
 - When was the snapshot generated?
 
-The default snapshot includes only active, normal-sensitivity claims that are
-eligible for default user-context use in the current project. It excludes
-inactive, suppressed, deleted, expired, future, personal, sensitive, and
-restricted claims. Audit flags may include excluded items, but the file must
-clearly label why each item is excluded from default use.
+The default snapshot includes only active, normal-sensitivity claims and
+source-supported summary text that are eligible for default user-context use in
+the current project. It excludes inactive, suppressed, deleted, expired, future,
+personal, sensitive, restricted, manual-only, and unsourced profile text. Audit
+flags may include excluded items, but the file must clearly label why each item
+is excluded from default use.
 
 The snapshot is a derived artifact. Editing it must not mutate remem state in
 the first implementation.
