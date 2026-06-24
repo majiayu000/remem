@@ -274,6 +274,13 @@ fn apply_candidate_tx(
     let note = edit
         .and_then(|edit| normalized_optional(edit.review_note))
         .map(str::to_string);
+    if let Some(reason) = crate::user_context::non_retention::block_reason(
+        &text,
+        candidate.source_preview.as_deref(),
+        &candidate.source_kind,
+    ) {
+        bail!("user-context candidate blocked by non-retention policy: {reason}");
+    }
     let now = chrono::Utc::now().timestamp();
     if edit.is_some() {
         let updated = conn.execute(

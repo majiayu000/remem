@@ -53,6 +53,7 @@ fn contains_secret_like_content(
     }
     contains_secret_key_token(blob)
         || contains_token_secret_phrase(blob)
+        || contains_access_key_phrase(blob)
         || contains_payment_card_number(blob)
         || contains_non_retention_pattern(blob, SECRET_PATTERNS)
         || (blob.contains("[redacted")
@@ -133,15 +134,62 @@ fn contains_token_secret_phrase(text: &str) -> bool {
     })
 }
 
+fn contains_access_key_phrase(text: &str) -> bool {
+    let tokens = lexical_tokens(text);
+    tokens.iter().enumerate().any(|(index, token)| {
+        if token != "access" || tokens.get(index + 1).is_none_or(|next| next != "key") {
+            return false;
+        }
+        tokens
+            .iter()
+            .skip(index + 2)
+            .take(5)
+            .filter(|candidate| {
+                !matches!(
+                    candidate.as_str(),
+                    "id" | "is" | "key" | "secret" | "the" | "value"
+                )
+            })
+            .any(|candidate| is_secret_value_token(candidate) || is_known_access_key_id(candidate))
+    })
+}
+
 fn contains_payment_card_number(text: &str) -> bool {
     let tokens = lexical_tokens(text);
-    let has_card_brand = tokens
-        .iter()
-        .any(|token| matches!(token.as_str(), "amex" | "discover" | "mastercard" | "visa"));
-    has_card_brand
-        && tokens.iter().any(|token| {
-            (13..=19).contains(&token.len()) && token.chars().all(|ch| ch.is_ascii_digit())
-        })
+    let has_card_context = tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "amex" | "card" | "credit" | "discover" | "mastercard" | "payment" | "visa"
+        )
+    });
+    has_card_context && contains_card_digit_sequence(text)
+}
+
+fn contains_card_digit_sequence(text: &str) -> bool {
+    let mut digits = 0;
+    let mut in_sequence = false;
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            digits += 1;
+            in_sequence = true;
+            continue;
+        }
+        if in_sequence && matches!(ch, ' ' | '-') {
+            continue;
+        }
+        if (13..=19).contains(&digits) {
+            return true;
+        }
+        digits = 0;
+        in_sequence = false;
+    }
+    (13..=19).contains(&digits)
+}
+
+fn is_known_access_key_id(token: &str) -> bool {
+    matches!(token.get(..4), Some("akia" | "asia"))
+        && token.len() >= 16
+        && token.chars().all(|ch| ch.is_ascii_alphanumeric())
 }
 
 fn is_secret_value_token(token: &str) -> bool {
@@ -422,7 +470,31 @@ mod tests {
         );
         assert_eq!(
             block_reason(
+                "User's Visa number is 4111 1111 1111 1111.",
+                None,
+                "explicit_user_statement"
+            ),
+            Some("secret_like_content")
+        );
+        assert_eq!(
+            block_reason(
+                "User's payment card is 4111-1111-1111-1111.",
+                None,
+                "explicit_user_statement"
+            ),
+            Some("secret_like_content")
+        );
+        assert_eq!(
+            block_reason(
                 "User's GitLab token is abc123.",
+                None,
+                "explicit_user_statement"
+            ),
+            Some("secret_like_content")
+        );
+        assert_eq!(
+            block_reason(
+                "User's AWS access key ID is AKIAIOSFODNN7EXAMPLE.",
                 None,
                 "explicit_user_statement"
             ),

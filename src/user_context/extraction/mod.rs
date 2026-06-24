@@ -198,7 +198,7 @@ fn non_retention_block_reason(
     )
     .or_else(|| {
         (candidate.source_kind == "third_party_statement"
-            && !is_user_framed_third_party_candidate(candidate, batch))
+            && !is_supported_third_party_candidate(candidate, batch))
         .then_some("unframed_third_party_detail")
     })
     .or_else(|| {
@@ -222,7 +222,7 @@ fn candidate_source_blob(
     (!blob.is_empty()).then_some(blob)
 }
 
-fn is_user_framed_third_party_candidate(
+fn is_supported_third_party_candidate(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> bool {
@@ -230,7 +230,58 @@ fn is_user_framed_third_party_candidate(
         .events_for_candidate(candidate)
         .into_iter()
         .filter(|event| batch.event_is_user_authored(event.id))
-        .any(|event| has_user_context_framing(&event.content))
+        .any(|event| {
+            has_user_context_framing(&event.content)
+                && has_third_party_fact_token_support(&candidate.claim_text, &event.content)
+        })
+}
+
+fn has_third_party_fact_token_support(claim_text: &str, source_text: &str) -> bool {
+    let claim_tokens = third_party_fact_tokens(claim_text);
+    if claim_tokens.len() < 2 {
+        return false;
+    }
+    let source_tokens = short_support_tokens(source_text);
+    claim_tokens
+        .iter()
+        .all(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn third_party_fact_tokens(text: &str) -> Vec<String> {
+    let mut tokens = short_support_tokens(text)
+        .into_iter()
+        .filter(|token| !is_third_party_fact_stopword(token))
+        .collect::<Vec<_>>();
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn is_third_party_fact_stopword(token: &str) -> bool {
+    matches!(
+        token,
+        "a" | "an"
+            | "and"
+            | "as"
+            | "for"
+            | "from"
+            | "her"
+            | "his"
+            | "i"
+            | "in"
+            | "is"
+            | "me"
+            | "my"
+            | "of"
+            | "on"
+            | "our"
+            | "s"
+            | "the"
+            | "their"
+            | "to"
+            | "user"
+            | "we"
+    )
 }
 
 fn has_user_context_framing(text: &str) -> bool {
