@@ -237,8 +237,8 @@ fn claim_has_likely_third_party_subject(text: &str) -> bool {
     first.is_some_and(|word| {
         is_likely_third_party_name(word)
             || (is_likely_lowercase_third_party_subject(word)
-                && claim_has_third_party_predicate(text))
-                && !claim_is_user_preferred_subject_statement(text)
+                && claim_has_third_party_predicate(text)
+                && !claim_is_user_preferred_subject_statement(text))
     })
 }
 
