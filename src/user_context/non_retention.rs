@@ -218,8 +218,12 @@ fn contains_current_weather_content(text: &str) -> bool {
 }
 
 fn contains_general_knowledge_content(text: &str) -> bool {
-    contains_non_retention_pattern(text, GENERAL_KNOWLEDGE_PATTERNS)
-        || contains_project_independent_fact_shape(text)
+    text.lines().any(|line| {
+        let tokens = lexical_tokens(line);
+        contains_non_retention_pattern(line, GENERAL_KNOWLEDGE_PATTERNS)
+            && !has_user_context_reference(&tokens)
+            && !has_project_context_reference(&tokens)
+    }) || contains_project_independent_fact_shape(text)
 }
 
 fn contains_project_independent_fact_shape(text: &str) -> bool {
@@ -272,18 +276,21 @@ fn contains_external_source_approval(text: &str) -> bool {
         "please remember from file",
         "please remember from files",
         "please remember from readme",
+        "please remember from the readme",
         "please remember from website",
         "please remember from web page",
         "please remember from browser page",
         "remember from file",
         "remember from files",
         "remember from readme",
+        "remember from the readme",
         "remember from website",
         "remember from web page",
         "remember from browser page",
         "save from file",
         "save from files",
         "save from readme",
+        "save from the readme",
         "save from website",
         "save from web page",
         "save from browser page",
@@ -479,14 +486,25 @@ const ILLEGAL_OR_HARMFUL_PATTERNS: &[&str] = &[
 ];
 
 const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
-    "browser page",
+    "according to browser page",
+    "according to readme",
+    "according to the browser page",
+    "according to the readme",
+    "according to the web page",
+    "according to web page",
+    "browser page says",
     "derived from file",
     "external source",
     "file says",
     "files say",
+    "from browser page",
+    "from the browser page",
+    "from the readme",
+    "from the web page",
+    "from web page",
     "readme says",
     "repository file says",
-    "web page",
+    "web page says",
     "website says",
     "without explicit user approval",
     "without user approval",
@@ -680,6 +698,22 @@ mod tests {
         );
         assert_eq!(
             block_reason(
+                "User works on internal payroll.",
+                Some("According to the README, the user works on internal payroll."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
+                "User works on internal payroll.",
+                Some("From the README, the user works on internal payroll."),
+                "explicit_user_statement"
+            ),
+            Some("unapproved_external_source")
+        );
+        assert_eq!(
+            block_reason(
                 "User lives in Paris.",
                 Some("Website says the user lives in Paris. Please remember from website."),
                 "explicit_user_statement"
@@ -690,6 +724,22 @@ mod tests {
             block_reason(
                 "The user prefers loading settings from files.",
                 Some("I prefer loading settings from files."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "User prefers Rust.",
+                Some("I prefer Rust because Rust ownership prevents data races."),
+                "explicit_user_statement"
+            ),
+            None
+        );
+        assert_eq!(
+            block_reason(
+                "User prefers testing web page layouts in Playwright.",
+                Some("I prefer testing web page layouts in Playwright."),
                 "explicit_user_statement"
             ),
             None
