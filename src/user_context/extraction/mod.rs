@@ -226,9 +226,6 @@ fn is_user_framed_third_party_candidate(
     candidate: &ParsedUserContextCandidate,
     batch: &CandidateSourceBatch,
 ) -> bool {
-    if has_user_context_framing(&candidate.claim_text) {
-        return true;
-    }
     batch
         .events_for_candidate(candidate)
         .into_iter()
