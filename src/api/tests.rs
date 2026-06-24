@@ -499,11 +499,19 @@ async fn router_serves_user_recall_with_auth() -> anyhow::Result<()> {
     let body = to_bytes(response.into_body(), usize::MAX).await?;
     let payload: Value = serde_json::from_slice(&body)?;
     assert_eq!(payload["empty"], false);
+    assert_eq!(
+        payload["usage_policy"],
+        crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY
+    );
     assert_eq!(payload["included"][0]["source_type"], "user_claim");
     assert!(payload["context"]
         .as_str()
         .unwrap_or_default()
         .contains("recall"));
+    assert!(!payload["context"]
+        .as_str()
+        .unwrap_or_default()
+        .contains(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY));
     Ok(())
 }
 
