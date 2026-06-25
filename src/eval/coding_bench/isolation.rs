@@ -22,6 +22,12 @@ impl CodexIsolation {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn prepare_codex_isolation(_run_root: &Path, _codex_bin: &str) -> Result<CodexIsolation> {
+    bail!("isolated codex benchmark runner requires a host-read sandbox on this platform")
+}
+
+#[cfg(target_os = "macos")]
 pub fn prepare_codex_isolation(run_root: &Path, codex_bin: &str) -> Result<CodexIsolation> {
     let codex_executable = resolve_executable(codex_bin)?;
     let node_executable = resolve_executable("node").ok();
@@ -37,10 +43,21 @@ pub fn prepare_codex_isolation(run_root: &Path, codex_bin: &str) -> Result<Codex
         )
     })?;
     copy_codex_auth(&isolated_codex_home)?;
+    let host_home = host_home_dir()?;
+    let auth_path = isolated_codex_home.join("auth.json");
+    let profile =
+        macos_host_read_sandbox_profile(run_root, &private_root, &host_home, &codex_executable);
 
-    let mut isolation = CodexIsolation {
-        program: codex_bin.to_string(),
-        args_prefix: Vec::new(),
+    Ok(CodexIsolation {
+        program: "/bin/sh".to_string(),
+        args_prefix: vec![
+            "-c".to_string(),
+            MACOS_CODEX_SANDBOX_WRAPPER.to_string(),
+            "remem-codex-sandbox".to_string(),
+            profile,
+            codex_executable.to_string_lossy().to_string(),
+            auth_path.to_string_lossy().to_string(),
+        ],
         env: vec![
             (
                 "HOME".to_string(),
@@ -56,35 +73,7 @@ pub fn prepare_codex_isolation(run_root: &Path, codex_bin: &str) -> Result<Codex
             ),
         ],
         private_root,
-    };
-
-    #[cfg(target_os = "macos")]
-    {
-        let host_home = host_home_dir()?;
-        let auth_path = isolated_codex_home.join("auth.json");
-        let profile = macos_host_read_sandbox_profile(
-            run_root,
-            &isolation.private_root,
-            &host_home,
-            &codex_executable,
-        );
-        isolation.program = "/bin/sh".to_string();
-        isolation.args_prefix = vec![
-            "-c".to_string(),
-            MACOS_CODEX_SANDBOX_WRAPPER.to_string(),
-            "remem-codex-sandbox".to_string(),
-            profile,
-            codex_executable.to_string_lossy().to_string(),
-            auth_path.to_string_lossy().to_string(),
-        ];
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        bail!("isolated codex benchmark runner requires a host-read sandbox on this platform");
-    }
-
-    Ok(isolation)
+    })
 }
 
 pub fn runner_isolation_violation(stdout: &str, stderr: &str) -> Option<String> {
