@@ -1,9 +1,7 @@
 use std::io::{Read, Write};
-use std::sync::Mutex;
 
 use super::*;
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 const TEST_API_KEY_ENV: &str = "REMEM_TEST_EMBEDDING_KEY";
 
 const ENV_KEYS: &[&str] = &[
@@ -25,7 +23,9 @@ const ENV_KEYS: &[&str] = &[
 ];
 
 fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+    let _guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("env lock should acquire");
     let saved = ENV_KEYS
         .iter()
         .map(|key| (*key, std::env::var(key).ok()))

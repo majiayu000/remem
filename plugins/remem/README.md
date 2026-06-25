@@ -49,10 +49,12 @@ node plugins/remem/scripts/remem-runtime.js status
 Release download support is intentionally checksum-gated. The release workflow
 uploads platform tarballs, `SHA256SUMS`, and a release-hosted
 `remem-releases.json` manifest with exact asset checksums. The checked-in
-manifest only needs the version and `base_url`; when its asset map is empty, the
-runtime manager fetches the release-hosted manifest before downloading a binary.
-Fresh installs outside a local checkout must provide `REMEM_BINARY` until a
-matching GitHub release has those checked assets.
+manifest keeps the current source version with `state: "unreleased"` and an
+empty asset map until a matching GitHub Release exists. In that staged state the
+runtime manager does not fetch a release URL, so fresh installs outside a local
+checkout must provide `REMEM_BINARY` or build from source. Release-hosted
+manifest fallback is enabled only when the checked-in entry has a `base_url`
+for an already-published tag.
 
 CI enforces that `Cargo.toml`, `Cargo.lock`,
 `.codex-plugin/plugin.json`, and `runtimes/remem-releases.json` carry the same
