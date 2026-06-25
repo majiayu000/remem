@@ -161,7 +161,7 @@ pub struct CodingRunArtifact {
     pub failure_reason: Option<String>,
     pub metrics: CodingRunMetrics,
     #[serde(default)]
-    pub memory_contract: Value,
+    pub memory_contract: Option<CodingMemoryContract>,
     #[serde(default)]
     pub artifacts: BTreeMap<String, String>,
 }
@@ -175,4 +175,19 @@ pub struct CodingRunMetrics {
     pub wall_time_ms: Option<u64>,
     pub tool_calls: Option<u64>,
     pub commands_run: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CodingMemoryContract {
+    #[serde(default)]
+    pub injected_memory_ids: Vec<i64>,
+    #[serde(default)]
+    pub used_memory_ids: Vec<i64>,
+    pub citation_precision: f64,
+    pub citation_recall: f64,
+    pub stale_used_count: u64,
+    pub irrelevant_injection_count: u64,
+    pub missing_relevant_memory_count: u64,
+    pub memory_helped: bool,
+    pub memory_hurt: bool,
 }

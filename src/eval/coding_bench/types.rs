@@ -185,6 +185,8 @@ pub struct ConditionSummary {
     pub turns_mean: Option<f64>,
     pub wall_time_ms_mean: f64,
     pub wall_time_ms_p95: f64,
+    pub failure_counts: BTreeMap<CodingBenchFailureReason, usize>,
+    pub memory_failure_counts: BTreeMap<CodingBenchFailureReason, usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -193,7 +195,7 @@ pub struct RunReport {
     pub task_id: String,
     pub run_index: usize,
     pub resolved: bool,
-    pub failure_reason: Option<String>,
+    pub failure_reason: Option<CodingBenchFailureReason>,
     pub usage: BenchTokenUsage,
     pub turns: Option<usize>,
     pub wall_time_ms: u128,
@@ -203,9 +205,62 @@ pub struct RunReport {
     pub runner_exit_code: Option<i32>,
     pub runner_timed_out: bool,
     pub score_commands: Vec<CommandReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_contract: Option<CodingMemoryAttribution>,
     #[serde(skip)]
     pub artifacts: RunArtifacts,
     pub workdir: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingBenchFailureReason {
+    TestFailure,
+    Timeout,
+    CompileFailure,
+    WrongFileModified,
+    IgnoredMemory,
+    MissingMemory,
+    StaleMemoryFollowed,
+    IrrelevantMemoryDistracted,
+    OverContextBudget,
+    AgentHallucinatedMemory,
+    OracleInconclusive,
+}
+
+impl CodingBenchFailureReason {
+    pub const fn is_memory_specific(self) -> bool {
+        matches!(
+            self,
+            Self::IgnoredMemory
+                | Self::MissingMemory
+                | Self::StaleMemoryFollowed
+                | Self::IrrelevantMemoryDistracted
+                | Self::AgentHallucinatedMemory
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CodingMemoryAttributionInput {
+    pub injected_memory_ids: Vec<i64>,
+    pub relevant_memory_ids: Vec<i64>,
+    pub forbidden_memory_ids: Vec<i64>,
+    pub gold_required_facts: Vec<String>,
+    pub gold_forbidden_facts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CodingMemoryAttribution {
+    pub injected_memory_ids: Vec<i64>,
+    pub used_memory_ids: Vec<i64>,
+    pub citation_precision: f64,
+    pub citation_recall: f64,
+    pub stale_used_count: usize,
+    pub irrelevant_injection_count: usize,
+    pub missing_relevant_memory_count: usize,
+    pub memory_helped: bool,
+    pub memory_hurt: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Default)]

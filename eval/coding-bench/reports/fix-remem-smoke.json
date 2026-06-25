@@ -42,7 +42,9 @@
         "tokens_total_stddev": 28471.172807596107,
         "turns_mean": 1.0,
         "wall_time_ms_mean": 58299.0,
-        "wall_time_ms_p95": 92915.0
+        "wall_time_ms_p95": 92915.0,
+        "failure_counts": {},
+        "memory_failure_counts": {}
       },
       "runs": [
         {

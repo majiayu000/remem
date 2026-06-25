@@ -19,7 +19,39 @@
       "enum": ["test_failure", "timeout", "compile_failure", "wrong_file_modified", "ignored_memory", "missing_memory", "stale_memory_followed", "irrelevant_memory_distracted", "over_context_budget", "agent_hallucinated_memory", "oracle_inconclusive", null]
     },
     "metrics": { "type": "object" },
-    "memory_contract": { "type": "object" },
+    "memory_contract": {
+      "type": "object",
+      "required": [
+        "injected_memory_ids",
+        "used_memory_ids",
+        "citation_precision",
+        "citation_recall",
+        "stale_used_count",
+        "irrelevant_injection_count",
+        "missing_relevant_memory_count",
+        "memory_helped",
+        "memory_hurt"
+      ],
+      "properties": {
+        "injected_memory_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "used_memory_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "citation_precision": { "type": "number", "minimum": 0, "maximum": 1 },
+        "citation_recall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "stale_used_count": { "type": "integer", "minimum": 0 },
+        "irrelevant_injection_count": { "type": "integer", "minimum": 0 },
+        "missing_relevant_memory_count": { "type": "integer", "minimum": 0 },
+        "memory_helped": { "type": "boolean" },
+        "memory_hurt": { "type": "boolean" }
+      }
+    },
     "artifacts": { "type": "object" }
   }
 }

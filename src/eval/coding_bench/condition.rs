@@ -1,15 +1,19 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use super::types::{BenchCondition, CodingBenchFixture, CodingBenchTask, SeedMemory};
+use super::types::{
+    BenchCondition, CodingBenchFixture, CodingBenchTask, CodingMemoryAttributionInput, SeedMemory,
+};
 
 #[derive(Debug, Clone)]
 pub struct ConditionSetup {
     pub env: Vec<(String, String)>,
     pub prompt_note: Option<String>,
+    pub memory_attribution: CodingMemoryAttributionInput,
 }
 
 pub fn apply_condition(
@@ -23,6 +27,7 @@ pub fn apply_condition(
         BenchCondition::NoMemory => Ok(ConditionSetup {
             env: vec![("REMEM_DISABLE_HOOKS".to_string(), "1".to_string())],
             prompt_note: None,
+            memory_attribution: CodingMemoryAttributionInput::default(),
         }),
         BenchCondition::CuratedFile => {
             let content = task
@@ -37,10 +42,12 @@ pub fn apply_condition(
                     "A curated MEMORY.md file is available in the repo. Read it before editing."
                         .to_string(),
                 ),
+                memory_attribution: CodingMemoryAttributionInput::default(),
             })
         }
         BenchCondition::Remem => {
-            let rendered = render_seeded_remem_context(data_dir, repo_dir, task)?;
+            let (rendered, memory_attribution) =
+                render_seeded_remem_context(data_dir, repo_dir, task)?;
             fs::write(repo_dir.join("REMEM_CONTEXT.md"), rendered)
                 .context("write remem benchmark context")?;
             Ok(ConditionSetup {
@@ -55,6 +62,7 @@ pub fn apply_condition(
                     "A remem SessionStart context file is available at REMEM_CONTEXT.md. Read it before editing; if it contains Benchmark Memory Details, use those preloaded remem details before calling any memory tool."
                         .to_string(),
                 ),
+                memory_attribution,
             })
         }
     }
@@ -64,7 +72,7 @@ pub fn render_seeded_remem_context(
     data_dir: &Path,
     repo_dir: &Path,
     task: &CodingBenchTask,
-) -> Result<String> {
+) -> Result<(String, CodingMemoryAttributionInput)> {
     fs::create_dir_all(data_dir).context("create benchmark REMEM_DATA_DIR")?;
     let _env = ScopedEnvVars::set_many([
         ("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string()),
@@ -72,11 +80,8 @@ pub fn render_seeded_remem_context(
     ]);
     let conn = crate::db::open_db().context("open benchmark remem database")?;
     let project = repo_dir.to_string_lossy().to_string();
-    let mut seeded_ids = Vec::new();
-    for memory in task.seed_memories() {
-        let saved = save_seed_memory(&conn, &project, memory)?;
-        seeded_ids.push(saved.id);
-    }
+    let seeded = seed_task_memories(&conn, &project, task)?;
+    let seeded_ids = seeded.iter().map(|memory| memory.id).collect::<Vec<_>>();
     let seeded_memories = crate::memory::get_memories_by_ids(&conn, &seeded_ids, Some(&project))
         .context("load seeded benchmark memories")?;
     if seeded_memories.len() != seeded_ids.len() {
@@ -90,9 +95,14 @@ pub fn render_seeded_remem_context(
     let snapshot =
         crate::context::session_start_eval_snapshot(&project, &project, Some("main"), "codex-cli")
             .context("render benchmark SessionStart context")?;
+    let mut injected_memory_ids = query_injected_memory_ids(&conn, &project)?;
+    injected_memory_ids.extend(seeded_ids.iter().copied());
+    injected_memory_ids.sort_unstable();
+    injected_memory_ids.dedup();
     let mut output = snapshot.rendered_output;
     append_benchmark_memory_details(&mut output, &seeded_memories);
-    Ok(output)
+    let memory_attribution = build_attribution_input(task, &seeded, injected_memory_ids);
+    Ok((output, memory_attribution))
 }
 
 fn save_seed_memory(
@@ -121,6 +131,102 @@ fn save_seed_memory(
             ..Default::default()
         },
     )
+}
+
+#[derive(Debug, Clone)]
+struct SeededMemoryEvidence {
+    id: i64,
+    facts: Vec<String>,
+}
+
+fn seed_task_memories(
+    conn: &rusqlite::Connection,
+    project: &str,
+    task: &CodingBenchTask,
+) -> Result<Vec<SeededMemoryEvidence>> {
+    let mut seeded = Vec::new();
+    for episode in &task.history_episodes {
+        for memory in &episode.memories {
+            let saved = save_seed_memory(conn, project, memory)?;
+            seeded.push(SeededMemoryEvidence {
+                id: saved.id,
+                facts: episode.expected_memory_facts.clone(),
+            });
+        }
+    }
+    for memory in &task.memories {
+        let saved = save_seed_memory(conn, project, memory)?;
+        seeded.push(SeededMemoryEvidence {
+            id: saved.id,
+            facts: task.gold_memory.required_facts.clone(),
+        });
+    }
+    Ok(seeded)
+}
+
+fn build_attribution_input(
+    task: &CodingBenchTask,
+    seeded: &[SeededMemoryEvidence],
+    injected_memory_ids: Vec<i64>,
+) -> CodingMemoryAttributionInput {
+    let mut fact_to_ids: BTreeMap<&str, Vec<i64>> = BTreeMap::new();
+    for memory in seeded {
+        for fact in &memory.facts {
+            fact_to_ids
+                .entry(fact.as_str())
+                .or_default()
+                .push(memory.id);
+        }
+    }
+    let required = task
+        .gold_memory
+        .required_facts
+        .iter()
+        .flat_map(|fact| {
+            fact_to_ids
+                .get(fact.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+        })
+        .collect::<BTreeSet<_>>();
+    let forbidden = task
+        .gold_memory
+        .forbidden_facts
+        .iter()
+        .flat_map(|fact| {
+            fact_to_ids
+                .get(fact.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+        })
+        .collect::<BTreeSet<_>>();
+    CodingMemoryAttributionInput {
+        injected_memory_ids,
+        relevant_memory_ids: required.into_iter().collect(),
+        forbidden_memory_ids: forbidden.into_iter().collect(),
+        gold_required_facts: task.gold_memory.required_facts.clone(),
+        gold_forbidden_facts: task.gold_memory.forbidden_facts.clone(),
+    }
+}
+
+fn query_injected_memory_ids(conn: &rusqlite::Connection, project: &str) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT memory_id
+         FROM context_injection_items
+         WHERE project = ?1
+           AND session_id = 'eval-session-start'
+           AND status = 'injected'
+           AND memory_id IS NOT NULL
+         ORDER BY memory_id ASC",
+    )?;
+    let rows = stmt.query_map([project], |row| row.get::<_, i64>(0))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row?);
+    }
+    Ok(ids)
 }
 
 fn append_benchmark_memory_details(output: &mut String, memories: &[crate::memory::Memory]) {

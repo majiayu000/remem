@@ -1,5 +1,6 @@
 mod artifact;
 mod condition;
+mod failure;
 mod fixture;
 mod isolation;
 mod run_plan;

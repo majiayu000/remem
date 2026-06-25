@@ -31,6 +31,11 @@ conflicts do not leak into active memory outputs unless explicitly approved.
 task pack. It contains 16 deterministic tasks across the required memory
 dependency categories plus a smoke subset:
 
+Coding-agent artifacts use a fixed `failure_reason` enum and, for `remem`
+runs, a `memory_contract` block that records injected memory ids, cited/used
+memory ids, citation precision/recall, stale used count, irrelevant injection
+count, missing relevant memory count, `memory_helped`, and `memory_hurt`.
+
 ```bash
 cargo run -- bench coding --suite issue385-v1 --dry-run --json-out /tmp/remem-issue385-v1-dry-run.json
 cargo run -- bench coding --suite issue385-v1 --task-set smoke --dry-run --json-out /tmp/remem-issue385-v1-smoke-dry-run.json
