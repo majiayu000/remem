@@ -12,6 +12,14 @@ decision avoidance, conflict detection, workstream continuity, prior bug root
 cause, architecture constraints, file/source anchors, and user-context
 relevance.
 
+The memory runner also supports diagnostic and baseline conditions for
+write-vs-retrieval analysis: `truncated_full_context`, `oracle_evidence`,
+`complete_stored_memory`, `retrieved_memory`, `bm25_baseline`,
+`vector_baseline`, `hybrid_rag_baseline`, and `summary_baseline`. Generated
+reports include `failure_decomposition` and per-condition latency/token
+metrics so misses can be attributed to write-side evidence loss, retrieval
+miss, reader failure, or policy abstention.
+
 `memory/suites/adversarial-policy/` covers memory non-retention policy behavior.
 The committed `remem_default` report checks that secrets, credentials, payment
 data, unframed third-party personal details, roleplay, negations, unsupported
@@ -29,6 +37,13 @@ Regenerate the committed memory-suite report and artifacts:
 
 ```bash
 cargo run -- bench memory --suite remem-code-memory --condition remem_default --root eval/public --artifact-prefix memory/artifacts/remem-code-memory-v1 --json-out eval/public/memory/reports/remem-code-memory-v1.json
+```
+
+Generate a full diagnostic memory-suite report without replacing committed
+artifacts:
+
+```bash
+cargo run -- bench memory --suite remem-code-memory --json-out /tmp/remem-memory-diagnostics.json
 ```
 
 Regenerate the committed adversarial-policy report and artifacts:

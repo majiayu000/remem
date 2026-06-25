@@ -14,27 +14,42 @@ pub const DEFAULT_REPORT_BENCHMARK_VERSION: &str = "v1";
 #[serde(rename_all = "snake_case")]
 pub enum MemoryBenchCondition {
     NoMemory,
+    TruncatedFullContext,
     OracleEvidence,
     CompleteStoredMemory,
     RetrievedMemory,
+    Bm25Baseline,
+    VectorBaseline,
+    HybridRagBaseline,
+    SummaryBaseline,
     RememDefault,
 }
 
 impl MemoryBenchCondition {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 10] = [
         Self::NoMemory,
+        Self::TruncatedFullContext,
         Self::OracleEvidence,
         Self::CompleteStoredMemory,
         Self::RetrievedMemory,
+        Self::Bm25Baseline,
+        Self::VectorBaseline,
+        Self::HybridRagBaseline,
+        Self::SummaryBaseline,
         Self::RememDefault,
     ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoMemory => "no_memory",
+            Self::TruncatedFullContext => "truncated_full_context",
             Self::OracleEvidence => "oracle_evidence",
             Self::CompleteStoredMemory => "complete_stored_memory",
             Self::RetrievedMemory => "retrieved_memory",
+            Self::Bm25Baseline => "bm25_baseline",
+            Self::VectorBaseline => "vector_baseline",
+            Self::HybridRagBaseline => "hybrid_rag_baseline",
+            Self::SummaryBaseline => "summary_baseline",
             Self::RememDefault => "remem_default",
         }
     }
@@ -42,9 +57,14 @@ impl MemoryBenchCondition {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "no_memory" => Some(Self::NoMemory),
+            "truncated_full_context" => Some(Self::TruncatedFullContext),
             "oracle_evidence" => Some(Self::OracleEvidence),
             "complete_stored_memory" => Some(Self::CompleteStoredMemory),
             "retrieved_memory" => Some(Self::RetrievedMemory),
+            "bm25_baseline" => Some(Self::Bm25Baseline),
+            "vector_baseline" => Some(Self::VectorBaseline),
+            "hybrid_rag_baseline" => Some(Self::HybridRagBaseline),
+            "summary_baseline" => Some(Self::SummaryBaseline),
             "remem_default" => Some(Self::RememDefault),
             _ => None,
         }
@@ -198,6 +218,8 @@ pub struct MemoryBenchRunOutcome {
     pub retrieved_evidence_json: serde_json::Value,
     pub diagnosis_notes: Vec<String>,
     pub policy: MemoryBenchPolicyOutcome,
+    pub diagnosis: MemoryBenchDiagnosisOutcome,
+    pub performance: MemoryBenchPerformanceMetrics,
 }
 
 impl MemoryBenchRunOutcome {
@@ -217,6 +239,47 @@ impl MemoryBenchRunOutcome {
             },
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MemoryBenchDiagnosisOutcome {
+    pub write_side_gap: bool,
+    pub retrieval_side_gap: bool,
+    pub reader_gap: bool,
+    pub policy_abstention: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct MemoryBenchPerformanceMetrics {
+    pub ingest_tokens: u64,
+    pub query_tokens: u64,
+    pub reader_tokens: u64,
+    pub retrieval_latency_ms: u64,
+    pub end_to_end_latency_ms: u64,
+    pub rows_written: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct MemoryBenchPerformanceSummary {
+    pub tasks: usize,
+    pub ingest_tokens_mean: f64,
+    pub query_tokens_mean: f64,
+    pub reader_tokens_mean: f64,
+    pub retrieval_latency_p50_ms: f64,
+    pub retrieval_latency_p95_ms: f64,
+    pub end_to_end_latency_p50_ms: f64,
+    pub end_to_end_latency_p95_ms: f64,
+    pub rows_written_mean: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct MemoryBenchFailureDecomposition {
+    pub runs: usize,
+    pub write_side_evidence_loss: usize,
+    pub retrieval_miss: usize,
+    pub reader_failure: usize,
+    pub policy_abstention: usize,
+    pub clean_runs: usize,
 }
 
 pub fn summarize_metrics<'a>(

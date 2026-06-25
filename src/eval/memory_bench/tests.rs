@@ -163,6 +163,56 @@ fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn write_vs_retrieval_report_includes_diagnostics_baselines_and_performance() -> Result<()> {
+    let root = unique_temp_dir("remem-write-vs-retrieval-public")?;
+    copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
+    let report_path = root.join("memory/reports/write-vs-retrieval.json");
+    let report = run_memory_bench(MemoryBenchOptions {
+        suite: DEFAULT_SUITE.to_string(),
+        condition: None,
+        json_out: report_path.to_string_lossy().to_string(),
+        root: root.to_string_lossy().to_string(),
+        artifact_prefix: Some("memory/artifacts/write-vs-retrieval".to_string()),
+    })?;
+
+    for condition in [
+        "truncated_full_context",
+        "oracle_evidence",
+        "complete_stored_memory",
+        "retrieved_memory",
+        "bm25_baseline",
+        "vector_baseline",
+        "hybrid_rag_baseline",
+        "summary_baseline",
+    ] {
+        assert!(
+            report.conditions.iter().any(|item| item == condition),
+            "missing condition {condition}"
+        );
+        assert!(
+            report.aggregate_metrics["failure_decomposition"]["by_condition"][condition]
+                .is_object(),
+            "missing failure decomposition for {condition}"
+        );
+        assert!(
+            report.aggregate_metrics["performance"][condition].is_object(),
+            "missing performance metrics for {condition}"
+        );
+    }
+    assert_eq!(report.aggregate_metrics["run_count"], 80);
+    assert!(
+        report.aggregate_metrics["failure_decomposition"]["overall"]["retrieval_miss"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(report.aggregate_metrics["performance"]["retrieved_memory"]
+        ["retrieval_latency_p95_ms"]
+        .as_f64()
+        .is_some());
+    Ok(())
+}
+
 fn unique_temp_dir(prefix: &str) -> Result<PathBuf> {
     let root = std::env::temp_dir().join(format!(
         "{prefix}-{}-{}",
