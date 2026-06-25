@@ -608,6 +608,63 @@ mod tests {
         assert!(classify_preference(1, &existing, &incoming).is_none());
     }
 
+    #[test]
+    fn embedding_fallback_refines_same_intent_when_concepts_miss() {
+        let existing_text = r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery.
+- Favor extending existing pathways rather than creating parallel UI/event infrastructure."#;
+        let incoming_text = r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep live Atlas runs opt-in, and validate via concrete artifacts while keeping credentials server-side."#;
+        let existing = PreferenceProfile::new(existing_text);
+        let incoming = PreferenceProfile::new(incoming_text);
+        let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_text);
+
+        assert!(classify_preference(1, &existing, &incoming).is_none());
+        let result =
+            match embedding_refinement(1, &existing, &incoming, existing_text, &incoming_embedding)
+            {
+                Some(result) => result,
+                None => panic!("embedding fallback should match same-intent variants"),
+            };
+
+        assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
+        assert!(
+            result.score >= DEFAULT_EMBEDDING_REFINE_THRESHOLD as f64,
+            "fallback score {} should meet default threshold",
+            result.score
+        );
+    }
+
+    #[test]
+    fn embedding_fallback_leaves_unrelated_preferences_unmatched() {
+        let existing_text = "Prefer concise Chinese progress updates.";
+        let incoming_text =
+            "Prefer parameterized SQL queries and reject string-built database statements.";
+        let existing = PreferenceProfile::new(existing_text);
+        let incoming = PreferenceProfile::new(incoming_text);
+        let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_text);
+
+        assert!(classify_preference(1, &existing, &incoming).is_none());
+        assert!(
+            embedding_refinement(1, &existing, &incoming, existing_text, &incoming_embedding,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn embedding_fallback_rejects_bidirectional_polarity_conflict() {
+        let existing_text =
+            "Never force push branches; require explicit approval before rewriting history.";
+        let incoming_text =
+            "Always force push branches; do not require approval before rewriting history.";
+        let existing = PreferenceProfile::new(existing_text);
+        let incoming = PreferenceProfile::new(incoming_text);
+        let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_text);
+
+        assert!(
+            embedding_refinement(1, &existing, &incoming, existing_text, &incoming_embedding,)
+                .is_none()
+        );
+    }
+
     /// Calibration: does main's concept-based consolidation already catch the
     /// 10 real "minimal vertical slice" preference variants from the `her`
     /// project (2026-05-29)? Run with --nocapture.

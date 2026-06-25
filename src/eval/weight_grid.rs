@@ -8,6 +8,8 @@ use serde::Serialize;
 use super::golden::{self, CategoryEvaluation, GoldenDataset, MetricAverages};
 use crate::retrieval::search::SearchWeights;
 
+mod usage_shadow;
+
 pub const DEFAULT_DATASET_PATH: &str = "eval/golden.json";
 pub const DEFAULT_REPORT_PATH: &str = "eval/weight-grid/report.json";
 const EPSILON: f64 = 0.000_001;
@@ -40,6 +42,7 @@ pub struct WeightGridReport {
     pub best: WeightGridCandidate,
     pub recommendation: WeightGridRecommendation,
     pub checks: WeightGridChecks,
+    pub usage_shadow: usage_shadow::UsageShadowReport,
     pub candidates: Vec<WeightGridCandidate>,
 }
 
@@ -182,9 +185,10 @@ fn run_weight_grid_dataset(
             >= default_overall.scored_queries,
         best_meets_recall_at_k_default_flip_gate,
     };
+    let usage_shadow = usage_shadow::build_usage_shadow_report(&conn, &dataset, k)?;
 
     Ok(WeightGridReport {
-        version: "2026-06-12".to_string(),
+        version: "2026-06-23".to_string(),
         dataset_path,
         k,
         scoring,
@@ -194,6 +198,7 @@ fn run_weight_grid_dataset(
         best,
         recommendation,
         checks,
+        usage_shadow,
         candidates: evaluated,
     })
 }
@@ -522,6 +527,12 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.weights == default));
+        assert!(report.usage_shadow.default_usage_weight_zero);
+        assert!(report
+            .usage_shadow
+            .comparisons
+            .iter()
+            .all(|comparison| comparison.usage_weight > 0.0));
         assert_eq!(report.candidates[0].rank, 1);
         Ok(())
     }

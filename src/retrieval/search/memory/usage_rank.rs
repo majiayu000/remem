@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use super::super::common::WeightedRankedHit;
 use super::SearchWeights;
 
-pub(super) fn usage_hits_for_retrieved_candidates(
+pub(crate) fn usage_hits_for_retrieved_candidates(
     conn: &Connection,
     candidate_ids: &[i64],
     weights: SearchWeights,

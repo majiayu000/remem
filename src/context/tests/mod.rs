@@ -234,7 +234,9 @@ pub(super) fn create_workstream_schema(conn: &Connection) {
             completed_at_epoch INTEGER,
             owner_scope TEXT,
             owner_key TEXT,
-            target_project TEXT
+            target_project TEXT,
+            identity_key TEXT,
+            merged_into_workstream_id INTEGER
         );",
     )
     .unwrap();

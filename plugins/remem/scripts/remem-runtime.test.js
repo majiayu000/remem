@@ -199,6 +199,30 @@ test("release asset resolver uses release-hosted manifest when local assets are 
   assert.match(asset.url, /^https:\/\/example\.test\/remem\/releases\/download\/v0\.5\.17\/remem-/);
 });
 
+test("staged unpublished manifest does not fetch a missing release", async () => {
+  const fx = fixture();
+  writeJson(path.join(fx.pluginRoot, "runtimes", "remem-releases.json"), {
+    versions: {
+      "0.5.17": {
+        state: "unreleased",
+        assets: {}
+      }
+    }
+  });
+  let fetched = false;
+
+  const asset = await releaseAssetForCurrentPlatform({
+    ...fx,
+    fetchJson: async () => {
+      fetched = true;
+      throw new Error("should not fetch");
+    }
+  });
+
+  assert.equal(asset, null);
+  assert.equal(fetched, false);
+});
+
 test("release asset resolver rejects unsafe manifest file names", async () => {
   const key = currentPlatformKey();
   for (const file of [
