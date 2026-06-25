@@ -1,4 +1,5 @@
 use clap::{Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub(in crate::cli) enum TimelineAction {
@@ -220,6 +221,11 @@ pub(in crate::cli) enum UserAction {
         #[command(subcommand)]
         action: UserSummaryAction,
     },
+    /// Export a derived read-only user profile snapshot.
+    Profile {
+        #[command(subcommand)]
+        action: UserProfileAction,
+    },
     /// Review automatic user-context extraction candidates.
     Review {
         #[command(subcommand)]
@@ -265,6 +271,43 @@ pub(in crate::cli) enum UserAction {
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum UserProfileAction {
+    /// Export a derived Markdown profile snapshot.
+    Export {
+        /// Snapshot format. Markdown is the only supported format in this slice.
+        #[arg(long, value_enum, default_value = "markdown")]
+        format: ProfileSnapshotFormatArg,
+        /// Write to a new file instead of stdout. Existing files are never overwritten.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// Project path to audit. Defaults to current cwd project.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// User-context owner scope.
+        #[arg(long = "owner-scope", value_enum, default_value = "user")]
+        owner_scope: UserClaimScopeArg,
+        /// Owner key for the selected scope. Defaults to user:default or the project for repo scope.
+        #[arg(long = "owner-key")]
+        owner_key: Option<String>,
+        /// Include suppressed claims and policy-suppressed entries for explicit audit.
+        #[arg(long)]
+        include_suppressed: bool,
+        /// Include personal, sensitive, and restricted claims for explicit audit.
+        #[arg(long)]
+        include_sensitive: bool,
+        /// Include expired, future, stale, and superseded claims for explicit audit.
+        #[arg(long)]
+        include_inactive: bool,
+        /// Include soft-deleted claims for explicit audit.
+        #[arg(long)]
+        include_deleted: bool,
+        /// Include manual or unsourced summary text with provenance warnings.
+        #[arg(long)]
+        include_manual_summaries: bool,
     },
 }
 
@@ -458,6 +501,11 @@ impl UserClaimScopeArg {
             Self::Session => "session",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(in crate::cli) enum ProfileSnapshotFormatArg {
+    Markdown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

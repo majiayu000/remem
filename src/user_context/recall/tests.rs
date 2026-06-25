@@ -92,7 +92,14 @@ fn recall_combines_user_claim_repo_memory_workstream_and_session() -> Result<()>
     let result = recall_user_context(&conn, &request("recall"))?;
 
     assert!(!result.empty);
+    assert_eq!(
+        result.usage_policy,
+        Some(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY)
+    );
     assert!(result.context.contains("recall"));
+    assert!(!result
+        .context
+        .contains(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY));
     assert!(result
         .included
         .iter()
@@ -313,6 +320,7 @@ fn recall_returns_explicit_empty_result_without_generic_profile() -> Result<()> 
 
     assert!(result.empty);
     assert!(result.context.is_empty());
+    assert!(result.usage_policy.is_none());
     assert!(result.included.is_empty());
     assert!(result
         .dropped
