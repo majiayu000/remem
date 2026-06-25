@@ -1,6 +1,7 @@
 mod artifact;
 mod condition;
 mod fixture;
+mod isolation;
 mod runner;
 mod score;
 #[cfg(test)]

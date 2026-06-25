@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 
 use super::condition::apply_condition;
 use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
+use super::isolation::{prepare_codex_isolation, runner_isolation_violation};
 use super::score::{
     parse_changed_paths, parse_codex_jsonl_usage, summarize_runs, unauthorized_paths,
 };
@@ -139,8 +140,15 @@ fn run_one(
     commit_condition_inputs(&repo_dir)?;
     let prompt = build_prompt(task, setup.prompt_note.as_deref());
 
-    let runner_outcome = invoke_agent(options, &repo_dir, &setup.env, &prompt, task.timeout_ms)
-        .context("invoke coding-agent runner")?;
+    let runner_outcome = invoke_agent(
+        options,
+        &repo_dir,
+        &run_root,
+        &setup.env,
+        &prompt,
+        task.timeout_ms,
+    )
+    .context("invoke coding-agent runner")?;
     let runner_stdout = write_artifact(&artifact_dir, "runner.stdout", &runner_outcome.stdout)?;
     let runner_stderr = write_artifact(&artifact_dir, "runner.stderr", &runner_outcome.stderr)?;
     let (usage, turns) = if options.runner == "codex" {
@@ -196,6 +204,7 @@ fn run_one(
     let failure_reason = failure_reason(
         score_failed,
         &unauthorized,
+        runner_isolation_violation(&runner_outcome.stdout, &runner_outcome.stderr).as_deref(),
         runner_outcome.timed_out,
         runner_outcome.exit_code,
     );
@@ -307,20 +316,28 @@ fn commit_condition_inputs(repo_dir: &Path) -> Result<()> {
 fn invoke_agent(
     options: &CodingBenchOptions,
     repo_dir: &Path,
+    run_root: &Path,
     env: &[(String, String)],
     prompt: &str,
     timeout_ms: u64,
 ) -> Result<CommandOutcome> {
     match options.runner.as_str() {
         "codex" => {
+            let isolation = prepare_codex_isolation(run_root, &options.codex_bin)?;
+            let mut runner_env = env.to_vec();
+            runner_env.extend(isolation.env.clone());
             let args = build_codex_exec_args(options, repo_dir, prompt);
-            command_output(
-                &options.codex_bin,
-                args.iter().map(String::as_str),
+            let mut wrapped_args = isolation.args_prefix.clone();
+            wrapped_args.extend(args);
+            let outcome = command_output(
+                &isolation.program,
+                wrapped_args.iter().map(String::as_str),
                 repo_dir,
-                env,
+                &runner_env,
                 timeout_ms,
-            )
+            );
+            isolation.cleanup();
+            outcome
         }
         "noop" => Ok(CommandOutcome {
             stdout: String::new(),
@@ -353,7 +370,6 @@ fn build_codex_exec_args(
         options.model.clone(),
         "--sandbox".to_string(),
         "danger-full-access".to_string(),
-        "--dangerously-bypass-approvals-and-sandbox".to_string(),
     ];
     if !options.reasoning_effort.trim().is_empty() {
         args.push("-c".to_string());
@@ -377,6 +393,7 @@ fn build_prompt(task: &CodingBenchTask, condition_note: Option<&str>) -> String 
         prompt.push_str(note);
         prompt.push('\n');
     }
+    prompt.push_str("Only inspect files under the repository root and context files explicitly named above. Do not inspect environment variables, parent directories, CODEX_HOME, HOME, tool caches, benchmark harness artifacts, or hidden tests.\n");
     prompt.push_str("Modify the repository to satisfy the task. Do not inspect or depend on hidden tests. Keep edits scoped to the task.\n\n");
     prompt.push_str("Task:\n");
     prompt.push_str(&task.prompt);
@@ -421,7 +438,17 @@ where
         .env_remove("REMEM_DATA_DIR")
         .env_remove("REMEM_CIPHER_KEY")
         .env_remove("REMEM_DISABLE_HOOKS")
-        .env_remove("REMEM_ALLOW_PLAINTEXT_DB");
+        .env_remove("REMEM_ALLOW_PLAINTEXT_DB")
+        .env_remove("CODEX_HOME")
+        .env_remove("CODEX_THREAD_ID")
+        .env_remove("VIRTUAL_ENV")
+        .env_remove("PYTHONHOME")
+        .env_remove("PYTHONPATH")
+        .env_remove("CONDA_PREFIX")
+        .env_remove("CONDA_DEFAULT_ENV")
+        .env_remove("PIPENV_ACTIVE")
+        .env_remove("POETRY_ACTIVE")
+        .env_remove("PYENV_VERSION");
     for (key, value) in env {
         command.env(key, value);
     }
@@ -627,9 +654,13 @@ fn report_command(options: &CodingBenchOptions) -> Vec<String> {
 fn failure_reason(
     score_failed: bool,
     unauthorized: &[String],
+    runner_isolation_violation: Option<&str>,
     runner_timed_out: bool,
     runner_exit_code: Option<i32>,
 ) -> Option<String> {
+    if let Some(reason) = runner_isolation_violation {
+        return Some(reason.to_string());
+    }
     if runner_timed_out {
         return Some("runner timed out".to_string());
     }
@@ -718,6 +749,10 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|window| window == ["--disable", "hooks"]));
+        assert!(args
+            .windows(2)
+            .any(|window| window == ["--sandbox", "danger-full-access"]));
+        assert!(!args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
         assert!(!args.contains(&"--dangerously-bypass-hook-trust".to_string()));
     }
 
