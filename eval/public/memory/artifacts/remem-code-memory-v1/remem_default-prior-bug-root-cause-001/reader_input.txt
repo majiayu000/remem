@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: prior-bug-root-cause-001
+category: prior_bug_root_cause
+reference_time_epoch: 1760000000
+
+question:
+What was the root cause of the duplicate startup summary bug?
+
+retrieved_evidence:
+- memory_id=1 event_id=bug-001:e1 status=active title=Duplicate startup summary root cause
+  The duplicate startup summary bug was caused by a summarize cooldown race; the fix serialized the cooldown claim.

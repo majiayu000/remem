@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "The current deployment path uses Vite; do not follow the stale webpack-only deployment constraint.",
+      "event_id": "stale-001:e2",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Vite deployment supersedes webpack"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "stale-decision-avoidance-001"
+}

@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "For PR handoffs, the user prefers concise, evidence-backed Chinese with exact PR and verification status.",
+      "event_id": "user-context-001:e1",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Concise evidence-backed Chinese handoffs"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "user-context-relevance-001"
+}

@@ -10,6 +10,13 @@ use crate::cli::eval_types::{BenchAction, EvalCodingBenchArgs};
 pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
     match action {
         BenchAction::Verify(args) => run_bench_verify(&args.root, &args.json_out),
+        BenchAction::Memory(args) => run_bench_memory(
+            &args.suite,
+            args.condition.as_deref(),
+            &args.root,
+            args.artifact_prefix.as_deref(),
+            &args.json_out,
+        ),
     }
 }
 
@@ -39,6 +46,27 @@ fn run_bench_verify(root: &str, json_out: &str) -> Result<()> {
             report.failures.len()
         );
     }
+    Ok(())
+}
+
+fn run_bench_memory(
+    suite: &str,
+    condition: Option<&str>,
+    root: &str,
+    artifact_prefix: Option<&str>,
+    json_out: &str,
+) -> Result<()> {
+    let report = crate::eval::memory_bench::run_memory_bench(
+        crate::eval::memory_bench::MemoryBenchOptions {
+            suite: suite.to_string(),
+            condition: condition.map(str::to_string),
+            json_out: json_out.to_string(),
+            root: root.to_string(),
+            artifact_prefix: artifact_prefix.map(str::to_string),
+        },
+    )?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    println!("{report_json}");
     Ok(())
 }
 

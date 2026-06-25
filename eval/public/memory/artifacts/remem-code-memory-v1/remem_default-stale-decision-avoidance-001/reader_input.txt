@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: stale-decision-avoidance-001
+category: stale_memory_avoidance
+reference_time_epoch: 1760000000
+
+question:
+Should the old webpack-only deploy constraint still be followed?
+
+retrieved_evidence:
+- memory_id=1 event_id=stale-001:e2 status=active title=Vite deployment supersedes webpack
+  The current deployment path uses Vite; do not follow the stale webpack-only deployment constraint.

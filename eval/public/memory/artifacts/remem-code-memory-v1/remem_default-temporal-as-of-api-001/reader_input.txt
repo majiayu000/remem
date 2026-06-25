@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: temporal-as-of-api-001
+category: temporal_as_of
+reference_time_epoch: 1760000000
+
+question:
+As of the benchmark reference time, which Atlas sync API is current?
+
+retrieved_evidence:
+- memory_id=1 event_id=temporal-001:e2 status=active title=Current Atlas GraphQL v2 sync API
+  Use GraphQL v2 for current Atlas sync API calls after the reference-time migration.

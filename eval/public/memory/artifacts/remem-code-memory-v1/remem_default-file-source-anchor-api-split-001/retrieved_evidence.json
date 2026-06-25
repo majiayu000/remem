@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "The API handler split decision is anchored by src/api/handlers.rs and src/api/server.rs.",
+      "event_id": "file-anchor-001:e1",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "API handler split file anchors"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "file-source-anchor-api-split-001"
+}

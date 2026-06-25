@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: architecture-constraint-capture-001
+category: architecture_constraints
+reference_time_epoch: 1760000000
+
+question:
+Can durable memory capture depend on agents voluntarily calling save_memory?
+
+retrieved_evidence:
+- memory_id=1 event_id=architecture-001:e1 status=active title=Automatic capture primary architecture
+  Durable memory capture must not depend on agents voluntarily calling save_memory; automatic hook capture is the primary path and manual save_memory is supplemental.

@@ -1,0 +1,9 @@
+{
+  "abstention_accuracy": 1.0,
+  "answer_score": 1.0,
+  "citation_precision": 1.0,
+  "citation_recall": 1.0,
+  "forbidden_evidence_count": 0,
+  "staleness_accuracy": 1.0,
+  "support_coverage": 1.0
+}

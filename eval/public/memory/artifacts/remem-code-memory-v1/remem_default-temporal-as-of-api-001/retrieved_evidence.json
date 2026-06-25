@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "Use GraphQL v2 for current Atlas sync API calls after the reference-time migration.",
+      "event_id": "temporal-001:e2",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Current Atlas GraphQL v2 sync API"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "temporal-as-of-api-001"
+}

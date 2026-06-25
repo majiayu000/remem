@@ -41,8 +41,45 @@ fn cli_parses_bench_verify_options() {
                 assert_eq!(args.root, "eval/public");
                 assert_eq!(args.json_out, "/tmp/remem-bench-verify.json");
             }
+            _ => panic!("expected bench verify action"),
         },
         _ => panic!("expected bench verify command"),
+    }
+}
+
+#[test]
+fn cli_parses_bench_memory_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "bench",
+        "memory",
+        "--suite",
+        "remem-code-memory",
+        "--condition",
+        "remem_default",
+        "--root",
+        "eval/public",
+        "--artifact-prefix",
+        "memory/artifacts/remem-code-memory-v1",
+        "--json-out",
+        "/tmp/remem-code-memory.json",
+    ]);
+
+    match cli.command {
+        Commands::Bench { action } => match action {
+            super::eval_types::BenchAction::Memory(args) => {
+                assert_eq!(args.suite, "remem-code-memory");
+                assert_eq!(args.condition.as_deref(), Some("remem_default"));
+                assert_eq!(args.root, "eval/public");
+                assert_eq!(
+                    args.artifact_prefix.as_deref(),
+                    Some("memory/artifacts/remem-code-memory-v1")
+                );
+                assert_eq!(args.json_out, "/tmp/remem-code-memory.json");
+            }
+            _ => panic!("expected bench memory action"),
+        },
+        _ => panic!("expected bench memory command"),
     }
 }
 

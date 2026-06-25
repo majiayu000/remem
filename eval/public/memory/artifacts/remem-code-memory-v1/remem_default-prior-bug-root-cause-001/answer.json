@@ -1,0 +1,5 @@
+{
+  "abstained": false,
+  "score": 1.0,
+  "text": "The root cause was a summarize cooldown race that allowed duplicate startup summaries."
+}

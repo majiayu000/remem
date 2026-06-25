@@ -4,6 +4,8 @@ use clap::{Args, Subcommand};
 pub(in crate::cli) enum BenchAction {
     /// Verify public benchmark artifact schemas, layout, logs, and isolation evidence.
     Verify(BenchVerifyArgs),
+    /// Run a deterministic public memory capability suite.
+    Memory(BenchMemoryArgs),
 }
 
 #[derive(Args)]
@@ -12,6 +14,25 @@ pub(in crate::cli) struct BenchVerifyArgs {
     #[arg(long, default_value = "eval/public")]
     pub(in crate::cli) root: String,
     /// Verification report output path.
+    #[arg(long)]
+    pub(in crate::cli) json_out: String,
+}
+
+#[derive(Args)]
+pub(in crate::cli) struct BenchMemoryArgs {
+    /// Memory benchmark suite id.
+    #[arg(long, default_value = crate::eval::memory_bench::types::DEFAULT_SUITE)]
+    pub(in crate::cli) suite: String,
+    /// Restrict to one condition: no_memory, oracle_evidence, complete_stored_memory, retrieved_memory, or remem_default.
+    #[arg(long)]
+    pub(in crate::cli) condition: Option<String>,
+    /// Public benchmark artifact root.
+    #[arg(long, default_value = crate::eval::memory_bench::types::DEFAULT_PUBLIC_ROOT)]
+    pub(in crate::cli) root: String,
+    /// Artifact directory prefix under --root when --json-out is inside --root.
+    #[arg(long)]
+    pub(in crate::cli) artifact_prefix: Option<String>,
+    /// Memory benchmark report output path.
     #[arg(long)]
     pub(in crate::cli) json_out: String,
 }

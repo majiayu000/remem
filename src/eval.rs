@@ -3,6 +3,7 @@ pub mod coding_bench;
 pub mod current_memory_contracts;
 pub mod e2e;
 pub mod extraction;
+pub mod memory_bench;
 pub mod gates {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fmt::{self, Display};
