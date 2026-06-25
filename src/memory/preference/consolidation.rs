@@ -11,6 +11,22 @@ const MIN_JACCARD: f64 = 0.45;
 const MIN_EXCLUSIVE_CONTAINMENT: f64 = 0.60;
 const MIN_EXCLUSIVE_JACCARD: f64 = 0.40;
 
+/// Cosine threshold for the embedding fallback when concept-based classification
+/// returns None. Calibrated on real `her` "minimal vertical slice" variants
+/// (2026-05-29): concept consolidation missed 89% of them (jaccard<0.45 because
+/// each variant adds distinct detail words), while feature-hash embedding
+/// separates them (min pairwise cosine 0.621 vs unrelated max 0.435). 0.55 sits
+/// inside that gap. Override with REMEM_PREF_EMBEDDING_THRESHOLD.
+const DEFAULT_EMBEDDING_REFINE_THRESHOLD: f32 = 0.55;
+
+fn embedding_refine_threshold() -> f32 {
+    std::env::var("REMEM_PREF_EMBEDDING_THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .filter(|v| (0.0..=1.0).contains(v))
+        .unwrap_or(DEFAULT_EMBEDDING_REFINE_THRESHOLD)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreferenceConsolidationKind {
     SamePreference,
@@ -84,9 +100,22 @@ pub(crate) fn find_preference_consolidation(
     let candidates = crate::db::query::collect_rows(rows)?;
 
     let mut best = None;
+    let incoming_embedding = crate::retrieval::vector::embed_query_text(content);
     for (memory_id, existing_content) in candidates {
         let existing = PreferenceProfile::new(&existing_content);
-        let Some(classified) = classify_preference(memory_id, &existing, &incoming) else {
+        // concept-based classification first (catches contradiction + high overlap);
+        // fall back to embedding cosine only when concepts miss (e.g. same intent,
+        // divergent detail wording like the "minimal vertical slice" variants).
+        let classified = classify_preference(memory_id, &existing, &incoming).or_else(|| {
+            embedding_refinement(
+                memory_id,
+                &existing,
+                &incoming,
+                &existing_content,
+                &incoming_embedding,
+            )
+        });
+        let Some(classified) = classified else {
             continue;
         };
         match &best {
@@ -170,6 +199,50 @@ fn classify_preference(
         shared_concepts: shared.clone(),
         reason: consolidation_reason(PreferenceConsolidationKind::Refinement, score, &shared),
     })
+}
+
+/// Embedding-cosine fallback for refinement when concept-based classification
+/// misses (concepts diverge but intent matches). Content-only feature-hash cosine
+/// at/above threshold => Refinement. Only reached when classify_preference
+/// returns None, so concept Contradiction/SamePreference always win first.
+fn embedding_refinement(
+    memory_id: i64,
+    existing: &PreferenceProfile,
+    incoming: &PreferenceProfile,
+    existing_content: &str,
+    incoming_embedding: &[f32],
+) -> Option<PreferenceConsolidationMatch> {
+    // Embedding cosine can't see negation/polarity, so never merge across a
+    // polarity conflict even if wording overlaps highly (e.g. "never force push"
+    // vs "always force push"). Require a BIDIRECTIONAL conflict (each side
+    // negates something the other asserts): a single-direction overlap is
+    // usually the coarse clause-level negation rule mislabeling a positive
+    // sub-clause (e.g. "favor plugin extension points to avoid bloating core"
+    // marks "plugin" as negated), not a genuine opposite.
+    let polarity_conflict = !existing
+        .negated_concepts
+        .is_disjoint(&incoming.positive_concepts)
+        && !incoming
+            .negated_concepts
+            .is_disjoint(&existing.positive_concepts);
+    if exclusive_mismatch(existing, incoming) || polarity_conflict {
+        return None;
+    }
+    let existing_embedding = crate::retrieval::vector::embed_query_text(existing_content);
+    let distance =
+        crate::retrieval::vector::cosine_distance(incoming_embedding, &existing_embedding).ok()?;
+    let cosine = 1.0 - distance as f64;
+    if cosine >= embedding_refine_threshold() as f64 {
+        Some(PreferenceConsolidationMatch {
+            memory_id,
+            kind: PreferenceConsolidationKind::Refinement,
+            score: cosine,
+            shared_concepts: Vec::new(),
+            reason: format!("embedding cosine={cosine:.3} refinement (concept cutoff missed)"),
+        })
+    } else {
+        None
+    }
 }
 
 fn better_match(
@@ -533,5 +606,70 @@ mod tests {
         let incoming = PreferenceProfile::new("Prefer concise verification logs after tests.");
 
         assert!(classify_preference(1, &existing, &incoming).is_none());
+    }
+
+    /// Calibration: does main's concept-based consolidation already catch the
+    /// 10 real "minimal vertical slice" preference variants from the `her`
+    /// project (2026-05-29)? Run with --nocapture.
+    #[test]
+    fn calibrate_her_variants_consolidation_coverage() {
+        let variants = [
+            r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery (Phase 1 then Phase 2).
+    - Favor extending existing pathways (existing `/api/events` + sidebar) rather than creating parallel UI/event infrastructure."#,
+            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; avoid rewriting `/chat` and avoid adding parallel UI/event infrastructure.
+- Favor using plugin extension points to avoid bloating core files; validate changes with scoped lint/tests (`npx eslint <file>`, targeted `pytest`)."#,
+            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; avoid rewriting `/chat` and avoid adding parallel UI/event infrastructure.
+    - Favor using plugin extension points to avoid bloating core files; validate changes with scoped lint/tests (`npx eslint <file>`, targeted `pytest`).
+    - Prefer cost-safe development: mock external providers by default; keep real provider smoke tests explicit opt-in."#,
+            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; avoid rewriting `/chat` or adding parallel UI/event infra. Prefer plugin extension points over core bloat; validate with scoped tests/lints; cost-safe development via mocking external providers by default."#,
+            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; cost-safe development via mocking external providers by default; keep the installed skill surface minimal and deterministic (now single-entry) with tarball backups before deletions."#,
+            r#"Prefer minimal vertical slice (最小纵向闭环) and phased delivery; cost-safe development via mocking external providers by default; keep the installed skill surface minimal and deterministic (single entry) and avoid unapproved quota spend (live provider calls only with explicit opt-in)."#,
+            r#"Prefer minimal vertical slice (最小纵向闭环) and cost-safe development: mock providers by default, run live Atlas only with explicit opt-in (env `ATLAS_API_KEY`), and keep entrypoints deterministic (single-entry intent routing)."#,
+            r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic single-entry routing, keep live Atlas runs opt-in (`ATLAS_API_KEY`), and validate via concrete end-to-end artifacts (HTTP 200 `video/mp4`, Playwright screenshot, test suite pass) rather than dashboard UI integration."#,
+            r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep `ATLAS_API_KEY` server-side only, and validate via concrete artifacts (tests pass, screenshot, server health) while keeping live Atlas runs opt-in / user-triggered to control cost."#,
+            r#"Prefer, cost-safe vertical slices: no auto-start generation, no fake jobs; keep credentials server-side; validate with concrete commands + targeted pytest + real browser verification."#,
+        ];
+        let profiles: Vec<PreferenceProfile> =
+            variants.iter().map(|t| PreferenceProfile::new(t)).collect();
+        let mut same = 0;
+        let mut refinement = 0;
+        let mut contradiction = 0;
+        let mut none = 0;
+        let mut total = 0;
+        for i in 0..profiles.len() {
+            for j in (i + 1)..profiles.len() {
+                total += 1;
+                let incoming_embedding = crate::retrieval::vector::embed_query_text(variants[j]);
+                let result = classify_preference(0, &profiles[i], &profiles[j]).or_else(|| {
+                    embedding_refinement(
+                        0,
+                        &profiles[i],
+                        &profiles[j],
+                        variants[i],
+                        &incoming_embedding,
+                    )
+                });
+                match result {
+                    Some(m) => match m.kind {
+                        PreferenceConsolidationKind::SamePreference => same += 1,
+                        PreferenceConsolidationKind::Refinement => refinement += 1,
+                        PreferenceConsolidationKind::Contradiction => contradiction += 1,
+                    },
+                    None => none += 1,
+                }
+            }
+        }
+        println!(
+            "her variants ({} pairs): same={}, refinement={}, contradiction={}, none={}",
+            total, same, refinement, contradiction, none
+        );
+        // With embedding fallback, most her variant pairs should now consolidate
+        // (concept-only was 40/45 none). none stays non-zero only for the most
+        // divergent pair (e.g. 78999, no shared "最小纵向闭环" wording).
+        let consolidated = same + refinement + contradiction;
+        assert!(
+            consolidated >= 40,
+            "embedding fallback should consolidate most her variants, got {consolidated}/{total} (none={none})"
+        );
     }
 }
