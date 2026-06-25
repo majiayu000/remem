@@ -25,6 +25,8 @@
   suite.
 - Staged source version `0.5.136` for memory benchmark write-vs-retrieval
   diagnostics and baseline adapters.
+- Staged source version `0.5.137` for the issue385-v1 coding benchmark task
+  pack and `bench coding` dry-run alias.
 
 ## [0.5.109] - 2026-06-20
 

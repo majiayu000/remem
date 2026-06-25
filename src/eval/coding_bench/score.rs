@@ -58,22 +58,62 @@ fn is_generated_path(path: &str) -> bool {
         || path.starts_with(".pytest_cache/")
 }
 
-pub fn unauthorized_paths(changed_paths: &[String], allowed_paths: &[String]) -> Vec<String> {
+pub fn unauthorized_paths(
+    changed_paths: &[String],
+    allowed_paths: &[String],
+    forbidden_paths: &[String],
+) -> Vec<String> {
     if allowed_paths.is_empty() {
-        return Vec::new();
+        return changed_paths
+            .iter()
+            .filter(|path| path_matches_any(path, forbidden_paths))
+            .cloned()
+            .collect();
     }
     changed_paths
         .iter()
         .filter(|path| {
-            !allowed_paths.iter().any(|allowed| {
-                path == &allowed
-                    || path
-                        .strip_prefix(allowed)
-                        .is_some_and(|rest| rest.starts_with('/'))
-            })
+            path_matches_any(path, forbidden_paths) || !path_matches_any(path, allowed_paths)
         })
         .cloned()
         .collect()
+}
+
+pub fn patch_pattern_failures(
+    diff: &str,
+    required_patterns: &[String],
+    forbidden_patterns: &[String],
+) -> Vec<String> {
+    let added = added_patch_text(diff);
+    let mut failures = Vec::new();
+    for pattern in required_patterns {
+        if !added.contains(pattern) {
+            failures.push(format!("missing required patch pattern: {pattern}"));
+        }
+    }
+    for pattern in forbidden_patterns {
+        if added.contains(pattern) {
+            failures.push(format!("forbidden patch pattern present: {pattern}"));
+        }
+    }
+    failures
+}
+
+fn path_matches_any(path: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        path == pattern
+            || path
+                .strip_prefix(pattern)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+fn added_patch_text(diff: &str) -> String {
+    diff.lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .map(|line| &line[1..])
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn parse_codex_jsonl_usage(stdout: &str) -> (BenchTokenUsage, Option<usize>) {
@@ -187,6 +227,37 @@ mod tests {
             " M memory_demo/slug.py\n?? tests/test_new.py\n?? memory_demo/__pycache__/\n",
         );
         assert_eq!(paths, vec!["memory_demo/slug.py", "tests/test_new.py"]);
+    }
+
+    #[test]
+    fn path_policy_checks_allowed_and_forbidden_paths() {
+        let changed = vec![
+            "memory_demo/slug.py".to_string(),
+            "README.md".to_string(),
+            "tests/test_new.py".to_string(),
+        ];
+        let unauthorized = unauthorized_paths(
+            &changed,
+            &["memory_demo".to_string(), "tests".to_string()],
+            &["README.md".to_string()],
+        );
+        assert_eq!(unauthorized, vec!["README.md"]);
+    }
+
+    #[test]
+    fn patch_patterns_scan_added_lines_only() {
+        let diff = "\
+diff --git a/memory_demo/slug.py b/memory_demo/slug.py
+--- a/memory_demo/slug.py
++++ b/memory_demo/slug.py
+@@
+-    return 'legacy'
++    return 'untitled'
+";
+        assert!(
+            patch_pattern_failures(diff, &["untitled".to_string()], &["legacy".to_string()])
+                .is_empty()
+        );
     }
 
     #[test]

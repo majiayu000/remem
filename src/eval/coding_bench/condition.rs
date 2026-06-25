@@ -73,7 +73,7 @@ pub fn render_seeded_remem_context(
     let conn = crate::db::open_db().context("open benchmark remem database")?;
     let project = repo_dir.to_string_lossy().to_string();
     let mut seeded_ids = Vec::new();
-    for memory in &task.memories {
+    for memory in task.seed_memories() {
         let saved = save_seed_memory(&conn, &project, memory)?;
         seeded_ids.push(saved.id);
     }

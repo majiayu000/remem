@@ -27,6 +27,15 @@ assistant claims, unapproved external sources, spliced claims, same-name repos,
 multi-task bleed, branch divergence, stale file anchors, and unresolved
 conflicts do not leak into active memory outputs unless explicitly approved.
 
+`../coding-bench/fixtures/tasks.json` is the public `issue385-v1` coding-agent
+task pack. It contains 16 deterministic tasks across the required memory
+dependency categories plus a smoke subset:
+
+```bash
+cargo run -- bench coding --suite issue385-v1 --dry-run --json-out /tmp/remem-issue385-v1-dry-run.json
+cargo run -- bench coding --suite issue385-v1 --task-set smoke --dry-run --json-out /tmp/remem-issue385-v1-smoke-dry-run.json
+```
+
 Run artifact verification:
 
 ```bash
