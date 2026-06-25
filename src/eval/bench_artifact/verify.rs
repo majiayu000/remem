@@ -304,10 +304,15 @@ fn validate_memory_run_artifact(
             "memory run condition requires retrieved memory IDs",
         );
     }
-    if abstained && !run.diagnosis.policy_abstention {
+    let diagnosis_explains_abstention = run.diagnosis.policy_abstention
+        || run.diagnosis.write_side_gap
+        || run.diagnosis.retrieval_side_gap
+        || run.diagnosis.reader_gap
+        || run.condition == "no_memory";
+    if abstained && !diagnosis_explains_abstention {
         state.fail(
             label.clone(),
-            "abstained memory run must mark diagnosis.policy_abstention",
+            "abstained memory run must mark a diagnosis reason",
         );
     }
     if !abstained {

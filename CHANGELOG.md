@@ -23,6 +23,8 @@
 - Staged source version `0.5.134` for the remem-native memory benchmark suite.
 - Staged source version `0.5.135` for the adversarial memory policy benchmark
   suite.
+- Staged source version `0.5.136` for memory benchmark write-vs-retrieval
+  diagnostics and baseline adapters.
 
 ## [0.5.109] - 2026-06-20
 

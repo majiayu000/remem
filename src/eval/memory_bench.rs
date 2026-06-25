@@ -1,3 +1,5 @@
+mod baselines;
+mod diagnostics;
 mod fixture;
 mod runner;
 #[cfg(test)]

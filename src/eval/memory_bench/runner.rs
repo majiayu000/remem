@@ -13,11 +13,16 @@ use crate::eval::bench_artifact::{
     MemoryRunArtifact, PublicBenchmarkReport, ReportVerifierMetadata, RunEnvironment,
 };
 
+use super::baselines::fixture_retrieval_indices;
+use super::diagnostics::{
+    classify_diagnosis, failure_decomposition, performance_by_condition, performance_metrics,
+    score_policy,
+};
 use super::fixture::load_suite;
 use super::types::{
     summarize_by_category, summarize_metrics, summarize_policy, MemoryBenchCondition,
-    MemoryBenchEvidence, MemoryBenchPolicyOutcome, MemoryBenchRunOutcome, MemoryBenchSuiteFixture,
-    MemoryBenchTask, DEFAULT_PUBLIC_ROOT, DEFAULT_REPORT_BENCHMARK_VERSION,
+    MemoryBenchEvidence, MemoryBenchRunOutcome, MemoryBenchSuiteFixture, MemoryBenchTask,
+    DEFAULT_PUBLIC_ROOT, DEFAULT_REPORT_BENCHMARK_VERSION,
 };
 
 const PROJECT: &str = "/tmp/remem-memory-bench/repo";
@@ -84,6 +89,8 @@ pub fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkRe
         "overall": summarize_metrics(&outcomes),
         "by_category": summarize_by_category(&outcomes),
         "conditions": summarize_by_condition(&outcomes),
+        "failure_decomposition": failure_decomposition(&outcomes),
+        "performance": performance_by_condition(&outcomes),
         "policy": summarize_policy(&outcomes),
     });
     let report = PublicBenchmarkReport {
@@ -140,25 +147,13 @@ fn run_task(
     condition: MemoryBenchCondition,
     task: &MemoryBenchTask,
 ) -> Result<MemoryBenchRunOutcome> {
-    let retrieved = match condition {
-        MemoryBenchCondition::NoMemory => Vec::new(),
-        MemoryBenchCondition::OracleEvidence => task
-            .evidence
-            .iter()
-            .enumerate()
-            .filter(|(_, evidence)| task.gold_supporting_event_ids.contains(&evidence.event_id))
-            .map(|(idx, evidence)| RetrievedEvidence::from_fixture(idx, evidence))
-            .collect(),
-        MemoryBenchCondition::CompleteStoredMemory => task
-            .evidence
-            .iter()
-            .enumerate()
-            .filter(|(_, evidence)| evidence.retention_allowed)
-            .map(|(idx, evidence)| RetrievedEvidence::from_fixture(idx, evidence))
-            .collect(),
-        MemoryBenchCondition::RetrievedMemory | MemoryBenchCondition::RememDefault => {
-            retrieve_with_remem_search(task)?
-        }
+    let retrieved = if let Some(indices) = fixture_retrieval_indices(condition, task) {
+        indices
+            .into_iter()
+            .map(|idx| RetrievedEvidence::from_fixture(idx, &task.evidence[idx]))
+            .collect()
+    } else {
+        retrieve_with_remem_search(task)?
     };
     Ok(score_task(fixture, condition, task, retrieved))
 }
@@ -303,8 +298,11 @@ fn score_task(
     } else {
         0.0
     };
-    let policy = score_policy(condition, task, &retrieved, abstained);
+    let policy = score_policy(condition, task, &retrieved_events, abstained);
     let reader_input = build_reader_input(condition, task, &retrieved);
+    let diagnosis =
+        classify_diagnosis(condition, task, &missing_event_ids, answer_score, abstained);
+    let performance = performance_metrics(condition, task, &reader_input, retrieved.len());
     let retrieved_evidence_json = json!({
         "suite": fixture.suite,
         "fixture_revision": fixture.fixture_revision,
@@ -360,125 +358,9 @@ fn score_task(
         retrieved_evidence_json,
         diagnosis_notes,
         policy,
+        diagnosis,
+        performance,
     }
-}
-
-fn score_policy(
-    condition: MemoryBenchCondition,
-    task: &MemoryBenchTask,
-    retrieved: &[RetrievedEvidence],
-    abstained: bool,
-) -> MemoryBenchPolicyOutcome {
-    let Some(policy) = &task.policy else {
-        return MemoryBenchPolicyOutcome::default();
-    };
-    let storage_condition = stores_memory_condition(condition);
-    let active_claim_count = if storage_condition
-        && task
-            .evidence
-            .iter()
-            .any(|evidence| evidence.retention_allowed)
-    {
-        1
-    } else {
-        0
-    };
-    let candidate_count = 0;
-    let summary_input_count = if active_claim_count > 0 { 1 } else { 0 };
-
-    let non_retention_applicable = storage_condition && policy.non_retention_required;
-    let non_retention_leaked = non_retention_applicable
-        && (active_claim_count > 0
-            || candidate_count > 0
-            || summary_input_count > 0
-            || retrieved
-                .iter()
-                .any(|item| !evidence_retention_allowed(task, &item.event_id)));
-    let false_block_applicable = storage_condition && policy.explicit_approval;
-    let false_blocked =
-        false_block_applicable && (active_claim_count < policy.expected_active_claims || abstained);
-    let suppression_applicable = storage_condition && policy.suppression_expected;
-    let suppression_obeyed = suppression_applicable
-        && active_claim_count == 0
-        && candidate_count == 0
-        && summary_input_count == 0
-        && retrieved.is_empty();
-    let sensitive_restricted_applicable = storage_condition && policy.sensitive_or_restricted;
-    let sensitive_restricted_default_excluded = sensitive_restricted_applicable
-        && active_claim_count == 0
-        && candidate_count == 0
-        && summary_input_count == 0;
-    let policy_abstention_applicable =
-        policy.expected_policy_abstention || policy.explicit_approval || storage_condition;
-    let policy_abstention_correct = if policy.expected_policy_abstention {
-        abstained
-    } else if false_block_applicable {
-        !abstained
-    } else {
-        true
-    };
-
-    let mut policy_failure_count = 0;
-    if non_retention_leaked {
-        policy_failure_count += 1;
-    }
-    if false_blocked {
-        policy_failure_count += 1;
-    }
-    if suppression_applicable && !suppression_obeyed {
-        policy_failure_count += 1;
-    }
-    if sensitive_restricted_applicable && !sensitive_restricted_default_excluded {
-        policy_failure_count += 1;
-    }
-    if policy_abstention_applicable && !policy_abstention_correct {
-        policy_failure_count += 1;
-    }
-    if storage_condition {
-        if active_claim_count != policy.expected_active_claims {
-            policy_failure_count += 1;
-        }
-        if candidate_count != policy.expected_candidates {
-            policy_failure_count += 1;
-        }
-        if summary_input_count != policy.expected_summary_inputs {
-            policy_failure_count += 1;
-        }
-    }
-
-    MemoryBenchPolicyOutcome {
-        active_claim_count,
-        candidate_count,
-        summary_input_count,
-        non_retention_applicable,
-        non_retention_leaked,
-        false_block_applicable,
-        false_blocked,
-        suppression_applicable,
-        suppression_obeyed,
-        sensitive_restricted_applicable,
-        sensitive_restricted_default_excluded,
-        policy_abstention_applicable,
-        policy_abstention_correct,
-        policy_failure_count,
-    }
-}
-
-fn stores_memory_condition(condition: MemoryBenchCondition) -> bool {
-    matches!(
-        condition,
-        MemoryBenchCondition::CompleteStoredMemory
-            | MemoryBenchCondition::RetrievedMemory
-            | MemoryBenchCondition::RememDefault
-    )
-}
-
-fn evidence_retention_allowed(task: &MemoryBenchTask, event_id: &str) -> bool {
-    task.evidence
-        .iter()
-        .find(|evidence| evidence.event_id == event_id)
-        .map(|evidence| evidence.retention_allowed)
-        .unwrap_or(false)
 }
 
 fn build_reader_input(
@@ -650,6 +532,12 @@ fn write_run_artifacts(
             cited_event_ids: outcome.cited_event_ids.clone(),
         },
         metrics: json!({
+            "ingest_tokens": outcome.performance.ingest_tokens,
+            "query_tokens": outcome.performance.query_tokens,
+            "reader_tokens": outcome.performance.reader_tokens,
+            "retrieval_latency_ms": outcome.performance.retrieval_latency_ms,
+            "end_to_end_latency_ms": outcome.performance.end_to_end_latency_ms,
+            "rows_written": outcome.performance.rows_written,
             "support_coverage": outcome.support_coverage,
             "answer_score": outcome.answer_score,
             "citation_recall": outcome.citation_recall,
@@ -666,10 +554,10 @@ fn write_run_artifacts(
             },
         }),
         diagnosis: MemoryDiagnosis {
-            write_side_gap: false,
-            retrieval_side_gap: !outcome.missing_event_ids.is_empty(),
-            reader_gap: false,
-            policy_abstention: outcome.abstained,
+            write_side_gap: outcome.diagnosis.write_side_gap,
+            retrieval_side_gap: outcome.diagnosis.retrieval_side_gap,
+            reader_gap: outcome.diagnosis.reader_gap,
+            policy_abstention: outcome.diagnosis.policy_abstention,
             notes: outcome.diagnosis_notes.clone(),
         },
         artifacts,
