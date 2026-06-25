@@ -1,13 +1,35 @@
 {
   "schema_version": 1,
-  "generated_at_epoch": 1782318110,
+  "generated_at_epoch": 1782389330,
   "fixture_path": "eval/coding-bench/fixtures/tasks.json",
-  "remem_rev": "15467327d6078cb40d15142b9cad81f65ca00786",
+  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
+  "remem_rev": "324aa0b3e1dd069ac5cc09129ebbe97b39e57446",
+  "source_dirty": false,
+  "command": [
+    "remem",
+    "eval-coding-bench",
+    "--fixture",
+    "eval/coding-bench/fixtures/tasks.json",
+    "--runs-per-condition",
+    "1",
+    "--runner",
+    "codex",
+    "--model",
+    "gpt-5.5",
+    "--reasoning-effort",
+    "medium",
+    "--json-out",
+    "eval/coding-bench/reports/fix-remem-smoke.json",
+    "--condition",
+    "remem",
+    "--ignore-budget"
+  ],
+  "artifact_policy": "raw_artifacts_local_ignored",
   "runner": {
     "provider": "codex",
     "model": "gpt-5.5",
     "runner": "codex",
-    "version": "codex-cli 0.142.0"
+    "version": "codex-cli 0.142.1"
   },
   "runs_per_condition": 1,
   "ignore_budget": true,
@@ -16,11 +38,11 @@
       "name": "remem",
       "summary": {
         "resolution_rate": 1.0,
-        "tokens_total_mean": 149753.2,
-        "tokens_total_stddev": 28780.23385172539,
-        "turns_mean": null,
-        "wall_time_ms_mean": 56666.2,
-        "wall_time_ms_p95": 68583.0
+        "tokens_total_mean": 99594.4,
+        "tokens_total_stddev": 28471.172807596107,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 58299.0,
+        "wall_time_ms_p95": 92915.0
       },
       "runs": [
         {
@@ -30,13 +52,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 201728,
-            "output_tokens": 2720,
-            "total_tokens": 204448
+            "input_tokens": 144919,
+            "output_tokens": 3274,
+            "total_tokens": 148193
           },
-          "turns": null,
-          "wall_time_ms": 68583,
-          "final_head_sha": "af6157d5236f94b7c7b86c2785133396c610cb48",
+          "turns": 1,
+          "wall_time_ms": 92915,
+          "final_head_sha": "573595409f69daf08aaa38f79824563a5969d299",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -65,16 +87,15 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 127796,
-            "output_tokens": 1770,
-            "total_tokens": 129566
+            "input_tokens": 63792,
+            "output_tokens": 1275,
+            "total_tokens": 65067
           },
-          "turns": null,
-          "wall_time_ms": 49741,
-          "final_head_sha": "b6615106b50b5ccd11d9f7dae6d96c82c2bcde3a",
+          "turns": 1,
+          "wall_time_ms": 34595,
+          "final_head_sha": "d995c96c6b4af3b31af9c6a5c3f979e1e9d91193",
           "changed_paths": [
-            "memory_demo/retention.py",
-            "tests/test_visible.py"
+            "memory_demo/retention.py"
           ],
           "unauthorized_path_changes": [],
           "runner_exit_code": 0,
@@ -100,13 +121,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 128900,
-            "output_tokens": 1843,
-            "total_tokens": 130743
+            "input_tokens": 78749,
+            "output_tokens": 1827,
+            "total_tokens": 80576
           },
-          "turns": null,
-          "wall_time_ms": 50062,
-          "final_head_sha": "f9d77d2ae360a43a1036d689ff11a84760b8e7fa",
+          "turns": 1,
+          "wall_time_ms": 58959,
+          "final_head_sha": "92224ab65f498878e8196446070c2c68a8452487",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -135,13 +156,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 151233,
-            "output_tokens": 2195,
-            "total_tokens": 153428
+            "input_tokens": 92436,
+            "output_tokens": 1722,
+            "total_tokens": 94158
           },
-          "turns": null,
-          "wall_time_ms": 64516,
-          "final_head_sha": "9c851d3df4065c73aa7871ed6248b3dd0ba7a544",
+          "turns": 1,
+          "wall_time_ms": 48837,
+          "final_head_sha": "ea57b4cdb6dd5e269b99da037725bd357247f56d",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -170,13 +191,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 128934,
-            "output_tokens": 1647,
-            "total_tokens": 130581
+            "input_tokens": 107995,
+            "output_tokens": 1983,
+            "total_tokens": 109978
           },
-          "turns": null,
-          "wall_time_ms": 50429,
-          "final_head_sha": "f3f32c0b9d2f9059206bbe9ee86d0db60a68d311",
+          "turns": 1,
+          "wall_time_ms": 56189,
+          "final_head_sha": "17926c909b72d3280292091f48220f79f5e5d5b3",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -200,27 +221,5 @@
         }
       ]
     }
-  ],
-  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
-  "source_dirty": true,
-  "command": [
-    "remem",
-    "eval-coding-bench",
-    "--fixture",
-    "eval/coding-bench/fixtures/tasks.json",
-    "--runs-per-condition",
-    "1",
-    "--runner",
-    "codex",
-    "--model",
-    "gpt-5.5",
-    "--reasoning-effort",
-    "medium",
-    "--json-out",
-    "eval/coding-bench/reports/fix-remem-smoke.json",
-    "--condition",
-    "remem",
-    "--ignore-budget"
-  ],
-  "artifact_policy": "raw_artifacts_local_ignored"
+  ]
 }
