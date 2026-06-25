@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use anyhow::Result;
+use rusqlite::{params, Connection};
 
 use super::normalize::{compact_line, relevant_to_request, search_query};
 use super::types::{
@@ -352,20 +352,12 @@ fn recall_claim_drop_reason(
     if claim.valid_to_epoch.is_some_and(|valid_to| valid_to <= now) {
         return Ok(Some("expired".to_string()));
     }
-    if !req.include_suppressed && claim_is_policy_suppressed(conn, claim.id)? {
+    if !req.include_suppressed
+        && crate::memory::suppression::user_claim_is_policy_suppressed(conn, claim.id)?
+    {
         return Ok(Some("policy_suppressed".to_string()));
     }
     Ok(None)
-}
-
-fn claim_is_policy_suppressed(conn: &Connection, claim_id: i64) -> Result<bool> {
-    let sql = format!(
-        "SELECT NOT ({}) FROM user_context_claims WHERE id = ?1",
-        crate::memory::suppression::user_claim_policy_filter_sql("user_context_claims")
-    );
-    conn.query_row(&sql, [claim_id], |row| row.get::<_, bool>(0))
-        .optional()?
-        .context("user-context claim disappeared during recall")
 }
 
 struct SessionCandidate {

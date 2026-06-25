@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::*;
 use crate::user_context::claims::{create_manual_claim, ManualClaimRequest};
@@ -110,6 +110,95 @@ fn candidates_require_non_empty_source_refs() -> Result<()> {
 }
 
 #[test]
+fn blocklisted_candidate_text_or_preview_is_rejected_before_insert() -> Result<()> {
+    let conn = migrated_conn()?;
+    let secret_text = create_candidate(
+        &conn,
+        &candidate_request("User's API key is sk-testsecret123456.", false),
+    )
+    .expect_err("secret-like candidate text should be rejected before insert");
+    assert!(secret_text
+        .to_string()
+        .contains("blocked by non-retention policy"));
+
+    let account_number = create_candidate(
+        &conn,
+        &candidate_request("User's bank account number is 123456789.", false),
+    )
+    .expect_err("account numbers should be rejected before insert");
+    assert!(account_number
+        .to_string()
+        .contains("blocked by non-retention policy"));
+
+    let mut preview_secret = candidate_request("Prefer concise review notes", false);
+    preview_secret.source_preview = Some("authorization=Bearer tiny-token");
+    let preview_err = create_candidate(&conn, &preview_secret)
+        .expect_err("secret-like source preview should be rejected before insert");
+    assert!(preview_err
+        .to_string()
+        .contains("blocked by non-retention policy"));
+
+    let mut whitespace_only_preview = candidate_request("Prefer concise review notes", false);
+    whitespace_only_preview.source_preview = Some("The user prefers   concise\treview notes.");
+    create_candidate(&conn, &whitespace_only_preview)?;
+
+    let candidate_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM user_context_candidates", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(candidate_count, 1);
+    Ok(())
+}
+
+#[test]
+fn apply_rechecks_non_retention_policy_for_pending_candidates() -> Result<()> {
+    let conn = migrated_conn()?;
+    let mut legacy_req = candidate_request("Prefer concise review notes", false);
+    legacy_req.claim_key = Some("preference:review-style");
+    let legacy = create_candidate(&conn, &legacy_req)?.candidate;
+    conn.execute(
+        "UPDATE user_context_candidates
+         SET claim_text = ?1
+         WHERE id = ?2",
+        params!["User's API key is sk-testsecret123456.", legacy.id],
+    )?;
+
+    let approve_err = approve_candidate(&conn, legacy.id)
+        .expect_err("legacy secret-like candidate must not apply");
+    assert!(approve_err
+        .to_string()
+        .contains("blocked by non-retention policy"));
+    assert!(list_claims_for_text(&conn, "User's API key is sk-testsecret123456.")?.is_empty());
+    assert_eq!(
+        load_candidate(&conn, legacy.id)?.review_status,
+        "pending_review"
+    );
+
+    let mut edited_req = candidate_request("Prefer draft review notes", false);
+    edited_req.claim_key = Some("preference:draft-review-style");
+    let edited = create_candidate(&conn, &edited_req)?.candidate;
+    let edit_err = edit_candidate(
+        &conn,
+        edited.id,
+        &CandidateEditRequest {
+            text: "User's AWS access key ID is AKIAIOSFODNN7EXAMPLE.",
+            claim_type: Some(UserContextClaimType::Preference),
+            claim_key: Some("preference:draft-review-style"),
+            sensitivity: Some(UserContextSensitivity::Normal),
+            review_note: Some("unsafe edit"),
+        },
+    )
+    .expect_err("secret-like review edit must not apply");
+    assert!(edit_err
+        .to_string()
+        .contains("blocked by non-retention policy"));
+    let edited_after = load_candidate(&conn, edited.id)?;
+    assert_eq!(edited_after.review_status, "pending_review");
+    assert_eq!(edited_after.claim_text, "Prefer draft review notes");
+    Ok(())
+}
+
+#[test]
 fn sensitive_or_high_risk_candidates_stay_pending_with_block_reason() -> Result<()> {
     let conn = migrated_conn()?;
     let mut sensitive = candidate_request("Sensitive identity detail", true);
@@ -159,6 +248,26 @@ fn sensitive_or_high_risk_candidates_stay_pending_with_block_reason() -> Result<
             .auto_promote_block_reason
             .as_deref(),
         Some("manual_source_review")
+    );
+    Ok(())
+}
+
+#[test]
+fn third_party_candidates_never_auto_promote() -> Result<()> {
+    let conn = migrated_conn()?;
+    let mut req = candidate_request("Alice owns release QA for the user's workflow", true);
+    req.claim_type = UserContextClaimType::Relationship;
+    req.claim_key = Some("relationship:alice-release-qa");
+    req.source_kind = "third_party_statement";
+
+    let result = create_candidate(&conn, &req)?;
+
+    assert_eq!(result.action, "pending_review");
+    assert!(result.claim.is_none());
+    assert_eq!(result.candidate.review_status, "pending_review");
+    assert_eq!(
+        result.candidate.auto_promote_block_reason.as_deref(),
+        Some("third_party_requires_review")
     );
     Ok(())
 }
