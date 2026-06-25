@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use super::types::{CodingBenchFailureReason, CodingMemoryAttribution};
 use super::*;
 
 const TEST_RUNS_PER_CONDITION: usize = MIN_RUNS_PER_CONDITION;
@@ -33,6 +34,20 @@ fn metrics() -> CodingBenchRunMetrics {
     }
 }
 
+fn memory_contract() -> CodingMemoryAttribution {
+    CodingMemoryAttribution {
+        injected_memory_ids: vec![1],
+        used_memory_ids: vec![1],
+        citation_precision: 1.0,
+        citation_recall: 1.0,
+        stale_used_count: 0,
+        irrelevant_injection_count: 0,
+        missing_relevant_memory_count: 0,
+        memory_helped: true,
+        memory_hurt: false,
+    }
+}
+
 fn remem_run(snapshot: RememContractSnapshot) -> CodingBenchRunReport {
     remem_run_for_task(snapshot, "fixture-task", 0)
 }
@@ -61,6 +76,7 @@ fn remem_run_for_task(
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
         patch_artifact_path: None,
         unauthorized_path_changes: Vec::new(),
+        memory_contract: Some(memory_contract()),
         remem_contract_snapshot: Some(snapshot),
     }
 }
@@ -84,6 +100,7 @@ fn control_run(
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
         patch_artifact_path: None,
         unauthorized_path_changes: Vec::new(),
+        memory_contract: None,
         remem_contract_snapshot: None,
     }
 }
@@ -273,7 +290,7 @@ fn validator_rejects_stale_task_failure_reason_on_resolved_run() -> Result<()> {
     let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
     let mut run = remem_run(snapshot);
     run.task_success = true;
-    run.task_failure_reason = Some("stale task failure".to_string());
+    run.task_failure_reason = Some(CodingBenchFailureReason::TestFailure);
     let report = report_with_run(run)?;
 
     assert!(validate_contract_snapshots(&report)
@@ -474,6 +491,7 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
         patch_artifact_path: None,
         unauthorized_path_changes: Vec::new(),
+        memory_contract: Some(memory_contract()),
         remem_contract_snapshot: None,
     })?;
     assert!(validate_contract_snapshots(&missing_snapshot)
@@ -499,6 +517,7 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
         patch_artifact_path: None,
         unauthorized_path_changes: Vec::new(),
+        memory_contract: None,
         remem_contract_snapshot: Some(snapshot),
     })?;
     assert!(validate_contract_snapshots(&non_remem_snapshot)
@@ -520,6 +539,7 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
         patch_artifact_path: None,
         unauthorized_path_changes: Vec::new(),
+        memory_contract: None,
         remem_contract_snapshot: None,
     })?;
     assert!(validate_contract_snapshots(&non_remem_contract_failure)

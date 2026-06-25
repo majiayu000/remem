@@ -6,8 +6,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::types::{
-    BenchVerifyFailure, BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer, CodingRunArtifact,
-    MemoryRunArtifact, PublicBenchmarkManifest, PublicBenchmarkReport,
+    BenchVerifyFailure, BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer,
+    CodingMemoryContract, CodingRunArtifact, MemoryRunArtifact, PublicBenchmarkManifest,
+    PublicBenchmarkReport,
 };
 
 const REQUIRED_SCHEMA_FILES: [&str; 6] = [
@@ -386,7 +387,9 @@ fn validate_coding_run_artifact(
     if run.condition == "remem" {
         require_artifact_key(&run.artifacts, "injected_context", &label, state);
         require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
-        if run.memory_contract.is_null() {
+        if let Some(contract) = &run.memory_contract {
+            validate_coding_memory_contract(contract, run.failure_reason.as_deref(), &label, state);
+        } else {
             state.fail(
                 label.clone(),
                 "remem coding run must include memory_contract",
@@ -399,6 +402,85 @@ fn validate_coding_run_artifact(
         "$",
         state,
     );
+}
+
+fn validate_coding_memory_contract(
+    contract: &CodingMemoryContract,
+    failure_reason: Option<&str>,
+    label: &str,
+    state: &mut VerifyState,
+) {
+    validate_rate(
+        contract.citation_precision,
+        "memory_contract.citation_precision",
+        label,
+        state,
+    );
+    validate_rate(
+        contract.citation_recall,
+        "memory_contract.citation_recall",
+        label,
+        state,
+    );
+    require_unique_positive_ids(
+        &contract.injected_memory_ids,
+        "memory_contract.injected_memory_ids",
+        label,
+        state,
+    );
+    require_unique_positive_ids(
+        &contract.used_memory_ids,
+        "memory_contract.used_memory_ids",
+        label,
+        state,
+    );
+    if contract.memory_helped && contract.memory_hurt {
+        state.fail(
+            label.to_string(),
+            "memory_contract cannot mark both memory_helped and memory_hurt",
+        );
+    }
+    if failure_reason.is_some_and(is_memory_specific_failure_reason) && !contract.memory_hurt {
+        state.fail(
+            label.to_string(),
+            "memory-specific failure_reason requires memory_contract.memory_hurt=true",
+        );
+    }
+}
+
+fn validate_rate(value: f64, field: &str, label: &str, state: &mut VerifyState) {
+    if !(0.0..=1.0).contains(&value) || !value.is_finite() {
+        state.fail(
+            label.to_string(),
+            format!("{field} must be a finite rate between 0 and 1"),
+        );
+    }
+}
+
+fn require_unique_positive_ids(ids: &[i64], field: &str, label: &str, state: &mut VerifyState) {
+    let mut seen = BTreeSet::new();
+    for id in ids {
+        if *id <= 0 {
+            state.fail(
+                label.to_string(),
+                format!("{field} contains non-positive id"),
+            );
+        }
+        if !seen.insert(*id) {
+            state.fail(label.to_string(), format!("{field} contains duplicate id"));
+        }
+    }
+}
+
+fn is_memory_specific_failure_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "ignored_memory"
+            | "missing_memory"
+            | "stale_memory_followed"
+            | "irrelevant_memory_distracted"
+            | "agent_hallucinated_memory"
+    )
 }
 
 fn validate_coding_metrics(run: &CodingRunArtifact, label: &str, state: &mut VerifyState) {

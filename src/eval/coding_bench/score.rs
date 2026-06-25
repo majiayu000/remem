@@ -1,6 +1,11 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde_json::Value;
 
-use super::types::{BenchTokenUsage, ConditionSummary, RunReport};
+use super::types::{
+    BenchTokenUsage, CodingBenchFailureReason, CodingMemoryAttribution,
+    CodingMemoryAttributionInput, ConditionSummary, RunReport,
+};
 
 pub fn summarize_runs(runs: &[RunReport]) -> ConditionSummary {
     if runs.is_empty() {
@@ -27,7 +32,23 @@ pub fn summarize_runs(runs: &[RunReport]) -> ConditionSummary {
         turns_mean: (!turns.is_empty()).then(|| mean(&turns)),
         wall_time_ms_mean: mean(&wall),
         wall_time_ms_p95: percentile(&wall, 0.95),
+        failure_counts: failure_counts(runs, false),
+        memory_failure_counts: failure_counts(runs, true),
     }
+}
+
+fn failure_counts(
+    runs: &[RunReport],
+    memory_specific_only: bool,
+) -> BTreeMap<CodingBenchFailureReason, usize> {
+    let mut counts = BTreeMap::new();
+    for reason in runs.iter().filter_map(|run| run.failure_reason) {
+        if memory_specific_only && !reason.is_memory_specific() {
+            continue;
+        }
+        *counts.entry(reason).or_insert(0) += 1;
+    }
+    counts
 }
 
 pub fn parse_changed_paths(porcelain: &str) -> Vec<String> {
@@ -97,6 +118,129 @@ pub fn patch_pattern_failures(
         }
     }
     failures
+}
+
+pub fn build_memory_attribution(
+    input: &CodingMemoryAttributionInput,
+    runner_stdout: &str,
+) -> CodingMemoryAttribution {
+    let injected = normalized_ids(&input.injected_memory_ids);
+    let used = extract_memory_citation_ids(runner_stdout);
+    let relevant = normalized_ids(&input.relevant_memory_ids);
+    let forbidden = normalized_ids(&input.forbidden_memory_ids);
+    let injected_set = injected.iter().copied().collect::<BTreeSet<_>>();
+    let used_set = used.iter().copied().collect::<BTreeSet<_>>();
+    let relevant_set = relevant.iter().copied().collect::<BTreeSet<_>>();
+    let forbidden_set = forbidden.iter().copied().collect::<BTreeSet<_>>();
+    let matched_used = used_set.intersection(&injected_set).count();
+    let relevant_used = used_set.intersection(&relevant_set).count();
+    let stale_used = used_set.intersection(&forbidden_set).count();
+    let irrelevant_injected = injected_set
+        .difference(&relevant_set)
+        .filter(|id| !forbidden_set.contains(id))
+        .count();
+    let missing_relevant = relevant_set.difference(&injected_set).count();
+
+    CodingMemoryAttribution {
+        injected_memory_ids: injected,
+        used_memory_ids: used,
+        citation_precision: ratio_or_zero(matched_used, used_set.len()),
+        citation_recall: ratio_or_one(relevant_used, relevant_set.len()),
+        stale_used_count: stale_used,
+        irrelevant_injection_count: irrelevant_injected,
+        missing_relevant_memory_count: missing_relevant,
+        memory_helped: false,
+        memory_hurt: false,
+    }
+}
+
+pub fn extract_memory_citation_ids(text: &str) -> Vec<i64> {
+    let mut ids = BTreeSet::new();
+    for line in text
+        .lines()
+        .filter(|line| line.contains("Memory citations:"))
+    {
+        let mut rest = line;
+        while let Some(index) = rest.find("memory:#") {
+            let after = &rest[index + "memory:#".len()..];
+            let digits = after
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect::<String>();
+            if let Ok(id) = digits.parse::<i64>() {
+                ids.insert(id);
+            }
+            rest = after;
+        }
+    }
+    ids.into_iter().collect()
+}
+
+pub fn update_memory_attribution_outcome(
+    attribution: &mut CodingMemoryAttribution,
+    resolved: bool,
+    failure_reason: Option<CodingBenchFailureReason>,
+) {
+    attribution.memory_helped =
+        resolved && attribution.citation_recall > 0.0 && attribution.stale_used_count == 0;
+    attribution.memory_hurt = failure_reason
+        .is_some_and(CodingBenchFailureReason::is_memory_specific)
+        || attribution.stale_used_count > 0;
+}
+
+pub fn used_unknown_memory(attribution: &CodingMemoryAttribution) -> bool {
+    let injected = attribution
+        .injected_memory_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    attribution
+        .used_memory_ids
+        .iter()
+        .any(|id| !injected.contains(id))
+}
+
+pub fn used_irrelevant_memory(
+    attribution: &CodingMemoryAttribution,
+    input: &CodingMemoryAttributionInput,
+) -> bool {
+    let relevant = input
+        .relevant_memory_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let forbidden = input
+        .forbidden_memory_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    attribution
+        .used_memory_ids
+        .iter()
+        .any(|id| !relevant.contains(id) && !forbidden.contains(id))
+}
+
+fn normalized_ids(ids: &[i64]) -> Vec<i64> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn ratio_or_zero(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
+fn ratio_or_one(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        1.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
 }
 
 fn path_matches_any(path: &str, patterns: &[String]) -> bool {
@@ -258,6 +402,46 @@ diff --git a/memory_demo/slug.py b/memory_demo/slug.py
             patch_pattern_failures(diff, &["untitled".to_string()], &["legacy".to_string()])
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn coding_bench_attribution_parses_memory_citations_and_recall() {
+        let input = CodingMemoryAttributionInput {
+            injected_memory_ids: vec![2, 1, 1],
+            relevant_memory_ids: vec![1],
+            forbidden_memory_ids: Vec::new(),
+            gold_required_facts: vec!["fact:one".to_string()],
+            gold_forbidden_facts: Vec::new(),
+        };
+        let attribution =
+            build_memory_attribution(&input, r#"{"msg":"Memory citations: memory:#1 memory:#9"}"#);
+
+        assert_eq!(attribution.injected_memory_ids, vec![1, 2]);
+        assert_eq!(attribution.used_memory_ids, vec![1, 9]);
+        assert_eq!(attribution.citation_precision, 0.5);
+        assert_eq!(attribution.citation_recall, 1.0);
+        assert!(used_unknown_memory(&attribution));
+    }
+
+    #[test]
+    fn coding_bench_attribution_marks_stale_memory_followed() {
+        let input = CodingMemoryAttributionInput {
+            injected_memory_ids: vec![7],
+            relevant_memory_ids: Vec::new(),
+            forbidden_memory_ids: vec![7],
+            gold_required_facts: Vec::new(),
+            gold_forbidden_facts: vec!["fact:old_api_current".to_string()],
+        };
+        let mut attribution = build_memory_attribution(&input, "Memory citations: memory:#7");
+        update_memory_attribution_outcome(
+            &mut attribution,
+            false,
+            Some(CodingBenchFailureReason::StaleMemoryFollowed),
+        );
+
+        assert_eq!(attribution.stale_used_count, 1);
+        assert!(attribution.memory_hurt);
+        assert!(!attribution.memory_helped);
     }
 
     #[test]

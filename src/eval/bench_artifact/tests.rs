@@ -33,7 +33,7 @@ fn verifier_rejects_missing_coding_test_log() -> Result<()> {
 }
 
 #[test]
-fn verifier_rejects_unknown_coding_failure_reason() -> Result<()> {
+fn coding_bench_attribution_verifier_rejects_unknown_coding_failure_reason() -> Result<()> {
     let root = copy_public_fixture("unknown-failure-reason")?;
     mutate_json(
         &root.join("coding/artifacts/smoke-coding-001/run.json"),
@@ -47,6 +47,28 @@ fn verifier_rejects_unknown_coding_failure_reason() -> Result<()> {
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("unknown failure_reason enum"));
+    Ok(())
+}
+
+#[test]
+fn coding_bench_attribution_verifier_rejects_invalid_memory_contract() -> Result<()> {
+    let root = copy_public_fixture("invalid-memory-contract")?;
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["resolved"] = Value::Bool(false);
+            json["failure_reason"] = Value::String("stale_memory_followed".to_string());
+            json["memory_contract"]["citation_precision"] = Value::from(1.5);
+            json["memory_contract"]["memory_hurt"] = Value::Bool(false);
+        },
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    let text = failure_text(&report);
+    assert!(text.contains("memory_contract.citation_precision"));
+    assert!(text.contains("memory_contract.memory_hurt=true"));
     Ok(())
 }
 

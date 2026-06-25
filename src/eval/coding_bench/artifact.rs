@@ -6,6 +6,8 @@ use crate::eval::current_memory_contracts::{
     CurrentMemoryContractEvalReport, CurrentMemoryContractRateMetric,
 };
 
+use super::types::{CodingBenchFailureReason, CodingMemoryAttribution};
+
 pub const CODING_AGENT_AB_SPEC_PATH: &str = "docs/specs/issue385-coding-agent-ab/TECH.md";
 pub const CURRENT_MEMORY_CONTRACT_SPEC_PATH: &str = "docs/specs/current-memory-contracts/TECH.md";
 pub const MIN_RUNS_PER_CONDITION: usize = 3;
@@ -38,7 +40,7 @@ pub struct CodingBenchRunReport {
     #[serde(rename = "resolved")]
     pub task_success: bool,
     #[serde(rename = "failure_reason")]
-    pub task_failure_reason: Option<String>,
+    pub task_failure_reason: Option<CodingBenchFailureReason>,
     pub memory_contract_status: CodingBenchMemoryContractStatus,
     pub runtime_contract_failure: bool,
     pub runtime_contract_failure_reason: Option<String>,
@@ -47,6 +49,8 @@ pub struct CodingBenchRunReport {
     pub final_head_sha: Option<String>,
     pub patch_artifact_path: Option<String>,
     pub unauthorized_path_changes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_contract: Option<CodingMemoryAttribution>,
     pub remem_contract_snapshot: Option<RememContractSnapshot>,
 }
 
@@ -242,12 +246,7 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     run.run_index
                 );
             }
-            if !run.task_success
-                && run
-                    .task_failure_reason
-                    .as_deref()
-                    .is_none_or(|reason| reason.trim().is_empty())
-            {
+            if !run.task_success && run.task_failure_reason.is_none() {
                 bail!(
                     "coding bench run {}#{} failed task without task_failure_reason",
                     run.task_id,
@@ -301,6 +300,14 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     {
                         bail!(
                             "{:?} run {}#{} must not report remem runtime contract failure",
+                            run.condition,
+                            run.task_id,
+                            run.run_index
+                        );
+                    }
+                    if run.memory_contract.is_some() {
+                        bail!(
+                            "{:?} run {}#{} must not carry memory_contract attribution",
                             run.condition,
                             run.task_id,
                             run.run_index
@@ -547,6 +554,7 @@ fn validate_required_run_metrics(run: &CodingBenchRunReport) -> Result<()> {
 }
 
 fn validate_remem_run_contract(run: &CodingBenchRunReport) -> Result<()> {
+    validate_memory_attribution(run)?;
     let snapshot = run.remem_contract_snapshot.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
             "remem run {}#{} is missing current memory contract snapshot",
@@ -590,6 +598,71 @@ fn validate_remem_run_contract(run: &CodingBenchRunReport) -> Result<()> {
             run.runtime_contract_failure,
             snapshot.contract_health.all_checks_passed
         );
+    }
+    Ok(())
+}
+
+fn validate_memory_attribution(run: &CodingBenchRunReport) -> Result<()> {
+    let attribution = run.memory_contract.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "remem run {}#{} is missing memory_contract attribution",
+            run.task_id,
+            run.run_index
+        )
+    })?;
+    validate_rate(attribution.citation_precision, "citation_precision", run)?;
+    validate_rate(attribution.citation_recall, "citation_recall", run)?;
+    ensure_unique_positive_ids(&attribution.injected_memory_ids, "injected_memory_ids", run)?;
+    ensure_unique_positive_ids(&attribution.used_memory_ids, "used_memory_ids", run)?;
+    if attribution.memory_helped && attribution.memory_hurt {
+        bail!(
+            "remem run {}#{} memory_contract cannot mark both memory_helped and memory_hurt",
+            run.task_id,
+            run.run_index
+        );
+    }
+    if run
+        .task_failure_reason
+        .is_some_and(CodingBenchFailureReason::is_memory_specific)
+        && !attribution.memory_hurt
+    {
+        bail!(
+            "remem run {}#{} has memory-specific failure without memory_hurt=true",
+            run.task_id,
+            run.run_index
+        );
+    }
+    Ok(())
+}
+
+fn validate_rate(value: f64, field: &str, run: &CodingBenchRunReport) -> Result<()> {
+    if !(0.0..=1.0).contains(&value) || !value.is_finite() {
+        bail!(
+            "remem run {}#{} memory_contract {field} must be a finite rate between 0 and 1",
+            run.task_id,
+            run.run_index
+        );
+    }
+    Ok(())
+}
+
+fn ensure_unique_positive_ids(ids: &[i64], field: &str, run: &CodingBenchRunReport) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for id in ids {
+        if *id <= 0 {
+            bail!(
+                "remem run {}#{} memory_contract {field} contains non-positive id",
+                run.task_id,
+                run.run_index
+            );
+        }
+        if !seen.insert(*id) {
+            bail!(
+                "remem run {}#{} memory_contract {field} contains duplicate id",
+                run.task_id,
+                run.run_index
+            );
+        }
     }
     Ok(())
 }

@@ -189,7 +189,15 @@ Each run entry records:
 - wall time
 - final head SHA
 - unauthorized path changes
-- failure reason
+- failure reason, using the fixed enum `test_failure`, `timeout`,
+  `compile_failure`, `wrong_file_modified`, `ignored_memory`, `missing_memory`,
+  `stale_memory_followed`, `irrelevant_memory_distracted`,
+  `over_context_budget`, `agent_hallucinated_memory`, or
+  `oracle_inconclusive`
+- `memory_contract` for remem runs, including injected memory IDs,
+  cited/used memory IDs, citation precision/recall, stale used count,
+  irrelevant injection count, missing relevant memory count, `memory_helped`,
+  and `memory_hurt`
 
 For `remem` condition runs, the run entry must also include
 `remem_contract_snapshot`. The snapshot is the benchmark handoff from

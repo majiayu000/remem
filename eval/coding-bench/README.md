@@ -64,14 +64,36 @@ defines the canonical fields:
   deterministic report;
 - `memory_contract_status`: `passed`, `failed`, or `not_applicable`;
 - `runtime_contract_failure` and `runtime_contract_failure_reason`;
+- `memory_contract`, with injected memory ids, cited/used memory ids, citation
+  precision/recall, stale used count, irrelevant injection count, missing
+  relevant memory count, `memory_helped`, and `memory_hurt`;
 - score command evidence, patch evidence, token metrics, turns, and wall time.
 
 `no_memory` and `curated_file` runs must set `memory_contract_status` to
-`not_applicable` and must not include remem contract evidence.
+`not_applicable` and must not include remem contract evidence or memory
+attribution.
 
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must
 preserve both facts instead of merging them into one failure reason.
+
+Task `failure_reason` is a fixed enum, not free text:
+
+- `test_failure`
+- `timeout`
+- `compile_failure`
+- `wrong_file_modified`
+- `ignored_memory`
+- `missing_memory`
+- `stale_memory_followed`
+- `irrelevant_memory_distracted`
+- `over_context_budget`
+- `agent_hallucinated_memory`
+- `oracle_inconclusive`
+
+Reports aggregate `memory_failure_counts` separately from the full
+`failure_counts` map so memory-specific failures are not mixed into ordinary
+coding failures.
 
 ## Commands
 

@@ -11,12 +11,13 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::condition::apply_condition;
+use super::failure::{classify_failure_reason, output_indicates_compile_failure, FailureEvidence};
 use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
 use super::isolation::{prepare_codex_isolation, runner_isolation_violation};
 use super::run_plan::randomized_run_plan;
 use super::score::{
-    parse_changed_paths, parse_codex_jsonl_usage, patch_pattern_failures, summarize_runs,
-    unauthorized_paths,
+    build_memory_attribution, parse_changed_paths, parse_codex_jsonl_usage, patch_pattern_failures,
+    summarize_runs, unauthorized_paths, update_memory_attribution_outcome,
 };
 use super::types::{
     BenchCondition, BenchTokenUsage, CodingBenchFixture, CodingBenchOptions, CodingBenchReport,
@@ -191,6 +192,10 @@ fn run_one(
         &task.score.forbidden_patch_patterns,
     );
     let mut score_failed = !patch_pattern_failures.is_empty();
+    let forbidden_patch_failed = patch_pattern_failures
+        .iter()
+        .any(|failure| failure.starts_with("forbidden patch pattern"));
+    let mut compile_failed = false;
     for (index, command) in task.score.commands.iter().enumerate() {
         let (program, args) = command
             .split_first()
@@ -205,6 +210,7 @@ fn run_one(
         .with_context(|| format!("run score command {:?}", command))?;
         if outcome.exit_code != Some(0) || outcome.timed_out {
             score_failed = true;
+            compile_failed |= output_indicates_compile_failure(&outcome.stdout, &outcome.stderr);
         }
         let stdout_artifact = write_artifact(
             &artifact_dir,
@@ -225,15 +231,30 @@ fn run_one(
         });
     }
 
+    let mut memory_contract = (condition == BenchCondition::Remem)
+        .then(|| build_memory_attribution(&setup.memory_attribution, &runner_outcome.stdout));
     let final_head_sha = current_git_rev(&repo_dir);
-    let failure_reason = failure_reason(
+    let failure_reason = classify_failure_reason(FailureEvidence {
         score_failed,
-        &unauthorized,
-        runner_isolation_violation(&runner_outcome.stdout, &runner_outcome.stderr).as_deref(),
-        runner_outcome.timed_out,
-        runner_outcome.exit_code,
-    );
+        compile_failed,
+        forbidden_patch_failed,
+        unauthorized_paths: &unauthorized,
+        memory_contract: memory_contract.as_ref(),
+        memory_input: &setup.memory_attribution,
+        runner_isolation_violation: runner_isolation_violation(
+            &runner_outcome.stdout,
+            &runner_outcome.stderr,
+        )
+        .as_deref(),
+        runner_timed_out: runner_outcome.timed_out,
+        runner_exit_code: runner_outcome.exit_code,
+        runner_stdout: &runner_outcome.stdout,
+        runner_stderr: &runner_outcome.stderr,
+    });
     let resolved = failure_reason.is_none();
+    if let Some(attribution) = &mut memory_contract {
+        update_memory_attribution_outcome(attribution, resolved, failure_reason);
+    }
     if !options.keep_workdirs {
         let _ = fs::remove_dir_all(&run_root);
     }
@@ -253,6 +274,7 @@ fn run_one(
         runner_exit_code: runner_outcome.exit_code,
         runner_timed_out: runner_outcome.timed_out,
         score_commands,
+        memory_contract,
         artifacts: RunArtifacts {
             runner_stdout,
             runner_stderr,
@@ -675,34 +697,6 @@ fn report_command(options: &CodingBenchOptions) -> Vec<String> {
         command.push("--keep-workdirs".to_string());
     }
     command
-}
-
-fn failure_reason(
-    score_failed: bool,
-    unauthorized: &[String],
-    runner_isolation_violation: Option<&str>,
-    runner_timed_out: bool,
-    runner_exit_code: Option<i32>,
-) -> Option<String> {
-    if let Some(reason) = runner_isolation_violation {
-        return Some(reason.to_string());
-    }
-    if runner_timed_out {
-        return Some("runner timed out".to_string());
-    }
-    if !unauthorized.is_empty() {
-        return Some(format!(
-            "unauthorized path changes: {}",
-            unauthorized.join(", ")
-        ));
-    }
-    if score_failed {
-        return Some("score command failed".to_string());
-    }
-    if runner_exit_code.is_none() {
-        return Some("runner terminated by signal".to_string());
-    }
-    None
 }
 
 fn toml_escape(value: &str) -> String {
