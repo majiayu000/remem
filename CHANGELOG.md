@@ -13,6 +13,7 @@
 - Added repository public-surface and file-size guardrails for release
   readiness.
 - Staged source version `0.5.126` for the current-memory contract gates.
+- Staged source version `0.5.127` for coding-bench contract artifacts.
 
 ## [0.5.109] - 2026-06-20
 
