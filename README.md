@@ -594,7 +594,7 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `today`, `top_projects` |
+| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `today`, `top_projects` |
 | `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied` |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem show <id> --json` | `found`, `id`, `memory` |

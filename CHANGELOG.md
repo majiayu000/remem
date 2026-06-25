@@ -15,6 +15,7 @@
 - Staged source version `0.5.126` for the current-memory contract gates.
 - Staged source version `0.5.127` for coding-bench contract artifacts.
 - Staged source version `0.5.128` for workstream identity continuity.
+- Staged source version `0.5.129` for usage feedback shadow ranking.
 
 ## [0.5.109] - 2026-06-20
 
