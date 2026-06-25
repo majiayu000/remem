@@ -20,7 +20,50 @@ plugin runtime metadata, and install paths aligned.
 ```bash
 python3 scripts/ci/check_plugin_version_sync.py
 python3 scripts/ci/check_public_surface.py
+python3 scripts/ci/check_public_claims.py
 python3 scripts/ci/check_file_size.py
+```
+
+## Public Claim Policy
+
+README, changelog, release notes, and release-adjacent docs must link public
+benchmark claims to committed report artifacts and the claim level they satisfy.
+Until the linked artifacts pass the relevant gate, use directional wording only.
+
+Allowed claim levels:
+
+| Level | Claim | Required evidence |
+|---|---|---|
+| 1 | Reproducible local memory benchmark | A memory-system report from a clean checkout, full reproduction commands, and a passing artifact verifier. |
+| 2 | Coding-agent outcome improvement | The #385 `no_memory` / `remem` / `curated_file` matrix on the same task set, at least three runs per condition, positive remem delta versus `no_memory`, reported token/turn/wall-time regressions, and the coding outcome stop-loss gate. |
+| 3 | Public SOTA claim | A public benchmark comparison using the same model, budget, harness, and published artifacts; wording must name the benchmark and condition instead of generalizing to all long-term memory or all coding agents. |
+
+The coding outcome stop-loss gate applies to README, release, marketing, and
+roadmap wording that says remem improves coding-agent outcomes, beats a
+maintained context file, or is broadly superior for coding workflows. The gate
+passes only when all of these are true:
+
+- remem beats `no_memory` on resolved rate by at least 10 percentage points, or
+  by a statistically credible positive bootstrap interval.
+- remem is not worse than `curated_file` by more than 3 percentage points.
+- remem total token cost is at most `curated_file + 20%`, unless the report
+  justifies a higher cost with a higher resolved rate.
+- stale-memory-caused failures stay under 2% of runs.
+- privacy and non-retention leak rate is 0 on the adversarial suite.
+- All linked artifacts reproduce from a clean checkout.
+
+If `curated_file` ties or beats remem with lower cost and no material usability
+downside, record the stop-loss signal in the M6 roadmap before strengthening
+release wording. The next slice should focus on ergonomics, export/import,
+human-maintained memory workflows, and context-file integration.
+
+Current public baseline: `eval/public/reports/baseline.md` and
+`eval/public/reports/baseline.json` are `directional_only_no_public_claim`. They
+do not support SOTA, broad superiority, or coding-task superiority wording.
+CI enforces this boundary with:
+
+```bash
+python3 scripts/ci/check_public_claims.py
 ```
 
 ## Local Verification

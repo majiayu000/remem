@@ -59,6 +59,12 @@ until the coding-agent artifacts include `no_memory`, `remem`, and
 `curated_file` with at least three runs per condition and the public claim gate
 passes.
 
+README and release wording may cite `reports/baseline.md` only as directional
+memory-system capability evidence. It must not use SOTA, broad superiority,
+coding-task superiority, or maintained-context-file comparison wording unless a
+later committed report passes the relevant claim level and stop-loss gate in
+`docs/release-lifecycle.md`.
+
 Regenerate the committed memory-suite report and artifacts:
 
 ```bash
