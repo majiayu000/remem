@@ -6,12 +6,14 @@ use crate::db::test_support::{
 use crate::{db, memory};
 
 use super::database::{
-    check_capture_drops, check_database, check_memory_usage_feedback, check_pending_queue,
-    check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
+    check_capture_drops, check_database, check_pending_queue, check_raw_archive_ingest,
+    check_temporal_facts, check_worker_daemon,
 };
-use super::health_action::{queue_actions, render_action_block};
 use super::report::{run_doctor_with_writer, DoctorOptions};
 use super::schema::{check_key_format, check_schema_migration};
+
+mod health_action_tests;
+mod memory_usage_feedback;
 
 struct ScopedCipherKeyEnv {
     previous: Option<std::ffi::OsString>,
@@ -146,31 +148,6 @@ fn check_key_format_reports_effective_env_key() -> anyhow::Result<()> {
         check.detail
     );
     Ok(())
-}
-
-#[test]
-fn health_action_queue_actions_are_empty_when_runtime_is_clear() {
-    let actions = queue_actions(0, 0, 0, 0, 0, 0);
-    assert!(actions.is_empty());
-    assert!(render_action_block(&actions).is_empty());
-}
-
-#[test]
-fn health_action_queue_actions_render_copy_paste_commands() {
-    let actions = queue_actions(43, 1, 5, 2, 3, 4);
-    let text = render_action_block(&actions);
-
-    assert!(text.contains("Needs attention:"));
-    assert!(text.contains("43 failed pending observations"));
-    assert!(text.contains("inspect: remem pending list-failed --limit 20"));
-    assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
-    assert!(text.contains("1 expired processing pending observation"));
-    assert!(text.contains("5 expired processing extraction tasks"));
-    assert!(text.contains("2 failed jobs"));
-    assert!(text.contains("3 stuck jobs"));
-    assert!(text.contains("4 failed extraction tasks"));
-    assert!(text.contains("inspect counts: remem status --json"));
-    assert!(text.contains("recover: remem worker --once"));
 }
 
 #[test]
@@ -415,52 +392,6 @@ fn check_capture_drops_warns_on_actionable_drops() -> anyhow::Result<()> {
         "{}",
         check.detail
     );
-    Ok(())
-}
-
-#[test]
-fn check_memory_usage_feedback_reports_parse_rate() -> anyhow::Result<()> {
-    let _test_dir = ScopedTestDataDir::new("doctor-memory-usage-feedback");
-    let conn = db::open_db()?;
-    let memory_id = memory::insert_memory(
-        &conn,
-        Some("session-1"),
-        "proj-a",
-        None,
-        "source memory",
-        "A cited injected memory.",
-        "decision",
-        None,
-    )?;
-    conn.execute(
-        "INSERT INTO context_injection_items
-         (injection_run_id, host, project, session_id, injection_key, output_mode,
-          decision, item_kind, item_id, memory_id, channel, render_order, status,
-          title, provenance, staleness, injected_at_epoch)
-         VALUES ('run-1', 'codex-cli', 'proj-a', 'session-1', 'key-1', 'full',
-                 'emitted', 'memory', ?1, ?1, 'core', 1, 'injected',
-                 'source memory', 'src=memory', 'current', 100)",
-        params![memory_id],
-    )?;
-    crate::memory::usage::record_stop_memory_citations(
-        &conn,
-        "codex-cli",
-        "proj-a",
-        "session-1",
-        "hash-1",
-        &format!("Used the injected memory.\nMemory citations: memory:#{memory_id}"),
-    )?;
-
-    let check = check_memory_usage_feedback(Some(&conn));
-    assert_eq!(check.icon(), "ok");
-    assert!(
-        check.detail.contains("1 citation event"),
-        "{}",
-        check.detail
-    );
-    assert!(check.detail.contains("parsed=1"), "{}", check.detail);
-    assert!(check.detail.contains("matched=1"), "{}", check.detail);
-    assert!(check.detail.contains("usage_events=1"), "{}", check.detail);
     Ok(())
 }
 

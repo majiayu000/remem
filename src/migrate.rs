@@ -12,11 +12,15 @@ mod tests_content_identity;
 #[cfg(test)]
 mod tests_convergence;
 #[cfg(test)]
+mod tests_memory_usage;
+#[cfg(test)]
 mod tests_schema;
 #[cfg(test)]
 mod tests_schema_drift;
 #[cfg(test)]
 mod tests_user_context;
+#[cfg(test)]
+mod tests_workstream_identity;
 mod transition;
 mod types;
 

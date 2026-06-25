@@ -11,6 +11,7 @@ const SELECT_FIELDS: &str =
 pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<WorkStream>> {
     let sql = format!(
         "{} WHERE status = 'active'
+              AND merged_into_workstream_id IS NULL
               AND ((owner_scope = 'repo' AND owner_key = ?1)
                    OR (owner_scope = 'repo' AND target_project = ?1)
                    OR (owner_scope = 'workstream' AND target_project = ?1)
@@ -32,6 +33,7 @@ pub fn query_workstreams(
         (
             format!(
                 "{} WHERE status = ?2
+                      AND merged_into_workstream_id IS NULL
                       AND ((owner_scope = 'repo' AND owner_key = ?1)
                            OR (owner_scope = 'repo' AND target_project = ?1)
                            OR (owner_scope = 'workstream' AND target_project = ?1)
@@ -44,7 +46,8 @@ pub fn query_workstreams(
     } else {
         (
             format!(
-                "{} WHERE ((owner_scope = 'repo' AND owner_key = ?1)
+                "{} WHERE merged_into_workstream_id IS NULL
+                      AND ((owner_scope = 'repo' AND owner_key = ?1)
                            OR (owner_scope = 'repo' AND target_project = ?1)
                            OR (owner_scope = 'workstream' AND target_project = ?1)
                            OR (owner_scope IS NULL AND project = ?1))

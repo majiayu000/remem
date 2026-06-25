@@ -86,6 +86,43 @@ fn cli_parses_workstream_update_json_filters() {
 }
 
 #[test]
+fn cli_parses_workstream_merge_json_filters() {
+    let cli = Cli::parse_from([
+        "remem",
+        "workstreams",
+        "merge",
+        "--project",
+        "/repo",
+        "--into",
+        "42",
+        "43",
+        "44",
+        "--confirm",
+        "--json",
+    ]);
+
+    match cli.command {
+        Commands::Workstreams {
+            action:
+                WorkstreamAction::Merge {
+                    project,
+                    into,
+                    duplicates,
+                    confirm,
+                    json,
+                },
+        } => {
+            assert_eq!(project, "/repo");
+            assert_eq!(into, 42);
+            assert_eq!(duplicates, vec![43, 44]);
+            assert!(confirm);
+            assert!(json);
+        }
+        _ => panic!("expected workstream merge command"),
+    }
+}
+
+#[test]
 fn cli_rejects_invalid_workstream_status() {
     let parsed = Cli::try_parse_from([
         "remem",

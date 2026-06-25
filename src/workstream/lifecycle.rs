@@ -11,6 +11,7 @@ pub fn auto_pause_inactive(conn: &Connection, project: &str, days: i64) -> Resul
         "UPDATE workstreams SET status = 'paused', updated_at_epoch = ?3
          WHERE status = 'active'
            AND updated_at_epoch < ?2
+           AND merged_into_workstream_id IS NULL
            AND ((owner_scope = 'repo' AND owner_key = ?1)
                 OR (owner_scope = 'repo' AND target_project = ?1)
                 OR (owner_scope = 'workstream' AND target_project = ?1)
@@ -28,7 +29,9 @@ pub fn auto_pause_all_inactive_at(conn: &Connection, now_epoch: i64, days: i64) 
     let cutoff = cutoff_epoch(now_epoch, days);
     let count = conn.execute(
         "UPDATE workstreams SET status = 'paused', updated_at_epoch = ?2
-         WHERE status = 'active' AND updated_at_epoch < ?1",
+         WHERE status = 'active'
+           AND updated_at_epoch < ?1
+           AND merged_into_workstream_id IS NULL",
         params![cutoff, now_epoch],
     )?;
     Ok(count)
@@ -42,7 +45,10 @@ pub fn count_auto_pause_all_inactive_at(
     let cutoff = cutoff_epoch(now_epoch, days);
     count_rows(
         conn,
-        "SELECT COUNT(*) FROM workstreams WHERE status = 'active' AND updated_at_epoch < ?1",
+        "SELECT COUNT(*) FROM workstreams
+          WHERE status = 'active'
+            AND updated_at_epoch < ?1
+            AND merged_into_workstream_id IS NULL",
         &[&cutoff],
     )
 }
@@ -54,6 +60,7 @@ pub fn auto_abandon_inactive(conn: &Connection, project: &str, days: i64) -> Res
         "UPDATE workstreams SET status = 'abandoned', updated_at_epoch = ?1
          WHERE status = 'paused'
            AND updated_at_epoch < ?3
+           AND merged_into_workstream_id IS NULL
            AND ((owner_scope = 'repo' AND owner_key = ?2)
                 OR (owner_scope = 'repo' AND target_project = ?2)
                 OR (owner_scope = 'workstream' AND target_project = ?2)
@@ -71,7 +78,9 @@ pub fn auto_abandon_all_inactive_at(conn: &Connection, now_epoch: i64, days: i64
     let cutoff = cutoff_epoch(now_epoch, days);
     let count = conn.execute(
         "UPDATE workstreams SET status = 'abandoned', updated_at_epoch = ?1
-         WHERE status = 'paused' AND updated_at_epoch < ?2",
+         WHERE status = 'paused'
+           AND updated_at_epoch < ?2
+           AND merged_into_workstream_id IS NULL",
         params![now_epoch, cutoff],
     )?;
     Ok(count)
@@ -85,7 +94,10 @@ pub fn count_auto_abandon_all_inactive_at(
     let cutoff = cutoff_epoch(now_epoch, days);
     count_rows(
         conn,
-        "SELECT COUNT(*) FROM workstreams WHERE status = 'paused' AND updated_at_epoch < ?1",
+        "SELECT COUNT(*) FROM workstreams
+          WHERE status = 'paused'
+            AND updated_at_epoch < ?1
+            AND merged_into_workstream_id IS NULL",
         &[&cutoff],
     )
 }

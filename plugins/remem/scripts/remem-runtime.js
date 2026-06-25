@@ -356,6 +356,7 @@ async function releaseAssetForCurrentPlatform(options = {}) {
   const localBaseUrl = localRelease?.base_url || defaultReleaseBaseUrl(expected);
   const localAsset = releaseAssetFromManifest(manifest, expected, key, localBaseUrl);
   if (localAsset || options.remoteManifest === false) return localAsset;
+  if (localRelease?.state === "unreleased") return null;
   if (!localRelease?.base_url) return null;
 
   const remoteManifestUrl = `${localRelease.base_url.replace(/\/$/, "")}/remem-releases.json`;

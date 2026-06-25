@@ -154,5 +154,17 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             format!("migration v{version:03}_{name} failed to backfill content identity hashes")
         })?;
     }
+    if version == 53 {
+        let updated = crate::workstream::backfill_workstream_alias_normalized_titles(conn)
+            .with_context(|| {
+                format!(
+                    "migration v{version:03}_{name} failed to normalize workstream alias titles"
+                )
+            })?;
+        crate::log::info(
+            "migrate",
+            &format!("normalized {updated} workstream alias title(s)"),
+        );
+    }
     Ok(())
 }

@@ -146,6 +146,22 @@ fn all_project_cleanup_counts_match_workstream_apply_sequence() {
         params![old_paused],
     )
     .unwrap();
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch, merged_into_workstream_id)
+         VALUES ('test/proj', 'Merged Old Active', 'active', ?1, ?1, 1)",
+        params![very_old],
+    )
+    .unwrap();
+    let merged_active_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch, merged_into_workstream_id)
+         VALUES ('test/proj', 'Merged Old Paused', 'paused', ?1, ?1, 1)",
+        params![old_paused],
+    )
+    .unwrap();
+    let merged_paused_id = conn.last_insert_rowid();
 
     assert_eq!(
         count_auto_pause_all_inactive_at(&conn, now, DEFAULT_AUTO_PAUSE_DAYS).unwrap(),
@@ -170,6 +186,19 @@ fn all_project_cleanup_counts_match_workstream_apply_sequence() {
     let abandoned = query_workstreams(&conn, "test/proj", Some("abandoned")).unwrap();
     assert_eq!(abandoned.len(), 1);
     assert_eq!(abandoned[0].title, "Old Paused");
+
+    let merged_statuses: Vec<String> = [merged_active_id, merged_paused_id]
+        .into_iter()
+        .map(|id| {
+            conn.query_row(
+                "SELECT status FROM workstreams WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(merged_statuses, vec!["active", "paused"]);
 }
 
 #[test]

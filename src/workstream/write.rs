@@ -1,7 +1,11 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use super::{matcher::find_matching_workstream, ParsedWorkStream, WorkStreamStatus};
+use super::{
+    identity::{ensure_workstream_alias, workstream_identity_key, MATCH_REASON_INSERT},
+    matcher::find_workstream_for_upsert,
+    ParsedWorkStream, WorkStreamStatus, WorkStreamUpsertResult,
+};
 
 pub fn upsert_workstream(
     conn: &Connection,
@@ -9,6 +13,15 @@ pub fn upsert_workstream(
     memory_session_id: &str,
     parsed: &ParsedWorkStream,
 ) -> Result<i64> {
+    Ok(upsert_workstream_with_match(conn, project, memory_session_id, parsed)?.id)
+}
+
+pub fn upsert_workstream_with_match(
+    conn: &Connection,
+    project: &str,
+    memory_session_id: &str,
+    parsed: &ParsedWorkStream,
+) -> Result<WorkStreamUpsertResult> {
     let Some(title) = parsed.title.as_deref() else {
         anyhow::bail!("workstream title is required");
     };
@@ -21,7 +34,9 @@ pub fn upsert_workstream(
     };
     let completed_at = if parsed.is_completed { Some(now) } else { None };
 
-    let workstream_id = if let Some(existing) = find_matching_workstream(conn, project, title)? {
+    let (workstream_id, match_reason, previous_title) = if let Some(existing) =
+        find_workstream_for_upsert(conn, project, memory_session_id, title)?
+    {
         conn.execute(
             "UPDATE workstreams
              SET title = ?1, status = ?2, progress = ?3, next_action = ?4, blockers = ?5,
@@ -40,11 +55,15 @@ pub fn upsert_workstream(
                 parsed.blockers,
                 now,
                 completed_at,
-                existing.id,
+                existing.workstream.id,
                 project,
             ],
         )?;
-        existing.id
+        (
+            existing.workstream.id,
+            existing.reason,
+            Some(existing.workstream.title),
+        )
     } else {
         conn.execute(
             "INSERT INTO workstreams
@@ -63,8 +82,35 @@ pub fn upsert_workstream(
                 completed_at,
             ],
         )?;
-        conn.last_insert_rowid()
+        let inserted_id = conn.last_insert_rowid();
+        let identity_key = workstream_identity_key(project, memory_session_id, now, inserted_id);
+        conn.execute(
+            "UPDATE workstreams SET identity_key = ?1 WHERE id = ?2",
+            params![identity_key, inserted_id],
+        )?;
+        (inserted_id, MATCH_REASON_INSERT, None)
     };
+
+    if let Some(previous_title) = previous_title.as_deref().filter(|value| *value != title) {
+        ensure_workstream_alias(
+            conn,
+            workstream_id,
+            previous_title,
+            "previous_title",
+            None,
+            None,
+            now,
+        )?;
+    }
+    ensure_workstream_alias(
+        conn,
+        workstream_id,
+        title,
+        "summary",
+        Some(memory_session_id),
+        None,
+        now,
+    )?;
 
     conn.execute(
         "INSERT OR IGNORE INTO workstream_sessions (workstream_id, memory_session_id, linked_at_epoch)
@@ -72,7 +118,10 @@ pub fn upsert_workstream(
         params![workstream_id, memory_session_id, now],
     )?;
 
-    Ok(workstream_id)
+    Ok(WorkStreamUpsertResult {
+        id: workstream_id,
+        match_reason,
+    })
 }
 
 pub fn update_workstream_manual(

@@ -96,3 +96,47 @@ fn records_only_cited_injected_memories_once() -> Result<()> {
     assert_eq!(usage_events, 1);
     Ok(())
 }
+
+#[test]
+fn usage_feedback_stats_expose_no_citation_and_unmatched_categories() -> Result<()> {
+    let conn = setup_memory_usage_conn()?;
+    let cited = insert_usage_memory(&conn, "cited")?;
+    let not_injected = insert_usage_memory(&conn, "not injected")?;
+    insert_injected_item(&conn, cited)?;
+
+    record_stop_memory_citations(
+        &conn,
+        "codex-cli",
+        "/repo",
+        "sess-1",
+        "hash-matched",
+        &format!("Used memory.\nMemory citations: memory:#{cited}"),
+    )?;
+    record_stop_memory_citations(
+        &conn,
+        "codex-cli",
+        "/repo",
+        "sess-1",
+        "hash-none",
+        "No memory was needed.\nMemory citations: none",
+    )?;
+    record_stop_memory_citations(
+        &conn,
+        "codex-cli",
+        "/repo",
+        "sess-1",
+        "hash-unmatched",
+        &format!("Referenced a missing injection.\nMemory citations: memory:#{not_injected}"),
+    )?;
+
+    let stats = query_memory_usage_feedback_stats(&conn)?;
+
+    assert_eq!(stats.total_events, 3);
+    assert_eq!(stats.parsed_events, 3);
+    assert_eq!(stats.matched_events, 1);
+    assert_eq!(stats.inserted_events, 1);
+    assert_eq!(stats.no_citation_events, 1);
+    assert_eq!(stats.unmatched_events, 1);
+    assert_eq!(stats.usage_events, 1);
+    Ok(())
+}

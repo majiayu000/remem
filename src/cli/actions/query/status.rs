@@ -36,6 +36,7 @@ fn load_status_report() -> Result<StatusReport> {
     let now = chrono::Utc::now().timestamp();
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
     let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
+    let usage_feedback = crate::memory::usage::query_memory_usage_feedback_stats(&conn)?;
 
     Ok(StatusReport {
         version,
@@ -106,6 +107,23 @@ fn load_status_report() -> Result<StatusReport> {
                 stats.pending_review_memory_candidates,
                 stats.total_memory_candidates,
             ),
+        },
+        usage_feedback: UsageFeedbackStatus {
+            citation_events: usage_feedback.total_events,
+            citation_line_present_events: usage_feedback.parsed_events,
+            citation_line_present_rate_percent: percent(
+                usage_feedback.parsed_events,
+                usage_feedback.total_events,
+            ),
+            matched_events: usage_feedback.matched_events,
+            match_rate_percent: percent(
+                usage_feedback.matched_events,
+                usage_feedback.parsed_events,
+            ),
+            inserted_events: usage_feedback.inserted_events,
+            no_citation_events: usage_feedback.no_citation_events,
+            unmatched_events: usage_feedback.unmatched_events,
+            usage_events: usage_feedback.usage_events,
         },
         pending_observations: PendingObservationStatus {
             ready: stats.ready_pending_observations,
@@ -280,6 +298,29 @@ fn print_status_report(report: &StatusReport) {
         report.promotion_funnel.pending_review_rate_percent
     );
     println!();
+    println!("Usage feedback:");
+    println!(
+        "  Citations:   {:>6} events, {:>6} with citation line ({:>5.1}%)",
+        report.usage_feedback.citation_events,
+        report.usage_feedback.citation_line_present_events,
+        report.usage_feedback.citation_line_present_rate_percent
+    );
+    println!(
+        "  Matched:     {:>6}/{:<6} ({:>5.1}% of citation-line events)",
+        report.usage_feedback.matched_events,
+        report.usage_feedback.citation_line_present_events,
+        report.usage_feedback.match_rate_percent
+    );
+    println!(
+        "  No citation: {:>6}",
+        report.usage_feedback.no_citation_events
+    );
+    println!(
+        "  Unmatched:   {:>6}",
+        report.usage_feedback.unmatched_events
+    );
+    println!("  Usage rows:  {:>6}", report.usage_feedback.usage_events);
+    println!();
     println!("Pending observations:");
     println!("  Ready:        {:>6}", report.pending_observations.ready);
     println!("  Delayed:      {:>6}", report.pending_observations.delayed);
@@ -419,6 +460,7 @@ pub(super) struct StatusReport {
     pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
     pub promotion_funnel: PromotionFunnelStatus,
+    pub usage_feedback: UsageFeedbackStatus,
     pub pending_observations: PendingObservationStatus,
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
     pub jobs: JobStatus,
@@ -492,6 +534,19 @@ pub(super) struct PromotionFunnelStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(super) struct UsageFeedbackStatus {
+    pub citation_events: i64,
+    pub citation_line_present_events: i64,
+    pub citation_line_present_rate_percent: f64,
+    pub matched_events: i64,
+    pub match_rate_percent: f64,
+    pub inserted_events: i64,
+    pub no_citation_events: i64,
+    pub unmatched_events: i64,
+    pub usage_events: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct PendingObservationStatus {
     pub ready: i64,
     pub delayed: i64,
@@ -555,219 +610,4 @@ pub(super) struct TopProjectStatus {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::Value;
-
-    use super::*;
-
-    fn status_report_fixture() -> StatusReport {
-        StatusReport {
-            version: "0.4.5".to_string(),
-            database: StatusDatabase {
-                path: "/tmp/remem-test".to_string(),
-                size_bytes: 1_048_576,
-                size_mb: 1.0,
-            },
-            totals: StatusTotals {
-                memories: 1,
-                observations: 2,
-                sessions: 3,
-                raw_messages: 4,
-            },
-            raw_archive: RawArchiveStatus {
-                messages: 4,
-                ingest_failures: 0,
-                parse_errors: 0,
-                insert_errors: 0,
-                latest_failure_epoch: None,
-                latest_failure_age_secs: None,
-                latest_failure_kind: None,
-                latest_failure_path: None,
-                latest_failure_message: None,
-            },
-            capture_pipeline: CapturePipelineStatus {
-                captured: 5,
-                dropped: 0,
-                unrecovered_spills: 0,
-                latest_drop_epoch: None,
-                latest_drop_age_secs: None,
-                latest_drop_reason: None,
-                latest_drop_detail: None,
-                extract_todo: 6,
-                extract_running: 7,
-                extract_expired: 0,
-                extract_failed: 0,
-                retryable_replay_ranges: 0,
-                active_replay_ranges: 0,
-                quarantined_replay_ranges: 0,
-                pending_candidates: 9,
-                pending_graph_candidates: 10,
-                oldest_task_epoch: Some(10),
-                oldest_task_age_secs: Some(11),
-            },
-            promotion_funnel: PromotionFunnelStatus {
-                captured_events: 5,
-                observations: 4,
-                observation_rate_percent: 80.0,
-                candidates: 3,
-                candidate_rate_percent: 75.0,
-                promoted: 2,
-                promoted_rate_percent: 66.66666666666667,
-                pending_review: 1,
-                pending_review_rate_percent: 33.333333333333336,
-            },
-            pending_observations: PendingObservationStatus {
-                ready: 12,
-                delayed: 13,
-                processing: 14,
-                expired: 0,
-                failed: 0,
-                oldest_ready_epoch: Some(17),
-                oldest_ready_age_secs: Some(18),
-            },
-            candidate_promotion: vec![CandidatePromotionStatus {
-                review_status: "pending_review".to_string(),
-                block_reason: Some("no_supporting_source_observation".to_string()),
-                total: 41,
-                last_7_days: 6,
-            }],
-            jobs: JobStatus {
-                pending: 19,
-                processing: 20,
-                failed: 0,
-                stuck: 0,
-            },
-            worker_daemon: WorkerDaemonStatus {
-                health: "healthy".to_string(),
-                heartbeat_age_secs: Some(23),
-                owner: Some("worker-1".to_string()),
-            },
-            latest_session_memory_spend: Some(LatestSessionMemorySpendStatus {
-                session_id: "sess-1".to_string(),
-                project: "/tmp/remem".to_string(),
-                latest_context_epoch: 1_800_000_000,
-                context_rows: 2,
-                context_output_chars: 3_201,
-                context_estimated_tokens: 801,
-                context_emit_count: 3,
-                context_suppress_count: 1,
-                ai_usage_attribution: "partial".to_string(),
-                ai_calls: 2,
-                ai_total_tokens: 1_234,
-                ai_estimated_cost_usd: 0.0123,
-                ai_unattributed_legacy_calls: 1,
-            }),
-            today: DailyStatus {
-                new_memories: 24,
-                new_observations: 25,
-            },
-            top_projects: vec![TopProjectStatus {
-                project: "proj".to_string(),
-                count: 26,
-            }],
-        }
-    }
-
-    #[test]
-    fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serde_json::Error> {
-        let mut report = status_report_fixture();
-        report.raw_archive.ingest_failures = 1;
-        report.raw_archive.parse_errors = 2;
-        report.raw_archive.insert_errors = 3;
-        report.raw_archive.latest_failure_kind = Some("mixed_errors".to_string());
-        report.raw_archive.latest_failure_path = Some("/bad/raw.jsonl".to_string());
-        report.pending_observations.expired = 15;
-        report.pending_observations.failed = 16;
-        report.jobs.failed = 21;
-        report.jobs.stuck = 22;
-
-        let text = serde_json::to_string(&report)?;
-        let parsed: Value = serde_json::from_str(&text)?;
-
-        assert_eq!(parsed["version"], "0.4.5");
-        assert_eq!(parsed["database"]["size_bytes"], 1_048_576);
-        assert_eq!(parsed["totals"]["memories"], 1);
-        assert_eq!(parsed["raw_archive"]["messages"], 4);
-        assert_eq!(parsed["raw_archive"]["ingest_failures"], 1);
-        assert_eq!(parsed["raw_archive"]["parse_errors"], 2);
-        assert_eq!(parsed["raw_archive"]["insert_errors"], 3);
-        assert_eq!(parsed["raw_archive"]["latest_failure_kind"], "mixed_errors");
-        assert_eq!(
-            parsed["raw_archive"]["latest_failure_path"],
-            "/bad/raw.jsonl"
-        );
-        assert_eq!(parsed["capture_pipeline"]["extract_todo"], 6);
-        assert_eq!(parsed["capture_pipeline"]["pending_graph_candidates"], 10);
-        assert_eq!(parsed["promotion_funnel"]["captured_events"], 5);
-        assert_eq!(parsed["promotion_funnel"]["observations"], 4);
-        assert_eq!(parsed["promotion_funnel"]["candidates"], 3);
-        assert_eq!(parsed["promotion_funnel"]["promoted"], 2);
-        assert_eq!(parsed["promotion_funnel"]["pending_review"], 1);
-        assert_eq!(parsed["pending_observations"]["failed"], 16);
-        assert_eq!(
-            parsed["candidate_promotion"][0]["review_status"],
-            "pending_review"
-        );
-        assert_eq!(
-            parsed["candidate_promotion"][0]["block_reason"],
-            "no_supporting_source_observation"
-        );
-        assert_eq!(parsed["candidate_promotion"][0]["total"], 41);
-        assert_eq!(parsed["candidate_promotion"][0]["last_7_days"], 6);
-        assert_eq!(parsed["worker_daemon"]["health"], "healthy");
-        assert_eq!(
-            parsed["latest_session_memory_spend"]["session_id"],
-            "sess-1"
-        );
-        assert_eq!(
-            parsed["latest_session_memory_spend"]["context_estimated_tokens"],
-            801
-        );
-        assert_eq!(
-            parsed["latest_session_memory_spend"]["ai_usage_attribution"],
-            "partial"
-        );
-        assert_eq!(
-            parsed["latest_session_memory_spend"]["ai_unattributed_legacy_calls"],
-            1
-        );
-        assert_eq!(
-            parsed["latest_session_memory_spend"]["ai_total_tokens"],
-            1234
-        );
-        assert_eq!(parsed["top_projects"][0]["project"], "proj");
-        Ok(())
-    }
-
-    #[test]
-    fn cli_status_has_no_action_block_when_runtime_is_clear() {
-        let report = status_report_fixture();
-        let actions = status_health_actions(&report);
-
-        assert!(render_action_block(&actions).is_empty());
-    }
-
-    #[test]
-    fn cli_status_renders_action_block_for_runtime_failures() {
-        let mut report = status_report_fixture();
-        report.pending_observations.failed = 43;
-        report.pending_observations.expired = 1;
-        report.capture_pipeline.extract_failed = 4;
-        report.jobs.failed = 2;
-        report.jobs.stuck = 3;
-
-        let actions = status_health_actions(&report);
-        let text = render_action_block(&actions);
-
-        assert!(text.contains("Needs attention:"));
-        assert!(text.contains("43 failed pending observations"));
-        assert!(text.contains("inspect: remem pending list-failed --limit 20"));
-        assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
-        assert!(text.contains("1 expired processing pending observation"));
-        assert!(text.contains("4 failed extraction tasks"));
-        assert!(text.contains("2 failed jobs"));
-        assert!(text.contains("3 stuck jobs"));
-        assert!(text.contains("inspect counts: remem status --json"));
-        assert!(text.contains("recover: remem worker --once"));
-    }
-}
+mod tests;

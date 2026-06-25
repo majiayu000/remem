@@ -114,9 +114,10 @@ information that remem was not also permitted to ingest.
 Every run records:
 
 - `resolved`: whether the task passed its objective oracle
-- `tokens_input`, `tokens_output`, and `tokens_total`
-- `turns`, when the runner exposes Codex `turn.completed` events; otherwise
-  `null`
+- `tokens_input`, `tokens_output`, and `tokens_total`, or
+  `token_accounting_unsupported_reason` when the provider cannot expose token
+  accounting
+- `turns`
 - `wall_time_ms`
 - `commands_run`
 - `final_head_sha` or patch artifact id
