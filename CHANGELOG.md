@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Fixed
-- Staged source version `0.5.121` without pointing plugin runtime downloads at
+- Staged source version `0.5.125` without pointing plugin runtime downloads at
   an unpublished GitHub Release. The committed runtime manifest now stays local
   until the release workflow uploads checked assets.
 - Hardened macOS ARM installer handling so ad-hoc codesigning failures are not

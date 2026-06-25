@@ -517,6 +517,7 @@ remem user summary show
 remem user summary refresh
 remem user summary edit --text "updated profile summary"
 remem user summary sources
+remem user profile export --format markdown --output profile.md
 remem user recall "review the remem user context design"
 remem user review inbox
 remem user review approve <id>
@@ -539,6 +540,18 @@ and delete commands change status without hard-deleting the audit row; default
 claim lists exclude suppressed, deleted, expired, not-yet-valid, and restricted
 claims.
 
+`remem user profile export --format markdown` writes a derived, read-only
+snapshot of the user profile remem would use. Without `--output` it prints to
+stdout; with `--output profile.md` it creates a new file and refuses to
+overwrite existing content. The snapshot names the SQLite database as the
+source of truth, includes owner/project metadata, active summary provenance,
+source ids, and active default-eligible claims. Default output excludes
+suppressed, deleted, expired, future, personal, sensitive, and restricted
+claims. Use `--include-suppressed`, `--include-sensitive`, `--include-inactive`,
+`--include-deleted`, and `--include-manual-summaries` only for explicit audit;
+audit rows are labeled with exclusion reasons and text remains redacted unless
+all applicable audit gates are enabled.
+
 `remem memory suppress` applies a default-read policy without deleting the
 source row. Targets can be `memory:<id>`, `claim:<id>`, `topic:<key>`,
 `entity:<name>`, `pattern:<text>`, or a bare memory id/topic key. Default
@@ -556,7 +569,11 @@ non-sensitive claims, repo memory, explicitly requested current-state keys,
 active workstreams, and recent sessions into compact source-attributed context.
 Default recall excludes suppressed, rejected, deleted, expired, future,
 personal, sensitive, and restricted claims. Use `--include-sensitive` and
-`--include-suppressed` only for explicit audit.
+`--include-suppressed` only for explicit audit. Non-empty recall output includes
+a usage policy telling agents to apply user context only when it materially
+improves the answer, prefer invisible adaptation over memory narration, avoid
+uncited profile inferences, and avoid inventing a profile when no context
+applies.
 
 `remem user review ...` governs review-gated user-context candidates before
 they become active claims. `inbox` shows pending candidates with risk,
@@ -591,7 +608,7 @@ is set:
 | `remem user summary show --json` | `found`, `summary` |
 | `remem user summary refresh --json` / `edit --json` | `status`, `summary` |
 | `remem user summary sources --json` | `summary`, `included_claims`, `included_memories`, `included_activity_refs`, `dropped_claims` |
-| `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `included`, `dropped`, `diagnostics` |
+| `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `usage_policy`, `included`, `dropped`, `diagnostics` |
 | `remem user review inbox --json` | `count`, `candidates` |
 | `remem user review approve <id> --json` / `edit <id> --json` | `status`, `action`, `candidate`, `claim` |
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
@@ -630,7 +647,12 @@ source events. Source capture, bounded rollup follow-up ranges, stale review
 guards, edited candidate audit persistence, and claim-key conflict review gates
 are tightened in source version `0.5.117`. Failed bounded follow-up retries and
 transactional auto-promotion conflict rechecks are tightened in source version
-`0.5.118`.
+`0.5.118`. User-context candidate extraction non-retention rules are tightened
+in source version `0.5.122`; transient, speculative, unsafe,
+assistant-authored, or unapproved external-source content does not enter the
+candidate queue. Source version `0.5.125` tightens post-review external-source
+attribution and third-party subject edge cases while preserving valid
+user-stated workflow preferences.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more

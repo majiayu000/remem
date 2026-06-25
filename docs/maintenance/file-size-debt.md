@@ -10,11 +10,12 @@ Captured from `origin/main` on 2026-06-25:
 
 | Lines | File | Split Priority |
 |---:|---|---|
-| 2032 | `src/api/tests.rs` | Test split |
+| 2088 | `src/user_context/extraction/tests.rs` | Test split |
+| 2041 | `src/api/tests.rs` | Test split |
 | 1221 | `src/graph_candidate/tests.rs` | Test split |
 | 1193 | `src/memory/current_state/tests.rs` | Test split |
 | 1181 | `tests/benchmark.rs` | Test split |
-| 974 | `src/mcp/server/tests.rs` | Test split |
+| 982 | `src/mcp/server/tests.rs` | Test split |
 | 922 | `src/cli/tests.rs` | Test split |
 | 896 | `src/db/extraction/tests.rs` | Test split |
 | 884 | `src/api/tests/web_regressions.rs` | Test split |
@@ -23,6 +24,7 @@ Captured from `origin/main` on 2026-06-25:
 | 833 | `src/git_trace.rs` | First production split target |
 | 823 | `src/context/tests/load.rs` | Test split |
 | 822 | `src/db/query/stats/tests.rs` | Test split |
+| 818 | `src/context/tests/render.rs` | Test split |
 | 809 | `src/retrieval/search/memory/tests.rs` | Test split |
 | 803 | `src/memory/staleness/tests.rs` | Test split |
 | 803 | `plugins/remem/apps/remem/server.test.js` | Test split |

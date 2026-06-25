@@ -101,11 +101,19 @@ fn recall_user_context_returns_source_attributed_context() -> anyhow::Result<()>
     let json: Value = serde_json::from_str(&response)?;
 
     assert_eq!(json["empty"], false);
+    assert_eq!(
+        json["usage_policy"],
+        crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY
+    );
     assert_eq!(json["included"][0]["source_type"], "user_claim");
     assert!(json["context"]
         .as_str()
         .unwrap_or_default()
         .contains("recall"));
+    assert!(!json["context"]
+        .as_str()
+        .unwrap_or_default()
+        .contains(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY));
     Ok(())
 }
 

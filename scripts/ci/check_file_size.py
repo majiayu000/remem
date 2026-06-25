@@ -17,19 +17,21 @@ SKIP_PARTS = {".git", "target", "node_modules"}
 ALLOWLIST = {
     "plugins/remem/apps/remem/server.test.js": 803,
     "src/api/tests/web_regressions.rs": 884,
-    "src/api/tests.rs": 2032,
+    "src/api/tests.rs": 2041,
     "src/cli/tests.rs": 922,
     "src/context/tests/load.rs": 823,
+    "src/context/tests/render.rs": 818,
     "src/db/extraction/tests.rs": 896,
     "src/db/query/stats/tests.rs": 822,
     "src/doctor/tests.rs": 858,
     "src/git_trace.rs": 833,
     "src/graph_candidate/tests.rs": 1221,
-    "src/mcp/server/tests.rs": 974,
+    "src/mcp/server/tests.rs": 982,
     "src/memory/current_state/tests.rs": 1193,
     "src/memory/staleness/tests.rs": 803,
     "src/migrate/tests.rs": 838,
     "src/retrieval/search/memory/tests.rs": 809,
+    "src/user_context/extraction/tests.rs": 2088,
     "tests/benchmark.rs": 1181,
 }
 
