@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+#[cfg(target_os = "macos")]
+use anyhow::Context;
+use anyhow::{bail, Result};
 
 #[derive(Debug)]
 pub struct CodexIsolation {
@@ -97,6 +99,7 @@ pub fn runner_isolation_violation(stdout: &str, stderr: &str) -> Option<String> 
     .then(|| "runner attempted benchmark-private Codex home access".to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn copy_codex_auth(isolated_codex_home: &Path) -> Result<()> {
     let host_codex_home = host_codex_home_dir()?;
     let auth_src = host_codex_home.join("auth.json");
@@ -117,6 +120,7 @@ fn copy_codex_auth(isolated_codex_home: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn host_codex_home_dir() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("CODEX_HOME") {
         return Ok(PathBuf::from(path));
@@ -124,12 +128,14 @@ fn host_codex_home_dir() -> Result<PathBuf> {
     Ok(host_home_dir()?.join(".codex"))
 }
 
+#[cfg(target_os = "macos")]
 fn host_home_dir() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME must be set to build an isolated Codex benchmark environment")
 }
 
+#[cfg(target_os = "macos")]
 fn sibling_private_root(run_root: &Path) -> PathBuf {
     let name = run_root
         .file_name()
@@ -142,6 +148,7 @@ fn sibling_private_root(run_root: &Path) -> PathBuf {
         .unwrap_or_else(|| run_root.join(&private_name))
 }
 
+#[cfg(target_os = "macos")]
 fn resolve_executable(program: &str) -> Result<PathBuf> {
     let candidate = PathBuf::from(program);
     if candidate.components().count() > 1 {
@@ -157,6 +164,7 @@ fn resolve_executable(program: &str) -> Result<PathBuf> {
     bail!("could not resolve codex runner executable {program:?} on PATH")
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn clean_runner_path(required_executables: &[&Path], optional_node: Option<&Path>) -> String {
     let mut entries = Vec::new();
     for executable in required_executables.iter().copied().chain(optional_node) {
