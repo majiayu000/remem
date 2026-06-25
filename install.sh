@@ -96,8 +96,17 @@ mv "${TMPDIR}/remem" "${INSTALL_DIR}/remem"
 chmod +x "${INSTALL_DIR}/remem"
 # macOS ARM requires ad-hoc codesign after replacing binary
 if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-  codesign -s - -f "${INSTALL_DIR}/remem" 2>/dev/null || true
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo "codesign is required on macOS ARM after replacing ${INSTALL_DIR}/remem"
+    exit 1
+  fi
+  if ! codesign -s - -f "${INSTALL_DIR}/remem"; then
+    echo "Failed to ad-hoc codesign ${INSTALL_DIR}/remem"
+    exit 1
+  fi
 fi
+
+"${INSTALL_DIR}/remem" --version >/dev/null
 
 echo "Installed to ${INSTALL_DIR}/remem"
 

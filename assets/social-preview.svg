@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">remem social preview</title>
+  <desc id="desc">Local-first coding agent memory for Claude Code and OpenAI Codex.</desc>
+  <rect width="1280" height="640" fill="#111111"/>
+  <rect x="72" y="72" width="1136" height="496" rx="36" fill="#f7f3ea"/>
+  <rect x="118" y="118" width="128" height="128" rx="30" fill="#111111"/>
+  <path d="M156 164l50 10-27 74-23-84z" fill="#f2c94c"/>
+  <circle cx="156" cy="164" r="14" fill="#f7f3ea"/>
+  <circle cx="206" cy="174" r="13" fill="#f7f3ea"/>
+  <circle cx="179" cy="238" r="13" fill="#f7f3ea"/>
+  <text x="286" y="194" fill="#111111" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="78" font-weight="800">remem</text>
+  <text x="286" y="275" fill="#111111" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="39" font-weight="650">Local-first coding agent memory</text>
+  <text x="286" y="339" fill="#333333" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30">Claude Code + OpenAI Codex + MCP</text>
+  <rect x="286" y="392" width="606" height="86" rx="14" fill="#111111"/>
+  <text x="322" y="446" fill="#f7f3ea" font-family="SFMono-Regular, ui-monospace, Menlo, Consolas, monospace" font-size="30">remem search "last decision"</text>
+  <text x="286" y="524" fill="#555555" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24">SQLite/SQLCipher • hooks • MCP • auditable recall</text>
+</svg>

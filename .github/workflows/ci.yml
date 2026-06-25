@@ -12,6 +12,10 @@ jobs:
           fetch-depth: 0
       - name: Check plugin version sync
         run: python3 scripts/ci/check_plugin_version_sync.py
+      - name: Check public surface
+        run: python3 scripts/ci/check_public_surface.py
+      - name: Check source file size guard
+        run: python3 scripts/ci/check_file_size.py
       - name: Test plugin runtime scripts
         run: node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js
       - name: Check spec lifecycle
