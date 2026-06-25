@@ -1,8 +1,10 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
@@ -423,6 +425,10 @@ where
     for (key, value) in env {
         command.env(key, value);
     }
+    #[cfg(unix)]
+    {
+        command.process_group(0);
+    }
     let mut child = command
         .spawn()
         .with_context(|| format!("spawn command {program}"))?;
@@ -434,7 +440,7 @@ where
         }
         if Instant::now() >= deadline {
             timed_out = true;
-            let _ = child.kill();
+            terminate_command(&mut child);
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -448,6 +454,47 @@ where
         exit_code: output.status.code(),
         timed_out,
     })
+}
+
+fn terminate_command(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let process_group = format!("-{}", child.id());
+        terminate_unix_process_group("TERM", &process_group);
+        std::thread::sleep(Duration::from_millis(200));
+        match child.try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) => terminate_unix_process_group("KILL", &process_group),
+            Err(err) => eprintln!(
+                "[coding-bench] failed to poll timed-out runner process {}: {err}",
+                child.id()
+            ),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(err) = child.kill() {
+            eprintln!(
+                "[coding-bench] failed to kill timed-out runner process {}: {err}",
+                child.id()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_unix_process_group(signal: &str, process_group: &str) {
+    match Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(process_group)
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            eprintln!("[coding-bench] kill -{signal} {process_group} exited with status {status}")
+        }
+        Err(err) => eprintln!("[coding-bench] failed to run kill -{signal} {process_group}: {err}"),
+    }
 }
 
 fn ensure_success(label: &str, outcome: &CommandOutcome) -> Result<()> {
@@ -672,5 +719,19 @@ mod tests {
             .windows(2)
             .any(|window| window == ["--disable", "hooks"]));
         assert!(!args.contains(&"--dangerously-bypass-hook-trust".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_timeout_terminates_process_group_children() -> Result<()> {
+        let start = Instant::now();
+        let outcome = command_output("sh", ["-c", "sleep 3"], Path::new("."), &[], 100)?;
+
+        assert!(outcome.timed_out);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "timeout should not wait for a grandchild sleep to exit"
+        );
+        Ok(())
     }
 }
