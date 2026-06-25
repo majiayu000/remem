@@ -47,6 +47,7 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 | Directory | Status | Notes |
 |---|---|---|
 | `current-memory-contracts/` | Current contract | Product and technical contract for converging existing memory truth, temporal facts, injection audits, usage feedback, staleness labels, observability, and host/app boundaries without a second rewrite. Refs #381, #383, #384, #385, #390. |
+| `high-fidelity-episode-evidence/` | Current contract | Product and technical contract for opt-in preserved source slices that make public benchmark and debugging failures distinguish missing evidence from retrieval/ranking, policy, or downstream task failures. Refs #626, #384, #385. |
 | `issue385-coding-agent-ab/` | Current contract | Product and technical contract for the flagship coding-agent A/B benchmark comparing no-memory, remem, and curated-file conditions. Refs #385. |
 | `public-memory-benchmark/` | Current contract | Product and technical contract for public benchmark evidence layers: memory-system capability proof, #385 coding-agent outcome proof, artifact schemas, reproducibility, claim levels, and stop-loss gates. Refs #384, #385, #629-#638. |
 | `spec-lifecycle-governance/` | Current contract | Product and technical contract for separating epic, spec, and implementation issue lifecycles. Refs #592. |
