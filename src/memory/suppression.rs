@@ -173,6 +173,16 @@ pub fn user_claim_policy_filter_sql(alias: &str) -> String {
     )
 }
 
+pub fn user_claim_is_policy_suppressed(conn: &Connection, claim_id: i64) -> Result<bool> {
+    let sql = format!(
+        "SELECT NOT ({}) FROM user_context_claims WHERE id = ?1",
+        user_claim_policy_filter_sql("user_context_claims")
+    );
+    conn.query_row(&sql, [claim_id], |row| row.get::<_, bool>(0))
+        .optional()?
+        .context("user-context claim disappeared during suppression check")
+}
+
 pub fn active_suppressed_memory_ids(conn: &Connection, ids: &[i64]) -> Result<HashSet<i64>> {
     if ids.is_empty() {
         return Ok(HashSet::new());

@@ -85,6 +85,7 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
             run_user_claims(&conn, action)?
         }
         UserAction::Summary { action } => super::run_user_summary(action)?,
+        UserAction::Profile { action } => super::run_user_profile(action)?,
         UserAction::Review { action } => super::run_user_review(action)?,
         UserAction::Recall {
             query,
@@ -160,6 +161,10 @@ fn run_user_recall(req: UserRecallCliRequest) -> Result<()> {
     } else if result.empty {
         println!("No relevant user context found.");
     } else {
+        if let Some(policy) = result.usage_policy {
+            println!("{policy}");
+            println!();
+        }
         println!("{}", result.context);
         if !result.dropped.is_empty() {
             println!();

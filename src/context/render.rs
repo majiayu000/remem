@@ -360,6 +360,8 @@ fn render_context_output_from_inputs(
     output.push('\n');
     output.push_str(crate::memory::usage::citation_contract_line());
     output.push('\n');
+    output.push_str(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY);
+    output.push('\n');
     if let Some(note) = context_source_note(request.hook_source.as_deref()) {
         output.push('\n');
         output.push_str(note);
