@@ -52,3 +52,18 @@ pub struct ParsedWorkStream {
     pub blockers: Option<String>,
     pub is_completed: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkStreamUpsertResult {
+    pub id: i64,
+    pub match_reason: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkStreamMergeResult {
+    pub canonical_id: i64,
+    pub merged_ids: Vec<i64>,
+    pub moved_session_links: usize,
+    pub copied_aliases: usize,
+    pub copied_alias_sources: usize,
+}

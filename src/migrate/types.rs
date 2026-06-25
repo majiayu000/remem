@@ -265,6 +265,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "user_context_candidates",
         sql: include_str!("../migrations/v052_user_context_candidates.sql"),
     },
+    Migration {
+        version: 53,
+        name: "workstream_identity_continuity",
+        sql: include_str!("../migrations/v053_workstream_identity_continuity.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

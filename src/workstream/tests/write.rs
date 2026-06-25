@@ -2,7 +2,8 @@ use rusqlite::{params, Connection};
 
 use super::support::setup_workstream_schema;
 use crate::workstream::{
-    query_workstreams, update_workstream_manual, upsert_workstream, ParsedWorkStream,
+    merge_workstreams_manual, query_active_workstreams, query_workstreams,
+    update_workstream_manual, upsert_workstream, upsert_workstream_with_match, ParsedWorkStream,
 };
 
 #[test]
@@ -59,4 +60,224 @@ fn test_update_workstream_manual_returns_false_when_missing() {
 
     let updated = update_workstream_manual(&conn, 999, Some("paused"), None, None).unwrap();
     assert!(!updated);
+}
+
+#[test]
+fn manual_merge_moves_sessions_and_aliases_to_canonical_workstream() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let canonical = ParsedWorkStream {
+        title: Some("Canonical Workstream".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let canonical_id = upsert_workstream(&conn, "test/proj", "mem-canonical", &canonical).unwrap();
+
+    let duplicate = ParsedWorkStream {
+        title: Some("Duplicate Workstream".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let duplicate_id = upsert_workstream(&conn, "test/proj", "mem-duplicate", &duplicate).unwrap();
+    let renamed_duplicate = ParsedWorkStream {
+        title: Some("Renamed Duplicate Workstream".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    upsert_workstream(&conn, "test/proj", "mem-duplicate", &renamed_duplicate).unwrap();
+
+    let result =
+        merge_workstreams_manual(&conn, "test/proj", canonical_id, &[duplicate_id]).unwrap();
+
+    assert_eq!(result.canonical_id, canonical_id);
+    assert_eq!(result.merged_ids, vec![duplicate_id]);
+    assert_eq!(result.moved_session_links, 1);
+    assert!(result.copied_aliases >= 2);
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(workstreams[0].id, canonical_id);
+
+    let canonical_sessions: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workstream_sessions WHERE workstream_id = ?1",
+            params![canonical_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(canonical_sessions, 2);
+    let duplicate_sessions: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workstream_sessions WHERE workstream_id = ?1",
+            params![duplicate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(duplicate_sessions, 0);
+    let duplicate_status: String = conn
+        .query_row(
+            "SELECT status FROM workstreams WHERE id = ?1",
+            params![duplicate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(duplicate_status, "abandoned");
+
+    let later_repeat = ParsedWorkStream {
+        title: Some("Renamed Duplicate Workstream".to_string()),
+        progress: Some("later repeat".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let later_id = upsert_workstream(&conn, "test/proj", "mem-later", &later_repeat).unwrap();
+    assert_eq!(later_id, canonical_id);
+}
+
+#[test]
+fn session_link_requires_unique_content_session_id() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    conn.execute(
+        "INSERT INTO sdk_sessions (content_session_id, memory_session_id, project)
+         VALUES (?1, 'mem-collide', 'test/proj'), (?2, 'mem-collide', 'test/proj')",
+        params!["abcdefgh-first", "abcdefgh-second"],
+    )
+    .unwrap();
+
+    let first = ParsedWorkStream {
+        title: Some("flowguard Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let first_id = upsert_workstream(&conn, "test/proj", "mem-collide", &first).unwrap();
+
+    let collided = ParsedWorkStream {
+        title: Some("flowguard / run-guard Skill 生命周期工作流".to_string()),
+        progress: Some("different content session".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let collided_result =
+        upsert_workstream_with_match(&conn, "test/proj", "mem-collide", &collided).unwrap();
+
+    assert_ne!(collided_result.id, first_id);
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 2);
+    assert!(workstreams
+        .iter()
+        .any(|workstream| workstream.title == "flowguard Skill 生命周期工作流"));
+}
+
+#[test]
+fn session_link_collision_check_is_project_scoped() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    conn.execute(
+        "INSERT INTO sdk_sessions (content_session_id, memory_session_id, project)
+         VALUES (?1, 'mem-collide', 'test/proj'), (?2, 'mem-collide', 'other/proj')",
+        params!["abcdefgh-first", "abcdefgh-other"],
+    )
+    .unwrap();
+
+    let first = ParsedWorkStream {
+        title: Some("flowguard Skill 生命周期工作流".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let first_id = upsert_workstream(&conn, "test/proj", "mem-collide", &first).unwrap();
+
+    let renamed = ParsedWorkStream {
+        title: Some("flowguard / run-guard Skill 生命周期工作流".to_string()),
+        progress: Some("same project rename".to_string()),
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let renamed_result =
+        upsert_workstream_with_match(&conn, "test/proj", "mem-collide", &renamed).unwrap();
+
+    assert_eq!(renamed_result.id, first_id);
+    assert_eq!(renamed_result.match_reason, "session_link");
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(
+        workstreams[0].progress.as_deref(),
+        Some("same project rename")
+    );
+}
+
+#[test]
+fn manual_merge_accepts_rows_visible_through_owner_scope() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          owner_scope, owner_key, target_project)
+         VALUES ('legacy/canonical', 'Canonical Workstream', 'active', ?1, ?1,
+                 'repo', 'test/proj', 'test/proj')",
+        params![now],
+    )
+    .unwrap();
+    let canonical_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          owner_scope, owner_key, target_project)
+         VALUES ('legacy/duplicate', 'Duplicate Workstream', 'active', ?1, ?1,
+                 'repo', 'other/legacy-owner', 'test/proj')",
+        params![now],
+    )
+    .unwrap();
+    let duplicate_id = conn.last_insert_rowid();
+
+    let result =
+        merge_workstreams_manual(&conn, "test/proj", canonical_id, &[duplicate_id]).unwrap();
+
+    assert_eq!(result.canonical_id, canonical_id);
+    assert_eq!(result.merged_ids, vec![duplicate_id]);
+}
+
+#[test]
+fn manual_merge_rejects_cross_project_duplicates() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+
+    let canonical = ParsedWorkStream {
+        title: Some("Canonical Workstream".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let canonical_id = upsert_workstream(&conn, "test/proj", "mem-canonical", &canonical).unwrap();
+    let duplicate = ParsedWorkStream {
+        title: Some("Duplicate Workstream".to_string()),
+        progress: None,
+        next_action: None,
+        blockers: None,
+        is_completed: false,
+    };
+    let duplicate_id = upsert_workstream(&conn, "other/proj", "mem-duplicate", &duplicate).unwrap();
+
+    let error =
+        merge_workstreams_manual(&conn, "test/proj", canonical_id, &[duplicate_id]).unwrap_err();
+    assert!(error.to_string().contains("project"));
 }

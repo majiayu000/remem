@@ -11,6 +11,9 @@ preferences available through hooks, MCP, CLI, and REST without requiring an
 external database.
 
 [![CI](https://github.com/majiayu000/remem/actions/workflows/ci.yml/badge.svg)](https://github.com/majiayu000/remem/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/majiayu000/remem?sort=semver)](https://github.com/majiayu000/remem/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/remem-ai)](https://crates.io/crates/remem-ai)
+[![npm](https://img.shields.io/npm/v/%40remem-ai%2Fremem)](https://www.npmjs.com/package/@remem-ai/remem)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ![Remem Memory terminal demo](assets/remem-demo.gif)
@@ -524,6 +527,8 @@ remem user review suppress <id>
 remem context --cwd .
 remem cleanup --dry-run --json
 remem cleanup
+remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm
+remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm --json
 remem dream [--project X] [--profile NAME] [--dry-run]
 remem install --target codex
 remem mcp
@@ -609,6 +614,7 @@ is set:
 | `remem user review inbox --json` | `count`, `candidates` |
 | `remem user review approve <id> --json` / `edit <id> --json` | `status`, `action`, `candidate`, `claim` |
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
+| `remem workstreams merge --json` | `project`, `result` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
