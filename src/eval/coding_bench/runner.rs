@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use super::condition::apply_condition;
 use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
 use super::isolation::{prepare_codex_isolation, runner_isolation_violation};
+use super::run_plan::randomized_run_plan;
 use super::score::{
     parse_changed_paths, parse_codex_jsonl_usage, summarize_runs, unauthorized_paths,
 };
@@ -58,35 +59,51 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
     let fixture = load_fixture(&options.fixture_path)?;
     let conditions = selected_conditions(options)?;
     let tasks = selected_tasks(&fixture, options)?;
+    let run_plan = randomized_run_plan(&conditions, tasks.len(), options.runs_per_condition)?;
     let fixture_sha256 = file_sha256(&options.fixture_path)?;
     let generated_at_epoch = current_epoch();
     let artifact_root = report_artifact_root(&options.json_out, generated_at_epoch)?;
     let runner_version = runner_version(options);
-    let mut condition_reports = Vec::new();
+    let mut grouped_runs = conditions
+        .iter()
+        .map(|condition| (*condition, Vec::new()))
+        .collect::<Vec<_>>();
 
-    for condition in conditions {
-        let mut runs = Vec::new();
-        for task in &tasks {
-            for run_index in 1..=options.runs_per_condition {
-                let run = run_one(
-                    options,
-                    &fixture,
-                    condition,
-                    task,
-                    run_index,
-                    &artifact_root,
-                )?;
-                eprintln!(
-                    "[coding-bench] {} {} run {}: resolved={} tokens={}",
-                    condition.as_str(),
-                    task.id,
-                    run_index,
-                    run.resolved,
-                    run.usage.total_tokens
-                );
-                runs.push(run);
-            }
+    for entry in run_plan {
+        let task = tasks
+            .get(entry.task_index)
+            .context("coding benchmark run plan referenced missing task")?;
+        let run = run_one(
+            options,
+            &fixture,
+            entry.condition,
+            task,
+            entry.run_index,
+            &artifact_root,
+        )?;
+        eprintln!(
+            "[coding-bench] {} {} run {}: resolved={} tokens={}",
+            entry.condition.as_str(),
+            task.id,
+            entry.run_index,
+            run.resolved,
+            run.usage.total_tokens
+        );
+        if let Some((_, runs)) = grouped_runs
+            .iter_mut()
+            .find(|(condition, _)| *condition == entry.condition)
+        {
+            runs.push(run);
+        } else {
+            bail!(
+                "coding benchmark run plan referenced unselected condition {}",
+                entry.condition.as_str()
+            );
         }
+    }
+
+    let mut condition_reports = Vec::new();
+    for (condition, runs) in grouped_runs {
         let summary = summarize_runs(&runs);
         condition_reports.push(ConditionReport {
             name: condition,

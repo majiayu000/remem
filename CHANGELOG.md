@@ -18,6 +18,7 @@
 - Staged source version `0.5.129` for usage feedback shadow ranking.
 - Staged source version `0.5.130` for preference semantic-dedup calibration.
 - Staged source version `0.5.131` for the coding-agent benchmark runner.
+- Staged source version `0.5.132` for randomized coding-benchmark run order.
 
 ## [0.5.109] - 2026-06-20
 
