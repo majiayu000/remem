@@ -21,6 +21,8 @@
 - Staged source version `0.5.132` for randomized coding-benchmark run order.
 - Staged source version `0.5.133` for the public benchmark artifact verifier.
 - Staged source version `0.5.134` for the remem-native memory benchmark suite.
+- Staged source version `0.5.135` for the adversarial memory policy benchmark
+  suite.
 
 ## [0.5.109] - 2026-06-20
 

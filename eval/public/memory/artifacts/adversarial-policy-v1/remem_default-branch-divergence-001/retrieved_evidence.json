@@ -1,0 +1,7 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "adversarial-policy-v1",
+  "retrieved": [],
+  "suite": "adversarial-policy",
+  "task_id": "branch-divergence-001"
+}

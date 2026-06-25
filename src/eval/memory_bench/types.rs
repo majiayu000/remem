@@ -4,6 +4,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_SUITE: &str = "remem-code-memory";
+pub const ADVERSARIAL_POLICY_SUITE: &str = "adversarial-policy";
+pub const SUPPORTED_SUITES: [&str; 2] = [DEFAULT_SUITE, ADVERSARIAL_POLICY_SUITE];
 pub const DEFAULT_PUBLIC_ROOT: &str = "eval/public";
 pub const DEFAULT_SUITE_ROOT: &str = "eval/public/memory/suites";
 pub const DEFAULT_REPORT_BENCHMARK_VERSION: &str = "v1";
@@ -81,6 +83,8 @@ pub struct MemoryBenchTask {
     pub forbidden_event_ids: Vec<String>,
     #[serde(default)]
     pub evidence: Vec<MemoryBenchEvidence>,
+    #[serde(default)]
+    pub policy: Option<MemoryBenchPolicyExpectation>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -101,6 +105,61 @@ pub struct MemoryBenchEvidence {
     pub source_anchor: String,
     #[serde(default)]
     pub created_at_epoch: Option<i64>,
+    #[serde(default = "retention_allowed")]
+    pub retention_allowed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryBenchPolicyExpectation {
+    #[serde(default)]
+    pub non_retention_required: bool,
+    #[serde(default)]
+    pub explicit_approval: bool,
+    #[serde(default)]
+    pub expected_active_claims: u32,
+    #[serde(default)]
+    pub expected_candidates: u32,
+    #[serde(default)]
+    pub expected_summary_inputs: u32,
+    #[serde(default)]
+    pub sensitive_or_restricted: bool,
+    #[serde(default)]
+    pub suppression_expected: bool,
+    #[serde(default)]
+    pub expected_policy_abstention: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MemoryBenchPolicySummary {
+    pub non_retention_cases: usize,
+    pub non_retention_leak_rate: f64,
+    pub false_block_cases: usize,
+    pub false_block_rate: f64,
+    pub suppression_cases: usize,
+    pub suppression_obeyed_rate: f64,
+    pub sensitive_restricted_cases: usize,
+    pub sensitive_restricted_default_exclusion_rate: f64,
+    pub policy_abstention_cases: usize,
+    pub policy_abstention_accuracy: f64,
+    pub policy_failure_rate: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MemoryBenchPolicyOutcome {
+    pub active_claim_count: u32,
+    pub candidate_count: u32,
+    pub summary_input_count: u32,
+    pub non_retention_applicable: bool,
+    pub non_retention_leaked: bool,
+    pub false_block_applicable: bool,
+    pub false_blocked: bool,
+    pub suppression_applicable: bool,
+    pub suppression_obeyed: bool,
+    pub sensitive_restricted_applicable: bool,
+    pub sensitive_restricted_default_excluded: bool,
+    pub policy_abstention_applicable: bool,
+    pub policy_abstention_correct: bool,
+    pub policy_failure_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
@@ -138,6 +197,7 @@ pub struct MemoryBenchRunOutcome {
     pub reader_input: String,
     pub retrieved_evidence_json: serde_json::Value,
     pub diagnosis_notes: Vec<String>,
+    pub policy: MemoryBenchPolicyOutcome,
 }
 
 impl MemoryBenchRunOutcome {
@@ -203,10 +263,93 @@ pub fn summarize_by_category(
         .collect()
 }
 
+pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicySummary {
+    let non_retention = outcomes
+        .iter()
+        .filter(|outcome| outcome.policy.non_retention_applicable)
+        .collect::<Vec<_>>();
+    let false_block = outcomes
+        .iter()
+        .filter(|outcome| outcome.policy.false_block_applicable)
+        .collect::<Vec<_>>();
+    let suppression = outcomes
+        .iter()
+        .filter(|outcome| outcome.policy.suppression_applicable)
+        .collect::<Vec<_>>();
+    let sensitive = outcomes
+        .iter()
+        .filter(|outcome| outcome.policy.sensitive_restricted_applicable)
+        .collect::<Vec<_>>();
+    let abstention = outcomes
+        .iter()
+        .filter(|outcome| outcome.policy.policy_abstention_applicable)
+        .collect::<Vec<_>>();
+    let policy_failure_count = outcomes
+        .iter()
+        .filter(|outcome| outcome.policy.policy_failure_count > 0)
+        .count();
+
+    MemoryBenchPolicySummary {
+        non_retention_cases: non_retention.len(),
+        non_retention_leak_rate: ratio_count(
+            non_retention
+                .iter()
+                .filter(|outcome| outcome.policy.non_retention_leaked)
+                .count(),
+            non_retention.len(),
+        ),
+        false_block_cases: false_block.len(),
+        false_block_rate: ratio_count(
+            false_block
+                .iter()
+                .filter(|outcome| outcome.policy.false_blocked)
+                .count(),
+            false_block.len(),
+        ),
+        suppression_cases: suppression.len(),
+        suppression_obeyed_rate: ratio_count(
+            suppression
+                .iter()
+                .filter(|outcome| outcome.policy.suppression_obeyed)
+                .count(),
+            suppression.len(),
+        ),
+        sensitive_restricted_cases: sensitive.len(),
+        sensitive_restricted_default_exclusion_rate: ratio_count(
+            sensitive
+                .iter()
+                .filter(|outcome| outcome.policy.sensitive_restricted_default_excluded)
+                .count(),
+            sensitive.len(),
+        ),
+        policy_abstention_cases: abstention.len(),
+        policy_abstention_accuracy: ratio_count(
+            abstention
+                .iter()
+                .filter(|outcome| outcome.policy.policy_abstention_correct)
+                .count(),
+            abstention.len(),
+        ),
+        policy_failure_rate: ratio_count(policy_failure_count, outcomes.len()),
+    }
+}
+
+fn ratio_count(numerator: usize, denominator: usize) -> f64 {
+    if denominator == 0 {
+        0.0
+    } else {
+        numerator as f64 / denominator as f64
+    }
+}
+
 fn active_status() -> String {
     "active".to_string()
 }
 
 fn project_scope() -> String {
     "project".to_string()
+}
+
+fn retention_allowed() -> bool {
+    true
 }

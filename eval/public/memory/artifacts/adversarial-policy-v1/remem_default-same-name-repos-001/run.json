@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v1",
+  "layer": "memory_system_capability",
+  "suite": "adversarial-policy",
+  "condition": "remem_default",
+  "task_id": "same-name-repos-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:d05060faf53bc785faa31dff4f854d3bd3ccdbc902a85dd94c8155973b8d3184",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "remem_commit": "8a6b03234c0d94605b08ef19f5ddb2bf9047a0c2",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v1/remem_default/same-name-repos-001",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v1",
+    "repo_base_commit": null
+  },
+  "answer": {
+    "abstained": true,
+    "no_answer_correct": true,
+    "score": 1.0,
+    "score_method": "deterministic_fixture",
+    "temporal_as_of_correct": true,
+    "text": "Insufficient benchmark evidence to answer."
+  },
+  "retrieval": {
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": [],
+    "gold_supporting_event_ids": [
+      "same-name-001:e1"
+    ],
+    "missing_supporting_evidence_ids": [
+      "same-name-001:e1"
+    ]
+  },
+  "evidence": {
+    "cited_memory_ids": [],
+    "cited_event_ids": []
+  },
+  "metrics": {
+    "abstention_accuracy": 1.0,
+    "answer_score": 1.0,
+    "citation_precision": 0.0,
+    "citation_recall": 0.0,
+    "forbidden_evidence_count": 0,
+    "policy": {
+      "active_claim_count": 0,
+      "candidate_count": 0,
+      "policy_failure_count": 0,
+      "summary_input_count": 0
+    },
+    "retrieved_memory_count": 0,
+    "staleness_accuracy": 1.0,
+    "support_coverage": 0.0
+  },
+  "diagnosis": {
+    "write_side_gap": false,
+    "retrieval_side_gap": true,
+    "reader_gap": false,
+    "policy_abstention": true,
+    "notes": [
+      "missing supporting evidence: same-name-001:e1"
+    ]
+  },
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/remem.db.snapshot.tar.zst",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/score.json"
+  }
+}

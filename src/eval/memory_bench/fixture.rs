@@ -4,15 +4,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use super::types::{MemoryBenchSuiteFixture, DEFAULT_SUITE, DEFAULT_SUITE_ROOT};
+use super::types::{MemoryBenchSuiteFixture, DEFAULT_SUITE_ROOT, SUPPORTED_SUITES};
 
 pub fn suite_path(suite: &str) -> PathBuf {
     Path::new(DEFAULT_SUITE_ROOT).join(suite).join("suite.json")
 }
 
 pub fn load_suite(suite: &str) -> Result<MemoryBenchSuiteFixture> {
-    if suite != DEFAULT_SUITE {
-        bail!("unknown memory benchmark suite {suite}; supported suite is {DEFAULT_SUITE}");
+    if !SUPPORTED_SUITES.contains(&suite) {
+        bail!(
+            "unknown memory benchmark suite {suite}; supported suites are {}",
+            SUPPORTED_SUITES.join(", ")
+        );
     }
     let path = suite_path(suite);
     let content = fs::read_to_string(&path)
@@ -85,6 +88,25 @@ pub fn validate_suite(fixture: &MemoryBenchSuiteFixture) -> Result<()> {
             require_non_blank(&evidence.memory_type, "evidence.memory_type")?;
             require_non_blank(&evidence.status, "evidence.status")?;
             require_non_blank(&evidence.scope, "evidence.scope")?;
+        }
+        if let Some(policy) = &task.policy {
+            if policy.non_retention_required && !policy.explicit_approval {
+                if policy.expected_active_claims != 0
+                    || policy.expected_candidates != 0
+                    || policy.expected_summary_inputs != 0
+                {
+                    bail!(
+                        "task {} non-retention policy must expect zero active claims, candidates, and summary inputs",
+                        task.id
+                    );
+                }
+                if !policy.expected_policy_abstention {
+                    bail!(
+                        "task {} non-retention policy must expect policy abstention",
+                        task.id
+                    );
+                }
+            }
         }
     }
 

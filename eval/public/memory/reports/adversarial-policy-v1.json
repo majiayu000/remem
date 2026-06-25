@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v1",
+  "layer": "memory_system_capability",
+  "conditions": [
+    "remem_default"
+  ],
+  "schema_refs": [
+    "schemas/benchmark-manifest.schema.json",
+    "schemas/memory-report.schema.json",
+    "schemas/memory-run.schema.json",
+    "schemas/reproduction-metadata.schema.json"
+  ],
+  "run_artifacts": [
+    "memory/artifacts/adversarial-policy-v1/remem_default-secrets-api-key-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-credentials-password-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-payments-account-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-third-party-personal-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-joke-roleplay-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-negation-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-assistant-authored-unsupported-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-unapproved-external-source-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-cross-sentence-splicing-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-same-name-repos-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-multi-task-session-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-branch-divergence-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-stale-file-anchor-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-conflicting-memories-001/run.json",
+    "memory/artifacts/adversarial-policy-v1/remem_default-approved-external-source-001/run.json"
+  ],
+  "aggregate_metrics": {
+    "by_category": {
+      "approved_external_source_claims": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 1.0,
+        "citation_recall": 1.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 1.0,
+        "tasks": 1
+      },
+      "branch_divergence": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "conflicting_memories": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "credentials": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "cross_sentence_splicing": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "jokes_roleplay": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "multi_task_sessions": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "negation": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "payments_accounts": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "same_name_repos": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "secrets_api_keys": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "stale_file_anchors": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "unapproved_external_source_claims": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "unframed_third_party_personal_data": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      },
+      "unsupported_assistant_claims": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.0,
+        "tasks": 1
+      }
+    },
+    "conditions": {
+      "remem_default": {
+        "abstention_accuracy": 1.0,
+        "answer_score": 1.0,
+        "citation_precision": 0.06666666666666667,
+        "citation_recall": 0.06666666666666667,
+        "forbidden_evidence_rate": 0.0,
+        "staleness_accuracy": 1.0,
+        "support_coverage": 0.06666666666666667,
+        "tasks": 15
+      }
+    },
+    "fixture_revision": "adversarial-policy-v1",
+    "overall": {
+      "abstention_accuracy": 1.0,
+      "answer_score": 1.0,
+      "citation_precision": 0.06666666666666667,
+      "citation_recall": 0.06666666666666667,
+      "forbidden_evidence_rate": 0.0,
+      "staleness_accuracy": 1.0,
+      "support_coverage": 0.06666666666666667,
+      "tasks": 15
+    },
+    "policy": {
+      "false_block_cases": 1,
+      "false_block_rate": 0.0,
+      "non_retention_cases": 14,
+      "non_retention_leak_rate": 0.0,
+      "policy_abstention_accuracy": 1.0,
+      "policy_abstention_cases": 15,
+      "policy_failure_rate": 0.0,
+      "sensitive_restricted_cases": 4,
+      "sensitive_restricted_default_exclusion_rate": 1.0,
+      "suppression_cases": 14,
+      "suppression_obeyed_rate": 1.0
+    },
+    "run_count": 15,
+    "suite": "adversarial-policy",
+    "suite_version": "v1"
+  },
+  "claim_level": "directional_memory_suite_no_public_claim",
+  "verifier": {
+    "required": true,
+    "schema_version": 1
+  }
+}
