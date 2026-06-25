@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "remem-ai"
-version = "0.5.130"
+version = "0.5.131"
 dependencies = [
  "anyhow",
  "axum",

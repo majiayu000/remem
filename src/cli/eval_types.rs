@@ -51,3 +51,46 @@ pub(in crate::cli) struct EvalWeightGridArgs {
     #[arg(long)]
     pub(in crate::cli) json: bool,
 }
+
+#[derive(Args)]
+pub(in crate::cli) struct EvalCodingBenchArgs {
+    /// Coding-agent benchmark fixture.
+    #[arg(long)]
+    pub(in crate::cli) fixture: String,
+    /// Repetitions for each selected condition/task pair.
+    #[arg(long)]
+    pub(in crate::cli) runs_per_condition: usize,
+    /// JSON report output path. Required unless --dry-run is set.
+    #[arg(long)]
+    pub(in crate::cli) json_out: Option<String>,
+    /// Restrict to one condition: no_memory, remem, or curated_file.
+    #[arg(long)]
+    pub(in crate::cli) condition: Option<String>,
+    /// Restrict to one task id.
+    #[arg(long)]
+    pub(in crate::cli) task: Option<String>,
+    /// Preserve temporary workdirs for inspection.
+    #[arg(long)]
+    pub(in crate::cli) keep_workdirs: bool,
+    /// Validate fixtures and print the planned matrix without invoking an agent.
+    #[arg(long)]
+    pub(in crate::cli) dry_run: bool,
+    /// Agent runner implementation.
+    #[arg(long, default_value = "codex")]
+    pub(in crate::cli) runner: String,
+    /// Codex executable path when --runner=codex.
+    #[arg(long, default_value = "codex")]
+    pub(in crate::cli) codex_bin: String,
+    /// Model passed to the coding-agent runner.
+    #[arg(long, default_value = "gpt-5.5")]
+    pub(in crate::cli) model: String,
+    /// Optional provider label recorded in reports.
+    #[arg(long)]
+    pub(in crate::cli) provider: Option<String>,
+    /// Codex model_reasoning_effort config override.
+    #[arg(long, default_value = "medium")]
+    pub(in crate::cli) reasoning_effort: String,
+    /// Record that the caller intentionally ignored budget gates for this manual run.
+    #[arg(long)]
+    pub(in crate::cli) ignore_budget: bool,
+}

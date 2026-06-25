@@ -1,0 +1,1642 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1782386171,
+  "fixture_path": "eval/coding-bench/fixtures/tasks.json",
+  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
+  "remem_rev": "c6a46aec3fe44c8a256138d839ebeea396b6cdb7",
+  "source_dirty": false,
+  "command": [
+    "remem",
+    "eval-coding-bench",
+    "--fixture",
+    "eval/coding-bench/fixtures/tasks.json",
+    "--runs-per-condition",
+    "3",
+    "--runner",
+    "codex",
+    "--model",
+    "gpt-5.5",
+    "--reasoning-effort",
+    "medium",
+    "--json-out",
+    "eval/coding-bench/reports/baseline.json",
+    "--ignore-budget"
+  ],
+  "artifact_policy": "raw_artifacts_local_ignored",
+  "runner": {
+    "provider": "codex",
+    "model": "gpt-5.5",
+    "runner": "codex",
+    "version": "codex-cli 0.142.1"
+  },
+  "runs_per_condition": 3,
+  "ignore_budget": true,
+  "conditions": [
+    {
+      "name": "no_memory",
+      "summary": {
+        "resolution_rate": 0.13333333333333333,
+        "tokens_total_mean": 115372.6,
+        "tokens_total_stddev": 38562.16025553202,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 75733.13333333333,
+        "wall_time_ms_p95": 132544.0
+      },
+      "runs": [
+        {
+          "condition": "no_memory",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 1,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 207627,
+            "output_tokens": 6103,
+            "total_tokens": 213730
+          },
+          "turns": 1,
+          "wall_time_ms": 132544,
+          "final_head_sha": "b1aaa485497e8a1fb25f4aa0ae48c7d3aa5bea3d",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 2,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 94571,
+            "output_tokens": 3056,
+            "total_tokens": 97627
+          },
+          "turns": 1,
+          "wall_time_ms": 80444,
+          "final_head_sha": "60bef2c65c1782dc9ca488161be5ecfa4c34d77d",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 3,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 98404,
+            "output_tokens": 3984,
+            "total_tokens": 102388
+          },
+          "turns": 1,
+          "wall_time_ms": 85017,
+          "final_head_sha": "7ad23e9635e65092d861b3ac533665562af7ce2f",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 1,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 77822,
+            "output_tokens": 2368,
+            "total_tokens": 80190
+          },
+          "turns": 1,
+          "wall_time_ms": 55817,
+          "final_head_sha": "46fe49e8a3e2a2497f734bd236744f35107604c8",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 2,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 78890,
+            "output_tokens": 2921,
+            "total_tokens": 81811
+          },
+          "turns": 1,
+          "wall_time_ms": 67977,
+          "final_head_sha": "1bd08589777f2fe087286224d5de1b3da1163c9e",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 3,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 78068,
+            "output_tokens": 2189,
+            "total_tokens": 80257
+          },
+          "turns": 1,
+          "wall_time_ms": 52433,
+          "final_head_sha": "fde5969c41a8ab788571c11a77cb699b2f16846b",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 138002,
+            "output_tokens": 3517,
+            "total_tokens": 141519
+          },
+          "turns": 1,
+          "wall_time_ms": 85139,
+          "final_head_sha": "71d252622ed714ffcc5a980ffa6f2e2501edf199",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 2,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 141718,
+            "output_tokens": 3497,
+            "total_tokens": 145215
+          },
+          "turns": 1,
+          "wall_time_ms": 88171,
+          "final_head_sha": "a20de5a55f2ce1cd20118d4921856d94f070c6fa",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 77457,
+            "output_tokens": 2018,
+            "total_tokens": 79475
+          },
+          "turns": 1,
+          "wall_time_ms": 52372,
+          "final_head_sha": "cdf6431a65242bb46d449529be924f1d2263a9a7",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "session-budget-footer",
+          "run_index": 1,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 109130,
+            "output_tokens": 3077,
+            "total_tokens": 112207
+          },
+          "turns": 1,
+          "wall_time_ms": 74295,
+          "final_head_sha": "57881d41db0602c05d54363d097ac9344c3db69b",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "session-budget-footer",
+          "run_index": 2,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 92099,
+            "output_tokens": 2244,
+            "total_tokens": 94343
+          },
+          "turns": 1,
+          "wall_time_ms": 53345,
+          "final_head_sha": "d0402f0dc76e9c561dc3b317d45364e754215fa8",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "session-budget-footer",
+          "run_index": 3,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 77174,
+            "output_tokens": 2019,
+            "total_tokens": 79193
+          },
+          "turns": 1,
+          "wall_time_ms": 50321,
+          "final_head_sha": "ea3fca2bbb5d7b9729d692b1b5ae1949e4234764",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "context-visibility-policy",
+          "run_index": 1,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 127533,
+            "output_tokens": 3056,
+            "total_tokens": 130589
+          },
+          "turns": 1,
+          "wall_time_ms": 74056,
+          "final_head_sha": "5b7e0aba771bdf198ca5c4d67be99d343fd32f09",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "context-visibility-policy",
+          "run_index": 2,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 112277,
+            "output_tokens": 3611,
+            "total_tokens": 115888
+          },
+          "turns": 1,
+          "wall_time_ms": 84517,
+          "final_head_sha": "93a65f830cb3282abbc6f474a30285ad951f8eed",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "context-visibility-policy",
+          "run_index": 3,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 172554,
+            "output_tokens": 3603,
+            "total_tokens": 176157
+          },
+          "turns": 1,
+          "wall_time_ms": 99549,
+          "final_head_sha": "77b2e68d55d36103297edd2a8917a30848cea489",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        }
+      ]
+    },
+    {
+      "name": "remem",
+      "summary": {
+        "resolution_rate": 1.0,
+        "tokens_total_mean": 104749.33333333333,
+        "tokens_total_stddev": 22052.295613432678,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 58725.666666666664,
+        "wall_time_ms_p95": 82397.0
+      },
+      "runs": [
+        {
+          "condition": "remem",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 111681,
+            "output_tokens": 2812,
+            "total_tokens": 114493
+          },
+          "turns": 1,
+          "wall_time_ms": 70191,
+          "final_head_sha": "8ba31dc1a4990e60044e0bb7f0efc0e10675e694",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 129769,
+            "output_tokens": 3161,
+            "total_tokens": 132930
+          },
+          "turns": 1,
+          "wall_time_ms": 77041,
+          "final_head_sha": "62274fdd72a56652ea498ddea265b18357ef4edc",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 130311,
+            "output_tokens": 3230,
+            "total_tokens": 133541
+          },
+          "turns": 1,
+          "wall_time_ms": 78337,
+          "final_head_sha": "f4e7b1ed98b7a45416eddfaebe3373069df941fb",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 64052,
+            "output_tokens": 1384,
+            "total_tokens": 65436
+          },
+          "turns": 1,
+          "wall_time_ms": 37922,
+          "final_head_sha": "51fcf6e963cc88cd144459396cc32d65f61b2a2b",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 63368,
+            "output_tokens": 1265,
+            "total_tokens": 64633
+          },
+          "turns": 1,
+          "wall_time_ms": 36092,
+          "final_head_sha": "19812e4498b45e26b9de931f5c6a4338d1a2ca65",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 93299,
+            "output_tokens": 1986,
+            "total_tokens": 95285
+          },
+          "turns": 1,
+          "wall_time_ms": 64292,
+          "final_head_sha": "3e3aa19078761ef2600e0df44492a64fc8492f6f",
+          "changed_paths": [
+            "memory_demo/retention.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 106777,
+            "output_tokens": 1795,
+            "total_tokens": 108572
+          },
+          "turns": 1,
+          "wall_time_ms": 53547,
+          "final_head_sha": "0de52ad09e247aecd5fce54ae9be5dd0a5986059",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 125531,
+            "output_tokens": 2701,
+            "total_tokens": 128232
+          },
+          "turns": 1,
+          "wall_time_ms": 82397,
+          "final_head_sha": "b4a1e17abea5ec24a0e4e173131d6fd3a1c79173",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 93303,
+            "output_tokens": 1951,
+            "total_tokens": 95254
+          },
+          "turns": 1,
+          "wall_time_ms": 52571,
+          "final_head_sha": "d72b2cde027a294cbac535f39a7e7cee1de9a5f3",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "session-budget-footer",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 122819,
+            "output_tokens": 2327,
+            "total_tokens": 125146
+          },
+          "turns": 1,
+          "wall_time_ms": 67747,
+          "final_head_sha": "6f59c8b93c725a1aec87c751764ad45eb1645aa6",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "session-budget-footer",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 108425,
+            "output_tokens": 1987,
+            "total_tokens": 110412
+          },
+          "turns": 1,
+          "wall_time_ms": 53859,
+          "final_head_sha": "b90e734d5bf7a2574300b5620f15ba5481d4b322",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "session-budget-footer",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 93014,
+            "output_tokens": 1825,
+            "total_tokens": 94839
+          },
+          "turns": 1,
+          "wall_time_ms": 50701,
+          "final_head_sha": "a81f31e7fef6bc44a309fe2280fbea45f462575e",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "context-visibility-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 124245,
+            "output_tokens": 2165,
+            "total_tokens": 126410
+          },
+          "turns": 1,
+          "wall_time_ms": 56187,
+          "final_head_sha": "5dd41c80ef2818d0d970e0356388e02afcbaea28",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "context-visibility-policy",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 78966,
+            "output_tokens": 1949,
+            "total_tokens": 80915
+          },
+          "turns": 1,
+          "wall_time_ms": 49313,
+          "final_head_sha": "d6f53d0002ccde2cf5ac1c933d2167d16134c21d",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "context-visibility-policy",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 93286,
+            "output_tokens": 1856,
+            "total_tokens": 95142
+          },
+          "turns": 1,
+          "wall_time_ms": 50688,
+          "final_head_sha": "980c32daeaa9e9d3262b0f2a95705b6ea80d906a",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        }
+      ]
+    },
+    {
+      "name": "curated_file",
+      "summary": {
+        "resolution_rate": 1.0,
+        "tokens_total_mean": 94016.53333333334,
+        "tokens_total_stddev": 14021.958122253192,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 62813.0,
+        "wall_time_ms_p95": 178532.0
+      },
+      "runs": [
+        {
+          "condition": "curated_file",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 93311,
+            "output_tokens": 2799,
+            "total_tokens": 96110
+          },
+          "turns": 1,
+          "wall_time_ms": 71574,
+          "final_head_sha": "d801090bbbb270415607e0f24eefe7c1e53e4d8a",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 91628,
+            "output_tokens": 2344,
+            "total_tokens": 93972
+          },
+          "turns": 1,
+          "wall_time_ms": 57689,
+          "final_head_sha": "f8edb19068a9c1fb906092dda5a750c62d2fcf85",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 109271,
+            "output_tokens": 2792,
+            "total_tokens": 112063
+          },
+          "turns": 1,
+          "wall_time_ms": 69682,
+          "final_head_sha": "8862e824cae2ea51a48de6c4baf9929b6f7dc613",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 76868,
+            "output_tokens": 1675,
+            "total_tokens": 78543
+          },
+          "turns": 1,
+          "wall_time_ms": 44150,
+          "final_head_sha": "c597937bf861a3be777051c107c99afacc9249e9",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 76650,
+            "output_tokens": 1698,
+            "total_tokens": 78348
+          },
+          "turns": 1,
+          "wall_time_ms": 45464,
+          "final_head_sha": "ea4cf9d8fd43ca93be8d9ce3e40af6059fc2bf25",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 76075,
+            "output_tokens": 1581,
+            "total_tokens": 77656
+          },
+          "turns": 1,
+          "wall_time_ms": 44334,
+          "final_head_sha": "54be7e6d6cbacbae407ad3a1a99918110a67b1de",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 106075,
+            "output_tokens": 2132,
+            "total_tokens": 108207
+          },
+          "turns": 1,
+          "wall_time_ms": 56206,
+          "final_head_sha": "e8d6c2da2a3489930625a5a1e97d0c76e996e564",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 108943,
+            "output_tokens": 2551,
+            "total_tokens": 111494
+          },
+          "turns": 1,
+          "wall_time_ms": 178532,
+          "final_head_sha": "dbbfaf4b7782dc015415cbb7ffb4965153d44b0b",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 91675,
+            "output_tokens": 2046,
+            "total_tokens": 93721
+          },
+          "turns": 1,
+          "wall_time_ms": 55493,
+          "final_head_sha": "6a7a7d92124748e1292e30507fb0c78f645bb681",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "session-budget-footer",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 92376,
+            "output_tokens": 2267,
+            "total_tokens": 94643
+          },
+          "turns": 1,
+          "wall_time_ms": 58905,
+          "final_head_sha": "7c0e6c3301fa113a61b2e806bcaa8f75f2cc047b",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "session-budget-footer",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 120901,
+            "output_tokens": 2339,
+            "total_tokens": 123240
+          },
+          "turns": 1,
+          "wall_time_ms": 60887,
+          "final_head_sha": "f94d45d35a0c7f6d23527472932f35df5a8a1501",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "session-budget-footer",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 90910,
+            "output_tokens": 1789,
+            "total_tokens": 92699
+          },
+          "turns": 1,
+          "wall_time_ms": 49210,
+          "final_head_sha": "cdcc8717006e80d0fcf5763ed7c0474acb66cd2e",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "context-visibility-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 76741,
+            "output_tokens": 1796,
+            "total_tokens": 78537
+          },
+          "turns": 1,
+          "wall_time_ms": 51364,
+          "final_head_sha": "098775031fa294e9b988620139bc24d0849ced82",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "context-visibility-policy",
+          "run_index": 2,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 76161,
+            "output_tokens": 1630,
+            "total_tokens": 77791
+          },
+          "turns": 1,
+          "wall_time_ms": 47832,
+          "final_head_sha": "02bbf6530878c590b802b948d3b7752424f7fab4",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "curated_file",
+          "task_id": "context-visibility-policy",
+          "run_index": 3,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 91271,
+            "output_tokens": 1953,
+            "total_tokens": 93224
+          },
+          "turns": 1,
+          "wall_time_ms": 50873,
+          "final_head_sha": "82b89ce47e891422b6b9b573a5956ed6d1f51ffa",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        }
+      ]
+    }
+  ]
+}

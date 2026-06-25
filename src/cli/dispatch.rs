@@ -5,7 +5,7 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_embeddings, run_backfill_entities,
     run_cleanup, run_commit, run_config, run_current_state, run_dream, run_encrypt, run_eval,
-    run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
+    run_eval_coding_bench, run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
     run_eval_graph_decision, run_eval_local, run_eval_weight_grid, run_export_markdown,
     run_governance, run_graph_review, run_import, run_memory_action, run_merge_preferences,
     run_model, run_pending, run_preferences, run_raw, run_reroute, run_review, run_search,
@@ -254,6 +254,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             args.json,
             args.simulate_golden_regression,
         )?,
+        Commands::EvalCodingBench(args) => run_eval_coding_bench(args)?,
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
         Commands::BackfillEmbeddings { limit, batch_size } => {

@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1782389330,
+  "fixture_path": "eval/coding-bench/fixtures/tasks.json",
+  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
+  "remem_rev": "324aa0b3e1dd069ac5cc09129ebbe97b39e57446",
+  "source_dirty": false,
+  "command": [
+    "remem",
+    "eval-coding-bench",
+    "--fixture",
+    "eval/coding-bench/fixtures/tasks.json",
+    "--runs-per-condition",
+    "1",
+    "--runner",
+    "codex",
+    "--model",
+    "gpt-5.5",
+    "--reasoning-effort",
+    "medium",
+    "--json-out",
+    "eval/coding-bench/reports/fix-remem-smoke.json",
+    "--condition",
+    "remem",
+    "--ignore-budget"
+  ],
+  "artifact_policy": "raw_artifacts_local_ignored",
+  "runner": {
+    "provider": "codex",
+    "model": "gpt-5.5",
+    "runner": "codex",
+    "version": "codex-cli 0.142.1"
+  },
+  "runs_per_condition": 1,
+  "ignore_budget": true,
+  "conditions": [
+    {
+      "name": "remem",
+      "summary": {
+        "resolution_rate": 1.0,
+        "tokens_total_mean": 99594.4,
+        "tokens_total_stddev": 28471.172807596107,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 58299.0,
+        "wall_time_ms_p95": 92915.0
+      },
+      "runs": [
+        {
+          "condition": "remem",
+          "task_id": "ticket-key-memory-convention",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 144919,
+            "output_tokens": 3274,
+            "total_tokens": 148193
+          },
+          "turns": 1,
+          "wall_time_ms": 92915,
+          "final_head_sha": "573595409f69daf08aaa38f79824563a5969d299",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "retention-window-memory-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 63792,
+            "output_tokens": 1275,
+            "total_tokens": 65067
+          },
+          "turns": 1,
+          "wall_time_ms": 34595,
+          "final_head_sha": "d995c96c6b4af3b31af9c6a5c3f979e1e9d91193",
+          "changed_paths": [
+            "memory_demo/retention.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_retention_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "slug-normalizer-contract",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 78749,
+            "output_tokens": 1827,
+            "total_tokens": 80576
+          },
+          "turns": 1,
+          "wall_time_ms": 58959,
+          "final_head_sha": "92224ab65f498878e8196446070c2c68a8452487",
+          "changed_paths": [
+            "memory_demo/slug.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_slug_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "session-budget-footer",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 92436,
+            "output_tokens": 1722,
+            "total_tokens": 94158
+          },
+          "turns": 1,
+          "wall_time_ms": 48837,
+          "final_head_sha": "ea57b4cdb6dd5e269b99da037725bd357247f56d",
+          "changed_paths": [
+            "memory_demo/session.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_session_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "remem",
+          "task_id": "context-visibility-policy",
+          "run_index": 1,
+          "resolved": true,
+          "failure_reason": null,
+          "usage": {
+            "input_tokens": 107995,
+            "output_tokens": 1983,
+            "total_tokens": 109978
+          },
+          "turns": 1,
+          "wall_time_ms": 56189,
+          "final_head_sha": "17926c909b72d3280292091f48220f79f5e5d5b3",
+          "changed_paths": [
+            "memory_demo/visibility.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_visibility_hidden"
+              ],
+              "exit_code": 0,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        }
+      ]
+    }
+  ]
+}

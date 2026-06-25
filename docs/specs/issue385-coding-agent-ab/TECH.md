@@ -23,7 +23,6 @@ outcomes, not only whether a memory result was retrieved.
 ```text
 src/eval/coding_bench.rs
 src/eval/coding_bench/
-  artifact.rs
   condition.rs
   fixture.rs
   runner.rs
@@ -33,15 +32,13 @@ eval/coding-bench/
   README.md
   fixtures/
     tasks.json
-    curated-context.md
-    seed-events.json
   reports/
     baseline.json
 ```
 
-If the first implementation needs a smaller slice, `eval/coding-bench/README.md`
-and the JSON schema may land before the Rust runner, but the issue is not
-complete until the command produces a baseline report from a clean checkout.
+Implemented status: the native Rust runner and the first committed baseline are
+present. The first fixture uses an inline Python repository for deterministic
+clean-checkout runs; later versions should add pinned real-repo fixtures.
 
 ## CLI Contract
 
@@ -81,7 +78,7 @@ Each run gets isolated state:
 3. Apply the selected memory condition.
 4. Invoke the configured coding-agent runner with a bounded timeout.
 5. Run the task scoring oracle.
-6. Record artifacts and clean up unless `--keep-workdirs` is set.
+6. Record local artifacts and clean up unless `--keep-workdirs` is set.
 
 The runner must pass command arguments as arrays, not shell-concatenated strings.
 Any provider key must come from the environment or the provider's normal local
@@ -103,7 +100,7 @@ configuration. No secrets may be stored in fixtures or reports.
     {
       "id": "fix-parser-edge-case",
       "prompt": "Fix the parser edge case and add the focused regression test.",
-      "timeout_ms": 900000,
+      "timeout_ms": 180000,
       "allowed_paths": ["src/parser.rs", "tests/parser.rs"],
       "score": {
         "commands": [["cargo", "test", "--test", "parser"]]
@@ -113,24 +110,32 @@ configuration. No secrets may be stored in fixtures or reports.
 }
 ```
 
-The fixture format must support objective scoring commands and path constraints.
-Path constraints are not a sandbox boundary; they are evaluated after the run to
-detect whether the agent touched unauthorized files.
+The current fixture format supports objective scoring commands, hidden files
+written after the agent run, and path constraints. Path constraints are not a
+sandbox boundary; they are evaluated after the run to detect whether the agent
+touched unauthorized files. Generated Python cache paths are ignored.
 
 ## Memory Seeding
 
 The `remem` condition seeds a temporary database from committed fixture evidence,
-not from private user memory. The first implementation may seed memories through
-public CLI or MCP surfaces; direct database writes are allowed only for fixture
-setup code that already goes through migration-managed schemas and is documented
-as test data loading.
+not from private user memory. The implementation uses `save_memory` against a
+temporary `REMEM_DATA_DIR`, then renders the production SessionStart context.
+Because Codex non-interactive MCP detail calls can be cancelled by the host, the
+benchmark appends full seeded memory details to `REMEM_CONTEXT.md` as preloaded
+`get_observations` details.
 
-The `curated_file` condition uses `fixtures/curated-context.md`. That file must
-be derived from the same source evidence as the remem seed and reviewed as part
-of fixture changes.
+The `curated_file` condition uses the fixture's `curated_context` text and writes
+it to `MEMORY.md` in the temporary repository. It must be derived from the same
+source evidence as the remem seed and reviewed as part of fixture changes.
 
 The `no_memory` condition must disable remem hooks, MCP registration, and native
 memory file injection for the temporary agent run.
+
+Codex runs must not inherit the host's normal Codex config, rules, hooks, MCP
+servers, or session persistence. The runner invokes `codex exec` with
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, and `--disable hooks`.
+The `remem` condition is represented by a temporary remem database plus the
+production SessionStart render path written into `REMEM_CONTEXT.md`.
 
 ## Report Schema
 
@@ -140,8 +145,12 @@ memory file injection for the temporary agent run.
 {
   "schema_version": 1,
   "generated_at_epoch": 0,
-  "repo_rev": "fixed-sha",
+  "fixture_path": "eval/coding-bench/fixtures/tasks.json",
+  "fixture_sha256": "fixture-sha256",
   "remem_rev": "current-sha",
+  "source_dirty": false,
+  "command": ["remem", "eval-coding-bench", "..."],
+  "artifact_policy": "raw_artifacts_local_ignored",
   "runner": {
     "provider": "codex-cli",
     "model": "example-model",
@@ -155,7 +164,7 @@ memory file injection for the temporary agent run.
         "resolution_rate": 0.0,
         "tokens_total_mean": 0.0,
         "tokens_total_stddev": 0.0,
-        "turns_mean": 0.0,
+        "turns_mean": null,
         "wall_time_ms_mean": 0.0,
         "wall_time_ms_p95": 0.0
       },
@@ -178,7 +187,7 @@ Each run entry records:
   expose token accounting
 - turn count
 - wall time
-- final head SHA or patch artifact
+- final head SHA
 - unauthorized path changes
 - failure reason
 
@@ -203,8 +212,11 @@ coding task can pass while the remem runtime contract fails; that run must set
 `resolved=true` and `runtime_contract_failure=true` instead of hiding the
 contract failure inside a generic task failure reason.
 
-Reports must not include full prompts containing secrets, provider API keys, or
-private user memory content.
+Committed reports must not include full prompts containing secrets, provider API
+keys, raw runner stdout/stderr, raw diffs, or private user memory content. The
+runner writes raw per-run artifacts under
+`eval/coding-bench/reports/artifacts/` for local audit only; that directory is
+ignored and must not be committed.
 
 ## Verification
 
@@ -219,6 +231,10 @@ remem eval-coding-bench --dry-run \
 remem eval-coding-bench \
   --fixture eval/coding-bench/fixtures/tasks.json \
   --runs-per-condition 3 \
+  --runner codex \
+  --model gpt-5.5 \
+  --reasoning-effort medium \
+  --ignore-budget \
   --json-out eval/coding-bench/reports/baseline.json
 ```
 
@@ -234,6 +250,22 @@ The first benchmark runner may be manual-only because it can be slow and model
 dependent. If it later enters CI, CI should validate fixture parsing and schema
 stability by default, with full agent runs behind an explicit scheduled or
 maintainer-triggered workflow.
+
+## Draft Baseline
+
+Generated on 2026-06-25 with `codex-cli 0.142.0`, `gpt-5.5`,
+`runs_per_condition=3`, 5 tasks, and 45 total agent runs before the Codex
+runner ignored host config, rules, hooks, and session persistence:
+
+| Condition | Resolved | Resolution | Mean tokens | Mean wall time |
+|---|---:|---:|---:|---:|
+| `no_memory` | 3/15 | 20.0% | 390,003 | 133.6s |
+| `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
+| `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
+
+Result: this draft run is report-shape evidence only and must be regenerated
+before publication or issue closure. It is not evidence that remem beats a
+carefully maintained `MEMORY.md`.
 
 ## Failure Handling
 

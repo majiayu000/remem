@@ -469,6 +469,8 @@ pub(super) enum Commands {
     EvalWeightGrid(super::eval_types::EvalWeightGridArgs),
     #[command(name = "eval-gates")]
     EvalGates(super::eval_types::EvalGatesArgs),
+    #[command(name = "eval-coding-bench")]
+    EvalCodingBench(super::eval_types::EvalCodingBenchArgs),
     /// Run local retrieval diagnostics.
     EvalLocal,
     /// Backfill entity records for existing memories.

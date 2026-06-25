@@ -17,6 +17,7 @@
 - Staged source version `0.5.128` for workstream identity continuity.
 - Staged source version `0.5.129` for usage feedback shadow ranking.
 - Staged source version `0.5.130` for preference semantic-dedup calibration.
+- Staged source version `0.5.131` for the coding-agent benchmark runner.
 
 ## [0.5.109] - 2026-06-20
 
