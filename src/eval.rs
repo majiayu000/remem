@@ -1,3 +1,4 @@
+pub mod current_memory_contracts;
 pub mod e2e;
 pub mod extraction;
 pub mod gates {
@@ -90,6 +91,7 @@ pub mod gates {
 
     #[derive(Debug, Clone, Serialize)]
     pub struct EvalSourceReports {
+        pub current_memory_contracts: serde_json::Value,
         pub golden: serde_json::Value,
         pub injection: serde_json::Value,
         pub extraction: serde_json::Value,
@@ -99,22 +101,26 @@ pub mod gates {
         let baseline = load_baseline(&options.baseline_path)?;
         let thresholds = load_thresholds(&options.thresholds_path)?;
         let golden = run_golden(&options.golden_dataset_path)?;
+        let current_memory_contracts =
+            crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
         let injection = crate::eval::injection::run_sandbox_eval(Default::default())?;
         let extraction = crate::eval::extraction::run_corpus_path(Default::default())?;
 
-        let mut current_metrics = collect_metrics(&golden, &injection, &extraction);
+        let mut current_metrics =
+            collect_metrics(&golden, &current_memory_contracts, &injection, &extraction);
         if options.simulate_golden_regression {
             current_metrics.insert("golden.slice.temporal.hit_at_k".to_string(), 0.0);
         }
         let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current_metrics);
         let source_reports = EvalSourceReports {
+            current_memory_contracts: serde_json::to_value(&current_memory_contracts)?,
             golden: serde_json::to_value(&golden)?,
             injection: serde_json::to_value(&injection)?,
             extraction: serde_json::to_value(&extraction)?,
         };
 
         Ok(EvalGateReport {
-            version: "2026-06-12".to_string(),
+            version: "2026-06-23".to_string(),
             baseline_version: baseline.version,
             thresholds_version: thresholds.version,
             summary: EvalGateSummary {
@@ -153,6 +159,7 @@ pub mod gates {
 
     fn collect_metrics(
         golden: &crate::eval::golden::GoldenEvalReport,
+        current_memory_contracts: &crate::eval::current_memory_contracts::CurrentMemoryContractEvalReport,
         injection: &crate::eval::injection::InjectionEvalReport,
         extraction: &crate::eval::extraction::ExtractionEvalReport,
     ) -> BTreeMap<String, f64> {
@@ -180,6 +187,146 @@ pub mod gates {
                 );
             }
         }
+        metrics.insert(
+            "current_memory_contracts.current_state.current".to_string(),
+            current_memory_contracts.metrics.current_state.current.rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.current_state.no_current".to_string(),
+            current_memory_contracts
+                .metrics
+                .current_state
+                .no_current
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.current_state.unresolved_conflict".to_string(),
+            current_memory_contracts
+                .metrics
+                .current_state
+                .unresolved_conflict
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.current_state.ambiguous".to_string(),
+            current_memory_contracts
+                .metrics
+                .current_state
+                .ambiguous
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.temporal.invalidated_fact_exclusion".to_string(),
+            current_memory_contracts
+                .metrics
+                .temporal
+                .invalidated_fact_exclusion
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.temporal.expired_fact_exclusion".to_string(),
+            current_memory_contracts
+                .metrics
+                .temporal
+                .expired_fact_exclusion
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.temporal.as_of_fact_retrieval".to_string(),
+            current_memory_contracts
+                .metrics
+                .temporal
+                .as_of_fact_retrieval
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.staleness.tracked".to_string(),
+            current_memory_contracts.metrics.staleness.tracked.rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.staleness.untracked".to_string(),
+            current_memory_contracts.metrics.staleness.untracked.rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.staleness.history_tracked".to_string(),
+            current_memory_contracts
+                .metrics
+                .staleness
+                .history_tracked
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.staleness.verify_before_trust".to_string(),
+            current_memory_contracts
+                .metrics
+                .staleness
+                .verify_before_trust
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.staleness.error".to_string(),
+            current_memory_contracts.metrics.staleness.error.rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.injection.audit_injected".to_string(),
+            current_memory_contracts
+                .metrics
+                .injection
+                .audit_injected
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.injection.audit_dropped".to_string(),
+            current_memory_contracts
+                .metrics
+                .injection
+                .audit_dropped
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.injection.audit_abstained".to_string(),
+            current_memory_contracts
+                .metrics
+                .injection
+                .audit_abstained
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.injection.output_gate_recorded".to_string(),
+            current_memory_contracts
+                .metrics
+                .injection
+                .output_gate_recorded
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.usage.citation_event_matched".to_string(),
+            current_memory_contracts
+                .metrics
+                .usage
+                .citation_event_matched
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.usage.citation_event_no_citation".to_string(),
+            current_memory_contracts
+                .metrics
+                .usage
+                .citation_event_no_citation
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.usage.usage_event_linked_to_injection_item".to_string(),
+            current_memory_contracts
+                .metrics
+                .usage
+                .usage_event_linked_to_injection_item
+                .rate,
+        );
+        metrics.insert(
+            "current_memory_contracts.all_checks".to_string(),
+            bool_metric(current_memory_contracts.metrics.all_checks_passed),
+        );
         metrics.insert(
             "injection.expected_memory_recall".to_string(),
             injection.metrics.expected_memory_recall.rate,
