@@ -486,12 +486,12 @@ where
 fn terminate_command(child: &mut Child) {
     #[cfg(unix)]
     {
-        let process_group = format!("-{}", child.id());
-        terminate_unix_process_group("TERM", &process_group);
+        let process_group = -(child.id() as libc::pid_t);
+        terminate_unix_process_group("TERM", libc::SIGTERM, process_group);
         std::thread::sleep(Duration::from_millis(200));
         match child.try_wait() {
             Ok(Some(_)) => {}
-            Ok(None) => terminate_unix_process_group("KILL", &process_group),
+            Ok(None) => terminate_unix_process_group("KILL", libc::SIGKILL, process_group),
             Err(err) => eprintln!(
                 "[coding-bench] failed to poll timed-out runner process {}: {err}",
                 child.id()
@@ -510,17 +510,16 @@ fn terminate_command(child: &mut Child) {
 }
 
 #[cfg(unix)]
-fn terminate_unix_process_group(signal: &str, process_group: &str) {
-    match Command::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(process_group)
-        .status()
-    {
-        Ok(status) if status.success() => {}
-        Ok(status) => {
-            eprintln!("[coding-bench] kill -{signal} {process_group} exited with status {status}")
-        }
-        Err(err) => eprintln!("[coding-bench] failed to run kill -{signal} {process_group}: {err}"),
+fn terminate_unix_process_group(
+    signal_name: &str,
+    signal: libc::c_int,
+    process_group: libc::pid_t,
+) {
+    if unsafe { libc::kill(process_group, signal) } != 0 {
+        let err = std::io::Error::last_os_error();
+        eprintln!(
+            "[coding-bench] failed to send {signal_name} to process group {process_group}: {err}"
+        );
     }
 }
 
@@ -760,11 +759,11 @@ mod tests {
     #[test]
     fn command_output_timeout_terminates_process_group_children() -> Result<()> {
         let start = Instant::now();
-        let outcome = command_output("sh", ["-c", "sleep 3"], Path::new("."), &[], 100)?;
+        let outcome = command_output("sh", ["-c", "sleep 10 & wait"], Path::new("."), &[], 100)?;
 
         assert!(outcome.timed_out);
         assert!(
-            start.elapsed() < Duration::from_secs(2),
+            start.elapsed() < Duration::from_secs(3),
             "timeout should not wait for a grandchild sleep to exit"
         );
         Ok(())
