@@ -126,6 +126,41 @@ pub(crate) fn find_preference_consolidation(
     Ok(best)
 }
 
+pub(crate) fn classify_preference_texts(
+    memory_id: i64,
+    existing_content: &str,
+    incoming_content: &str,
+) -> Option<PreferenceConsolidationMatch> {
+    let existing = PreferenceProfile::new(existing_content);
+    let incoming = PreferenceProfile::new(incoming_content);
+    if existing.normalized_text == incoming.normalized_text {
+        return Some(PreferenceConsolidationMatch {
+            memory_id,
+            kind: PreferenceConsolidationKind::SamePreference,
+            score: 1.0,
+            shared_concepts: existing
+                .concepts
+                .intersection(&incoming.concepts)
+                .cloned()
+                .collect(),
+            reason: "normalized preference text already matches".to_string(),
+        });
+    }
+    if incoming.concepts.len() < MIN_SHARED_CONCEPTS {
+        return None;
+    }
+    let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_content);
+    classify_preference(memory_id, &existing, &incoming).or_else(|| {
+        embedding_refinement(
+            memory_id,
+            &existing,
+            &incoming,
+            existing_content,
+            &incoming_embedding,
+        )
+    })
+}
+
 fn classify_preference(
     memory_id: i64,
     existing: &PreferenceProfile,

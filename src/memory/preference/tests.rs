@@ -501,6 +501,45 @@ fn test_render_preferences_reports_project_global_split() -> Result<()> {
 }
 
 #[test]
+fn render_preferences_semantically_dedups_same_intent_variants() -> Result<()> {
+    let conn = setup_test_db();
+    insert_preference_row(
+        &conn,
+        10,
+        "test/proj",
+        Some("vertical-a"),
+        "Preference: minimal vertical slice",
+        r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery."#,
+        "project",
+    )?;
+    insert_preference_row(
+        &conn,
+        11,
+        "test/proj",
+        Some("vertical-b"),
+        "Preference: deterministic vertical slice",
+        "Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep live Atlas runs opt-in, and validate via concrete artifacts while keeping credentials server-side.",
+        "project",
+    )?;
+
+    let mut output = String::new();
+    let rendered = render_preferences_with_limits(
+        &mut output,
+        &conn,
+        "test/proj",
+        "/nonexistent",
+        20,
+        0,
+        1500,
+    )?;
+
+    assert_eq!(rendered, 1);
+    assert!(output.contains("deterministic routing"));
+    assert!(!output.contains("full cloud platform"));
+    Ok(())
+}
+
+#[test]
 fn test_global_preferences_require_explicit_global_scope() -> Result<()> {
     let conn = setup_test_db();
     for project in &["proj-a", "proj-b", "proj-c"] {

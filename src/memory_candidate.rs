@@ -48,6 +48,7 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
     "sk-",
     "token",
 ];
+const CANDIDATE_PROMPT_PREFERENCE_LIMIT: usize = 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCandidateResult {
     EmptyRange,
@@ -77,6 +78,12 @@ struct ObservationBatch {
     to_event_id: i64,
     evidence_event_ids: Vec<i64>,
     observations: Vec<SourceObservation>,
+}
+
+#[derive(Debug, Clone)]
+struct CandidatePromptPreference {
+    id: i64,
+    text: String,
 }
 
 pub(crate) struct CandidatePromptObservation<'a> {
@@ -139,7 +146,7 @@ pub(crate) fn build_eval_candidate_request(
     format!(
         "{}\n\n<user_prompt>\n{}\n</user_prompt>",
         MEMORY_CANDIDATE_SYSTEM,
-        build_candidate_prompt(&task, &batch)
+        build_candidate_prompt(&task, &batch, &[])
     )
 }
 
@@ -189,7 +196,8 @@ where
         return Ok(MemoryCandidateResult::EmptyRange);
     };
 
-    let prompt = build_candidate_prompt(task, &batch);
+    let existing_preferences = load_candidate_prompt_preferences(conn, &task.project)?;
+    let prompt = build_candidate_prompt(task, &batch, &existing_preferences);
     let response = generate(prompt).await?;
     let candidates = parse_memory_candidates(&response)?;
     if candidates.is_empty() {
@@ -223,6 +231,24 @@ where
         pending_review: result.pending_review,
         to_event_id: batch.to_event_id,
     })
+}
+
+fn load_candidate_prompt_preferences(
+    conn: &Connection,
+    project: &str,
+) -> Result<Vec<CandidatePromptPreference>> {
+    let preferences = crate::memory::preference::query_project_preferences(
+        conn,
+        project,
+        CANDIDATE_PROMPT_PREFERENCE_LIMIT,
+    )?;
+    Ok(preferences
+        .into_iter()
+        .map(|preference| CandidatePromptPreference {
+            id: preference.id,
+            text: preference.text,
+        })
+        .collect())
 }
 
 fn enqueue_graph_followup(
@@ -670,7 +696,11 @@ fn candidate_title(candidate: &ParsedMemoryCandidate) -> String {
     crate::db::truncate_str(first_line, 96).to_string()
 }
 
-fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -> String {
+fn build_candidate_prompt(
+    task: &db::ExtractionTask,
+    batch: &ObservationBatch,
+    existing_preferences: &[CandidatePromptPreference],
+) -> String {
     let mut prompt = format!(
         "Task: memory_candidate\nProject: {}\nHost: {}\nSession: {}\nCovered evidence events: {}..{}\n\n",
         task.project,
@@ -679,6 +709,7 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
         batch.from_event_id,
         batch.to_event_id
     );
+    append_existing_preferences(&mut prompt, existing_preferences);
     for observation in &batch.observations {
         let evidence = observation
             .evidence_event_ids
@@ -697,6 +728,25 @@ fn build_candidate_prompt(task: &db::ExtractionTask, batch: &ObservationBatch) -
         prompt.push_str("\n</observation>\n\n");
     }
     prompt
+}
+
+fn append_existing_preferences(prompt: &mut String, preferences: &[CandidatePromptPreference]) {
+    if preferences.is_empty() {
+        return;
+    }
+    prompt.push_str("<existing_active_preferences>\n");
+    prompt.push_str(
+        "These preferences are already active for this project. Do not emit a new preference candidate that merely restates or paraphrases them; emit only net-new preferences, material refinements, or explicit contradictions supported by the observations.\n",
+    );
+    for preference in preferences {
+        prompt.push_str(&format!(
+            "<preference id=\"{}\">\n",
+            xml_escape_attr(&preference.id.to_string())
+        ));
+        prompt.push_str(&xml_escape_text(&preference.text));
+        prompt.push_str("\n</preference>\n");
+    }
+    prompt.push_str("</existing_active_preferences>\n\n");
 }
 
 fn eval_task(

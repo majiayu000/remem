@@ -3,7 +3,10 @@ use rusqlite::Connection;
 
 use crate::memory::Memory;
 
-use super::{query_global_preferences, query_project_preferences};
+use super::{
+    consolidation::{classify_preference_texts, PreferenceConsolidationKind},
+    query_global_preferences, query_project_preferences,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PreferenceRenderSummary {
@@ -135,6 +138,10 @@ pub(crate) fn render_preferences_with_context_details(
     if keep_indices.is_empty() {
         return Ok(PreferenceRenderDetails::default());
     }
+    let keep_indices = dedup_with_preference_similarity(&memories, &keep_indices);
+    if keep_indices.is_empty() {
+        return Ok(PreferenceRenderDetails::default());
+    }
 
     output.push_str("## Your Preferences (always apply these)\n");
     let mut total_chars = 0usize;
@@ -168,4 +175,27 @@ pub(crate) fn render_preferences_with_context_details(
         summary,
         rendered_ids,
     })
+}
+
+fn dedup_with_preference_similarity(prefs: &[Memory], indices: &[usize]) -> Vec<usize> {
+    let mut kept: Vec<usize> = Vec::new();
+    for &idx in indices {
+        let incoming = &prefs[idx];
+        let already_represented = kept.iter().any(|&kept_idx| {
+            let existing = &prefs[kept_idx];
+            classify_preference_texts(existing.id, &existing.text, &incoming.text).is_some_and(
+                |matched| {
+                    matches!(
+                        matched.kind,
+                        PreferenceConsolidationKind::SamePreference
+                            | PreferenceConsolidationKind::Refinement
+                    )
+                },
+            )
+        });
+        if !already_represented {
+            kept.push(idx);
+        }
+    }
+    kept
 }

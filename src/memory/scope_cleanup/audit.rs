@@ -1,8 +1,9 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
+use super::preference_cluster::preference_clusters;
 use super::{ObjectRef, ScopeObjectKind};
 
 const LOW_CONFIDENCE_THRESHOLD: f64 = 0.6;
@@ -474,153 +475,6 @@ fn load_workstream_audit_rows(conn: &Connection, project: &str) -> Result<Vec<Wo
         })
     })?;
     crate::db::query::collect_rows(rows)
-}
-
-pub(super) fn preference_clusters(rows: &[MemoryAuditRow], project: &str) -> Vec<DuplicateCluster> {
-    let mut groups: BTreeMap<String, Vec<&MemoryAuditRow>> = BTreeMap::new();
-    for row in rows {
-        if row.memory_type != "preference" || row.status != "active" {
-            continue;
-        }
-        if !is_repo_owned_for_project(
-            project,
-            row.project.as_str(),
-            row.scope.as_deref(),
-            row.owner_scope.as_deref(),
-            row.owner_key.as_deref(),
-            row.target_project.as_deref(),
-        ) {
-            continue;
-        }
-        for key in preference_cluster_keys(row) {
-            let namespace = format!(
-                "{}:{}:{}:{}",
-                row.owner_scope.as_deref().unwrap_or("legacy"),
-                row.owner_key.as_deref().unwrap_or(row.project.as_str()),
-                row.target_project.as_deref().unwrap_or(""),
-                key
-            );
-            groups.entry(namespace).or_default().push(row);
-        }
-    }
-    let mut seen_member_sets = HashSet::new();
-    let mut grouped = groups.into_iter().collect::<Vec<_>>();
-    grouped.sort_by(|left, right| {
-        right
-            .1
-            .len()
-            .cmp(&left.1.len())
-            .then_with(|| left.0.cmp(&right.0))
-    });
-    let mut emitted_sets: Vec<HashSet<i64>> = Vec::new();
-    grouped
-        .into_iter()
-        .filter_map(|(namespace, mut members)| {
-            let key = namespace.rsplit(':').next().unwrap_or("unique").to_string();
-            if key == "unique" || members.len() < 2 {
-                return None;
-            }
-            members.sort_by_key(|row| row.id);
-            let member_key = members
-                .iter()
-                .map(|row| row.id.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            if !seen_member_sets.insert(member_key) {
-                return None;
-            }
-            let member_set = members.iter().map(|row| row.id).collect::<HashSet<_>>();
-            if emitted_sets
-                .iter()
-                .any(|emitted| member_set.is_subset(emitted))
-            {
-                return None;
-            }
-            emitted_sets.push(member_set);
-            let canonical = current_member(&members)
-                .or_else(|| latest_member(&members))
-                .or_else(|| members.first().copied())?;
-            let refs = members
-                .iter()
-                .map(|row| row.object_ref().to_string())
-                .collect::<Vec<_>>();
-            Some(DuplicateCluster {
-                cluster_key: key,
-                canonical_ref: canonical.object_ref().to_string(),
-                refs,
-                reason: "active preferences overlap and should be represented once".to_string(),
-                merged_content: Some(merge_preference_texts(
-                    &members
-                        .iter()
-                        .map(|row| row.content.as_str())
-                        .collect::<Vec<_>>(),
-                )),
-            })
-        })
-        .collect()
-}
-
-fn preference_cluster_keys(row: &MemoryAuditRow) -> Vec<String> {
-    let mut keys = Vec::new();
-    if let Some(state_key) = non_empty(row.state_key.as_deref()) {
-        keys.push(format!("state:{state_key}"));
-    }
-    let text = normalize_text(&format!("{} {}", row.title, row.content));
-    if text.contains("ui") && text.contains("critique") {
-        keys.push("ui-critique".to_string());
-    }
-    if text.contains("direct") && text.contains("review") {
-        keys.push("direct-review".to_string());
-    }
-    let content_key = normalize_text(&row.content);
-    if !content_key.is_empty() {
-        keys.push(format!("text:{content_key}"));
-    }
-    if let Some(topic_key) = non_empty(row.topic_key.as_deref()) {
-        keys.push(format!("topic:{topic_key}"));
-    }
-    if keys.is_empty() {
-        keys.push("unique".to_string());
-    }
-    keys
-}
-
-fn current_member<'a>(members: &[&'a MemoryAuditRow]) -> Option<&'a MemoryAuditRow> {
-    members
-        .iter()
-        .copied()
-        .find(|row| row.current_memory_id == Some(row.id))
-}
-
-fn latest_member<'a>(members: &[&'a MemoryAuditRow]) -> Option<&'a MemoryAuditRow> {
-    members
-        .iter()
-        .copied()
-        .max_by_key(|row| (row.updated_at_epoch, row.id))
-}
-
-fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn merge_preference_texts(texts: &[&str]) -> String {
-    let mut parts = Vec::new();
-    let mut seen = HashSet::new();
-    for text in texts {
-        let cleaned = text
-            .trim()
-            .trim_start_matches("Preference:")
-            .trim()
-            .trim_end_matches('.');
-        if cleaned.is_empty() {
-            continue;
-        }
-        let key = normalize_text(cleaned);
-        if seen.insert(key) {
-            parts.push(cleaned.to_string());
-        }
-    }
-    format!("Preference: {}.", parts.join("; "))
 }
 
 fn workstream_clusters(rows: &[WorkstreamAuditRow]) -> Vec<DuplicateCluster> {
