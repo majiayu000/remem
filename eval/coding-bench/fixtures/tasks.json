@@ -2,124 +2,588 @@
   "version": 1,
   "repo": {
     "kind": "inline_python",
+    "base_commit": "fixture:inline-python-issue385-v1",
+    "fixture_revision": "issue385-v1",
     "files": {
       "README.md": "# Memory Demo\n\nSmall deterministic fixture repository for remem coding-agent A/B tests.\n",
       "memory_demo/__init__.py": "",
-      "memory_demo/tickets.py": "def normalize_ticket_key(value):\n    cleaned = str(value).strip().replace(\"_\", \"-\").replace(\" \", \"-\")\n    return cleaned.upper()\n",
+      "memory_demo/api.py": "def current_api_endpoint():\n    return \"/api/v1\"\n",
+      "memory_demo/conflicts.py": "def choose_current_endpoint(candidates):\n    return candidates[-1][\"endpoint\"] if candidates else None\n\n\ndef resolve_single_owner(candidates):\n    return candidates[0] if candidates else None\n",
+      "memory_demo/duration.py": "def parse_duration_ms(value):\n    return int(value)\n",
+      "memory_demo/markdown.py": "def render_markdown_cell(value):\n    return str(value)\n",
       "memory_demo/retention.py": "def retention_days(policy_name):\n    return 30\n",
-      "memory_demo/slug.py": "import re\n\n\ndef normalize_slug(value):\n    slug = re.sub(r\"[^a-z0-9]+\", \"-\", str(value).lower()).strip(\"-\")\n    return slug[:32]\n",
+      "memory_demo/routing.py": "def feature_flag_pager(feature_name):\n    return \"pager-platform\"\n\n\ndef notification_channel(project, severity):\n    return \"#general\"\n",
       "memory_demo/session.py": "def render_session_footer(title, budget_label):\n    return f\"{title}\\n\\u2514\\u2500 Budget: {budget_label}\"\n",
+      "memory_demo/slug.py": "import re\n\n\ndef normalize_slug(value):\n    slug = re.sub(r\"[^a-z0-9]+\", \"-\", str(value).lower()).strip(\"-\")\n    return slug[:32]\n",
+      "memory_demo/storage.py": "def default_storage_driver():\n    return \"sqlite\"\n",
+      "memory_demo/tickets.py": "def normalize_ticket_key(value):\n    cleaned = str(value).strip().replace(\"_\", \"-\").replace(\" \", \"-\")\n    return cleaned.upper()\n",
+      "memory_demo/user_prefs.py": "def format_due_date(year, month, day):\n    return f\"{year:04d}-{month:02d}-{day:02d}\"\n\n\ndef format_status_line(subject, state, detail):\n    return f\"{subject}: {state}: {detail}\"\n",
       "memory_demo/visibility.py": "def visible_context_sections(sections):\n    return [section for section in sections if section.get(\"status\") != \"suppressed\"]\n",
+      "memory_demo/workstream.py": "def canonical_workstream_title(title):\n    return title.strip().lower()\n\n\ndef next_workstream_status(current_status, latest_signal):\n    return current_status\n",
       "tests/__init__.py": "",
       "tests/test_visible.py": "import unittest\n\nfrom memory_demo.slug import normalize_slug\nfrom memory_demo.retention import retention_days\n\n\nclass VisibleTests(unittest.TestCase):\n    def test_slug_basic(self):\n        self.assertEqual(normalize_slug(\"Hello, World!\"), \"hello-world\")\n\n    def test_default_retention(self):\n        self.assertEqual(retention_days(\"unknown\"), 30)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
     }
   },
-  "curated_context": "# Curated Project Memory\n\n- Ticket keys normalize to uppercase PREFIX-digits. Accept spaces, underscores, hyphens, and leading #. If input has only digits, use default prefix MEM.\n- Retention policy names map to days: default or unknown = 30, audit_log = 365, ephemeral = 7, disabled = 0.\n- Slug normalization returns lowercase ASCII words joined by hyphen, trims boundary hyphens, limits output to 32 characters without a trailing hyphen, and returns `untitled` when the cleaned slug is empty.\n- SessionStart budget footer must render as `Budget: <label>` only when a nonblank budget label exists. Do not render tree glyphs such as `\\u2514\\u2500` in the budget line.\n- Context visibility lists must exclude sections with status `suppressed` or `terminal`; keep active and stale sections in original order.\n",
+  "curated_context": "# Curated Project Memory\n\n- Ticket keys normalize to uppercase PREFIX-digits. Accept spaces, underscores, hyphens, and leading #. If input has only digits, use default prefix MEM.\n- Retention policy names map to days: default or unknown = 30, audit_log = 365, ephemeral = 7, disabled = 0.\n- Slug normalization returns lowercase ASCII words joined by hyphen, trims boundary hyphens, limits output to 32 characters without a trailing hyphen, and returns `untitled` when the cleaned slug is empty.\n- Duration parsing bug root cause: values with suffix `ms`, `s`, or `m` must be converted to milliseconds; blank or None returns 0.\n- Current API endpoint is `/api/v2`; `/api/v1` is stale compatibility information and must not be restored.\n- Default storage driver is `sqlcipher`; old SQLite-only memory is stale.\n- SessionStart budget footer must render `Budget: <label>` only when a nonblank budget label exists. Do not render tree glyphs such as `\\u2514\\u2500` in the budget line.\n- Markdown table cells escape pipes with a backslash and render newlines as `<br>`; do not use HTML escaping for this helper.\n- Workstream titles for current-memory-contracts should canonicalize to `current-memory-contracts` across separators and follow-up wording.\n- Workstream status continues as active when the latest signal is active, even if an older row says paused.\n- Feature flag `retention-v2` belongs to team `memory-runtime`; memory-runtime uses pager `pager-memory`.\n- Project `codex-plugin` release notifications go to `#remem-release`; incidents go to `#remem-incident`.\n- The user prefers due dates in day/month/year format, such as `25/06/2026`, not ISO format.\n- The user prefers compact status lines as `<subject>: <state>` and does not want extra detail appended in benchmark status summaries.\n- When endpoint candidates conflict, select the active non-stale candidate with the newest `event_time`.\n- When owner candidates contain multiple distinct active owners, return None instead of guessing.\n",
   "tasks": [
     {
       "id": "ticket-key-memory-convention",
+      "category": "prior_decision_dependency",
+      "smoke": true,
       "prompt": "Fix ticket key normalization. The repository has only a weak visible test; use project memory/context for the durable ticket key convention.",
       "timeout_ms": 180000,
       "allowed_paths": ["memory_demo/tickets.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
       "score": {
         "commands": [["python3", "-m", "unittest", "tests.test_ticket_hidden"]],
+        "required_patch_patterns": ["MEM-"],
+        "forbidden_patch_patterns": [],
         "hidden_files": {
           "tests/test_ticket_hidden.py": "import unittest\n\nfrom memory_demo.tickets import normalize_ticket_key\n\n\nclass TicketHiddenTests(unittest.TestCase):\n    def test_prefix_digits_contract(self):\n        self.assertEqual(normalize_ticket_key(\"#remem 42\"), \"REMEM-42\")\n        self.assertEqual(normalize_ticket_key(\"ab_7\"), \"AB-7\")\n        self.assertEqual(normalize_ticket_key(\"385\"), \"MEM-385\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
       },
-      "memories": [
-        {
+      "history_episodes": [{
+        "episode_id": "ticket-convention-episode",
+        "reference_time_epoch": 1760000000,
+        "summary": "The team settled the ticket key normalization convention for benchmark fixtures.",
+        "expected_memory_facts": ["fact:ticket_key_convention"],
+        "memories": [{
           "title": "Ticket key memory convention",
           "text": "Ticket keys normalize to uppercase PREFIX-digits. Inputs may contain spaces, underscores, hyphens, or a leading #. If the input contains only digits, use default prefix MEM.",
           "memory_type": "procedure",
           "topic_key": "ticket-key-convention",
           "files": ["memory_demo/tickets.py"]
-        }
-      ]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:ticket_key_convention"],
+        "forbidden_facts": [],
+        "supporting_event_ids": ["ticket-convention-episode:e1"]
+      }
     },
     {
       "id": "retention-window-memory-policy",
+      "category": "prior_decision_dependency",
       "prompt": "Implement the retention window mapping. The visible test only proves the default; use project memory/context for the named policy windows.",
       "timeout_ms": 180000,
       "allowed_paths": ["memory_demo/retention.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
       "score": {
         "commands": [["python3", "-m", "unittest", "tests.test_retention_hidden"]],
+        "required_patch_patterns": ["audit_log", "365", "ephemeral"],
+        "forbidden_patch_patterns": [],
         "hidden_files": {
           "tests/test_retention_hidden.py": "import unittest\n\nfrom memory_demo.retention import retention_days\n\n\nclass RetentionHiddenTests(unittest.TestCase):\n    def test_named_policy_windows(self):\n        self.assertEqual(retention_days(\"audit_log\"), 365)\n        self.assertEqual(retention_days(\"ephemeral\"), 7)\n        self.assertEqual(retention_days(\"disabled\"), 0)\n        self.assertEqual(retention_days(\"unknown\"), 30)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
       },
-      "memories": [
-        {
+      "history_episodes": [{
+        "episode_id": "retention-policy-episode",
+        "reference_time_epoch": 1760000100,
+        "summary": "The retention policy windows were chosen after a governance review.",
+        "expected_memory_facts": ["fact:retention_policy_windows"],
+        "memories": [{
           "title": "Retention window memory policy",
           "text": "Retention policy names map to days: default or unknown = 30, audit_log = 365, ephemeral = 7, disabled = 0.",
           "memory_type": "decision",
           "topic_key": "retention-window-policy",
           "files": ["memory_demo/retention.py"]
-        }
-      ]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:retention_policy_windows"],
+        "forbidden_facts": [],
+        "supporting_event_ids": ["retention-policy-episode:e1"]
+      }
     },
     {
       "id": "slug-normalizer-contract",
-      "prompt": "Fix the slug normalizer edge cases. The hidden oracle checks the durable empty-output and truncation contract from project memory/context.",
+      "category": "prior_bug_root_cause",
+      "smoke": true,
+      "prompt": "Fix the slug normalizer edge cases. The hidden oracle checks the durable empty-output and truncation bug root cause from project memory/context.",
       "timeout_ms": 180000,
       "allowed_paths": ["memory_demo/slug.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
       "score": {
         "commands": [["python3", "-m", "unittest", "tests.test_slug_hidden"]],
+        "required_patch_patterns": ["untitled"],
+        "forbidden_patch_patterns": [],
         "hidden_files": {
           "tests/test_slug_hidden.py": "import unittest\n\nfrom memory_demo.slug import normalize_slug\n\n\nclass SlugHiddenTests(unittest.TestCase):\n    def test_empty_and_truncation_contract(self):\n        self.assertEqual(normalize_slug(\"\"), \"untitled\")\n        self.assertEqual(normalize_slug(\"----\"), \"untitled\")\n        slug = normalize_slug(\"hello \" * 20)\n        self.assertLessEqual(len(slug), 32)\n        self.assertFalse(slug.endswith(\"-\"))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
       },
-      "memories": [
-        {
-          "title": "Slug normalizer contract",
-          "text": "Slug normalization returns lowercase ASCII words joined by hyphen, trims boundary hyphens, limits output to 32 characters without a trailing hyphen, and returns `untitled` when the cleaned slug is empty.",
-          "memory_type": "procedure",
-          "topic_key": "slug-normalizer-contract",
+      "history_episodes": [{
+        "episode_id": "slug-bug-episode",
+        "reference_time_epoch": 1760000200,
+        "summary": "A prior bug showed empty slugs and trailing hyphen truncation were easy to regress.",
+        "expected_memory_facts": ["fact:slug_empty_and_truncation_bug"],
+        "memories": [{
+          "title": "Slug normalizer root cause",
+          "text": "Slug normalization previously returned blank strings and sometimes left a trailing hyphen after truncation. Return `untitled` when the cleaned slug is empty, limit output to 32 characters, and strip any trailing hyphen after truncation.",
+          "memory_type": "bugfix",
+          "topic_key": "slug-normalizer-root-cause",
           "files": ["memory_demo/slug.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:slug_empty_and_truncation_bug"],
+        "forbidden_facts": [],
+        "supporting_event_ids": ["slug-bug-episode:e1"]
+      }
+    },
+    {
+      "id": "duration-parser-root-cause",
+      "category": "prior_bug_root_cause",
+      "prompt": "Fix duration parsing. The old failure was caused by treating suffixed strings as raw integers; use memory/context for the unit conversion contract.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/duration.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_duration_hidden"]],
+        "required_patch_patterns": ["1000", "60000"],
+        "forbidden_patch_patterns": ["eval("],
+        "hidden_files": {
+          "tests/test_duration_hidden.py": "import unittest\n\nfrom memory_demo.duration import parse_duration_ms\n\n\nclass DurationHiddenTests(unittest.TestCase):\n    def test_duration_units_convert_to_milliseconds(self):\n        self.assertEqual(parse_duration_ms(\"250ms\"), 250)\n        self.assertEqual(parse_duration_ms(\"1.5s\"), 1500)\n        self.assertEqual(parse_duration_ms(\"2m\"), 120000)\n        self.assertEqual(parse_duration_ms(\"\"), 0)\n        self.assertEqual(parse_duration_ms(None), 0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
-      ]
+      },
+      "history_episodes": [{
+        "episode_id": "duration-bug-episode",
+        "reference_time_epoch": 1760000300,
+        "summary": "The duration parser bug was traced to unit suffixes being interpreted as raw integer text.",
+        "expected_memory_facts": ["fact:duration_suffix_root_cause"],
+        "memories": [{
+          "title": "Duration parser root cause",
+          "text": "The duration parser must convert `ms`, `s`, and `m` suffixes to milliseconds. `ms` is already milliseconds, `s` multiplies by 1000, `m` multiplies by 60000, and blank or None input returns 0.",
+          "memory_type": "bugfix",
+          "topic_key": "duration-parser-unit-suffix",
+          "files": ["memory_demo/duration.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:duration_suffix_root_cause"],
+        "forbidden_facts": ["fact:duration_raw_int_only"],
+        "supporting_event_ids": ["duration-bug-episode:e1"]
+      }
+    },
+    {
+      "id": "api-version-stale-memory",
+      "category": "stale_memory_avoidance",
+      "prompt": "Fix the current API endpoint helper. There is stale v1 context in the code; use memory/context to choose the current endpoint.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/api.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_api_hidden"]],
+        "required_patch_patterns": ["/api/v2"],
+        "forbidden_patch_patterns": ["/api/v1"],
+        "hidden_files": {
+          "tests/test_api_hidden.py": "import unittest\n\nfrom memory_demo.api import current_api_endpoint\n\n\nclass ApiHiddenTests(unittest.TestCase):\n    def test_current_api_endpoint_uses_v2(self):\n        self.assertEqual(current_api_endpoint(), \"/api/v2\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "api-v2-episode",
+        "reference_time_epoch": 1760000400,
+        "summary": "The v1 endpoint was invalidated by the v2 rollout decision.",
+        "expected_memory_facts": ["fact:api_v2_current"],
+        "memories": [{
+          "title": "Current API endpoint",
+          "text": "The current API endpoint is `/api/v2`. `/api/v1` is stale compatibility information and must not be restored for new helpers.",
+          "memory_type": "decision",
+          "topic_key": "current-api-endpoint",
+          "files": ["memory_demo/api.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:api_v2_current"],
+        "forbidden_facts": ["fact:api_v1_current"],
+        "supporting_event_ids": ["api-v2-episode:e1"]
+      }
+    },
+    {
+      "id": "storage-driver-stale-memory",
+      "category": "stale_memory_avoidance",
+      "prompt": "Fix the default storage driver helper. The old SQLite-only decision is stale; use memory/context for the current default.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/storage.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_storage_hidden"]],
+        "required_patch_patterns": ["sqlcipher"],
+        "forbidden_patch_patterns": [],
+        "hidden_files": {
+          "tests/test_storage_hidden.py": "import unittest\n\nfrom memory_demo.storage import default_storage_driver\n\n\nclass StorageHiddenTests(unittest.TestCase):\n    def test_current_default_storage_driver(self):\n        self.assertEqual(default_storage_driver(), \"sqlcipher\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "storage-driver-episode",
+        "reference_time_epoch": 1760000500,
+        "summary": "The storage default moved from SQLite-only to SQLCipher.",
+        "expected_memory_facts": ["fact:storage_driver_sqlcipher_current"],
+        "memories": [{
+          "title": "Current storage driver",
+          "text": "Default storage driver is `sqlcipher`; the older SQLite-only default is stale and should not be used by new helpers.",
+          "memory_type": "decision",
+          "topic_key": "storage-driver-current",
+          "files": ["memory_demo/storage.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:storage_driver_sqlcipher_current"],
+        "forbidden_facts": ["fact:storage_driver_sqlite_current"],
+        "supporting_event_ids": ["storage-driver-episode:e1"]
+      }
     },
     {
       "id": "session-budget-footer",
-      "prompt": "Fix SessionStart footer rendering for the budget label. Use project memory/context for the exact footer contract.",
+      "category": "negative_constraints",
+      "prompt": "Fix SessionStart footer rendering for the budget label. Use project memory/context for the exact footer contract and the forbidden glyph behavior.",
       "timeout_ms": 180000,
       "allowed_paths": ["memory_demo/session.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
       "score": {
         "commands": [["python3", "-m", "unittest", "tests.test_session_hidden"]],
+        "required_patch_patterns": ["Budget:"],
+        "forbidden_patch_patterns": ["\\u2514"],
         "hidden_files": {
           "tests/test_session_hidden.py": "import unittest\n\nfrom memory_demo.session import render_session_footer\n\n\nclass SessionHiddenTests(unittest.TestCase):\n    def test_budget_footer_contract(self):\n        footer = render_session_footer(\"SessionStart\", \"medium\")\n        self.assertIn(\"Budget: medium\", footer)\n        self.assertNotIn(\"\\u2514\", footer)\n        self.assertEqual(render_session_footer(\"SessionStart\", \"\"), \"SessionStart\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
       },
-      "memories": [
-        {
+      "history_episodes": [{
+        "episode_id": "session-footer-episode",
+        "reference_time_epoch": 1760000600,
+        "summary": "The SessionStart footer contract explicitly forbids tree glyphs in compact budget lines.",
+        "expected_memory_facts": ["fact:session_budget_footer_negative_constraint"],
+        "memories": [{
           "title": "SessionStart budget footer contract",
           "text": "SessionStart budget footer must render as `Budget: <label>` only when a nonblank budget label exists. Do not render tree glyphs such as `\\u2514\\u2500` in the budget line.",
           "memory_type": "procedure",
           "topic_key": "session-budget-footer",
           "files": ["memory_demo/session.py"]
-        }
-      ]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:session_budget_footer_negative_constraint"],
+        "forbidden_facts": ["fact:session_footer_tree_glyph"],
+        "supporting_event_ids": ["session-footer-episode:e1"]
+      }
     },
     {
-      "id": "context-visibility-policy",
-      "prompt": "Fix context visibility filtering. Use project memory/context for which statuses must be excluded.",
+      "id": "markdown-cell-negative-constraint",
+      "category": "negative_constraints",
+      "prompt": "Fix Markdown table-cell rendering. Use memory/context for the escaping contract and avoid the explicitly forbidden HTML escaping path.",
       "timeout_ms": 180000,
-      "allowed_paths": ["memory_demo/visibility.py", "tests"],
+      "allowed_paths": ["memory_demo/markdown.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
       "score": {
-        "commands": [["python3", "-m", "unittest", "tests.test_visibility_hidden"]],
+        "commands": [["python3", "-m", "unittest", "tests.test_markdown_hidden"]],
+        "required_patch_patterns": ["<br>", "\\\\|"],
+        "forbidden_patch_patterns": ["html.escape"],
         "hidden_files": {
-          "tests/test_visibility_hidden.py": "import unittest\n\nfrom memory_demo.visibility import visible_context_sections\n\n\nclass VisibilityHiddenTests(unittest.TestCase):\n    def test_terminal_and_suppressed_excluded(self):\n        sections = [\n            {\"name\": \"core\", \"status\": \"active\"},\n            {\"name\": \"session\", \"status\": \"terminal\"},\n            {\"name\": \"old\", \"status\": \"suppressed\"},\n            {\"name\": \"stale\", \"status\": \"stale\"},\n        ]\n        self.assertEqual(\n            [section[\"name\"] for section in visible_context_sections(sections)],\n            [\"core\", \"stale\"],\n        )\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+          "tests/test_markdown_hidden.py": "import unittest\n\nfrom memory_demo.markdown import render_markdown_cell\n\n\nclass MarkdownHiddenTests(unittest.TestCase):\n    def test_markdown_cell_contract(self):\n        self.assertEqual(render_markdown_cell(\"a|b\"), \"a\\\\|b\")\n        self.assertEqual(render_markdown_cell(\"line1\\nline2\"), \"line1<br>line2\")\n        self.assertEqual(render_markdown_cell(\"<tag>\"), \"<tag>\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
       },
-      "memories": [
-        {
-          "title": "Context visibility status policy",
-          "text": "Context visibility lists must exclude sections with status `suppressed` or `terminal`; keep active and stale sections in original order.",
+      "history_episodes": [{
+        "episode_id": "markdown-constraint-episode",
+        "reference_time_epoch": 1760000700,
+        "summary": "Markdown table cells use Markdown-specific escaping and intentionally do not HTML-escape angle brackets.",
+        "expected_memory_facts": ["fact:markdown_cell_negative_constraint"],
+        "memories": [{
+          "title": "Markdown cell escaping constraint",
+          "text": "Markdown table cells escape pipes with a backslash and render newlines as `<br>`. Do not use HTML escaping for this helper; angle brackets remain unchanged.",
           "memory_type": "decision",
-          "topic_key": "context-visibility-status-policy",
-          "files": ["memory_demo/visibility.py"]
+          "topic_key": "markdown-cell-escaping",
+          "files": ["memory_demo/markdown.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:markdown_cell_negative_constraint"],
+        "forbidden_facts": ["fact:markdown_cell_html_escape"],
+        "supporting_event_ids": ["markdown-constraint-episode:e1"]
+      }
+    },
+    {
+      "id": "workstream-title-continuity",
+      "category": "workstream_continuity",
+      "smoke": true,
+      "prompt": "Fix workstream title canonicalization. Use memory/context to keep renamed current-memory-contracts follow-up work on one canonical stream.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/workstream.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_workstream_title_hidden"]],
+        "required_patch_patterns": ["current-memory-contracts"],
+        "forbidden_patch_patterns": [],
+        "hidden_files": {
+          "tests/test_workstream_title_hidden.py": "import unittest\n\nfrom memory_demo.workstream import canonical_workstream_title\n\n\nclass WorkstreamTitleHiddenTests(unittest.TestCase):\n    def test_current_memory_contract_aliases_collapse(self):\n        self.assertEqual(canonical_workstream_title(\"Current Memory Contracts follow-up\"), \"current-memory-contracts\")\n        self.assertEqual(canonical_workstream_title(\"current_memory_contracts cleanup\"), \"current-memory-contracts\")\n        self.assertEqual(canonical_workstream_title(\"current-memory-contracts\"), \"current-memory-contracts\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
         }
-      ]
+      },
+      "history_episodes": [{
+        "episode_id": "workstream-title-episode",
+        "reference_time_epoch": 1760000800,
+        "summary": "Current-memory-contracts follow-up titles should preserve one canonical workstream identity.",
+        "expected_memory_facts": ["fact:workstream_current_memory_contracts_alias"],
+        "memories": [{
+          "title": "Current memory contracts workstream alias",
+          "text": "Workstream titles for current-memory-contracts should canonicalize to `current-memory-contracts` across spaces, underscores, hyphens, and follow-up or cleanup suffixes.",
+          "memory_type": "procedure",
+          "topic_key": "workstream-current-memory-contracts-alias",
+          "files": ["memory_demo/workstream.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:workstream_current_memory_contracts_alias"],
+        "forbidden_facts": [],
+        "supporting_event_ids": ["workstream-title-episode:e1"]
+      }
+    },
+    {
+      "id": "workstream-status-continuity",
+      "category": "workstream_continuity",
+      "prompt": "Fix workstream status continuity. Use memory/context to prefer the latest active signal over an older paused row.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/workstream.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_workstream_status_hidden"]],
+        "required_patch_patterns": ["latest_signal"],
+        "forbidden_patch_patterns": [],
+        "hidden_files": {
+          "tests/test_workstream_status_hidden.py": "import unittest\n\nfrom memory_demo.workstream import next_workstream_status\n\n\nclass WorkstreamStatusHiddenTests(unittest.TestCase):\n    def test_latest_active_signal_wins(self):\n        self.assertEqual(next_workstream_status(\"paused\", \"active\"), \"active\")\n        self.assertEqual(next_workstream_status(\"active\", \"blocked\"), \"blocked\")\n        self.assertEqual(next_workstream_status(\"paused\", \"\"), \"paused\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "workstream-status-episode",
+        "reference_time_epoch": 1760000900,
+        "summary": "Latest workstream status evidence supersedes older paused status rows.",
+        "expected_memory_facts": ["fact:workstream_latest_status_signal"],
+        "memories": [{
+          "title": "Workstream latest status continuity",
+          "text": "Workstream status continues from the latest nonblank signal. A latest `active` or `blocked` signal supersedes an older `paused` row; if no latest signal exists, keep the current status.",
+          "memory_type": "decision",
+          "topic_key": "workstream-latest-status-signal",
+          "files": ["memory_demo/workstream.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:workstream_latest_status_signal"],
+        "forbidden_facts": ["fact:workstream_old_paused_wins"],
+        "supporting_event_ids": ["workstream-status-episode:e1"]
+      }
+    },
+    {
+      "id": "feature-flag-multi-hop-routing",
+      "category": "multi_hop_project_context",
+      "prompt": "Fix feature flag pager routing. The answer requires combining feature ownership and team pager memory.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/routing.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_feature_routing_hidden"]],
+        "required_patch_patterns": ["retention-v2", "pager-memory"],
+        "forbidden_patch_patterns": [],
+        "hidden_files": {
+          "tests/test_feature_routing_hidden.py": "import unittest\n\nfrom memory_demo.routing import feature_flag_pager\n\n\nclass FeatureRoutingHiddenTests(unittest.TestCase):\n    def test_feature_owner_hops_to_team_pager(self):\n        self.assertEqual(feature_flag_pager(\"retention-v2\"), \"pager-memory\")\n        self.assertEqual(feature_flag_pager(\"unknown\"), \"pager-platform\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "feature-owner-episode",
+        "reference_time_epoch": 1760001000,
+        "summary": "Feature ownership was recorded separately from team pager routing.",
+        "expected_memory_facts": ["fact:retention_v2_owner", "fact:memory_runtime_pager"],
+        "memories": [{
+          "title": "Retention v2 feature owner",
+          "text": "Feature flag `retention-v2` belongs to team `memory-runtime`.",
+          "memory_type": "decision",
+          "topic_key": "feature-retention-v2-owner",
+          "files": ["memory_demo/routing.py"]
+        }, {
+          "title": "Memory runtime pager",
+          "text": "Team `memory-runtime` uses pager `pager-memory`.",
+          "memory_type": "procedure",
+          "topic_key": "team-memory-runtime-pager",
+          "files": ["memory_demo/routing.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:retention_v2_owner", "fact:memory_runtime_pager"],
+        "forbidden_facts": ["fact:retention_v2_platform_pager"],
+        "supporting_event_ids": ["feature-owner-episode:e1", "feature-owner-episode:e2"]
+      }
+    },
+    {
+      "id": "notification-channel-multi-hop",
+      "category": "multi_hop_project_context",
+      "prompt": "Fix notification channel routing. Use memory/context to combine project identity and severity channel policy.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/routing.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_notification_hidden"]],
+        "required_patch_patterns": ["#remem-release", "#remem-incident"],
+        "forbidden_patch_patterns": [],
+        "hidden_files": {
+          "tests/test_notification_hidden.py": "import unittest\n\nfrom memory_demo.routing import notification_channel\n\n\nclass NotificationHiddenTests(unittest.TestCase):\n    def test_codex_plugin_channels(self):\n        self.assertEqual(notification_channel(\"codex-plugin\", \"release\"), \"#remem-release\")\n        self.assertEqual(notification_channel(\"codex-plugin\", \"incident\"), \"#remem-incident\")\n        self.assertEqual(notification_channel(\"other\", \"release\"), \"#general\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "notification-channel-episode",
+        "reference_time_epoch": 1760001100,
+        "summary": "Codex plugin notifications have project-specific release and incident channels.",
+        "expected_memory_facts": ["fact:codex_plugin_project", "fact:codex_plugin_channels"],
+        "memories": [{
+          "title": "Codex plugin project identity",
+          "text": "Project `codex-plugin` is part of remem plugin operations and uses remem-specific notification channels.",
+          "memory_type": "discovery",
+          "topic_key": "project-codex-plugin-identity",
+          "files": ["memory_demo/routing.py"]
+        }, {
+          "title": "Codex plugin notification channels",
+          "text": "For project `codex-plugin`, release notifications go to `#remem-release` and incidents go to `#remem-incident`.",
+          "memory_type": "procedure",
+          "topic_key": "codex-plugin-notification-channels",
+          "files": ["memory_demo/routing.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:codex_plugin_project", "fact:codex_plugin_channels"],
+        "forbidden_facts": ["fact:codex_plugin_general_channel"],
+        "supporting_event_ids": ["notification-channel-episode:e1", "notification-channel-episode:e2"]
+      }
+    },
+    {
+      "id": "user-date-format-preference",
+      "category": "user_context_relevance",
+      "prompt": "Fix due-date formatting. Use memory/context for the relevant user preference and ignore the ISO-style default in code.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/user_prefs.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_user_date_hidden"]],
+        "required_patch_patterns": ["{day:02d}/{month:02d}/{year:04d}"],
+        "forbidden_patch_patterns": ["{year:04d}-{month:02d}-{day:02d}"],
+        "hidden_files": {
+          "tests/test_user_date_hidden.py": "import unittest\n\nfrom memory_demo.user_prefs import format_due_date\n\n\nclass UserDateHiddenTests(unittest.TestCase):\n    def test_user_prefers_day_month_year(self):\n        self.assertEqual(format_due_date(2026, 6, 25), \"25/06/2026\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "user-date-preference-episode",
+        "reference_time_epoch": 1760001200,
+        "summary": "The user stated a preference for day/month/year dates in benchmark-facing summaries.",
+        "expected_memory_facts": ["fact:user_prefers_dmy_dates"],
+        "memories": [{
+          "title": "User date format preference",
+          "text": "The user prefers due dates in day/month/year format, such as `25/06/2026`, not ISO year-month-day format.",
+          "memory_type": "preference",
+          "topic_key": "user-date-format-dmy",
+          "files": ["memory_demo/user_prefs.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:user_prefers_dmy_dates"],
+        "forbidden_facts": ["fact:user_prefers_iso_dates"],
+        "supporting_event_ids": ["user-date-preference-episode:e1"]
+      }
+    },
+    {
+      "id": "user-status-line-preference",
+      "category": "user_context_relevance",
+      "prompt": "Fix status-line formatting. Use memory/context for the relevant compact-output user preference.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/user_prefs.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_user_status_hidden"]],
+        "required_patch_patterns": ["{subject}: {state}"],
+        "forbidden_patch_patterns": [": {detail}"],
+        "hidden_files": {
+          "tests/test_user_status_hidden.py": "import unittest\n\nfrom memory_demo.user_prefs import format_status_line\n\n\nclass UserStatusHiddenTests(unittest.TestCase):\n    def test_compact_status_omits_detail(self):\n        self.assertEqual(format_status_line(\"CI\", \"passed\", \"all checks green\"), \"CI: passed\")\n        self.assertEqual(format_status_line(\"PR\", \"blocked\", \"needs baseline\"), \"PR: blocked\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "user-status-preference-episode",
+        "reference_time_epoch": 1760001300,
+        "summary": "The user prefers compact status lines and does not want extra explanation appended.",
+        "expected_memory_facts": ["fact:user_prefers_compact_status_lines"],
+        "memories": [{
+          "title": "User compact status preference",
+          "text": "The user prefers compact status lines as `<subject>: <state>` and does not want extra detail appended in benchmark status summaries.",
+          "memory_type": "preference",
+          "topic_key": "user-compact-status-line",
+          "files": ["memory_demo/user_prefs.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:user_prefers_compact_status_lines"],
+        "forbidden_facts": ["fact:user_prefers_verbose_status_lines"],
+        "supporting_event_ids": ["user-status-preference-episode:e1"]
+      }
+    },
+    {
+      "id": "conflicting-endpoint-current-choice",
+      "category": "conflict_ambiguity_handling",
+      "prompt": "Fix current endpoint conflict handling. Use memory/context for how to choose among stale and active candidates.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/conflicts.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_conflict_endpoint_hidden"]],
+        "required_patch_patterns": ["event_time", "stale"],
+        "forbidden_patch_patterns": [],
+        "hidden_files": {
+          "tests/test_conflict_endpoint_hidden.py": "import unittest\n\nfrom memory_demo.conflicts import choose_current_endpoint\n\n\nclass ConflictEndpointHiddenTests(unittest.TestCase):\n    def test_active_newest_non_stale_endpoint_wins(self):\n        candidates = [\n            {\"endpoint\": \"/api/v1\", \"event_time\": 1, \"stale\": True, \"active\": False},\n            {\"endpoint\": \"/api/v2\", \"event_time\": 2, \"stale\": False, \"active\": True},\n            {\"endpoint\": \"/api/experimental\", \"event_time\": 3, \"stale\": False, \"active\": False},\n        ]\n        self.assertEqual(choose_current_endpoint(candidates), \"/api/v2\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "conflicting-endpoint-episode",
+        "reference_time_epoch": 1760001400,
+        "summary": "Endpoint candidates can conflict; only active non-stale candidates should be eligible.",
+        "expected_memory_facts": ["fact:conflict_active_non_stale_newest"],
+        "memories": [{
+          "title": "Endpoint conflict resolution",
+          "text": "When endpoint candidates conflict, select the active non-stale candidate with the newest `event_time`. Ignore stale candidates and inactive experimental candidates.",
+          "memory_type": "procedure",
+          "topic_key": "endpoint-conflict-resolution",
+          "files": ["memory_demo/conflicts.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:conflict_active_non_stale_newest"],
+        "forbidden_facts": ["fact:conflict_latest_any_candidate"],
+        "supporting_event_ids": ["conflicting-endpoint-episode:e1"]
+      }
+    },
+    {
+      "id": "ambiguous-owner-abstention",
+      "category": "conflict_ambiguity_handling",
+      "prompt": "Fix owner resolution. Use memory/context for ambiguity handling: do not guess when multiple distinct active owners exist.",
+      "timeout_ms": 180000,
+      "allowed_paths": ["memory_demo/conflicts.py", "tests"],
+      "forbidden_paths": ["README.md", "MEMORY.md", "REMEM_CONTEXT.md"],
+      "score": {
+        "commands": [["python3", "-m", "unittest", "tests.test_ambiguous_owner_hidden"]],
+        "required_patch_patterns": ["set("],
+        "forbidden_patch_patterns": ["candidates[0]"],
+        "hidden_files": {
+          "tests/test_ambiguous_owner_hidden.py": "import unittest\n\nfrom memory_demo.conflicts import resolve_single_owner\n\n\nclass AmbiguousOwnerHiddenTests(unittest.TestCase):\n    def test_ambiguous_active_owners_return_none(self):\n        self.assertIsNone(resolve_single_owner([\"search\", \"runtime\"]))\n        self.assertEqual(resolve_single_owner([\"search\", \"search\"]), \"search\")\n        self.assertIsNone(resolve_single_owner([]))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+        }
+      },
+      "history_episodes": [{
+        "episode_id": "ambiguous-owner-episode",
+        "reference_time_epoch": 1760001500,
+        "summary": "Owner resolution should abstain instead of guessing when active owner evidence conflicts.",
+        "expected_memory_facts": ["fact:ambiguous_owner_abstain"],
+        "memories": [{
+          "title": "Ambiguous owner abstention",
+          "text": "When owner candidates contain multiple distinct active owners, return None instead of guessing. Return the owner only when all nonblank candidates agree.",
+          "memory_type": "decision",
+          "topic_key": "ambiguous-owner-abstention",
+          "files": ["memory_demo/conflicts.py"]
+        }]
+      }],
+      "gold_memory": {
+        "required_facts": ["fact:ambiguous_owner_abstain"],
+        "forbidden_facts": ["fact:ambiguous_owner_first_candidate"],
+        "supporting_event_ids": ["ambiguous-owner-episode:e1"]
+      }
     }
   ]
 }

@@ -9,6 +9,7 @@ pub struct CodingBenchOptions {
     pub json_out: String,
     pub condition: Option<String>,
     pub task: Option<String>,
+    pub task_set: String,
     pub keep_workdirs: bool,
     pub dry_run: bool,
     pub runner: String,
@@ -31,6 +32,8 @@ pub struct CodingBenchFixture {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FixtureRepo {
     pub kind: String,
+    pub base_commit: Option<String>,
+    pub fixture_revision: Option<String>,
     #[serde(default)]
     pub files: BTreeMap<String, String>,
 }
@@ -38,16 +41,25 @@ pub struct FixtureRepo {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CodingBenchTask {
     pub id: String,
+    pub category: String,
+    #[serde(default)]
+    pub smoke: bool,
     pub prompt: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default)]
     pub allowed_paths: Vec<String>,
+    #[serde(default)]
+    pub forbidden_paths: Vec<String>,
     pub score: ScoreSpec,
+    #[serde(default)]
+    pub history_episodes: Vec<HistoryEpisode>,
     #[serde(default)]
     pub memories: Vec<SeedMemory>,
     #[serde(default)]
     pub curated_context: Option<String>,
+    #[serde(default)]
+    pub gold_memory: GoldMemory,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +68,21 @@ pub struct ScoreSpec {
     pub commands: Vec<Vec<String>>,
     #[serde(default)]
     pub hidden_files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub required_patch_patterns: Vec<String>,
+    #[serde(default)]
+    pub forbidden_patch_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HistoryEpisode {
+    pub episode_id: String,
+    pub reference_time_epoch: i64,
+    pub summary: String,
+    #[serde(default)]
+    pub expected_memory_facts: Vec<String>,
+    #[serde(default)]
+    pub memories: Vec<SeedMemory>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,6 +95,26 @@ pub struct SeedMemory {
     pub topic_key: Option<String>,
     #[serde(default)]
     pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GoldMemory {
+    #[serde(default)]
+    pub required_facts: Vec<String>,
+    #[serde(default)]
+    pub forbidden_facts: Vec<String>,
+    #[serde(default)]
+    pub supporting_event_ids: Vec<String>,
+}
+
+impl CodingBenchTask {
+    pub fn seed_memories(&self) -> Vec<&SeedMemory> {
+        self.history_episodes
+            .iter()
+            .flat_map(|episode| episode.memories.iter())
+            .chain(self.memories.iter())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

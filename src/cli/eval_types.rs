@@ -6,6 +6,8 @@ pub(in crate::cli) enum BenchAction {
     Verify(BenchVerifyArgs),
     /// Run a deterministic public memory capability suite.
     Memory(BenchMemoryArgs),
+    /// Run or dry-run the public coding-agent benchmark suite.
+    Coding(BenchCodingArgs),
 }
 
 #[derive(Args)]
@@ -35,6 +37,55 @@ pub(in crate::cli) struct BenchMemoryArgs {
     /// Memory benchmark report output path.
     #[arg(long)]
     pub(in crate::cli) json_out: String,
+}
+
+#[derive(Args)]
+pub(in crate::cli) struct BenchCodingArgs {
+    /// Coding benchmark suite id. Currently supports issue385-v1.
+    #[arg(long, default_value = "issue385-v1")]
+    pub(in crate::cli) suite: String,
+    /// Override the fixture path for local debugging.
+    #[arg(long)]
+    pub(in crate::cli) fixture: Option<String>,
+    /// Repetitions for each selected condition/task pair.
+    #[arg(long, default_value = "3")]
+    pub(in crate::cli) runs_per_condition: usize,
+    /// JSON report output path.
+    #[arg(long)]
+    pub(in crate::cli) json_out: String,
+    /// Restrict to one condition: no_memory, remem, or curated_file.
+    #[arg(long)]
+    pub(in crate::cli) condition: Option<String>,
+    /// Restrict to one task id.
+    #[arg(long)]
+    pub(in crate::cli) task: Option<String>,
+    /// Select the full v1 task pack or smoke subset.
+    #[arg(long, default_value = "full")]
+    pub(in crate::cli) task_set: String,
+    /// Preserve temporary workdirs for inspection.
+    #[arg(long)]
+    pub(in crate::cli) keep_workdirs: bool,
+    /// Validate fixtures and print the planned matrix without invoking an agent.
+    #[arg(long)]
+    pub(in crate::cli) dry_run: bool,
+    /// Agent runner implementation.
+    #[arg(long, default_value = "codex")]
+    pub(in crate::cli) runner: String,
+    /// Codex executable path when --runner=codex.
+    #[arg(long, default_value = "codex")]
+    pub(in crate::cli) codex_bin: String,
+    /// Model passed to the coding-agent runner.
+    #[arg(long, default_value = "gpt-5.5")]
+    pub(in crate::cli) model: String,
+    /// Optional provider label recorded in reports.
+    #[arg(long)]
+    pub(in crate::cli) provider: Option<String>,
+    /// Codex model_reasoning_effort config override.
+    #[arg(long, default_value = "medium")]
+    pub(in crate::cli) reasoning_effort: String,
+    /// Record that the caller intentionally ignored budget gates for this manual run.
+    #[arg(long)]
+    pub(in crate::cli) ignore_budget: bool,
 }
 
 #[derive(Args)]
@@ -106,6 +157,9 @@ pub(in crate::cli) struct EvalCodingBenchArgs {
     /// Restrict to one task id.
     #[arg(long)]
     pub(in crate::cli) task: Option<String>,
+    /// Select the full v1 task pack or smoke subset.
+    #[arg(long, default_value = "full")]
+    pub(in crate::cli) task_set: String,
     /// Preserve temporary workdirs for inspection.
     #[arg(long)]
     pub(in crate::cli) keep_workdirs: bool,

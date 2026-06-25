@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::db;
 
-use crate::cli::eval_types::{BenchAction, EvalCodingBenchArgs};
+use crate::cli::eval_types::{BenchAction, BenchCodingArgs, EvalCodingBenchArgs};
 
 pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
     match action {
@@ -17,6 +17,7 @@ pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
             args.artifact_prefix.as_deref(),
             &args.json_out,
         ),
+        BenchAction::Coding(args) => run_bench_coding(args),
     }
 }
 
@@ -68,6 +69,36 @@ fn run_bench_memory(
     let report_json = serde_json::to_string_pretty(&report)?;
     println!("{report_json}");
     Ok(())
+}
+
+fn run_bench_coding(args: BenchCodingArgs) -> Result<()> {
+    let fixture = args
+        .fixture
+        .map(Ok)
+        .unwrap_or_else(|| coding_fixture_for_suite(&args.suite))?;
+    run_coding_bench_options(crate::eval::coding_bench::CodingBenchOptions {
+        fixture_path: fixture,
+        runs_per_condition: args.runs_per_condition,
+        json_out: args.json_out,
+        condition: args.condition,
+        task: args.task,
+        task_set: args.task_set,
+        keep_workdirs: args.keep_workdirs,
+        dry_run: args.dry_run,
+        runner: args.runner,
+        codex_bin: args.codex_bin,
+        model: args.model,
+        provider: args.provider,
+        reasoning_effort: args.reasoning_effort,
+        ignore_budget: args.ignore_budget,
+    })
+}
+
+fn coding_fixture_for_suite(suite: &str) -> Result<String> {
+    match suite {
+        "issue385-v1" => Ok("eval/coding-bench/fixtures/tasks.json".to_string()),
+        _ => bail!("unknown coding benchmark suite: {suite}"),
+    }
 }
 
 pub(in crate::cli) fn run_eval_local() -> Result<()> {
@@ -241,12 +272,13 @@ pub(in crate::cli) fn run_eval_weight_grid(
 }
 
 pub(in crate::cli) fn run_eval_coding_bench(args: EvalCodingBenchArgs) -> Result<()> {
-    let options = crate::eval::coding_bench::CodingBenchOptions {
+    run_coding_bench_options(crate::eval::coding_bench::CodingBenchOptions {
         fixture_path: args.fixture,
         runs_per_condition: args.runs_per_condition,
         json_out: args.json_out.unwrap_or_default(),
         condition: args.condition,
         task: args.task,
+        task_set: args.task_set,
         keep_workdirs: args.keep_workdirs,
         dry_run: args.dry_run,
         runner: args.runner,
@@ -255,7 +287,10 @@ pub(in crate::cli) fn run_eval_coding_bench(args: EvalCodingBenchArgs) -> Result
         provider: args.provider,
         reasoning_effort: args.reasoning_effort,
         ignore_budget: args.ignore_budget,
-    };
+    })
+}
+
+fn run_coding_bench_options(options: crate::eval::coding_bench::CodingBenchOptions) -> Result<()> {
     if options.dry_run {
         println!("{}", crate::eval::coding_bench::dry_run_plan(&options)?);
         return Ok(());

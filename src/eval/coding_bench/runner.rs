@@ -15,7 +15,8 @@ use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate
 use super::isolation::{prepare_codex_isolation, runner_isolation_violation};
 use super::run_plan::randomized_run_plan;
 use super::score::{
-    parse_changed_paths, parse_codex_jsonl_usage, summarize_runs, unauthorized_paths,
+    parse_changed_paths, parse_codex_jsonl_usage, patch_pattern_failures, summarize_runs,
+    unauthorized_paths,
 };
 use super::types::{
     BenchCondition, BenchTokenUsage, CodingBenchFixture, CodingBenchOptions, CodingBenchReport,
@@ -34,6 +35,7 @@ pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
         "runs_per_condition: {}\n",
         options.runs_per_condition
     ));
+    output.push_str(&format!("task_set: {}\n", options.task_set));
     output.push_str(&format!(
         "runner: {} model: {}\n",
         options.runner, options.model
@@ -176,13 +178,19 @@ fn run_one(
 
     let status = command_output("git", ["status", "--porcelain"], &repo_dir, &[], 30_000)?;
     let changed_paths = parse_changed_paths(&status.stdout);
-    let unauthorized = unauthorized_paths(&changed_paths, &task.allowed_paths);
+    let unauthorized =
+        unauthorized_paths(&changed_paths, &task.allowed_paths, &task.forbidden_paths);
     let diff = command_output("git", ["diff", "--binary"], &repo_dir, &[], 30_000)?;
     let final_diff = write_artifact(&artifact_dir, "final.diff", &diff.stdout)?;
     write_hidden_files(task, &repo_dir)?;
 
     let mut score_commands = Vec::new();
-    let mut score_failed = false;
+    let patch_pattern_failures = patch_pattern_failures(
+        &diff.stdout,
+        &task.score.required_patch_patterns,
+        &task.score.forbidden_patch_patterns,
+    );
+    let mut score_failed = !patch_pattern_failures.is_empty();
     for (index, command) in task.score.commands.iter().enumerate() {
         let (program, args) = command
             .split_first()
@@ -633,6 +641,8 @@ fn report_command(options: &CodingBenchOptions) -> Vec<String> {
         options.fixture_path.clone(),
         "--runs-per-condition".to_string(),
         options.runs_per_condition.to_string(),
+        "--task-set".to_string(),
+        options.task_set.clone(),
         "--runner".to_string(),
         options.runner.clone(),
         "--model".to_string(),
@@ -720,6 +730,7 @@ mod tests {
             json_out: "/tmp/remem-coding-bench.json".to_string(),
             condition: None,
             task: None,
+            task_set: "full".to_string(),
             keep_workdirs: false,
             dry_run: true,
             runner: "noop".to_string(),
@@ -732,10 +743,10 @@ mod tests {
         let conditions = selected_conditions(&options)?;
         let tasks = selected_tasks(&fixture, &options)?;
         assert_eq!(conditions.len(), 3);
-        assert!(tasks.len() >= 5);
+        assert_eq!(tasks.len(), 16);
         assert_eq!(
             conditions.len() * tasks.len() * options.runs_per_condition,
-            45
+            144
         );
         Ok(())
     }
@@ -748,6 +759,7 @@ mod tests {
             json_out: "/tmp/remem-coding-bench.json".to_string(),
             condition: None,
             task: None,
+            task_set: "full".to_string(),
             keep_workdirs: false,
             dry_run: false,
             runner: "codex".to_string(),

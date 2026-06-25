@@ -7,17 +7,19 @@ Manual benchmark for issue #385. It compares the same coding tasks under:
   through the SessionStart context path, and preloaded into `REMEM_CONTEXT.md`.
 - `curated_file`: the same evidence is provided as a hand-curated `MEMORY.md`.
 
-The first fixture is intentionally small and deterministic. It borrows the
-scoring shape of SWE-bench style patch tasks, but uses an inline repository so
-the harness can run from a clean checkout without Docker or external issue data.
-It should be expanded later with pinned real-repo tasks.
+The v1 fixture is deterministic and public. It borrows the scoring shape of
+SWE-bench style patch tasks, but uses an inline repository so the harness can
+run from a clean checkout without Docker or external issue data. The pack has
+16 memory-dependent tasks across eight categories, with a three-task smoke
+subset for fast validation. Later versions should add pinned real-repo tasks.
 
 ## Isolated Baseline
 
 Generated: 2026-06-25 19:16 CST
 
 Runner: `codex-cli 0.142.1`, model `gpt-5.5`, `runs_per_condition=3`, 5 tasks,
-45 total agent runs.
+45 total agent runs. This baseline predates the 16-task v1 fixture pack and
+must be regenerated before publication.
 
 This run was generated from clean source at remem revision
 `c6a46aec3fe44c8a256138d839ebeea396b6cdb7` with `source_dirty=false`. The
@@ -73,7 +75,26 @@ preserve both facts instead of merging them into one failure reason.
 
 ## Commands
 
-Dry run:
+Full v1 dry run:
+
+```bash
+cargo run -- bench coding \
+  --suite issue385-v1 \
+  --dry-run \
+  --json-out /tmp/remem-issue385-v1-dry-run.json
+```
+
+Smoke subset dry run:
+
+```bash
+cargo run -- bench coding \
+  --suite issue385-v1 \
+  --task-set smoke \
+  --dry-run \
+  --json-out /tmp/remem-issue385-v1-smoke-dry-run.json
+```
+
+Legacy direct dry run:
 
 ```bash
 cargo run -- eval-coding-bench \
@@ -133,6 +154,23 @@ The `curated_file` condition intentionally includes a repo-local `MEMORY.md` in
 each fixture checkout. Raw artifact scans may therefore contain `MEMORY.md`
 references for that condition; host home, host `.codex`, auth files, virtualenvs,
 and benchmark-private Codex homes must not appear.
+
+## Fixture Pack
+
+`eval/coding-bench/fixtures/tasks.json` is the public v1 task pack. Each task
+records:
+
+- category and smoke/full membership;
+- history episodes with expected memory facts;
+- target prompt, allowed paths, and forbidden paths;
+- deterministic oracle commands and hidden test files;
+- required and forbidden patch patterns checked on added diff lines;
+- gold required/forbidden memory facts plus supporting event ids.
+
+The required category coverage is two tasks each for prior decisions, prior bug
+root causes, stale-memory avoidance, negative constraints, workstream
+continuity, multi-hop project context, user-context relevance, and
+conflict/ambiguity handling.
 
 ## Expansion Targets
 

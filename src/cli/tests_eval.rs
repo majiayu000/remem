@@ -84,6 +84,36 @@ fn cli_parses_bench_memory_options() {
 }
 
 #[test]
+fn cli_parses_bench_coding_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "bench",
+        "coding",
+        "--suite",
+        "issue385-v1",
+        "--task-set",
+        "smoke",
+        "--dry-run",
+        "--json-out",
+        "/tmp/remem-issue385-v1-dry-run.json",
+    ]);
+
+    match cli.command {
+        Commands::Bench { action } => match action {
+            super::eval_types::BenchAction::Coding(args) => {
+                assert_eq!(args.suite, "issue385-v1");
+                assert_eq!(args.task_set, "smoke");
+                assert!(args.dry_run);
+                assert_eq!(args.runs_per_condition, 3);
+                assert_eq!(args.json_out, "/tmp/remem-issue385-v1-dry-run.json");
+            }
+            _ => panic!("expected bench coding action"),
+        },
+        _ => panic!("expected bench coding command"),
+    }
+}
+
+#[test]
 fn cli_parses_eval_extraction_options() {
     let cli = Cli::parse_from([
         "remem",
@@ -222,6 +252,7 @@ fn cli_parses_eval_coding_bench_options() {
             );
             assert_eq!(args.condition.as_deref(), Some("remem"));
             assert_eq!(args.task.as_deref(), Some("slug-normalizer-contract"));
+            assert_eq!(args.task_set, "full");
             assert_eq!(args.runner, "codex");
             assert_eq!(args.codex_bin, "/usr/bin/false");
             assert_eq!(args.model, "gpt-5.5");
