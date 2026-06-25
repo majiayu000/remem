@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/coding-run.schema.json",
+  "title": "remem public coding run artifact",
+  "type": "object",
+  "required": ["schema_version", "benchmark_version", "layer", "condition", "task_id", "run_index", "model", "environment", "resolved", "failure_reason", "metrics", "memory_contract", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "layer": { "const": "coding_agent_outcome" },
+    "benchmark_version": { "type": "string", "minLength": 1 },
+    "condition": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "run_index": { "type": "integer", "minimum": 0 },
+    "model": { "type": "object" },
+    "environment": { "type": "object" },
+    "resolved": { "type": "boolean" },
+    "failure_reason": {
+      "type": ["string", "null"],
+      "enum": ["test_failure", "timeout", "compile_failure", "wrong_file_modified", "ignored_memory", "missing_memory", "stale_memory_followed", "irrelevant_memory_distracted", "over_context_budget", "agent_hallucinated_memory", "oracle_inconclusive", null]
+    },
+    "metrics": { "type": "object" },
+    "memory_contract": { "type": "object" },
+    "artifacts": { "type": "object" }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/benchmark-manifest.schema.json",
+  "title": "remem public benchmark manifest",
+  "type": "object",
+  "required": ["schema_version", "benchmark_id", "layer", "version", "created_at_epoch", "source_policy", "conditions", "reports"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark_id": { "type": "string", "minLength": 1 },
+    "layer": { "enum": ["memory_system_capability", "coding_agent_outcome"] },
+    "version": { "type": "string", "minLength": 1 },
+    "created_at_epoch": { "type": "integer", "minimum": 1 },
+    "source_policy": {
+      "type": "object",
+      "required": ["private_user_memory_allowed", "requires_temp_remem_data_dir", "external_dataset_revision"],
+      "properties": {
+        "private_user_memory_allowed": { "const": false },
+        "requires_temp_remem_data_dir": { "const": true },
+        "external_dataset_revision": { "type": ["string", "null"] }
+      }
+    },
+    "conditions": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "reports": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+  },
+  "additionalProperties": false
+}

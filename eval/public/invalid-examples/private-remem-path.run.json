@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "layer": "memory_system_capability",
+  "environment": {
+    "remem_data_dir": "~/.remem"
+  }
+}

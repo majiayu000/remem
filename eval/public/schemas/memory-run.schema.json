@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/memory-run.schema.json",
+  "title": "remem public memory run artifact",
+  "type": "object",
+  "required": ["schema_version", "benchmark_version", "layer", "suite", "condition", "task_id", "run_index", "reference_time_epoch", "reader_model", "environment", "answer", "retrieval", "evidence", "metrics", "diagnosis", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "layer": { "const": "memory_system_capability" },
+    "benchmark_version": { "type": "string", "minLength": 1 },
+    "suite": { "type": "string", "minLength": 1 },
+    "condition": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "run_index": { "type": "integer", "minimum": 0 },
+    "reference_time_epoch": { "type": "integer", "minimum": 1 },
+    "reader_model": { "type": "object" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "answer": { "type": "object" },
+    "retrieval": { "type": "object" },
+    "evidence": { "type": "object" },
+    "metrics": { "type": "object" },
+    "diagnosis": { "type": "object" },
+    "artifacts": { "type": "object" }
+  },
+  "$defs": {
+    "environment": {
+      "type": "object",
+      "required": ["os", "arch", "remem_commit", "remem_data_dir"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "remem_commit": { "type": "string", "minLength": 1 },
+        "remem_data_dir": { "type": "string", "minLength": 1 },
+        "docker_image_digest": { "type": ["string", "null"] },
+        "fixture_revision": { "type": ["string", "null"] },
+        "repo_base_commit": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/reproduction-metadata.schema.json",
+  "title": "remem public benchmark reproduction metadata",
+  "type": "object",
+  "required": ["schema_version", "remem_commit", "fixture_revision", "commands"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "remem_commit": { "type": "string", "minLength": 1 },
+    "fixture_revision": { "type": "string", "minLength": 1 },
+    "commands": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+    }
+  }
+}

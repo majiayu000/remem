@@ -1,0 +1,1 @@
+Memory #101: serialize startup migrations before opening the runtime database.

@@ -1,0 +1,4 @@
+{
+  "text": "The serialized migration lock fixed the startup race.",
+  "abstained": false
+}

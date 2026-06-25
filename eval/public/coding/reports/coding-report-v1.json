@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "issue385-smoke",
+  "benchmark_version": "v1",
+  "layer": "coding_agent_outcome",
+  "conditions": ["remem"],
+  "schema_refs": [
+    "schemas/benchmark-manifest.schema.json",
+    "schemas/coding-report.schema.json",
+    "schemas/coding-run.schema.json",
+    "schemas/reproduction-metadata.schema.json"
+  ],
+  "run_artifacts": ["coding/artifacts/smoke-coding-001/run.json"],
+  "aggregate_metrics": {
+    "resolved_rate": 1.0,
+    "runs": 1,
+    "stale_memory_failure_rate": 0.0
+  },
+  "claim_level": "smoke_only_no_public_claim",
+  "verifier": {
+    "required": true,
+    "schema_version": 1
+  }
+}

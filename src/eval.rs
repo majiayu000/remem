@@ -1,3 +1,4 @@
+pub mod bench_artifact;
 pub mod coding_bench;
 pub mod current_memory_contracts;
 pub mod e2e;

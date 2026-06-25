@@ -5,7 +5,42 @@ use anyhow::{bail, Context, Result};
 
 use crate::db;
 
-use crate::cli::eval_types::EvalCodingBenchArgs;
+use crate::cli::eval_types::{BenchAction, EvalCodingBenchArgs};
+
+pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
+    match action {
+        BenchAction::Verify(args) => run_bench_verify(&args.root, &args.json_out),
+    }
+}
+
+fn run_bench_verify(root: &str, json_out: &str) -> Result<()> {
+    let report = crate::eval::bench_artifact::verify_benchmark_artifacts(
+        crate::eval::bench_artifact::BenchVerifyOptions {
+            root: Path::new(root).to_path_buf(),
+        },
+    )?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create benchmark verification report directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    fs::write(json_out, &report_json)
+        .with_context(|| format!("write benchmark verification report {json_out}"))?;
+    println!("{report_json}");
+    if !report.passed {
+        bail!(
+            "bench verify failed with {} issue(s)",
+            report.failures.len()
+        );
+    }
+    Ok(())
+}
 
 pub(in crate::cli) fn run_eval_local() -> Result<()> {
     let conn = db::open_db()?;

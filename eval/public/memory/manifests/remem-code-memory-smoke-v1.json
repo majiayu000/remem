@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "remem-code-memory-smoke",
+  "layer": "memory_system_capability",
+  "version": "v1",
+  "created_at_epoch": 1760000000,
+  "source_policy": {
+    "private_user_memory_allowed": false,
+    "requires_temp_remem_data_dir": true,
+    "external_dataset_revision": null
+  },
+  "conditions": ["remem_default"],
+  "reports": ["memory/reports/memory-report-v1.json"]
+}
