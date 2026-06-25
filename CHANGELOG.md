@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Staged source version `0.5.125` without pointing plugin runtime downloads at
+  an unpublished GitHub Release. The committed runtime manifest now stays local
+  until the release workflow uploads checked assets.
+- Hardened macOS ARM installer handling so ad-hoc codesigning failures are not
+  silently ignored.
+
+### Changed
+- Added repository public-surface and file-size guardrails for release
+  readiness.
+- Staged source version `0.5.126` for the current-memory contract gates.
+
 ## [0.5.109] - 2026-06-20
 
 ### Added
