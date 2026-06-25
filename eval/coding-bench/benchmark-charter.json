@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "status": "baseline_complete",
+  "status": "isolated_baseline_complete",
   "issue": "#385",
-  "generated_at": "2026-06-25T01:44:00+08:00",
+  "generated_at": "2026-06-25T19:16:11+08:00",
   "runner": {
     "name": "codex",
-    "version": "codex-cli 0.142.0",
+    "version": "codex-cli 0.142.1",
     "model": "gpt-5.5",
     "reasoning_effort": "medium"
   },
@@ -23,28 +23,34 @@
   },
   "resolution": {
     "no_memory": {
-      "resolved": 3,
+      "resolved": 2,
       "total": 15,
-      "rate": 0.2,
-      "tokens_total_mean": 390003.93333333335,
-      "wall_time_ms_mean": 133593.73333333334
+      "rate": 0.13333333333333333,
+      "tokens_total_mean": 115372.6,
+      "wall_time_ms_mean": 75733.13333333333
     },
     "remem": {
       "resolved": 15,
       "total": 15,
       "rate": 1.0,
-      "tokens_total_mean": 170284.6,
-      "wall_time_ms_mean": 62245.666666666664
+      "tokens_total_mean": 104749.33333333333,
+      "wall_time_ms_mean": 58725.666666666664
     },
     "curated_file": {
       "resolved": 15,
       "total": 15,
       "rate": 1.0,
-      "tokens_total_mean": 146840.13333333333,
-      "wall_time_ms_mean": 60522.86666666667
+      "tokens_total_mean": 94016.53333333334,
+      "wall_time_ms_mean": 62813.0
     }
   },
   "interpretation": "remem matches curated_file resolution and strongly beats no_memory on the first small memory-dependent fixture; curated_file remains cheaper, so this does not prove remem beats a carefully maintained MEMORY.md.",
+  "isolation": {
+    "source_dirty": false,
+    "remem_rev": "c6a46aec3fe44c8a256138d839ebeea396b6cdb7",
+    "artifact_marker_scan": "no host home, host .codex, auth, virtualenv, sandbox error, or benchmark-private Codex home markers found in raw artifacts",
+    "runner_policy": "temporary HOME/CODEX_HOME, ignored host Codex config/rules/hooks/session persistence, stripped host env, macOS host-read sandbox"
+  },
   "caveats": [
     "This fixture is small and synthetic; it is directional evidence only.",
     "Codex non-interactive MCP calls can be cancelled by the host, so remem preloads full seeded memory details into REMEM_CONTEXT.md after using the production SessionStart render path.",

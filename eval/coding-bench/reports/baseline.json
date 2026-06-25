@@ -1,13 +1,33 @@
 {
   "schema_version": 1,
-  "generated_at_epoch": 1782319499,
+  "generated_at_epoch": 1782386171,
   "fixture_path": "eval/coding-bench/fixtures/tasks.json",
-  "remem_rev": "15467327d6078cb40d15142b9cad81f65ca00786",
+  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
+  "remem_rev": "c6a46aec3fe44c8a256138d839ebeea396b6cdb7",
+  "source_dirty": false,
+  "command": [
+    "remem",
+    "eval-coding-bench",
+    "--fixture",
+    "eval/coding-bench/fixtures/tasks.json",
+    "--runs-per-condition",
+    "3",
+    "--runner",
+    "codex",
+    "--model",
+    "gpt-5.5",
+    "--reasoning-effort",
+    "medium",
+    "--json-out",
+    "eval/coding-bench/reports/baseline.json",
+    "--ignore-budget"
+  ],
+  "artifact_policy": "raw_artifacts_local_ignored",
   "runner": {
     "provider": "codex",
     "model": "gpt-5.5",
     "runner": "codex",
-    "version": "codex-cli 0.142.0"
+    "version": "codex-cli 0.142.1"
   },
   "runs_per_condition": 3,
   "ignore_budget": true,
@@ -15,12 +35,12 @@
     {
       "name": "no_memory",
       "summary": {
-        "resolution_rate": 0.2,
-        "tokens_total_mean": 390003.93333333335,
-        "tokens_total_stddev": 75394.0822748193,
-        "turns_mean": null,
-        "wall_time_ms_mean": 133593.73333333334,
-        "wall_time_ms_p95": 181443.0
+        "resolution_rate": 0.13333333333333333,
+        "tokens_total_mean": 115372.6,
+        "tokens_total_stddev": 38562.16025553202,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 75733.13333333333,
+        "wall_time_ms_p95": 132544.0
       },
       "runs": [
         {
@@ -28,50 +48,15 @@
           "task_id": "ticket-key-memory-convention",
           "run_index": 1,
           "resolved": false,
-          "failure_reason": "runner timed out",
-          "usage": {
-            "input_tokens": 354929,
-            "output_tokens": 3767,
-            "total_tokens": 358696
-          },
-          "turns": null,
-          "wall_time_ms": 181350,
-          "final_head_sha": "646d777e255930484e365e1aba265119b9f2ccdb",
-          "changed_paths": [
-            "memory_demo/tickets.py",
-            "tests/test_visible.py"
-          ],
-          "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
-          "score_commands": [
-            {
-              "command": [
-                "python3",
-                "-m",
-                "unittest",
-                "tests.test_ticket_hidden"
-              ],
-              "exit_code": 1,
-              "timed_out": false
-            }
-          ],
-          "workdir": null
-        },
-        {
-          "condition": "no_memory",
-          "task_id": "ticket-key-memory-convention",
-          "run_index": 2,
-          "resolved": false,
           "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 449886,
-            "output_tokens": 3819,
-            "total_tokens": 453705
+            "input_tokens": 207627,
+            "output_tokens": 6103,
+            "total_tokens": 213730
           },
-          "turns": null,
-          "wall_time_ms": 108751,
-          "final_head_sha": "96e5cf2ce40406fe1ae657f20578772fe609bb61",
+          "turns": 1,
+          "wall_time_ms": 132544,
+          "final_head_sha": "b1aaa485497e8a1fb25f4aa0ae48c7d3aa5bea3d",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -96,17 +81,52 @@
         {
           "condition": "no_memory",
           "task_id": "ticket-key-memory-convention",
+          "run_index": 2,
+          "resolved": false,
+          "failure_reason": "score command failed",
+          "usage": {
+            "input_tokens": 94571,
+            "output_tokens": 3056,
+            "total_tokens": 97627
+          },
+          "turns": 1,
+          "wall_time_ms": 80444,
+          "final_head_sha": "60bef2c65c1782dc9ca488161be5ecfa4c34d77d",
+          "changed_paths": [
+            "memory_demo/tickets.py",
+            "tests/test_visible.py"
+          ],
+          "unauthorized_path_changes": [],
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
+          "score_commands": [
+            {
+              "command": [
+                "python3",
+                "-m",
+                "unittest",
+                "tests.test_ticket_hidden"
+              ],
+              "exit_code": 1,
+              "timed_out": false
+            }
+          ],
+          "workdir": null
+        },
+        {
+          "condition": "no_memory",
+          "task_id": "ticket-key-memory-convention",
           "run_index": 3,
           "resolved": false,
           "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 355077,
-            "output_tokens": 3605,
-            "total_tokens": 358682
+            "input_tokens": 98404,
+            "output_tokens": 3984,
+            "total_tokens": 102388
           },
-          "turns": null,
-          "wall_time_ms": 101865,
-          "final_head_sha": "1f755997e74eb727224347c391ad6402f646183b",
+          "turns": 1,
+          "wall_time_ms": 85017,
+          "final_head_sha": "7ad23e9635e65092d861b3ac533665562af7ce2f",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -133,21 +153,21 @@
           "task_id": "retention-window-memory-policy",
           "run_index": 1,
           "resolved": false,
-          "failure_reason": "runner timed out",
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 485647,
-            "output_tokens": 4430,
-            "total_tokens": 490077
+            "input_tokens": 77822,
+            "output_tokens": 2368,
+            "total_tokens": 80190
           },
-          "turns": null,
-          "wall_time_ms": 181355,
-          "final_head_sha": "4bf06cf0a3332943b3b5f0d9fde06e6bfc1f3388",
+          "turns": 1,
+          "wall_time_ms": 55817,
+          "final_head_sha": "46fe49e8a3e2a2497f734bd236744f35107604c8",
           "changed_paths": [
             "memory_demo/retention.py"
           ],
           "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
           "score_commands": [
             {
               "command": [
@@ -167,21 +187,21 @@
           "task_id": "retention-window-memory-policy",
           "run_index": 2,
           "resolved": false,
-          "failure_reason": "runner timed out",
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 406739,
-            "output_tokens": 3153,
-            "total_tokens": 409892
+            "input_tokens": 78890,
+            "output_tokens": 2921,
+            "total_tokens": 81811
           },
-          "turns": null,
-          "wall_time_ms": 181287,
-          "final_head_sha": "0d15c17bc71cc2260eb0b07f3dc0cccc5f7d9ce7",
+          "turns": 1,
+          "wall_time_ms": 67977,
+          "final_head_sha": "1bd08589777f2fe087286224d5de1b3da1163c9e",
           "changed_paths": [
             "memory_demo/retention.py"
           ],
           "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
           "score_commands": [
             {
               "command": [
@@ -201,22 +221,21 @@
           "task_id": "retention-window-memory-policy",
           "run_index": 3,
           "resolved": false,
-          "failure_reason": "runner timed out",
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 557840,
-            "output_tokens": 4170,
-            "total_tokens": 562010
+            "input_tokens": 78068,
+            "output_tokens": 2189,
+            "total_tokens": 80257
           },
-          "turns": null,
-          "wall_time_ms": 181341,
-          "final_head_sha": "c85f57428b12295e83b299e3924fbca5d92dbc1f",
+          "turns": 1,
+          "wall_time_ms": 52433,
+          "final_head_sha": "fde5969c41a8ab788571c11a77cb699b2f16846b",
           "changed_paths": [
-            "memory_demo/retention.py",
-            "tests/test_visible.py"
+            "memory_demo/retention.py"
           ],
           "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
           "score_commands": [
             {
               "command": [
@@ -238,13 +257,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 421958,
-            "output_tokens": 3284,
-            "total_tokens": 425242
+            "input_tokens": 138002,
+            "output_tokens": 3517,
+            "total_tokens": 141519
           },
-          "turns": null,
-          "wall_time_ms": 95641,
-          "final_head_sha": "3eeea07247080c4714c5bd84e9b4b07d5afa082a",
+          "turns": 1,
+          "wall_time_ms": 85139,
+          "final_head_sha": "71d252622ed714ffcc5a980ffa6f2e2501edf199",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -270,16 +289,16 @@
           "condition": "no_memory",
           "task_id": "slug-normalizer-contract",
           "run_index": 2,
-          "resolved": true,
-          "failure_reason": null,
+          "resolved": false,
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 293075,
-            "output_tokens": 3253,
-            "total_tokens": 296328
+            "input_tokens": 141718,
+            "output_tokens": 3497,
+            "total_tokens": 145215
           },
-          "turns": null,
-          "wall_time_ms": 92168,
-          "final_head_sha": "5467548c2363750b2576acd743401adde98c8a17",
+          "turns": 1,
+          "wall_time_ms": 88171,
+          "final_head_sha": "a20de5a55f2ce1cd20118d4921856d94f070c6fa",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -295,7 +314,7 @@
                 "unittest",
                 "tests.test_slug_hidden"
               ],
-              "exit_code": 0,
+              "exit_code": 1,
               "timed_out": false
             }
           ],
@@ -308,13 +327,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 327192,
-            "output_tokens": 3125,
-            "total_tokens": 330317
+            "input_tokens": 77457,
+            "output_tokens": 2018,
+            "total_tokens": 79475
           },
-          "turns": null,
-          "wall_time_ms": 95843,
-          "final_head_sha": "2a0883cc1190676aab31ab2ae707f464e138974a",
+          "turns": 1,
+          "wall_time_ms": 52372,
+          "final_head_sha": "cdf6431a65242bb46d449529be924f1d2263a9a7",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -343,13 +362,13 @@
           "resolved": false,
           "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 245085,
-            "output_tokens": 2698,
-            "total_tokens": 247783
+            "input_tokens": 109130,
+            "output_tokens": 3077,
+            "total_tokens": 112207
           },
-          "turns": null,
-          "wall_time_ms": 76110,
-          "final_head_sha": "09175a2e7cfd79709591983b215a0ea3cdf589cf",
+          "turns": 1,
+          "wall_time_ms": 74295,
+          "final_head_sha": "57881d41db0602c05d54363d097ac9344c3db69b",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -378,13 +397,13 @@
           "resolved": false,
           "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 335943,
-            "output_tokens": 2641,
-            "total_tokens": 338584
+            "input_tokens": 92099,
+            "output_tokens": 2244,
+            "total_tokens": 94343
           },
-          "turns": null,
-          "wall_time_ms": 74191,
-          "final_head_sha": "80e4e0e4ee705bed53c1a799eb40102e8f2bee8a",
+          "turns": 1,
+          "wall_time_ms": 53345,
+          "final_head_sha": "d0402f0dc76e9c561dc3b317d45364e754215fa8",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -411,22 +430,22 @@
           "task_id": "session-budget-footer",
           "run_index": 3,
           "resolved": false,
-          "failure_reason": "runner timed out",
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 356159,
-            "output_tokens": 3238,
-            "total_tokens": 359397
+            "input_tokens": 77174,
+            "output_tokens": 2019,
+            "total_tokens": 79193
           },
-          "turns": null,
-          "wall_time_ms": 181339,
-          "final_head_sha": "1fd8bfbf0400d38ce7da6bcf225b7d51e623b84c",
+          "turns": 1,
+          "wall_time_ms": 50321,
+          "final_head_sha": "ea3fca2bbb5d7b9729d692b1b5ae1949e4234764",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
           ],
           "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
           "score_commands": [
             {
               "command": [
@@ -446,22 +465,22 @@
           "task_id": "context-visibility-policy",
           "run_index": 1,
           "resolved": false,
-          "failure_reason": "runner timed out",
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 425001,
-            "output_tokens": 3886,
-            "total_tokens": 428887
+            "input_tokens": 127533,
+            "output_tokens": 3056,
+            "total_tokens": 130589
           },
-          "turns": null,
-          "wall_time_ms": 181280,
-          "final_head_sha": "d593fa25ed7b649ded4a76a052fb261856de91ed",
+          "turns": 1,
+          "wall_time_ms": 74056,
+          "final_head_sha": "5b7e0aba771bdf198ca5c4d67be99d343fd32f09",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
           ],
           "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
           "score_commands": [
             {
               "command": [
@@ -481,22 +500,22 @@
           "task_id": "context-visibility-policy",
           "run_index": 2,
           "resolved": false,
-          "failure_reason": "runner timed out",
+          "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 404509,
-            "output_tokens": 2869,
-            "total_tokens": 407378
+            "input_tokens": 112277,
+            "output_tokens": 3611,
+            "total_tokens": 115888
           },
-          "turns": null,
-          "wall_time_ms": 181443,
-          "final_head_sha": "a96a4ea05f98972bbe3dced03c54641a3a61db50",
+          "turns": 1,
+          "wall_time_ms": 84517,
+          "final_head_sha": "93a65f830cb3282abbc6f474a30285ad951f8eed",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
           ],
           "unauthorized_path_changes": [],
-          "runner_exit_code": null,
-          "runner_timed_out": true,
+          "runner_exit_code": 0,
+          "runner_timed_out": false,
           "score_commands": [
             {
               "command": [
@@ -518,13 +537,13 @@
           "resolved": false,
           "failure_reason": "score command failed",
           "usage": {
-            "input_tokens": 380482,
-            "output_tokens": 2599,
-            "total_tokens": 383081
+            "input_tokens": 172554,
+            "output_tokens": 3603,
+            "total_tokens": 176157
           },
-          "turns": null,
-          "wall_time_ms": 89942,
-          "final_head_sha": "0d576a0a36a5f60ba7bfcb7f7d023c21f89705f3",
+          "turns": 1,
+          "wall_time_ms": 99549,
+          "final_head_sha": "77b2e68d55d36103297edd2a8917a30848cea489",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -552,11 +571,11 @@
       "name": "remem",
       "summary": {
         "resolution_rate": 1.0,
-        "tokens_total_mean": 170284.6,
-        "tokens_total_stddev": 42436.24709891298,
-        "turns_mean": null,
-        "wall_time_ms_mean": 62245.666666666664,
-        "wall_time_ms_p95": 97957.0
+        "tokens_total_mean": 104749.33333333333,
+        "tokens_total_stddev": 22052.295613432678,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 58725.666666666664,
+        "wall_time_ms_p95": 82397.0
       },
       "runs": [
         {
@@ -566,13 +585,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 258500,
-            "output_tokens": 3718,
-            "total_tokens": 262218
+            "input_tokens": 111681,
+            "output_tokens": 2812,
+            "total_tokens": 114493
           },
-          "turns": null,
-          "wall_time_ms": 97957,
-          "final_head_sha": "a96c63524d02aac9ebce11807471cc8f72bf7711",
+          "turns": 1,
+          "wall_time_ms": 70191,
+          "final_head_sha": "8ba31dc1a4990e60044e0bb7f0efc0e10675e694",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -601,13 +620,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 204949,
-            "output_tokens": 2852,
-            "total_tokens": 207801
+            "input_tokens": 129769,
+            "output_tokens": 3161,
+            "total_tokens": 132930
           },
-          "turns": null,
-          "wall_time_ms": 77008,
-          "final_head_sha": "13da01f4d62ce57cd822ea26fcd4fc95c547997a",
+          "turns": 1,
+          "wall_time_ms": 77041,
+          "final_head_sha": "62274fdd72a56652ea498ddea265b18357ef4edc",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -636,13 +655,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 210708,
-            "output_tokens": 3534,
-            "total_tokens": 214242
+            "input_tokens": 130311,
+            "output_tokens": 3230,
+            "total_tokens": 133541
           },
-          "turns": null,
-          "wall_time_ms": 91703,
-          "final_head_sha": "dbf5896fc2358684faa6d1bb037df4e0d86e506e",
+          "turns": 1,
+          "wall_time_ms": 78337,
+          "final_head_sha": "f4e7b1ed98b7a45416eddfaebe3373069df941fb",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -671,13 +690,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 127368,
-            "output_tokens": 1671,
-            "total_tokens": 129039
+            "input_tokens": 64052,
+            "output_tokens": 1384,
+            "total_tokens": 65436
           },
-          "turns": null,
-          "wall_time_ms": 55335,
-          "final_head_sha": "82b373c052eb6fb9c05ac5d3b3e55a7841d43de1",
+          "turns": 1,
+          "wall_time_ms": 37922,
+          "final_head_sha": "51fcf6e963cc88cd144459396cc32d65f61b2a2b",
           "changed_paths": [
             "memory_demo/retention.py"
           ],
@@ -705,13 +724,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 106244,
-            "output_tokens": 1358,
-            "total_tokens": 107602
+            "input_tokens": 63368,
+            "output_tokens": 1265,
+            "total_tokens": 64633
           },
-          "turns": null,
-          "wall_time_ms": 42866,
-          "final_head_sha": "ca947378f31d979fdab5147df79b3f0db9f651c4",
+          "turns": 1,
+          "wall_time_ms": 36092,
+          "final_head_sha": "19812e4498b45e26b9de931f5c6a4338d1a2ca65",
           "changed_paths": [
             "memory_demo/retention.py"
           ],
@@ -739,15 +758,16 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 177003,
-            "output_tokens": 2251,
-            "total_tokens": 179254
+            "input_tokens": 93299,
+            "output_tokens": 1986,
+            "total_tokens": 95285
           },
-          "turns": null,
-          "wall_time_ms": 63003,
-          "final_head_sha": "44f4f466c3314f02bc3e524c7b8d72876177ca75",
+          "turns": 1,
+          "wall_time_ms": 64292,
+          "final_head_sha": "3e3aa19078761ef2600e0df44492a64fc8492f6f",
           "changed_paths": [
-            "memory_demo/retention.py"
+            "memory_demo/retention.py",
+            "tests/test_visible.py"
           ],
           "unauthorized_path_changes": [],
           "runner_exit_code": 0,
@@ -773,13 +793,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 152079,
-            "output_tokens": 2197,
-            "total_tokens": 154276
+            "input_tokens": 106777,
+            "output_tokens": 1795,
+            "total_tokens": 108572
           },
-          "turns": null,
-          "wall_time_ms": 57366,
-          "final_head_sha": "05c8d9fdcb8aef54769cf5a7ff8f2d9a4b9076a0",
+          "turns": 1,
+          "wall_time_ms": 53547,
+          "final_head_sha": "0de52ad09e247aecd5fce54ae9be5dd0a5986059",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -808,13 +828,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 176215,
-            "output_tokens": 2098,
-            "total_tokens": 178313
+            "input_tokens": 125531,
+            "output_tokens": 2701,
+            "total_tokens": 128232
           },
-          "turns": null,
-          "wall_time_ms": 62826,
-          "final_head_sha": "626aa5daa3bab17836e4909ca44b423151de3002",
+          "turns": 1,
+          "wall_time_ms": 82397,
+          "final_head_sha": "b4a1e17abea5ec24a0e4e173131d6fd3a1c79173",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -843,13 +863,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 126842,
-            "output_tokens": 1493,
-            "total_tokens": 128335
+            "input_tokens": 93303,
+            "output_tokens": 1951,
+            "total_tokens": 95254
           },
-          "turns": null,
-          "wall_time_ms": 42588,
-          "final_head_sha": "4a40b66dc380c51ca441b86010d7a6a70b5d7a41",
+          "turns": 1,
+          "wall_time_ms": 52571,
+          "final_head_sha": "d72b2cde027a294cbac535f39a7e7cee1de9a5f3",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -878,13 +898,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 175774,
-            "output_tokens": 2095,
-            "total_tokens": 177869
+            "input_tokens": 122819,
+            "output_tokens": 2327,
+            "total_tokens": 125146
           },
-          "turns": null,
-          "wall_time_ms": 59498,
-          "final_head_sha": "59513448b6546e498768a540a49c7be9c88a09df",
+          "turns": 1,
+          "wall_time_ms": 67747,
+          "final_head_sha": "6f59c8b93c725a1aec87c751764ad45eb1645aa6",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -913,13 +933,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 199101,
-            "output_tokens": 2303,
-            "total_tokens": 201404
+            "input_tokens": 108425,
+            "output_tokens": 1987,
+            "total_tokens": 110412
           },
-          "turns": null,
-          "wall_time_ms": 65991,
-          "final_head_sha": "6941b0522d782d919bb3594c312114d52e3845c8",
+          "turns": 1,
+          "wall_time_ms": 53859,
+          "final_head_sha": "b90e734d5bf7a2574300b5620f15ba5481d4b322",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -948,13 +968,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 198119,
-            "output_tokens": 2359,
-            "total_tokens": 200478
+            "input_tokens": 93014,
+            "output_tokens": 1825,
+            "total_tokens": 94839
           },
-          "turns": null,
-          "wall_time_ms": 65486,
-          "final_head_sha": "49ee1a1fc601a33da8849c3ddd173c271687f327",
+          "turns": 1,
+          "wall_time_ms": 50701,
+          "final_head_sha": "a81f31e7fef6bc44a309fe2280fbea45f462575e",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -983,13 +1003,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 106646,
-            "output_tokens": 1604,
-            "total_tokens": 108250
+            "input_tokens": 124245,
+            "output_tokens": 2165,
+            "total_tokens": 126410
           },
-          "turns": null,
-          "wall_time_ms": 46975,
-          "final_head_sha": "916c408a4a44ea6fd43999fa5fbf5829b8b9ea3a",
+          "turns": 1,
+          "wall_time_ms": 56187,
+          "final_head_sha": "5dd41c80ef2818d0d970e0356388e02afcbaea28",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -1018,13 +1038,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 173374,
-            "output_tokens": 1781,
-            "total_tokens": 175155
+            "input_tokens": 78966,
+            "output_tokens": 1949,
+            "total_tokens": 80915
           },
-          "turns": null,
-          "wall_time_ms": 57895,
-          "final_head_sha": "14183afe3ff91a19d747f74817d8b0dd1b30de12",
+          "turns": 1,
+          "wall_time_ms": 49313,
+          "final_head_sha": "d6f53d0002ccde2cf5ac1c933d2167d16134c21d",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -1053,13 +1073,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 128433,
-            "output_tokens": 1600,
-            "total_tokens": 130033
+            "input_tokens": 93286,
+            "output_tokens": 1856,
+            "total_tokens": 95142
           },
-          "turns": null,
-          "wall_time_ms": 47188,
-          "final_head_sha": "848da78f39c402a7a2f6af135504bbf97581ff40",
+          "turns": 1,
+          "wall_time_ms": 50688,
+          "final_head_sha": "980c32daeaa9e9d3262b0f2a95705b6ea80d906a",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -1087,11 +1107,11 @@
       "name": "curated_file",
       "summary": {
         "resolution_rate": 1.0,
-        "tokens_total_mean": 146840.13333333333,
-        "tokens_total_stddev": 28637.200642676107,
-        "turns_mean": null,
-        "wall_time_ms_mean": 60522.86666666667,
-        "wall_time_ms_p95": 83959.0
+        "tokens_total_mean": 94016.53333333334,
+        "tokens_total_stddev": 14021.958122253192,
+        "turns_mean": 1.0,
+        "wall_time_ms_mean": 62813.0,
+        "wall_time_ms_p95": 178532.0
       },
       "runs": [
         {
@@ -1101,13 +1121,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 151384,
-            "output_tokens": 2854,
-            "total_tokens": 154238
+            "input_tokens": 93311,
+            "output_tokens": 2799,
+            "total_tokens": 96110
           },
-          "turns": null,
-          "wall_time_ms": 74638,
-          "final_head_sha": "77e8b9aad29223b3b688765ef3d57f6ba69fcb89",
+          "turns": 1,
+          "wall_time_ms": 71574,
+          "final_head_sha": "d801090bbbb270415607e0f24eefe7c1e53e4d8a",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -1136,13 +1156,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 128126,
-            "output_tokens": 2473,
-            "total_tokens": 130599
+            "input_tokens": 91628,
+            "output_tokens": 2344,
+            "total_tokens": 93972
           },
-          "turns": null,
-          "wall_time_ms": 64767,
-          "final_head_sha": "17c0b08d16f85fa86a2e1cc5b5d4115c1d999f67",
+          "turns": 1,
+          "wall_time_ms": 57689,
+          "final_head_sha": "f8edb19068a9c1fb906092dda5a750c62d2fcf85",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -1171,13 +1191,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 199617,
-            "output_tokens": 3284,
-            "total_tokens": 202901
+            "input_tokens": 109271,
+            "output_tokens": 2792,
+            "total_tokens": 112063
           },
-          "turns": null,
-          "wall_time_ms": 83959,
-          "final_head_sha": "c327610bdad5635dc7aa712130afeb271afe0c5e",
+          "turns": 1,
+          "wall_time_ms": 69682,
+          "final_head_sha": "8862e824cae2ea51a48de6c4baf9929b6f7dc613",
           "changed_paths": [
             "memory_demo/tickets.py",
             "tests/test_visible.py"
@@ -1206,13 +1226,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 104269,
-            "output_tokens": 1322,
-            "total_tokens": 105591
+            "input_tokens": 76868,
+            "output_tokens": 1675,
+            "total_tokens": 78543
           },
-          "turns": null,
-          "wall_time_ms": 42305,
-          "final_head_sha": "0a151731ff2f0b0bbce8e68d02c32c0f31b0d9a7",
+          "turns": 1,
+          "wall_time_ms": 44150,
+          "final_head_sha": "c597937bf861a3be777051c107c99afacc9249e9",
           "changed_paths": [
             "memory_demo/retention.py"
           ],
@@ -1240,16 +1260,15 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 148405,
-            "output_tokens": 2088,
-            "total_tokens": 150493
+            "input_tokens": 76650,
+            "output_tokens": 1698,
+            "total_tokens": 78348
           },
-          "turns": null,
-          "wall_time_ms": 56827,
-          "final_head_sha": "b6803abc141bd7abf56f88b9f1d69eabc8fdba61",
+          "turns": 1,
+          "wall_time_ms": 45464,
+          "final_head_sha": "ea4cf9d8fd43ca93be8d9ce3e40af6059fc2bf25",
           "changed_paths": [
-            "memory_demo/retention.py",
-            "tests/test_visible.py"
+            "memory_demo/retention.py"
           ],
           "unauthorized_path_changes": [],
           "runner_exit_code": 0,
@@ -1275,13 +1294,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 102826,
-            "output_tokens": 1229,
-            "total_tokens": 104055
+            "input_tokens": 76075,
+            "output_tokens": 1581,
+            "total_tokens": 77656
           },
-          "turns": null,
-          "wall_time_ms": 36298,
-          "final_head_sha": "f37cfb07ea1e58aaf2154e0524fcea6d26970938",
+          "turns": 1,
+          "wall_time_ms": 44334,
+          "final_head_sha": "54be7e6d6cbacbae407ad3a1a99918110a67b1de",
           "changed_paths": [
             "memory_demo/retention.py"
           ],
@@ -1309,13 +1328,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 126182,
-            "output_tokens": 1882,
-            "total_tokens": 128064
+            "input_tokens": 106075,
+            "output_tokens": 2132,
+            "total_tokens": 108207
           },
-          "turns": null,
-          "wall_time_ms": 51066,
-          "final_head_sha": "4e295ec22e14527e4f9142b9292f123f1cf045d1",
+          "turns": 1,
+          "wall_time_ms": 56206,
+          "final_head_sha": "e8d6c2da2a3489930625a5a1e97d0c76e996e564",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -1344,13 +1363,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 171618,
-            "output_tokens": 2453,
-            "total_tokens": 174071
+            "input_tokens": 108943,
+            "output_tokens": 2551,
+            "total_tokens": 111494
           },
-          "turns": null,
-          "wall_time_ms": 66267,
-          "final_head_sha": "864e888db52707916f2fc1ccae56d59d9ed3ec97",
+          "turns": 1,
+          "wall_time_ms": 178532,
+          "final_head_sha": "dbbfaf4b7782dc015415cbb7ffb4965153d44b0b",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -1379,13 +1398,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 125810,
-            "output_tokens": 1726,
-            "total_tokens": 127536
+            "input_tokens": 91675,
+            "output_tokens": 2046,
+            "total_tokens": 93721
           },
-          "turns": null,
-          "wall_time_ms": 50275,
-          "final_head_sha": "22ab847fe84fab426e237f99929e21a7c6121225",
+          "turns": 1,
+          "wall_time_ms": 55493,
+          "final_head_sha": "6a7a7d92124748e1292e30507fb0c78f645bb681",
           "changed_paths": [
             "memory_demo/slug.py",
             "tests/test_visible.py"
@@ -1414,13 +1433,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 146956,
-            "output_tokens": 1779,
-            "total_tokens": 148735
+            "input_tokens": 92376,
+            "output_tokens": 2267,
+            "total_tokens": 94643
           },
-          "turns": null,
-          "wall_time_ms": 53368,
-          "final_head_sha": "13c99542da2147ea8e041c272149ab3b37319574",
+          "turns": 1,
+          "wall_time_ms": 58905,
+          "final_head_sha": "7c0e6c3301fa113a61b2e806bcaa8f75f2cc047b",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -1449,13 +1468,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 169926,
-            "output_tokens": 2241,
-            "total_tokens": 172167
+            "input_tokens": 120901,
+            "output_tokens": 2339,
+            "total_tokens": 123240
           },
-          "turns": null,
-          "wall_time_ms": 70503,
-          "final_head_sha": "564a715469cb16c91b391fe21637a8d68d7af4b4",
+          "turns": 1,
+          "wall_time_ms": 60887,
+          "final_head_sha": "f94d45d35a0c7f6d23527472932f35df5a8a1501",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -1484,13 +1503,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 151291,
-            "output_tokens": 2088,
-            "total_tokens": 153379
+            "input_tokens": 90910,
+            "output_tokens": 1789,
+            "total_tokens": 92699
           },
-          "turns": null,
-          "wall_time_ms": 74509,
-          "final_head_sha": "8ff1e27865a8d18b4c102c4f21f8819797ab141e",
+          "turns": 1,
+          "wall_time_ms": 49210,
+          "final_head_sha": "cdcc8717006e80d0fcf5763ed7c0474acb66cd2e",
           "changed_paths": [
             "memory_demo/session.py",
             "tests/test_visible.py"
@@ -1519,13 +1538,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 125189,
-            "output_tokens": 1524,
-            "total_tokens": 126713
+            "input_tokens": 76741,
+            "output_tokens": 1796,
+            "total_tokens": 78537
           },
-          "turns": null,
-          "wall_time_ms": 54475,
-          "final_head_sha": "4ffe8298e4c3979eda9b181376967a392a37b17e",
+          "turns": 1,
+          "wall_time_ms": 51364,
+          "final_head_sha": "098775031fa294e9b988620139bc24d0849ced82",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -1554,13 +1573,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 193524,
-            "output_tokens": 2222,
-            "total_tokens": 195746
+            "input_tokens": 76161,
+            "output_tokens": 1630,
+            "total_tokens": 77791
           },
-          "turns": null,
-          "wall_time_ms": 70905,
-          "final_head_sha": "c36161121c6be319d23cd1a0eaacd4778c934ea8",
+          "turns": 1,
+          "wall_time_ms": 47832,
+          "final_head_sha": "02bbf6530878c590b802b948d3b7752424f7fab4",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -1589,13 +1608,13 @@
           "resolved": true,
           "failure_reason": null,
           "usage": {
-            "input_tokens": 126566,
-            "output_tokens": 1748,
-            "total_tokens": 128314
+            "input_tokens": 91271,
+            "output_tokens": 1953,
+            "total_tokens": 93224
           },
-          "turns": null,
-          "wall_time_ms": 57681,
-          "final_head_sha": "6fc3874c9297100c77863ccd0ed598e804a362c2",
+          "turns": 1,
+          "wall_time_ms": 50873,
+          "final_head_sha": "82b89ce47e891422b6b9b573a5956ed6d1f51ffa",
           "changed_paths": [
             "memory_demo/visibility.py",
             "tests/test_visible.py"
@@ -1619,25 +1638,5 @@
         }
       ]
     }
-  ],
-  "fixture_sha256": "7ed9395f2a84e732ac59f32b704b3ef008bc1bf26fa630c96c0c7b98610b12f0",
-  "source_dirty": true,
-  "command": [
-    "remem",
-    "eval-coding-bench",
-    "--fixture",
-    "eval/coding-bench/fixtures/tasks.json",
-    "--runs-per-condition",
-    "3",
-    "--runner",
-    "codex",
-    "--model",
-    "gpt-5.5",
-    "--reasoning-effort",
-    "medium",
-    "--json-out",
-    "eval/coding-bench/reports/baseline.json",
-    "--ignore-budget"
-  ],
-  "artifact_policy": "raw_artifacts_local_ignored"
+  ]
 }

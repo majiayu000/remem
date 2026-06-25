@@ -12,27 +12,33 @@ scoring shape of SWE-bench style patch tasks, but uses an inline repository so
 the harness can run from a clean checkout without Docker or external issue data.
 It should be expanded later with pinned real-repo tasks.
 
-## Draft Baseline
+## Isolated Baseline
 
-Generated: 2026-06-25 01:44 CST
+Generated: 2026-06-25 19:16 CST
 
-Runner: `codex-cli 0.142.0`, model `gpt-5.5`, `runs_per_condition=3`, 5 tasks,
+Runner: `codex-cli 0.142.1`, model `gpt-5.5`, `runs_per_condition=3`, 5 tasks,
 45 total agent runs.
 
-This run was generated before the runner started ignoring host Codex config,
-rules, hooks, and session persistence. Treat it as report-shape evidence only
-until it is regenerated with the isolated runner.
+This run was generated from clean source at remem revision
+`c6a46aec3fe44c8a256138d839ebeea396b6cdb7` with `source_dirty=false`. The
+Codex runner used an isolated temporary HOME/CODEX_HOME, ignored host Codex
+config/rules/hooks/session persistence, stripped host virtualenv/env leakage,
+and on macOS denied reads under the real host home except the Codex install path
+and temporary benchmark run roots. Runs are marked failed if runner output
+shows host home or benchmark-private Codex home access.
 
 | Condition | Resolved | Resolution | Mean tokens | Mean wall time |
 |---|---:|---:|---:|---:|
-| `no_memory` | 3/15 | 20.0% | 390,003 | 133.6s |
-| `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
-| `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
+| `no_memory` | 2/15 | 13.3% | 115,373 | 75.7s |
+| `remem` | 15/15 | 100.0% | 104,749 | 58.7s |
+| `curated_file` | 15/15 | 100.0% | 94,017 | 62.8s |
 
-Interpretation: do not use this draft run for public product claims until the
-isolated-runner baseline is regenerated. The stop-loss control remains active:
-the next benchmark slice should add broader real-repo tasks before making
-stronger product claims.
+Interpretation: remem matches curated-file resolution and strongly beats
+no-memory on this first small memory-dependent fixture. Curated-file remains a
+carefully maintained file baseline, so this does not prove remem beats a
+manually curated `MEMORY.md`. The stop-loss control remains active: the next
+benchmark slice should add broader real-repo tasks before making stronger
+product claims.
 
 Reports:
 
@@ -117,7 +123,16 @@ rather than memory quality.
 
 The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,
 and `--disable hooks` so benchmark agents do not inherit the host's MCP servers,
-hooks, user rules, or session log persistence.
+hooks, user rules, or session log persistence. The runner also launches Codex
+with a clean temporary HOME/CODEX_HOME and strips common host environment
+variables. On macOS the harness wraps Codex in a host-read sandbox that denies
+reads under the real HOME except the Codex install path plus temporary benchmark
+run roots.
+
+The `curated_file` condition intentionally includes a repo-local `MEMORY.md` in
+each fixture checkout. Raw artifact scans may therefore contain `MEMORY.md`
+references for that condition; host home, host `.codex`, auth files, virtualenvs,
+and benchmark-private Codex homes must not appear.
 
 ## Expansion Targets
 
