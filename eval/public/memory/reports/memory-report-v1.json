@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "remem-code-memory-smoke",
+  "benchmark_version": "v1",
+  "layer": "memory_system_capability",
+  "conditions": ["remem_default"],
+  "schema_refs": [
+    "schemas/benchmark-manifest.schema.json",
+    "schemas/memory-report.schema.json",
+    "schemas/memory-run.schema.json",
+    "schemas/reproduction-metadata.schema.json"
+  ],
+  "run_artifacts": ["memory/artifacts/smoke-memory-001/run.json"],
+  "aggregate_metrics": {
+    "support_coverage": 1.0,
+    "citation_recall": 1.0,
+    "non_retention_leak_rate": 0.0
+  },
+  "claim_level": "smoke_only_no_public_claim",
+  "verifier": {
+    "required": true,
+    "schema_version": 1
+  }
+}

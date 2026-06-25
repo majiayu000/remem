@@ -428,6 +428,11 @@ pub(super) enum Commands {
         #[arg(long)]
         branch: Option<String>,
     },
+    /// Public benchmark artifact commands.
+    Bench {
+        #[command(subcommand)]
+        action: super::eval_types::BenchAction,
+    },
     /// Run the golden retrieval evaluation dataset.
     Eval {
         /// Golden dataset path.

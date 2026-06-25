@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/coding-report.schema.json",
+  "title": "remem public coding benchmark report",
+  "type": "object",
+  "required": ["schema_version", "benchmark_id", "benchmark_version", "layer", "conditions", "schema_refs", "run_artifacts", "aggregate_metrics", "claim_level", "verifier"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark_id": { "type": "string", "minLength": 1 },
+    "benchmark_version": { "type": "string", "minLength": 1 },
+    "layer": { "const": "coding_agent_outcome" },
+    "conditions": { "type": "array", "minItems": 1 },
+    "schema_refs": { "type": "array", "minItems": 1 },
+    "run_artifacts": { "type": "array", "minItems": 1 },
+    "aggregate_metrics": { "type": "object" },
+    "claim_level": { "type": "string", "minLength": 1 },
+    "verifier": { "type": "object" }
+  }
+}

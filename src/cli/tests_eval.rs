@@ -24,6 +24,29 @@ fn cli_parses_eval_json_options() {
 }
 
 #[test]
+fn cli_parses_bench_verify_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "bench",
+        "verify",
+        "--root",
+        "eval/public",
+        "--json-out",
+        "/tmp/remem-bench-verify.json",
+    ]);
+
+    match cli.command {
+        Commands::Bench { action } => match action {
+            super::eval_types::BenchAction::Verify(args) => {
+                assert_eq!(args.root, "eval/public");
+                assert_eq!(args.json_out, "/tmp/remem-bench-verify.json");
+            }
+        },
+        _ => panic!("expected bench verify command"),
+    }
+}
+
+#[test]
 fn cli_parses_eval_extraction_options() {
     let cli = Cli::parse_from([
         "remem",

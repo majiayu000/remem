@@ -1,0 +1,1 @@
+{"tool":"shell","argv":["cargo","test","-q","startup_migration_race"],"exit_code":0}

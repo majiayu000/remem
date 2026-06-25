@@ -1,4 +1,20 @@
-use clap::Args;
+use clap::{Args, Subcommand};
+
+#[derive(Subcommand)]
+pub(in crate::cli) enum BenchAction {
+    /// Verify public benchmark artifact schemas, layout, logs, and isolation evidence.
+    Verify(BenchVerifyArgs),
+}
+
+#[derive(Args)]
+pub(in crate::cli) struct BenchVerifyArgs {
+    /// Public benchmark artifact root.
+    #[arg(long, default_value = "eval/public")]
+    pub(in crate::cli) root: String,
+    /// Verification report output path.
+    #[arg(long)]
+    pub(in crate::cli) json_out: String,
+}
 
 #[derive(Args)]
 pub(in crate::cli) struct EvalExtractionArgs {

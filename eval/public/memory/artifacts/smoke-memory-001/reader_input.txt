@@ -1,0 +1,3 @@
+Question: What fixed the startup migration race?
+
+Evidence memory: Root cause was concurrent migration execution. The fix serialized startup migrations.

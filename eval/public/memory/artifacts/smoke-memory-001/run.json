@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "remem-code-memory-smoke-v1",
+  "layer": "memory_system_capability",
+  "suite": "remem-code-memory-smoke",
+  "condition": "remem_default",
+  "task_id": "smoke-temporal-root-cause-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "provider": "fixture",
+    "model": "deterministic-reader",
+    "temperature": 0,
+    "prompt_hash": "sha256:smoke-reader"
+  },
+  "environment": {
+    "os": "linux",
+    "arch": "x86_64",
+    "docker_image_digest": "sha256:smoke",
+    "remem_commit": "a683e46cfd6e1b85f14b2c78ecc1a175b4e5f163",
+    "fixture_revision": "remem-code-memory-smoke-v1",
+    "remem_data_dir": "temp://remem-public-smoke/memory-001"
+  },
+  "answer": {
+    "text": "The serialized migration lock fixed the startup race.",
+    "abstained": false,
+    "score": 1.0,
+    "score_method": "fixture",
+    "temporal_as_of_correct": true,
+    "no_answer_correct": null
+  },
+  "retrieval": {
+    "retrieved_memory_ids": [101],
+    "retrieved_supporting_evidence_ids": ["prior-001:e17"],
+    "gold_supporting_event_ids": ["prior-001:e17"],
+    "support_coverage": 1.0,
+    "missing_supporting_evidence_ids": [],
+    "irrelevant_memory_count": 0
+  },
+  "evidence": {
+    "cited_memory_ids": [101],
+    "cited_event_ids": ["prior-001:e17"],
+    "citation_precision": 1.0,
+    "citation_recall": 1.0,
+    "source_anchor_staleness": {
+      "prior-001:e17": "tracked"
+    }
+  },
+  "metrics": {
+    "ingest_tokens": 0,
+    "query_tokens": 0,
+    "reader_tokens": 0,
+    "retrieval_latency_ms": 1,
+    "end_to_end_latency_ms": 1,
+    "rows_written": 1
+  },
+  "diagnosis": {
+    "write_side_gap": false,
+    "retrieval_side_gap": false,
+    "reader_gap": false,
+    "policy_abstention": false,
+    "notes": []
+  },
+  "artifacts": {
+    "reader_input": "memory/artifacts/smoke-memory-001/reader_input.txt",
+    "retrieved_evidence": "memory/artifacts/smoke-memory-001/retrieved_evidence.json",
+    "answer": "memory/artifacts/smoke-memory-001/answer.json",
+    "score": "memory/artifacts/smoke-memory-001/score.json",
+    "diagnosis": "memory/artifacts/smoke-memory-001/diagnosis.json",
+    "remem_db_snapshot": "memory/artifacts/smoke-memory-001/remem.db.snapshot.tar.zst"
+  }
+}

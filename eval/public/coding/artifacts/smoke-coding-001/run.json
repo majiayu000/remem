@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "issue385-smoke-v1",
+  "layer": "coding_agent_outcome",
+  "condition": "remem",
+  "task_id": "smoke-fix-startup-race-001",
+  "run_index": 0,
+  "model": {
+    "agent": "codex-cli",
+    "model": "fixture-agent",
+    "temperature": 0,
+    "reasoning": "medium"
+  },
+  "environment": {
+    "os": "linux",
+    "arch": "x86_64",
+    "docker_image_digest": "sha256:smoke",
+    "remem_commit": "a683e46cfd6e1b85f14b2c78ecc1a175b4e5f163",
+    "repo_base_commit": "0123456789abcdef0123456789abcdef01234567",
+    "fixture_revision": "issue385-smoke-v1",
+    "remem_data_dir": "temp://remem-public-smoke/coding-001"
+  },
+  "resolved": true,
+  "failure_reason": null,
+  "metrics": {
+    "tokens_input": 100,
+    "tokens_output": 25,
+    "tokens_total": 125,
+    "memory_tokens": 15,
+    "turns": 2,
+    "wall_time_ms": 1000,
+    "tool_calls": 3,
+    "commands_run": 1
+  },
+  "memory_contract": {
+    "injected_memory_ids": [101],
+    "used_memory_ids": [101],
+    "citation_precision": 1.0,
+    "citation_recall": 1.0,
+    "stale_used_count": 0,
+    "missing_relevant_memory_count": 0,
+    "irrelevant_injection_count": 0,
+    "memory_helped": true,
+    "memory_hurt": false
+  },
+  "artifacts": {
+    "patch": "coding/artifacts/smoke-coding-001/patch.diff",
+    "tool_log": "coding/artifacts/smoke-coding-001/tool_log.jsonl",
+    "test_log": "coding/artifacts/smoke-coding-001/test.log",
+    "injected_context": "coding/artifacts/smoke-coding-001/injected_context.txt",
+    "remem_db_snapshot": "coding/artifacts/smoke-coding-001/remem.db.snapshot.tar.zst"
+  }
+}
