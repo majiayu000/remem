@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: conflict-detection-storage-001
+category: conflict_detection
+reference_time_epoch: 1760000000
+
+question:
+When storage memories conflict, which storage rule should be followed?
+
+retrieved_evidence:
+- memory_id=1 event_id=conflict-001:e2 status=active title=SQLCipher private memory storage
+  Private memory storage must use SQLCipher encryption at rest; this resolves the plaintext conflict.

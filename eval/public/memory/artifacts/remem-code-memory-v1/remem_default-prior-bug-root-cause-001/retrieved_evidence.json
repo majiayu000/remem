@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "The duplicate startup summary bug was caused by a summarize cooldown race; the fix serialized the cooldown claim.",
+      "event_id": "bug-001:e1",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Duplicate startup summary root cause"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "prior-bug-root-cause-001"
+}

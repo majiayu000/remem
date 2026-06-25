@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "Private memory storage must use SQLCipher encryption at rest; this resolves the plaintext conflict.",
+      "event_id": "conflict-001:e2",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "SQLCipher private memory storage"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "conflict-detection-storage-001"
+}

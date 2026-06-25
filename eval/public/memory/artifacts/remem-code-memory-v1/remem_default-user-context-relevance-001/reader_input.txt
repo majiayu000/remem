@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: user-context-relevance-001
+category: user_context_relevance
+reference_time_epoch: 1760000000
+
+question:
+Which user-context preference is relevant to a PR handoff summary?
+
+retrieved_evidence:
+- memory_id=1 event_id=user-context-001:e1 status=active title=Concise evidence-backed Chinese handoffs
+  For PR handoffs, the user prefers concise, evidence-backed Chinese with exact PR and verification status.

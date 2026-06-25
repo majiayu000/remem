@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: file-source-anchor-api-split-001
+category: file_source_anchors
+reference_time_epoch: 1760000000
+
+question:
+Which file anchors support the API handler split decision?
+
+retrieved_evidence:
+- memory_id=1 event_id=file-anchor-001:e1 status=active title=API handler split file anchors
+  The API handler split decision is anchored by src/api/handlers.rs and src/api/server.rs.

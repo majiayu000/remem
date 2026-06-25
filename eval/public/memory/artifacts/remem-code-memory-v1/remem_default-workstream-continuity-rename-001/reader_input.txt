@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: workstream-continuity-rename-001
+category: workstream_continuity
+reference_time_epoch: 1760000000
+
+question:
+Which workstream identity should continue after the queue runner rename?
+
+retrieved_evidence:
+- memory_id=1 event_id=workstream-001:e1 status=active title=Capture-ledger drain queue-runner rename
+  The queue-runner rename is the same capture-ledger drain workstream; continue the existing workstream identity after the rename.

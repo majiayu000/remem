@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "Durable memory capture must not depend on agents voluntarily calling save_memory; automatic hook capture is the primary path and manual save_memory is supplemental.",
+      "event_id": "architecture-001:e1",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Automatic capture primary architecture"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "architecture-constraint-capture-001"
+}

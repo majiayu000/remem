@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v1",
+  "layer": "memory_system_capability",
+  "suite": "remem-code-memory",
+  "condition": "remem_default",
+  "task_id": "prior-bug-root-cause-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:09646b29a6cfdae5b323cafcc61b2bcd33819f86ed9ffe96317221e3d88b0f88",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "remem_commit": "846e4d31ce9b5966e498b9104fc04ac5a045cf44",
+    "remem_data_dir": "temp://remem-memory-bench/remem-code-memory-v1/remem_default/prior-bug-root-cause-001",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "remem-code-memory-v1",
+    "repo_base_commit": null
+  },
+  "answer": {
+    "abstained": false,
+    "no_answer_correct": true,
+    "score": 1.0,
+    "score_method": "deterministic_fixture",
+    "temporal_as_of_correct": true,
+    "text": "The root cause was a summarize cooldown race that allowed duplicate startup summaries."
+  },
+  "retrieval": {
+    "retrieved_memory_ids": [
+      1
+    ],
+    "retrieved_supporting_evidence_ids": [
+      "bug-001:e1"
+    ],
+    "gold_supporting_event_ids": [
+      "bug-001:e1"
+    ],
+    "missing_supporting_evidence_ids": []
+  },
+  "evidence": {
+    "cited_memory_ids": [
+      1
+    ],
+    "cited_event_ids": [
+      "bug-001:e1"
+    ]
+  },
+  "metrics": {
+    "abstention_accuracy": 1.0,
+    "answer_score": 1.0,
+    "citation_precision": 1.0,
+    "citation_recall": 1.0,
+    "forbidden_evidence_count": 0,
+    "retrieved_memory_count": 1,
+    "staleness_accuracy": 1.0,
+    "support_coverage": 1.0
+  },
+  "diagnosis": {
+    "write_side_gap": false,
+    "retrieval_side_gap": false,
+    "reader_gap": false,
+    "policy_abstention": false,
+    "notes": []
+  },
+  "artifacts": {
+    "answer": "memory/artifacts/remem-code-memory-v1/remem_default-prior-bug-root-cause-001/answer.json",
+    "diagnosis": "memory/artifacts/remem-code-memory-v1/remem_default-prior-bug-root-cause-001/diagnosis.json",
+    "reader_input": "memory/artifacts/remem-code-memory-v1/remem_default-prior-bug-root-cause-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/remem-code-memory-v1/remem_default-prior-bug-root-cause-001/remem.db.snapshot.tar.zst",
+    "retrieved_evidence": "memory/artifacts/remem-code-memory-v1/remem_default-prior-bug-root-cause-001/retrieved_evidence.json",
+    "score": "memory/artifacts/remem-code-memory-v1/remem_default-prior-bug-root-cause-001/score.json"
+  }
+}

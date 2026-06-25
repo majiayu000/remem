@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "remem-code-memory-v1",
+  "retrieved": [
+    {
+      "content": "The queue-runner rename is the same capture-ledger drain workstream; continue the existing workstream identity after the rename.",
+      "event_id": "workstream-001:e1",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Capture-ledger drain queue-runner rename"
+    }
+  ],
+  "suite": "remem-code-memory",
+  "task_id": "workstream-continuity-rename-001"
+}

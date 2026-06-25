@@ -1,0 +1,5 @@
+{
+  "abstained": false,
+  "score": 1.0,
+  "text": "Follow the SQLCipher encrypted storage rule and reject the stale plaintext-memory claim."
+}

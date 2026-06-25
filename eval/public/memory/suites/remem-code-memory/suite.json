@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "suite": "remem-code-memory",
+  "version": "v1",
+  "fixture_revision": "remem-code-memory-v1",
+  "benchmark_id": "remem-code-memory",
+  "tasks": [
+    {
+      "id": "temporal-as-of-api-001",
+      "category": "temporal_as_of",
+      "reference_time_epoch": 1760000000,
+      "prompt": "As of the benchmark reference time, which Atlas sync API is current?",
+      "query": "current Atlas sync GraphQL v2 API",
+      "expected_answer": "Use the GraphQL v2 Atlas sync API.",
+      "gold_supporting_event_ids": ["temporal-001:e2"],
+      "forbidden_event_ids": ["temporal-001:e1"],
+      "evidence": [
+        {
+          "event_id": "temporal-001:e1",
+          "title": "Deprecated Atlas REST sync API",
+          "content": "The old Atlas sync REST v1 endpoint was retired before the reference time and must not be treated as current.",
+          "memory_type": "decision",
+          "status": "stale",
+          "topic_key": "atlas-sync-api",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1750000000
+        },
+        {
+          "event_id": "temporal-001:e2",
+          "title": "Current Atlas GraphQL v2 sync API",
+          "content": "Use GraphQL v2 for current Atlas sync API calls after the reference-time migration.",
+          "memory_type": "decision",
+          "topic_key": "atlas-sync-api",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759000000
+        }
+      ]
+    },
+    {
+      "id": "stale-decision-avoidance-001",
+      "category": "stale_memory_avoidance",
+      "reference_time_epoch": 1760000000,
+      "prompt": "Should the old webpack-only deploy constraint still be followed?",
+      "query": "Vite deployment superseded webpack deploy constraint",
+      "expected_answer": "No. The Vite deployment decision superseded the old webpack-only constraint.",
+      "gold_supporting_event_ids": ["stale-001:e2"],
+      "forbidden_event_ids": ["stale-001:e1"],
+      "evidence": [
+        {
+          "event_id": "stale-001:e1",
+          "title": "Old webpack-only deployment constraint",
+          "content": "The app used to require webpack-only deploy steps, but this deployment memory is stale.",
+          "memory_type": "decision",
+          "status": "stale",
+          "topic_key": "frontend-deploy-tooling",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1751000000
+        },
+        {
+          "event_id": "stale-001:e2",
+          "title": "Vite deployment supersedes webpack",
+          "content": "The current deployment path uses Vite; do not follow the stale webpack-only deployment constraint.",
+          "memory_type": "decision",
+          "topic_key": "frontend-deploy-tooling",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759500000
+        }
+      ]
+    },
+    {
+      "id": "conflict-detection-storage-001",
+      "category": "conflict_detection",
+      "reference_time_epoch": 1760000000,
+      "prompt": "When storage memories conflict, which storage rule should be followed?",
+      "query": "storage conflict SQLCipher plaintext rule",
+      "expected_answer": "Follow the SQLCipher encrypted storage rule and reject the stale plaintext-memory claim.",
+      "gold_supporting_event_ids": ["conflict-001:e2"],
+      "forbidden_event_ids": ["conflict-001:e1"],
+      "evidence": [
+        {
+          "event_id": "conflict-001:e1",
+          "title": "Plaintext memory store claim",
+          "content": "A stale storage note claimed private memory could be stored in plaintext.",
+          "memory_type": "architecture",
+          "status": "stale",
+          "topic_key": "private-memory-storage",
+          "source_anchor": "verify-before-trust",
+          "created_at_epoch": 1750500000
+        },
+        {
+          "event_id": "conflict-001:e2",
+          "title": "SQLCipher private memory storage",
+          "content": "Private memory storage must use SQLCipher encryption at rest; this resolves the plaintext conflict.",
+          "memory_type": "architecture",
+          "topic_key": "private-memory-storage",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759600000
+        }
+      ]
+    },
+    {
+      "id": "workstream-continuity-rename-001",
+      "category": "workstream_continuity",
+      "reference_time_epoch": 1760000000,
+      "prompt": "Which workstream identity should continue after the queue runner rename?",
+      "query": "queue runner rename workstream continuity capture ledger drain",
+      "expected_answer": "Continue the capture-ledger drain workstream under the queue-runner rename.",
+      "gold_supporting_event_ids": ["workstream-001:e1"],
+      "evidence": [
+        {
+          "event_id": "workstream-001:e1",
+          "title": "Capture-ledger drain queue-runner rename",
+          "content": "The queue-runner rename is the same capture-ledger drain workstream; continue the existing workstream identity after the rename.",
+          "memory_type": "procedure",
+          "topic_key": "capture-ledger-drain-workstream",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759600100
+        }
+      ]
+    },
+    {
+      "id": "prior-bug-root-cause-001",
+      "category": "prior_bug_root_cause",
+      "reference_time_epoch": 1760000000,
+      "prompt": "What was the root cause of the duplicate startup summary bug?",
+      "query": "duplicate startup summary root cause summarize cooldown race",
+      "expected_answer": "The root cause was a summarize cooldown race that allowed duplicate startup summaries.",
+      "gold_supporting_event_ids": ["bug-001:e1"],
+      "evidence": [
+        {
+          "event_id": "bug-001:e1",
+          "title": "Duplicate startup summary root cause",
+          "content": "The duplicate startup summary bug was caused by a summarize cooldown race; the fix serialized the cooldown claim.",
+          "memory_type": "bugfix",
+          "topic_key": "startup-summary-duplicate-root-cause",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759600200,
+          "files": ["src/summarize.rs"]
+        }
+      ]
+    },
+    {
+      "id": "architecture-constraint-capture-001",
+      "category": "architecture_constraints",
+      "reference_time_epoch": 1760000000,
+      "prompt": "Can durable memory capture depend on agents voluntarily calling save_memory?",
+      "query": "automatic capture primary manual save_memory supplemental",
+      "expected_answer": "No. Automatic hook capture is primary; manual save_memory is only supplemental.",
+      "gold_supporting_event_ids": ["architecture-001:e1"],
+      "evidence": [
+        {
+          "event_id": "architecture-001:e1",
+          "title": "Automatic capture primary architecture",
+          "content": "Durable memory capture must not depend on agents voluntarily calling save_memory; automatic hook capture is the primary path and manual save_memory is supplemental.",
+          "memory_type": "architecture",
+          "topic_key": "automatic-capture-primary",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759600300
+        }
+      ]
+    },
+    {
+      "id": "file-source-anchor-api-split-001",
+      "category": "file_source_anchors",
+      "reference_time_epoch": 1760000000,
+      "prompt": "Which file anchors support the API handler split decision?",
+      "query": "API handler split file anchors handlers routes server",
+      "expected_answer": "The split is anchored in src/api/handlers.rs and src/api/server.rs.",
+      "gold_supporting_event_ids": ["file-anchor-001:e1"],
+      "evidence": [
+        {
+          "event_id": "file-anchor-001:e1",
+          "title": "API handler split file anchors",
+          "content": "The API handler split decision is anchored by src/api/handlers.rs and src/api/server.rs.",
+          "memory_type": "decision",
+          "topic_key": "api-handler-split",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759600400,
+          "files": ["src/api/handlers.rs", "src/api/server.rs"]
+        }
+      ]
+    },
+    {
+      "id": "user-context-relevance-001",
+      "category": "user_context_relevance",
+      "reference_time_epoch": 1760000000,
+      "prompt": "Which user-context preference is relevant to a PR handoff summary?",
+      "query": "user preference concise evidence backed PR handoff Chinese",
+      "expected_answer": "Use concise, evidence-backed Chinese for the PR handoff.",
+      "gold_supporting_event_ids": ["user-context-001:e1"],
+      "forbidden_event_ids": ["user-context-001:e2"],
+      "evidence": [
+        {
+          "event_id": "user-context-001:e1",
+          "title": "Concise evidence-backed Chinese handoffs",
+          "content": "For PR handoffs, the user prefers concise, evidence-backed Chinese with exact PR and verification status.",
+          "memory_type": "preference",
+          "topic_key": "handoff-style-zh-cn",
+          "source_anchor": "tracked",
+          "created_at_epoch": 1759600500
+        },
+        {
+          "event_id": "user-context-001:e2",
+          "title": "Marketing launch copy style",
+          "content": "Marketing launch copy can use splashy English phrases; this is not relevant to engineering PR handoff summaries.",
+          "memory_type": "preference",
+          "status": "stale",
+          "topic_key": "marketing-copy-style",
+          "source_anchor": "untracked",
+          "created_at_epoch": 1750000000
+        }
+      ]
+    }
+  ]
+}
