@@ -33,6 +33,8 @@ pub(super) fn finalize(
         host: normalized.host,
         empty: included.is_empty(),
         context,
+        usage_policy: (!included.is_empty())
+            .then_some(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY),
         included,
         dropped: state.dropped,
         diagnostics: UserRecallDiagnostics {

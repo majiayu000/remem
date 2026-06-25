@@ -163,6 +163,8 @@ fn render_prompt_submit_context(
     let mut output = String::from("# remem prompt context\n\n## Relevant Memories\n");
     output.push_str(crate::memory::usage::citation_contract_line());
     output.push('\n');
+    output.push_str(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY);
+    output.push('\n');
     let now = chrono::Utc::now().timestamp();
     for memory in memories {
         let header = format!(
@@ -354,6 +356,12 @@ mod tests {
 
         assert!(output.contains("SQLCipher storage decision"));
         assert!(output.contains("src=memory:#"));
+        assert_eq!(
+            output
+                .matches(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY)
+                .count(),
+            1
+        );
         Ok(())
     }
 

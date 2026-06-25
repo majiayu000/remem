@@ -132,6 +132,7 @@ pub(super) struct CapabilitiesFeatures {
     pub candidate_review: bool,
     pub graph: bool,
     pub user_recall: bool,
+    pub user_recall_usage_policy: bool,
 }
 
 #[derive(Serialize)]
