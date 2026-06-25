@@ -22,6 +22,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             candidate_review: true,
             graph: true,
             user_recall: true,
+            user_recall_usage_policy: true,
         },
         endpoints: BTreeMap::from([
             ("health", "/api/v1/health"),
