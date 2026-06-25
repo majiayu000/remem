@@ -287,23 +287,36 @@ fn validate_memory_run_artifact(
             "memory run diagnosis notes must not be blank",
         );
     }
+    let abstained = run
+        .answer
+        .get("abstained")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     if run.retrieval.gold_supporting_event_ids.is_empty() {
         state.fail(
             label.clone(),
             "memory run is missing gold supporting evidence IDs",
         );
     }
-    if run.condition != "no_memory" && run.retrieval.retrieved_memory_ids.is_empty() {
+    if !abstained && run.condition != "no_memory" && run.retrieval.retrieved_memory_ids.is_empty() {
         state.fail(
             label.clone(),
             "memory run condition requires retrieved memory IDs",
         );
     }
-    if run.condition != "no_memory" && run.evidence.cited_memory_ids.is_empty() {
-        state.fail(label.clone(), "memory run is missing cited memory IDs");
+    if abstained && !run.diagnosis.policy_abstention {
+        state.fail(
+            label.clone(),
+            "abstained memory run must mark diagnosis.policy_abstention",
+        );
     }
-    if run.evidence.cited_event_ids.is_empty() {
-        state.fail(label.clone(), "memory run is missing cited event IDs");
+    if !abstained {
+        if run.condition != "no_memory" && run.evidence.cited_memory_ids.is_empty() {
+            state.fail(label.clone(), "memory run is missing cited memory IDs");
+        }
+        if run.evidence.cited_event_ids.is_empty() {
+            state.fail(label.clone(), "memory run is missing cited event IDs");
+        }
     }
     for id in &run.retrieval.retrieved_supporting_evidence_ids {
         require_non_blank(id, &label, "retrieved_supporting_evidence_ids", state);

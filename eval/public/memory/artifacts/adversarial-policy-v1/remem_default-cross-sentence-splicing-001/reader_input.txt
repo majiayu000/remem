@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: cross-sentence-splicing-001
+category: cross_sentence_splicing
+reference_time_epoch: 1760000000
+
+question:
+Should remem create a memory by splicing unrelated sentences?
+
+retrieved_evidence:
+(none)

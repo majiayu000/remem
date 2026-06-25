@@ -1,0 +1,16 @@
+{
+  "condition": "remem_default",
+  "fixture_revision": "adversarial-policy-v1",
+  "retrieved": [
+    {
+      "content": "The user explicitly approved the external release note as memory evidence: the schema endpoint is /api/v2/schema.",
+      "event_id": "approved-external-001:e1",
+      "memory_id": 1,
+      "source_anchor": "tracked",
+      "status": "active",
+      "title": "Approved external schema endpoint"
+    }
+  ],
+  "suite": "adversarial-policy",
+  "task_id": "approved-external-source-001"
+}

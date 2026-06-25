@@ -13,10 +13,10 @@ fn committed_public_fixture_passes() -> Result<()> {
     })?;
 
     assert!(report.passed, "{:#?}", report.failures);
-    assert_eq!(report.manifests_checked, 3);
-    assert_eq!(report.reports_checked, 3);
-    assert_eq!(report.run_artifacts_checked, 10);
-    assert_eq!(report.artifact_files_checked, 50);
+    assert_eq!(report.manifests_checked, 4);
+    assert_eq!(report.reports_checked, 4);
+    assert_eq!(report.run_artifacts_checked, 25);
+    assert_eq!(report.artifact_files_checked, 125);
     Ok(())
 }
 

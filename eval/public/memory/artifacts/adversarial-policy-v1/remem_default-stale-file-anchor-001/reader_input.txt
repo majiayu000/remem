@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: stale-file-anchor-001
+category: stale_file_anchors
+reference_time_epoch: 1760000000
+
+question:
+Should remem trust a memory whose source file anchor is stale?
+
+retrieved_evidence:
+(none)

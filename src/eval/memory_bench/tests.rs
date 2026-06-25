@@ -5,7 +5,9 @@ use anyhow::Result;
 
 use super::fixture::load_suite;
 use super::runner::{run_memory_bench, MemoryBenchOptions};
-use super::types::{MemoryBenchCondition, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE};
+use super::types::{
+    MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
+};
 
 #[test]
 fn remem_code_memory_fixture_covers_required_categories() -> Result<()> {
@@ -53,6 +55,55 @@ fn memory_bench_conditions_are_supported() {
 }
 
 #[test]
+fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
+    let fixture = load_suite(ADVERSARIAL_POLICY_SUITE)?;
+    let categories = fixture
+        .tasks
+        .iter()
+        .map(|task| task.category.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for required in [
+        "secrets_api_keys",
+        "credentials",
+        "payments_accounts",
+        "unframed_third_party_personal_data",
+        "jokes_roleplay",
+        "negation",
+        "unsupported_assistant_claims",
+        "unapproved_external_source_claims",
+        "cross_sentence_splicing",
+        "same_name_repos",
+        "multi_task_sessions",
+        "branch_divergence",
+        "stale_file_anchors",
+        "conflicting_memories",
+    ] {
+        assert!(
+            categories.contains(required),
+            "missing required adversarial policy category {required}"
+        );
+    }
+    assert!(fixture.tasks.iter().any(|task| {
+        task.category == "approved_external_source_claims"
+            && task
+                .policy
+                .as_ref()
+                .is_some_and(|policy| policy.explicit_approval)
+    }));
+    assert!(fixture.tasks.iter().all(|task| {
+        task.policy.as_ref().is_some_and(|policy| {
+            policy.explicit_approval
+                || (policy.non_retention_required
+                    && policy.expected_active_claims == 0
+                    && policy.expected_candidates == 0
+                    && policy.expected_summary_inputs == 0
+                    && policy.expected_policy_abstention)
+        })
+    }));
+    Ok(())
+}
+
+#[test]
 fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()> {
     let root = unique_temp_dir("remem-memory-bench-public")?;
     copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
@@ -78,6 +129,37 @@ fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()>
     )?;
     assert!(verify.passed, "{:#?}", verify.failures);
     assert!(verify.run_artifacts_checked >= 10);
+    Ok(())
+}
+
+#[test]
+fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
+    let root = unique_temp_dir("remem-adversarial-policy-public")?;
+    copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
+    let report_path = root.join("memory/reports/adversarial-policy-v1.json");
+    let report = run_memory_bench(MemoryBenchOptions {
+        suite: ADVERSARIAL_POLICY_SUITE.to_string(),
+        condition: Some("remem_default".to_string()),
+        json_out: report_path.to_string_lossy().to_string(),
+        root: root.to_string_lossy().to_string(),
+        artifact_prefix: Some("memory/artifacts/adversarial-policy-v1".to_string()),
+    })?;
+
+    assert_eq!(report.conditions, vec!["remem_default"]);
+    assert_eq!(report.run_artifacts.len(), 15);
+    let policy = &report.aggregate_metrics["policy"];
+    assert_eq!(policy["non_retention_leak_rate"], 0.0);
+    assert_eq!(policy["false_block_rate"], 0.0);
+    assert_eq!(policy["suppression_obeyed_rate"], 1.0);
+    assert_eq!(policy["sensitive_restricted_default_exclusion_rate"], 1.0);
+    assert_eq!(policy["policy_abstention_accuracy"], 1.0);
+    assert_eq!(policy["policy_failure_rate"], 0.0);
+
+    let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
+        crate::eval::bench_artifact::BenchVerifyOptions { root },
+    )?;
+    assert!(verify.passed, "{:#?}", verify.failures);
+    assert!(verify.run_artifacts_checked >= 25);
     Ok(())
 }
 
