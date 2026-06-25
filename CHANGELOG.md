@@ -31,6 +31,8 @@
   fixed failure taxonomy.
 - Staged source version `0.5.139` for the directional public benchmark baseline
   report generator and checked-in baseline report.
+- Staged source version `0.5.140` for preference semantic-dedup follow-ups:
+  extraction source reduction, render-time cleanup, and merge cleanup clustering.
 
 ## [0.5.109] - 2026-06-20
 

@@ -2,9 +2,10 @@ use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
 
-use super::audit::{load_memory_audit_rows, preference_clusters, DuplicateCluster};
+use super::audit::{load_memory_audit_rows, DuplicateCluster};
 use super::mutate::ObjectMutation;
 use super::plan::{apply_memory_cleanup_plan, build_preference_cleanup_plan};
+use super::preference_cluster::preference_clusters;
 
 #[derive(Debug, Clone)]
 pub struct MergePreferencesRequest<'a> {

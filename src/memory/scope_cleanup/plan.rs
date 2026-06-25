@@ -7,8 +7,9 @@ use std::collections::HashSet;
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
-use super::audit::{load_memory_audit_rows, preference_clusters};
+use super::audit::load_memory_audit_rows;
 use super::mutate::{insert_scope_cleanup_event, load_target, ObjectMutation};
+use super::preference_cluster::preference_clusters;
 use super::ObjectRef;
 
 pub const CLEANUP_PLANNER_VERSION: &str = "memory-cleanup-v1";

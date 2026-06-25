@@ -6,6 +6,7 @@ use crate::db::{self, record_captured_event, CaptureEventInput, ExtractionTaskKi
 use super::{process_with_generator, MemoryCandidateResult};
 
 mod candidate_edges;
+mod existing_preferences;
 mod ttl;
 
 pub(super) fn setup_conn() -> Connection {

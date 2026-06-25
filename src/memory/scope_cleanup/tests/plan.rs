@@ -255,6 +255,40 @@ fn cleanup_plan_keeps_cross_owner_preferences_separate() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn cleanup_plan_clusters_semantic_preference_variants() -> Result<()> {
+    let conn = setup_conn();
+    insert_pref(
+        &conn,
+        2300,
+        STASH,
+        "Preference: minimal vertical slice",
+        r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery.
+- Favor extending existing pathways rather than creating parallel UI/event infrastructure."#,
+        Some("vertical-a"),
+        "repo",
+        STASH,
+    )?;
+    insert_pref(
+        &conn,
+        2301,
+        STASH,
+        "Preference: deterministic vertical slice",
+        "Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep live Atlas runs opt-in, and validate via concrete artifacts while keeping credentials server-side.",
+        Some("vertical-b"),
+        "repo",
+        STASH,
+    )?;
+
+    let plan = build_preference_cleanup_plan(&conn, STASH)?;
+
+    assert_eq!(plan.groups.len(), 1);
+    assert_eq!(plan.groups[0].current_id, 2301);
+    assert_eq!(plan.groups[0].stale_ids, vec![2300]);
+    assert!(plan.groups[0].reason.contains("semantically similar"));
+    Ok(())
+}
+
 fn snapshot_for_test(
     id: i64,
     project: &str,
