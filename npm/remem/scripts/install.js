@@ -94,6 +94,49 @@ function sha256(file) {
   return hash.digest("hex");
 }
 
+function shouldCodesign(platform = process.platform, arch = process.arch) {
+  return platform === "darwin" && arch === "arm64";
+}
+
+function codesignBinary(binary, options = {}) {
+  const platform = options.platform || process.platform;
+  const arch = options.arch || process.arch;
+  if (!shouldCodesign(platform, arch)) {
+    return false;
+  }
+  const spawn = options.spawnSync || spawnSync;
+  const result = spawn("codesign", ["--force", "--sign", "-", binary], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5000,
+  });
+  if (result.error) {
+    throw new Error(`codesign failed for ${binary}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const reason = (result.stderr || result.stdout || `exit ${result.status}`).trim();
+    throw new Error(`codesign failed for ${binary}: ${reason}`);
+  }
+  return true;
+}
+
+function smokeBinary(binary, options = {}) {
+  const spawn = options.spawnSync || spawnSync;
+  const result = spawn(binary, ["--version"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5000,
+  });
+  if (result.error) {
+    throw new Error(`installed remem binary is not executable: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const reason = (result.stderr || result.stdout || `exit ${result.status}`).trim();
+    throw new Error(`installed remem binary failed --version: ${reason}`);
+  }
+  return (result.stdout || result.stderr || "").trim();
+}
+
 function expectedAssetFile(key) {
   if (!/^(darwin|linux)-(arm64|x64)$/.test(key)) {
     throw new Error(`Unsupported release asset platform key: ${key}`);
@@ -167,6 +210,8 @@ async function main() {
     if (tar.status !== 0) throw new Error(`tar exited with status ${tar.status}`);
 
     fs.chmodSync(binary, 0o755);
+    codesignBinary(binary);
+    smokeBinary(binary);
     console.log(`Installed remem binary to ${binary}`);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -183,5 +228,8 @@ if (require.main === module) {
 module.exports = {
   BASE_URL,
   VERSION,
+  codesignBinary,
   resolveAsset,
+  shouldCodesign,
+  smokeBinary,
 };
