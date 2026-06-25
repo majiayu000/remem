@@ -1,0 +1,863 @@
+{
+  "schema_version": 1,
+  "report_id": "public-baseline-directional-v1",
+  "report_kind": "baseline_directional_public_benchmark",
+  "root": "eval/public",
+  "created_at_epoch": 1760000000,
+  "claim_level": "directional_only_no_public_claim",
+  "artifact_verifier": {
+    "schema_version": 1,
+    "root": "eval/public",
+    "passed": true,
+    "manifests_checked": 4,
+    "reports_checked": 4,
+    "run_artifacts_checked": 25,
+    "artifact_files_checked": 125,
+    "failures": []
+  },
+  "summary": {
+    "memory_system": {
+      "status": "directional_memory_system_evidence",
+      "report_count": 3,
+      "run_artifact_count": 24,
+      "benchmark_ids": [
+        "adversarial-policy",
+        "remem-code-memory",
+        "remem-code-memory-smoke"
+      ],
+      "conditions": [
+        "remem_default"
+      ],
+      "claim_levels": [
+        "directional_memory_suite_no_public_claim",
+        "smoke_only_no_public_claim"
+      ],
+      "notes": [
+        "Memory-system capability results are separate from coding-agent outcomes.",
+        "Committed memory suites are directional until public claim gates pass."
+      ]
+    },
+    "coding_agent": {
+      "status": "smoke_coding_outcome_evidence",
+      "report_count": 1,
+      "run_artifact_count": 1,
+      "benchmark_ids": [
+        "issue385-smoke"
+      ],
+      "conditions": [
+        "remem"
+      ],
+      "claim_levels": [
+        "smoke_only_no_public_claim"
+      ],
+      "notes": [
+        "Current committed coding artifacts are smoke-only.",
+        "The #385 claim gate requires no_memory, remem, and curated_file with at least three runs per condition."
+      ]
+    },
+    "manifest_count": 4,
+    "report_count": 4,
+    "run_artifact_count": 25
+  },
+  "reports": [
+    {
+      "path": "coding/reports/coding-report-v1.json",
+      "benchmark_id": "issue385-smoke",
+      "benchmark_version": "v1",
+      "layer": "coding_agent_outcome",
+      "conditions": [
+        "remem"
+      ],
+      "run_artifact_count": 1,
+      "claim_level": "smoke_only_no_public_claim",
+      "aggregate_metrics": {
+        "resolved_rate": 1.0,
+        "runs": 1,
+        "stale_memory_failure_rate": 0.0
+      }
+    },
+    {
+      "path": "memory/reports/adversarial-policy-v1.json",
+      "benchmark_id": "adversarial-policy",
+      "benchmark_version": "v1",
+      "layer": "memory_system_capability",
+      "conditions": [
+        "remem_default"
+      ],
+      "run_artifact_count": 15,
+      "claim_level": "directional_memory_suite_no_public_claim",
+      "aggregate_metrics": {
+        "by_category": {
+          "approved_external_source_claims": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "branch_divergence": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "conflicting_memories": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "credentials": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "cross_sentence_splicing": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "jokes_roleplay": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "multi_task_sessions": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "negation": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "payments_accounts": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "same_name_repos": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "secrets_api_keys": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "stale_file_anchors": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "unapproved_external_source_claims": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "unframed_third_party_personal_data": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          },
+          "unsupported_assistant_claims": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.0,
+            "tasks": 1
+          }
+        },
+        "conditions": {
+          "remem_default": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 0.06666666666666667,
+            "citation_recall": 0.06666666666666667,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 0.06666666666666667,
+            "tasks": 15
+          }
+        },
+        "fixture_revision": "adversarial-policy-v1",
+        "overall": {
+          "abstention_accuracy": 1.0,
+          "answer_score": 1.0,
+          "citation_precision": 0.06666666666666667,
+          "citation_recall": 0.06666666666666667,
+          "forbidden_evidence_rate": 0.0,
+          "staleness_accuracy": 1.0,
+          "support_coverage": 0.06666666666666667,
+          "tasks": 15
+        },
+        "policy": {
+          "false_block_cases": 1,
+          "false_block_rate": 0.0,
+          "non_retention_cases": 14,
+          "non_retention_leak_rate": 0.0,
+          "policy_abstention_accuracy": 1.0,
+          "policy_abstention_cases": 15,
+          "policy_failure_rate": 0.0,
+          "sensitive_restricted_cases": 4,
+          "sensitive_restricted_default_exclusion_rate": 1.0,
+          "suppression_cases": 14,
+          "suppression_obeyed_rate": 1.0
+        },
+        "run_count": 15,
+        "suite": "adversarial-policy",
+        "suite_version": "v1"
+      }
+    },
+    {
+      "path": "memory/reports/memory-report-v1.json",
+      "benchmark_id": "remem-code-memory-smoke",
+      "benchmark_version": "v1",
+      "layer": "memory_system_capability",
+      "conditions": [
+        "remem_default"
+      ],
+      "run_artifact_count": 1,
+      "claim_level": "smoke_only_no_public_claim",
+      "aggregate_metrics": {
+        "citation_recall": 1.0,
+        "non_retention_leak_rate": 0.0,
+        "support_coverage": 1.0
+      }
+    },
+    {
+      "path": "memory/reports/remem-code-memory-v1.json",
+      "benchmark_id": "remem-code-memory",
+      "benchmark_version": "v1",
+      "layer": "memory_system_capability",
+      "conditions": [
+        "remem_default"
+      ],
+      "run_artifact_count": 8,
+      "claim_level": "directional_memory_suite_no_public_claim",
+      "aggregate_metrics": {
+        "by_category": {
+          "architecture_constraints": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "conflict_detection": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "file_source_anchors": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "prior_bug_root_cause": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "stale_memory_avoidance": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "temporal_as_of": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "user_context_relevance": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          },
+          "workstream_continuity": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 1
+          }
+        },
+        "conditions": {
+          "remem_default": {
+            "abstention_accuracy": 1.0,
+            "answer_score": 1.0,
+            "citation_precision": 1.0,
+            "citation_recall": 1.0,
+            "forbidden_evidence_rate": 0.0,
+            "staleness_accuracy": 1.0,
+            "support_coverage": 1.0,
+            "tasks": 8
+          }
+        },
+        "fixture_revision": "remem-code-memory-v1",
+        "overall": {
+          "abstention_accuracy": 1.0,
+          "answer_score": 1.0,
+          "citation_precision": 1.0,
+          "citation_recall": 1.0,
+          "forbidden_evidence_rate": 0.0,
+          "staleness_accuracy": 1.0,
+          "support_coverage": 1.0,
+          "tasks": 8
+        },
+        "run_count": 8,
+        "suite": "remem-code-memory",
+        "suite_version": "v1"
+      }
+    }
+  ],
+  "memory_task_outcomes": [
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "secrets-api-key-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "credentials-password-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "payments-account-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "third-party-personal-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "joke-roleplay-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "negation-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "assistant-authored-unsupported-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "unapproved-external-source-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "cross-sentence-splicing-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "same-name-repos-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "multi-task-session-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "branch-divergence-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "stale-file-anchor-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "conflicting-memories-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": true,
+      "reader_gap": false,
+      "policy_abstention": true
+    },
+    {
+      "report_path": "memory/reports/adversarial-policy-v1.json",
+      "suite": "adversarial-policy",
+      "condition": "remem_default",
+      "task_id": "approved-external-source-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/memory-report-v1.json",
+      "suite": "remem-code-memory-smoke",
+      "condition": "remem_default",
+      "task_id": "smoke-temporal-root-cause-001",
+      "run_index": 0,
+      "answer_score": null,
+      "support_coverage": null,
+      "citation_recall": null,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "temporal-as-of-api-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "stale-decision-avoidance-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "conflict-detection-storage-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "workstream-continuity-rename-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "prior-bug-root-cause-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "architecture-constraint-capture-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "file-source-anchor-api-split-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    },
+    {
+      "report_path": "memory/reports/remem-code-memory-v1.json",
+      "suite": "remem-code-memory",
+      "condition": "remem_default",
+      "task_id": "user-context-relevance-001",
+      "run_index": 0,
+      "answer_score": 1.0,
+      "support_coverage": 1.0,
+      "citation_recall": 1.0,
+      "write_side_gap": false,
+      "retrieval_side_gap": false,
+      "reader_gap": false,
+      "policy_abstention": false
+    }
+  ],
+  "coding_task_outcomes": [
+    {
+      "report_path": "coding/reports/coding-report-v1.json",
+      "condition": "remem",
+      "task_id": "smoke-fix-startup-race-001",
+      "run_index": 0,
+      "resolved": true,
+      "failure_reason": null,
+      "tokens_total": 125,
+      "turns": 2,
+      "wall_time_ms": 1000,
+      "memory_helped": true,
+      "memory_hurt": false
+    }
+  ],
+  "coding_condition_variance": [
+    {
+      "condition": "remem",
+      "runs": 1,
+      "resolved_rate": 1.0,
+      "tokens_total_mean": 125.0,
+      "tokens_total_sample_variance": null,
+      "wall_time_ms_mean": 1000.0,
+      "wall_time_ms_sample_variance": null,
+      "variance_status": "insufficient_runs_for_variance"
+    }
+  ],
+  "failure_decomposition": {
+    "coding_failure_counts": {},
+    "coding_memory_failure_counts": {},
+    "memory_gap_counts": {
+      "policy_abstention": 14,
+      "retrieval_side_gap": 14
+    }
+  },
+  "reproducibility": {
+    "remem_commits": [
+      "846e4d31ce9b5966e498b9104fc04ac5a045cf44",
+      "8a6b03234c0d94605b08ef19f5ddb2bf9047a0c2",
+      "a683e46cfd6e1b85f14b2c78ecc1a175b4e5f163"
+    ],
+    "fixture_revisions": [
+      "adversarial-policy-v1",
+      "issue385-smoke-v1",
+      "remem-code-memory-smoke-v1",
+      "remem-code-memory-v1"
+    ],
+    "docker_image_digests": [
+      "local-fixture-no-docker",
+      "sha256:smoke"
+    ],
+    "repo_base_commits": [
+      "0123456789abcdef0123456789abcdef01234567"
+    ],
+    "prompt_hashes": [
+      "sha256:00d7f929f3676dc638546c66202832d0d31bb124863c86947d215353b8d41571",
+      "sha256:09646b29a6cfdae5b323cafcc61b2bcd33819f86ed9ffe96317221e3d88b0f88",
+      "sha256:14cae784cc7ed29bacef28168979a010046d517cd8f41ce588df1e305b5ade82",
+      "sha256:1cf9f943f8ac5ed617a338774438b00189cbd057c708abb033acb4df77a22f56",
+      "sha256:3a81a8f35fe4a5f8434fd22ae3e3a800ed915b2c209876389de0743357dd9949",
+      "sha256:3c45628060a55ee864b87f8eb7b163852c4153fd73a1d1d451967fb6781a8e3f",
+      "sha256:4c30c640e6d58549ebff4ba5ce2b7e9b784e51fdf75fbdd96e61820aba3a2772",
+      "sha256:51df2a69b571183e0c4a1ebe9dd8e0de26dd27e72ac31da64e6960aee8b611e6",
+      "sha256:5fed206d1fcdb8057d0f3f1535467c93efa21f3bd302d09bc3afd6f23d986912",
+      "sha256:81bab494ec2c2e87466ed83ee985e5dd003bdf1532b439767b454ff05172c15d",
+      "sha256:92b701e6501f389f65487c107f8417665e200254716c9bf5cfab9091e5b8bfc8",
+      "sha256:a166d89e6bdb0b22ab6971f66987ca8bb006d7239a972525d2e259e89063fdb8",
+      "sha256:aad744e9dd6db95c9e82834122d105a5f51925bc10bd7796977687a9bdf0d2d5",
+      "sha256:aeb62ea94d107a5ce9688abeb3c66e14c85a0c9d879ee7be812c8d65cfa000f1",
+      "sha256:b82bab70d2b81e1dde369b8a3d4547eea8dc1a3da5b2281ecad2690b7a021ac6",
+      "sha256:bd6cf67a345d7d2aa581fa6cbfbe20dd6fb63131e15685e7a8e225f1181e35d5",
+      "sha256:c158bc96549d329231982e914f0e1e36a74a66799b732bea24684cfba745d605",
+      "sha256:c95e90dfc21f48899c1021adcc8336ebe7405945fe92a0a5abfd35c0cc9f24c9",
+      "sha256:ceced4df4ed2bef7894878fad7f577f0517b30634d0f1bbce064883d21053b91",
+      "sha256:d05060faf53bc785faa31dff4f854d3bd3ccdbc902a85dd94c8155973b8d3184",
+      "sha256:d14a840a8fd6e511f8a90096a63843da204d34720350fb2b507abe1ded43733f",
+      "sha256:ecb045e2857e6a3c33acd368953d2d8974b3033f7b90c98cc205fa0bb90682e7",
+      "sha256:ffa1eb561981761bc33ce5c8e3d9a37214a68d24bc74990b500fc44f836c710f",
+      "sha256:smoke-reader"
+    ],
+    "models": [
+      "codex-cli/fixture-agent",
+      "fixture/deterministic-memory-reader",
+      "fixture/deterministic-reader"
+    ]
+  },
+  "claim_gate": {
+    "artifact_verifier_passed": true,
+    "coding_outcome_stop_loss_status": "not_evaluated_insufficient_coding_matrix",
+    "public_sota_status": "not_evaluated_no_public_sota_claim",
+    "notes": [
+      "This baseline is directional only and must not be used for coding-task superiority claims.",
+      "README and release wording must not claim SOTA or coding outcome improvement from this report.",
+      "Coding artifacts do not yet include no_memory, remem, and curated_file conditions.",
+      "Coding artifacts do not yet have at least three runs per condition."
+    ]
+  },
+  "reproduction_commands": [
+    "cargo run -- bench verify --root eval/public --json-out /tmp/remem-public-bench-verify.json",
+    "cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md",
+    "cargo run -- bench coding --suite issue385-v1 --dry-run --json-out /tmp/remem-issue385-v1-dry-run.json",
+    "cargo run -- bench memory --suite remem-code-memory --condition remem_default --root eval/public --artifact-prefix memory/artifacts/remem-code-memory-v1 --json-out eval/public/memory/reports/remem-code-memory-v1.json",
+    "cargo run -- bench memory --suite adversarial-policy --condition remem_default --root eval/public --artifact-prefix memory/artifacts/adversarial-policy-v1 --json-out eval/public/memory/reports/adversarial-policy-v1.json"
+  ]
+}

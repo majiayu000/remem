@@ -21,6 +21,40 @@ fn committed_public_fixture_passes() -> Result<()> {
 }
 
 #[test]
+fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
+    let report = super::generate_public_baseline_report(Path::new("eval/public"))?;
+
+    assert!(report.artifact_verifier.passed);
+    assert_eq!(report.summary.manifest_count, 4);
+    assert_eq!(report.summary.report_count, 4);
+    assert_eq!(report.summary.run_artifact_count, 25);
+    assert_eq!(report.summary.memory_system.run_artifact_count, 24);
+    assert_eq!(report.summary.coding_agent.run_artifact_count, 1);
+    assert_eq!(
+        report.claim_gate.coding_outcome_stop_loss_status,
+        "not_evaluated_insufficient_coding_matrix"
+    );
+    assert!(report
+        .coding_condition_variance
+        .iter()
+        .any(|entry| entry.variance_status == "insufficient_runs_for_variance"));
+    Ok(())
+}
+
+#[test]
+fn public_baseline_markdown_is_directional_and_separates_layers() -> Result<()> {
+    let report = super::generate_public_baseline_report(Path::new("eval/public"))?;
+    let markdown = super::render_public_baseline_markdown(&report);
+
+    assert!(markdown.contains("directional_only_no_public_claim"));
+    assert!(markdown.contains("## Memory-System Capability"));
+    assert!(markdown.contains("## Coding-Agent Outcome"));
+    assert!(markdown.contains("insufficient_runs_for_variance"));
+    assert!(markdown.contains("must not be used for coding-task superiority claims"));
+    Ok(())
+}
+
+#[test]
 fn verifier_rejects_missing_coding_test_log() -> Result<()> {
     let root = copy_public_fixture("missing-test-log")?;
     fs::remove_file(root.join("coding/artifacts/smoke-coding-001/test.log"))?;

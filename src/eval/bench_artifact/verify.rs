@@ -608,7 +608,7 @@ fn read_json<T: DeserializeOwned>(path: &Path, state: &mut VerifyState, label: &
     }
 }
 
-fn collect_manifest_paths(root: &Path) -> Result<Vec<PathBuf>> {
+pub(super) fn collect_manifest_paths(root: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     collect_manifest_paths_recursive(root, &mut paths)
         .with_context(|| format!("scan benchmark manifests under {}", root.display()))?;
