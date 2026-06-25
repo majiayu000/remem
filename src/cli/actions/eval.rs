@@ -18,6 +18,17 @@ pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
             &args.json_out,
         ),
         BenchAction::Coding(args) => run_bench_coding(args),
+        BenchAction::Report(args) => {
+            let report = crate::eval::bench_artifact::write_public_baseline_report(
+                crate::eval::bench_artifact::BenchReportOptions {
+                    root: Path::new(&args.root).to_path_buf(),
+                    json_out: Path::new(&args.json_out).to_path_buf(),
+                    markdown_out: Path::new(&args.markdown_out).to_path_buf(),
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
     }
 }
 

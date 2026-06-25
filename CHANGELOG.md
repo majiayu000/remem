@@ -29,6 +29,8 @@
   pack and `bench coding` dry-run alias.
 - Staged source version `0.5.138` for coding-benchmark memory attribution and
   fixed failure taxonomy.
+- Staged source version `0.5.139` for the directional public benchmark baseline
+  report generator and checked-in baseline report.
 
 ## [0.5.109] - 2026-06-20
 

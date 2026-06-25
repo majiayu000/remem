@@ -114,6 +114,33 @@ fn cli_parses_bench_coding_options() {
 }
 
 #[test]
+fn cli_parses_bench_report_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "bench",
+        "report",
+        "--root",
+        "eval/public",
+        "--json-out",
+        "eval/public/reports/baseline.json",
+        "--markdown-out",
+        "eval/public/reports/baseline.md",
+    ]);
+
+    match cli.command {
+        Commands::Bench { action } => match action {
+            super::eval_types::BenchAction::Report(args) => {
+                assert_eq!(args.root, "eval/public");
+                assert_eq!(args.json_out, "eval/public/reports/baseline.json");
+                assert_eq!(args.markdown_out, "eval/public/reports/baseline.md");
+            }
+            _ => panic!("expected bench report action"),
+        },
+        _ => panic!("expected bench report command"),
+    }
+}
+
+#[test]
 fn cli_parses_eval_extraction_options() {
     let cli = Cli::parse_from([
         "remem",

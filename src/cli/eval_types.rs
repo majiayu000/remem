@@ -8,6 +8,8 @@ pub(in crate::cli) enum BenchAction {
     Memory(BenchMemoryArgs),
     /// Run or dry-run the public coding-agent benchmark suite.
     Coding(BenchCodingArgs),
+    /// Generate the directional public benchmark baseline report from committed artifacts.
+    Report(BenchReportArgs),
 }
 
 #[derive(Args)]
@@ -86,6 +88,19 @@ pub(in crate::cli) struct BenchCodingArgs {
     /// Record that the caller intentionally ignored budget gates for this manual run.
     #[arg(long)]
     pub(in crate::cli) ignore_budget: bool,
+}
+
+#[derive(Args)]
+pub(in crate::cli) struct BenchReportArgs {
+    /// Public benchmark artifact root.
+    #[arg(long, default_value = "eval/public")]
+    pub(in crate::cli) root: String,
+    /// Baseline report JSON output path.
+    #[arg(long)]
+    pub(in crate::cli) json_out: String,
+    /// Baseline report Markdown output path.
+    #[arg(long)]
+    pub(in crate::cli) markdown_out: String,
 }
 
 #[derive(Args)]

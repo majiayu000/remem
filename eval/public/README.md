@@ -47,6 +47,18 @@ Run artifact verification:
 cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
 ```
 
+Generate the checked-in directional baseline report:
+
+```bash
+cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
+```
+
+The baseline report separates memory-system capability evidence from
+coding-agent outcome evidence. It remains `directional_only_no_public_claim`
+until the coding-agent artifacts include `no_memory`, `remem`, and
+`curated_file` with at least three runs per condition and the public claim gate
+passes.
+
 Regenerate the committed memory-suite report and artifacts:
 
 ```bash
