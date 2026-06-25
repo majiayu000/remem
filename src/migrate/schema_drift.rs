@@ -512,6 +512,44 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "user_context_candidates",
         "idx_user_context_candidates_dedupe",
     ),
+    SchemaInvariant::column(
+        53,
+        "workstream_identity_continuity",
+        "workstreams",
+        "identity_key",
+    ),
+    SchemaInvariant::column(
+        53,
+        "workstream_identity_continuity",
+        "workstreams",
+        "merged_into_workstream_id",
+    ),
+    SchemaInvariant::table(53, "workstream_identity_continuity", "workstream_aliases"),
+    SchemaInvariant::table(
+        53,
+        "workstream_identity_continuity",
+        "workstream_alias_sources",
+    ),
+    SchemaInvariant::index(
+        53,
+        "workstream_identity_continuity",
+        "idx_workstream_aliases_lookup",
+    ),
+    SchemaInvariant::index(
+        53,
+        "workstream_identity_continuity",
+        "idx_workstream_alias_sources_alias",
+    ),
+    SchemaInvariant::index(
+        53,
+        "workstream_identity_continuity",
+        "idx_workstreams_identity_key",
+    ),
+    SchemaInvariant::index(
+        53,
+        "workstream_identity_continuity",
+        "idx_workstreams_merged_into",
+    ),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {

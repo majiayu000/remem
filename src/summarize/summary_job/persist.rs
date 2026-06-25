@@ -102,12 +102,17 @@ pub(super) fn finalize_summary(
     }
 
     if let Some(workstream) = parsed_workstream_from_summary(&summary) {
-        match crate::workstream::upsert_workstream(conn, project, memory_sid, &workstream) {
-            Ok(workstream_id) => crate::log::info(
+        match crate::workstream::upsert_workstream_with_match(
+            conn,
+            project,
+            memory_sid,
+            &workstream,
+        ) {
+            Ok(result) => crate::log::info(
                 "summary-job",
                 &format!(
-                    "upserted workstream id={} project={} session={}",
-                    workstream_id, project, session_id
+                    "upserted workstream id={} reason={} project={} session={}",
+                    result.id, result.match_reason, project, session_id
                 ),
             ),
             Err(err) => crate::log::warn(
@@ -197,11 +202,17 @@ fn get_linked_workstream_context(
     project: &str,
 ) -> Result<Option<ExistingWorkStreamContext>> {
     conn.query_row(
-        "SELECT ws.title, ws.progress, ws.next_action, ws.blockers
-         FROM workstreams ws
-         JOIN workstream_sessions wss ON wss.workstream_id = ws.id
-         WHERE wss.memory_session_id = ?1 AND ws.project = ?2
-         ORDER BY wss.linked_at_epoch DESC, ws.updated_at_epoch DESC
+        "SELECT canonical.title, canonical.progress, canonical.next_action, canonical.blockers
+         FROM workstream_sessions wss
+         JOIN workstreams linked ON linked.id = wss.workstream_id
+         JOIN workstreams canonical ON canonical.id = COALESCE(linked.merged_into_workstream_id, linked.id)
+         WHERE wss.memory_session_id = ?1
+           AND canonical.merged_into_workstream_id IS NULL
+           AND ((canonical.owner_scope = 'repo' AND canonical.owner_key = ?2)
+                OR (canonical.owner_scope = 'repo' AND canonical.target_project = ?2)
+                OR (canonical.owner_scope = 'workstream' AND canonical.target_project = ?2)
+                OR (canonical.owner_scope IS NULL AND canonical.project = ?2))
+         ORDER BY wss.linked_at_epoch DESC, canonical.updated_at_epoch DESC
          LIMIT 1",
         params![memory_sid, project],
         |row| {

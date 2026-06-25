@@ -28,6 +28,13 @@ pub(in crate::cli) fn run_workstreams(action: WorkstreamAction) -> Result<()> {
             confirm,
             json,
         ),
+        WorkstreamAction::Merge {
+            project,
+            into,
+            duplicates,
+            confirm,
+            json,
+        } => run_workstream_merge(&project, into, &duplicates, confirm, json),
     }
 }
 
@@ -111,6 +118,48 @@ fn validate_workstream_update_request(
     Ok(())
 }
 
+fn run_workstream_merge(
+    project: &str,
+    canonical_id: i64,
+    duplicate_ids: &[i64],
+    confirm: bool,
+    json: bool,
+) -> Result<()> {
+    validate_workstream_merge_request(canonical_id, duplicate_ids, confirm)?;
+    let conn = db::open_db()?;
+    let result = workstream::merge_workstreams_manual(&conn, project, canonical_id, duplicate_ids)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&WorkstreamMergeJson { project, result })?
+        );
+        return Ok(());
+    }
+    println!(
+        "Merged {} duplicate workstream(s) into workstream #{}.",
+        duplicate_ids.len(),
+        canonical_id
+    );
+    Ok(())
+}
+
+fn validate_workstream_merge_request(
+    canonical_id: i64,
+    duplicate_ids: &[i64],
+    confirm: bool,
+) -> Result<()> {
+    if duplicate_ids.is_empty() {
+        bail!("workstreams merge requires at least one duplicate id");
+    }
+    if duplicate_ids.contains(&canonical_id) {
+        bail!("workstreams merge cannot merge a workstream into itself");
+    }
+    if !confirm {
+        bail!("workstreams merge requires --confirm");
+    }
+    Ok(())
+}
+
 fn render_workstream_list(workstreams: &[workstream::WorkStream]) -> String {
     let mut output = String::new();
     if workstreams.is_empty() {
@@ -151,6 +200,12 @@ struct WorkstreamUpdateJson<'a> {
     updated: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct WorkstreamMergeJson<'a> {
+    project: &'a str,
+    result: workstream::WorkStreamMergeResult,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +226,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("--confirm"));
+    }
+
+    #[test]
+    fn workstream_merge_requires_confirmation() {
+        let error = validate_workstream_merge_request(1, &[2], false).unwrap_err();
+        assert!(error.to_string().contains("--confirm"));
+    }
+
+    #[test]
+    fn workstream_merge_rejects_self_merge() {
+        let error = validate_workstream_merge_request(1, &[2, 1], true).unwrap_err();
+        assert!(error.to_string().contains("itself"));
     }
 }
