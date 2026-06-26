@@ -63,12 +63,20 @@ pub(super) fn normalize_scope(raw: &str) -> Result<String> {
 
 pub(super) fn normalize_memory_type(raw: &str) -> Result<String> {
     let value = raw.trim().to_ascii_lowercase();
-    match crate::memory::MemoryType::parse(&value) {
-        Some(memory_type) if memory_type != crate::memory::MemoryType::SessionActivity => {
-            Ok(memory_type.as_str().to_string())
+    // Candidate 词汇表：decision/discovery/bugfix/architecture/lesson/preference/procedure
+    // (session_activity 不是合法 candidate type)。
+    if let Some(memory_type) = crate::memory::MemoryType::parse(&value) {
+        if memory_type != crate::memory::MemoryType::SessionActivity {
+            return Ok(memory_type.as_str().to_string());
         }
-        _ => bail!("malformed memory_candidate output: invalid memory type '{value}'"),
     }
+    // LLM 经常把 observation type（feature/refactor/change/discovery/bugfix/decision）
+    // 误抄进 <type>。observation 与 candidate 是两套词汇表，复用 from_observation_type
+    // 归一映射，避免单个误抄值让整批 candidate 被 bail 拖死。
+    if let Some(mapped) = crate::memory::MemoryType::from_observation_type(&value) {
+        return Ok(mapped.as_str().to_string());
+    }
+    bail!("malformed memory_candidate output: invalid memory type '{value}'")
 }
 
 pub(super) fn normalize_topic_key(raw: &str) -> Result<String> {
@@ -119,5 +127,31 @@ mod tests {
     #[test]
     fn ignores_defer_without_reason() {
         assert_eq!(parse_defer_reason("<defer/>"), None);
+    }
+
+    #[test]
+    fn normalizes_canonical_candidate_types() {
+        assert_eq!(normalize_memory_type("discovery").unwrap(), "discovery");
+        assert_eq!(normalize_memory_type("Bugfix").unwrap(), "bugfix");
+        assert_eq!(normalize_memory_type("Preference").unwrap(), "preference");
+    }
+
+    #[test]
+    fn maps_observation_type_vocab_to_candidate_type() {
+        // LLM 把 observation type 误抄进 <type>；归一到对应 candidate type，而非 bail 整批。
+        assert_eq!(normalize_memory_type("feature").unwrap(), "discovery");
+        assert_eq!(normalize_memory_type("refactor").unwrap(), "discovery");
+        assert_eq!(normalize_memory_type("change").unwrap(), "discovery");
+        assert_eq!(normalize_memory_type("bugfix").unwrap(), "bugfix");
+        assert_eq!(normalize_memory_type("decision").unwrap(), "decision");
+    }
+
+    #[test]
+    fn rejects_non_candidate_memory_types() {
+        // session_activity 是合法 MemoryType 但不是 candidate type
+        assert!(normalize_memory_type("session_activity").is_err());
+        // status 是 LLM 自由发挥值；保持拒绝比错误归一化更安全
+        assert!(normalize_memory_type("status").is_err());
+        assert!(normalize_memory_type("nonsense").is_err());
     }
 }

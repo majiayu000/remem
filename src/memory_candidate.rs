@@ -26,6 +26,7 @@ const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
 Return zero or more <memory_candidate> blocks.
 Each block must include <scope>, <type>, <topic_key>, <risk_class>, <confidence>, and <text>.
+<type> must be one of the valid candidate memory types listed in the task. Observations use a different type vocabulary (feature/refactor/change are not candidate types), so never copy an observation's type verbatim into <type>; map feature/refactor/change to discovery.
 Use scope=project unless the observation is explicitly a stable user preference.
 Use risk_class=low only for factual project-scoped information that can be promoted without review.
 If there is no durable memory candidate, return exactly <no_candidates reason=\"...\"/>.
@@ -710,6 +711,18 @@ fn build_candidate_prompt(
         batch.to_event_id
     );
     append_existing_preferences(&mut prompt, existing_preferences);
+    // 单一真实来源：从 MemoryType::ALL 动态生成合法 candidate type 列表注入 prompt，
+    // 避免与枚举漂移（曾因 LLM 把 observation type feature/change 抄进 <type> 整批失败）。
+    let valid_candidate_types = MemoryType::ALL
+        .iter()
+        .copied()
+        .filter(|memory_type| *memory_type != MemoryType::SessionActivity)
+        .map(|memory_type| memory_type.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    prompt.push_str(&format!(
+        "Valid candidate <type> values: {valid_candidate_types}.\nDo not copy an observation's type verbatim; observations use a different vocabulary and feature/refactor/change must be mapped to discovery.\n\n"
+    ));
     for observation in &batch.observations {
         let evidence = observation
             .evidence_event_ids
