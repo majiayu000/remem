@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Mapped memory-candidate extraction outputs that copy observation types
+  (`feature`, `refactor`, `change`) back into the canonical candidate memory
+  vocabulary instead of failing the whole extraction batch.
 - Staged source version `0.5.125` without pointing plugin runtime downloads at
   an unpublished GitHub Release. The committed runtime manifest now stays local
   until the release workflow uploads checked assets.
@@ -37,6 +40,8 @@
   extraction source reduction, render-time cleanup, and merge cleanup clustering.
 - Staged source version `0.5.141` for automatic release dispatch after
   bot-created release tags.
+- Staged source version `0.5.142` for memory-candidate observation-type
+  normalization.
 
 ## [0.5.109] - 2026-06-20
 
