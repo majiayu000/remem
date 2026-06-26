@@ -6,7 +6,7 @@
     <title>remem - Coding agent memory for Claude Code and OpenAI Codex</title>
     <meta
       name="description"
-      content="remem is an open-source Rust CLI and MCP memory server for Claude Code, OpenAI Codex, and Codex CLI. Capture, search, audit, and inject local project memory across coding agent sessions."
+      content="remem is an open-source Rust CLI and MCP memory server for Claude Code, OpenAI Codex, and Codex CLI. Capture, search, audit, inject, and verify local project memory across coding agent sessions."
     >
     <meta name="robots" content="index,follow">
     <meta name="theme-color" content="#111111">
@@ -30,7 +30,7 @@
         "@type": "SoftwareSourceCode",
         "name": "remem",
         "alternateName": "remem-ai",
-        "description": "Local-first coding agent memory for Claude Code, OpenAI Codex, and Codex CLI. remem captures, searches, audits, and injects project memory through hooks, MCP, CLI, and REST APIs.",
+        "description": "Local-first coding agent memory for Claude Code, OpenAI Codex, and Codex CLI. remem captures, searches, audits, injects, and verifies project memory through hooks, MCP, CLI, REST APIs, and public benchmark artifacts.",
         "url": "https://majiayu000.github.io/remem/",
         "codeRepository": "https://github.com/majiayu000/remem",
         "programmingLanguage": "Rust",
@@ -105,7 +105,7 @@
               Stop re-explaining your project every new session.
             </h1>
             <p class="lead" data-i18n="hero_lead">
-              An open-source Rust CLI and MCP memory server that automatically captures, searches, audits, and injects local project memory across Claude Code, OpenAI Codex, and Codex CLI sessions.
+              An open-source Rust CLI and MCP memory server that automatically captures, searches, audits, injects, and verifies local project memory across Claude Code, OpenAI Codex, and Codex CLI sessions.
             </p>
             <div class="hero-actions">
               <a class="button primary" href="#install">
@@ -252,7 +252,7 @@
             <p class="eyebrow" data-i18n="proof_kicker">Product proof</p>
             <h2 data-i18n="proof_title">The memory arrives before the work begins.</h2>
             <p data-i18n="proof_lead">
-              The site ships with the repository's existing terminal demo asset, so the first release uses real project media instead of stock visuals.
+              Current releases ship through GitHub, crates.io, npm, and Homebrew, with reproducible artifact checks guarding public benchmark and claim wording.
             </p>
           </div>
           <figure class="demo-frame reveal">
@@ -267,28 +267,28 @@
           <div class="section-head reveal">
             <p class="eyebrow" data-i18n="bench_kicker">Benchmarks</p>
             <h2 data-i18n="bench_title">Measured, not hand-waved.</h2>
-            <p data-i18n="bench_lead">Published README snapshots cover LoCoMo, internal retrieval, and local QA evaluation.</p>
+            <p data-i18n="bench_lead">Public artifacts now separate memory-system capability evidence from coding-agent outcome claims.</p>
           </div>
           <div class="metrics-grid reveal">
             <article>
-              <span>LoCoMo overall</span>
-              <strong>62.7%</strong>
-              <p data-i18n="metric_locomo">v2 optimized, session summary ingest, gpt-5.4.</p>
+              <span data-i18n="metric_artifacts_label">Public artifacts</span>
+              <strong>125 files</strong>
+              <p data-i18n="metric_artifacts">4 manifests, 4 reports, and 25 run artifacts verified.</p>
             </article>
             <article>
-              <span>MRR</span>
-              <strong>0.858</strong>
-              <p data-i18n="metric_mrr">Internal eval over 1,777 real memories.</p>
+              <span data-i18n="metric_memory_label">Memory QA suite</span>
+              <strong>8 runs</strong>
+              <p data-i18n="metric_memory">Temporal answers, stale decisions, conflicts, file anchors, and user-context relevance.</p>
             </article>
             <article>
-              <span>Hit Rate@5</span>
-              <strong>1.000</strong>
-              <p data-i18n="metric_hit">Internal retrieval hit rate.</p>
+              <span data-i18n="metric_policy_label">Policy suite</span>
+              <strong>15 cases</strong>
+              <p data-i18n="metric_policy">Secrets, credentials, unsafe claims, stale anchors, and unresolved conflicts.</p>
             </article>
             <article>
-              <span>Project leak</span>
-              <strong>0%</strong>
-              <p data-i18n="metric_leak">Project-scoped search validation.</p>
+              <span data-i18n="metric_claim_label">Claim gate</span>
+              <strong>Directional</strong>
+              <p data-i18n="metric_claim">No SOTA or coding-task superiority claim until the public gate passes.</p>
             </article>
           </div>
         </div>
@@ -352,10 +352,11 @@
           <div class="section-head reveal">
             <p class="eyebrow" data-i18n="install_kicker">Install</p>
             <h2 data-i18n="install_title">Use the same commands as the README.</h2>
-            <p data-i18n="install_lead">Start with Homebrew, the prebuilt GitHub Release installer, or Cargo. Then restart your coding agent.</p>
+            <p data-i18n="install_lead">Start with Homebrew, npm, the prebuilt GitHub Release installer, or Cargo. Then restart your coding agent.</p>
             <div class="tabs" role="tablist" aria-label="Install method">
               <button type="button" role="tab" aria-selected="true" data-command="quick" data-i18n="tab_quick">Quick install</button>
               <button type="button" role="tab" aria-selected="false" data-command="homebrew">Homebrew</button>
+              <button type="button" role="tab" aria-selected="false" data-command="npm">npm</button>
               <button type="button" role="tab" aria-selected="false" data-command="cargo">Cargo</button>
             </div>
             <div class="code-card">

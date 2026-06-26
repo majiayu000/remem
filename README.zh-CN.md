@@ -22,6 +22,10 @@
 - Bug 修复原因、偏好和项目模式可以搜索。
 - 记忆默认留在本地：SQLite + SQLCipher。
 - hooks、MCP tools、CLI 命令和 localhost REST API 共用同一份记忆库。
+- current-memory contract 会暴露 staleness、temporal/as-of truth、
+  citation usage 和 injection audit，不把召回过程当黑箱。
+- user-context 控制把个人 claim、profile summary、suppression feedback
+  和 Markdown export 保持为显式、可审阅的流程。
 - 一个 Rust 二进制程序，不需要托管数据库或额外记忆服务。
 
 ## 安装
@@ -237,6 +241,8 @@ remem 解决的是不应该依赖手工维护的部分：
 - **与原生 memory 的桥接**：当 Claude Code native memory 目录存在时，`remem sync-memory --cwd .` 会写入 compact 的 `remem_sessions.md`，并在 `MEMORY.md` 中追加指针和大小保护。完整细节仍保留在数据库里，用 `remem search` 查询。
 - **可人工编辑的 Markdown 镜像**：`remem export --markdown --output ./remem-memory --project "$PWD"` 会把每条 curated memory 写成一个 `.md` 文件，且目标目录必须为空。编辑这些文件后，`remem import markdown --source ./remem-memory` 会更新已有行，并重建 search、entity、embedding 和 current-state 索引。导出会拒绝非空目录，避免覆盖人工编辑。
 - **治理与可审计性**：`remem why <id>`、`remem govern --action stale --dry-run --json <id>`、`remem status --json`、`remem usage --days 14 --weeks 8` 分别用于查看记忆为什么可见、预览治理操作、检查存储健康，以及查看 memory-AI token/费用统计。
+- **current-memory 可解释性**：staleness label、temporal fact、source-anchor check、injection item audit row、citation/usage event 会说明一条记忆为什么 current、stale、dropped、abstained、cited 或 ignored。
+- **user-context 治理**：`remem user ...`、`remem memory suppress ...`、profile export 和 non-retention policy check 让个性化召回保持显式，而不是把所有用户事实静默混入所有项目。
 - **声明前的确定性检查**：本地门禁包括 `cargo test -q context::claude_memory --lib`、`cargo test -q eval::golden --lib`、`cargo test -q eval::governance --lib` 和 `remem eval-e2e --json`。
 
 这不是“remem 已经在真实编码任务上击败精心维护的 `MEMORY.md`”的公开 benchmark 声明。no-memory / remem / curated-file 三组旗舰 A/B 仍是单独的 benchmark 要求；在它发布前，诚实边界是功能覆盖和可复现的本地检查。
@@ -273,6 +279,42 @@ Query: "database encryption"
 - MCP 工具中的多步检索引导
 
 ## 基准概览
+
+### Public artifact suite（仅方向性证据）
+
+仓库内的 `eval/public` artifact 会把 memory-system capability evidence
+和 coding-agent outcome evidence 分开。可以用下面的命令复现 public verifier：
+
+```bash
+cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
+cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
+```
+
+当前 directional report 会验证 4 个 manifest、4 个 report、25 个 run
+artifact 和 125 个 artifact 文件。它包含：
+
+- `remem-code-memory`：8 个 memory QA run，覆盖 temporal/as-of 回答、stale
+  decision avoidance、conflict、workstream continuity、prior bug root cause、
+  architecture constraint、file/source anchor 和 user-context relevance。
+- `adversarial-policy`：15 个 non-retention case，覆盖 secrets、credentials、
+  payment data、unsupported assistant claim、unapproved external source、
+  roleplay、negation、same-name repo、branch divergence、stale file anchor
+  和 unresolved conflict。
+- `issue385-v1`：公开的 16-task coding-agent fixture pack，包含 3-task
+  smoke subset，并为 `remem` run 记录 memory-contract 字段。
+
+该报告有意标记为 `directional_only_no_public_claim`。README 和 release
+文案不能声明 SOTA、宽泛优越性或 coding-task superiority，直到
+[`docs/release-lifecycle.md`](docs/release-lifecycle.md) 中的 public claim
+gate 通过。
+
+### 隔离 coding-agent baseline（内部证据，不是公开 claim）
+
+`eval/coding-bench/reports/baseline.json` 包含一个隔离的 5-task、
+每个 condition 3 次运行的 baseline，运行器是 `codex-cli 0.142.1`，
+模型是 `gpt-5.5`：`no_memory` 解决 2/15，`remem` 解决 15/15，
+`curated_file` 解决 15/15。这是有用的工程证据，但它早于公开 16-task
+v1 fixture pack，必须重新生成后才能支持更强的产品声明。
 
 ### LoCoMo（仅作信息参考）
 
