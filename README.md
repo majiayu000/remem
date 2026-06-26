@@ -24,6 +24,10 @@ external database.
 - Bug-fix rationale, preferences, and project patterns are searchable.
 - Memory stays local by default with SQLite and SQLCipher.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
+- Current-memory contracts expose staleness, temporal/as-of truth, citation
+  usage, and injection audit state instead of treating recall as a black box.
+- User-context controls keep personal claims, profile summaries, suppression
+  feedback, and Markdown export explicit and reviewable.
 - One Rust binary; no hosted database or separate memory service.
 
 ## Install
@@ -297,6 +301,12 @@ Remem is meant for the parts that should not depend on manual upkeep:
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,
   and memory-AI token/cost accounting.
+- **Current-memory accountability**: staleness labels, temporal facts,
+  source-anchor checks, injection item audit rows, and citation/usage events
+  show why a memory is current, stale, dropped, abstained, cited, or ignored.
+- **User-context governance**: `remem user ...`, `remem memory suppress ...`,
+  profile export, and non-retention policy checks keep personalized recall
+  explicit instead of silently blending every user fact into every project.
 - **Deterministic checks before claims**: local gates include
   `cargo test -q context::claude_memory --lib`, `cargo test -q eval::golden
   --lib`, `cargo test -q eval::governance --lib`, and `remem eval-e2e --json`.
@@ -338,6 +348,45 @@ Enhancements:
 - Multi-step retrieval guidance in MCP tool descriptions
 
 ## Benchmark Snapshot
+
+### Public Artifact Suite (Directional Only)
+
+The checked-in `eval/public` artifacts now separate memory-system capability
+evidence from coding-agent outcome evidence. Reproduce the public verifier with:
+
+```bash
+cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
+cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
+```
+
+The current directional report verifies 4 manifests, 4 reports, 25 run
+artifacts, and 125 artifact files. It includes:
+
+- `remem-code-memory`: 8 memory QA runs covering temporal/as-of answers, stale
+  decision avoidance, conflicts, workstream continuity, prior bug root cause,
+  architecture constraints, file/source anchors, and user-context relevance.
+- `adversarial-policy`: 15 non-retention cases covering secrets, credentials,
+  payment data, unsupported assistant claims, unapproved external sources,
+  roleplay, negation, same-name repos, branch divergence, stale file anchors,
+  and unresolved conflicts.
+- `issue385-smoke`: one committed coding-agent smoke run artifact with
+  memory-contract fields for `remem` runs. The full `issue385-v1` fixture pack
+  is referenced for dry-run reproduction, but it is not yet part of the
+  verified public outcome report.
+
+The report is intentionally labeled `directional_only_no_public_claim`. README
+and release wording must stay directional and avoid broad outcome or
+coding-task outcome claims until the public claim gate in
+[`docs/release-lifecycle.md`](docs/release-lifecycle.md) passes.
+
+### Isolated Coding-Agent Baseline (Internal, Not A Public Claim)
+
+`eval/coding-bench/reports/baseline.json` contains an isolated 5-task,
+3-runs-per-condition baseline generated with `codex-cli 0.142.1` and
+`gpt-5.5`: `no_memory` resolved 2/15, `remem` resolved 15/15, and
+`curated_file` resolved 15/15. This is useful engineering evidence, but it
+predates the public 16-task v1 fixture pack and must be regenerated before it
+supports stronger product claims.
 
 ### LoCoMo (Informational Only)
 

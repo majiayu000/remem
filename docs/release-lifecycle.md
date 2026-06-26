@@ -3,7 +3,7 @@
 This checklist keeps remem's source version, binary assets, package registries,
 plugin runtime metadata, and install paths aligned.
 
-## Before Tagging
+## Before Auto Tagging
 
 - [ ] `Cargo.toml`, `Cargo.lock`, `plugins/remem/.codex-plugin/plugin.json`,
       `plugins/remem/runtimes/remem-releases.json`, and
@@ -23,6 +23,31 @@ python3 scripts/ci/check_public_surface.py
 python3 scripts/ci/check_public_claims.py
 python3 scripts/ci/check_file_size.py
 ```
+
+## Automatic Tagging
+
+`Auto Release` is the only default path for creating release tags. After `CI`
+passes on `main`, `.github/workflows/auto-release.yml` verifies that:
+
+- required release secrets are present (`CRATES_IO_TOKEN` and `NPM_TOKEN`)
+- the checked-out commit is the exact `main` commit that passed CI
+- release metadata is synchronized with `Cargo.toml`
+- `plugins/remem/runtimes/remem-releases.json` marks the current version as
+  `state: "unreleased"` with empty `assets`
+- the matching `vX.Y.Z` tag does not already point at another commit
+- the source version is newer than the latest existing semver release tag
+
+When all gates pass, the workflow creates the annotated `vX.Y.Z` tag and then
+dispatches `.github/workflows/release.yml` against that tag ref. The explicit
+dispatch is required because GitHub suppresses downstream workflow triggers
+from tags created with the default `GITHUB_TOKEN`.
+
+The release workflow builds assets, creates the GitHub Release, publishes
+crates.io, and publishes npm. It also accepts manual `workflow_dispatch`, but
+only when the selected ref is a `v*` tag.
+
+Manual tag pushes remain a break-glass fallback only. Prefer rerunning
+`Auto Release` with `workflow_dispatch` after fixing the failed gate.
 
 ## Public Claim Policy
 
@@ -68,7 +93,7 @@ python3 scripts/ci/check_public_claims.py
 
 ## Local Verification
 
-Run focused checks before creating the tag:
+Run focused checks before release approval:
 
 ```bash
 sh -n install.sh
