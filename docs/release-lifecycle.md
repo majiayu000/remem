@@ -37,9 +37,14 @@ passes on `main`, `.github/workflows/auto-release.yml` verifies that:
 - the matching `vX.Y.Z` tag does not already point at another commit
 - the source version is newer than the latest existing semver release tag
 
-When all gates pass, the workflow creates the annotated `vX.Y.Z` tag. That tag
-push triggers `.github/workflows/release.yml`, which builds assets, creates the
-GitHub Release, publishes crates.io, and publishes npm.
+When all gates pass, the workflow creates the annotated `vX.Y.Z` tag and then
+dispatches `.github/workflows/release.yml` against that tag ref. The explicit
+dispatch is required because GitHub suppresses downstream workflow triggers
+from tags created with the default `GITHUB_TOKEN`.
+
+The release workflow builds assets, creates the GitHub Release, publishes
+crates.io, and publishes npm. It also accepts manual `workflow_dispatch`, but
+only when the selected ref is a `v*` tag.
 
 Manual tag pushes remain a break-glass fallback only. Prefer rerunning
 `Auto Release` with `workflow_dispatch` after fixing the failed gate.

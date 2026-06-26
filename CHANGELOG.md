@@ -35,6 +35,8 @@
   report generator and checked-in baseline report.
 - Staged source version `0.5.140` for preference semantic-dedup follow-ups:
   extraction source reduction, render-time cleanup, and merge cleanup clustering.
+- Staged source version `0.5.141` for automatic release dispatch after
+  bot-created release tags.
 
 ## [0.5.109] - 2026-06-20
 
