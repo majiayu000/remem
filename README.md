@@ -369,12 +369,14 @@ artifacts, and 125 artifact files. It includes:
   payment data, unsupported assistant claims, unapproved external sources,
   roleplay, negation, same-name repos, branch divergence, stale file anchors,
   and unresolved conflicts.
-- `issue385-v1`: a public 16-task coding-agent fixture pack with a three-task
-  smoke subset and memory-contract fields for `remem` runs.
+- `issue385-smoke`: one committed coding-agent smoke run artifact with
+  memory-contract fields for `remem` runs. The full `issue385-v1` fixture pack
+  is referenced for dry-run reproduction, but it is not yet part of the
+  verified public outcome report.
 
 The report is intentionally labeled `directional_only_no_public_claim`. README
-and release wording must not claim SOTA, broad superiority, or coding-task
-superiority until the public claim gate in
+and release wording must stay directional and avoid broad outcome or
+coding-task outcome claims until the public claim gate in
 [`docs/release-lifecycle.md`](docs/release-lifecycle.md) passes.
 
 ### Isolated Coding-Agent Baseline (Internal, Not A Public Claim)

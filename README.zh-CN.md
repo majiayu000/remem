@@ -300,11 +300,12 @@ artifact 和 125 个 artifact 文件。它包含：
   payment data、unsupported assistant claim、unapproved external source、
   roleplay、negation、same-name repo、branch divergence、stale file anchor
   和 unresolved conflict。
-- `issue385-v1`：公开的 16-task coding-agent fixture pack，包含 3-task
-  smoke subset，并为 `remem` run 记录 memory-contract 字段。
+- `issue385-smoke`：一个已提交的 coding-agent smoke run artifact，并为
+  `remem` run 记录 memory-contract 字段。完整 `issue385-v1` fixture pack
+  目前只作为 dry-run 复现输入引用，还不属于已验证的 public outcome report。
 
 该报告有意标记为 `directional_only_no_public_claim`。README 和 release
-文案不能发布最强类、宽泛优越性或编码任务效果优越类公开声明，直到
+文案只能保持方向性，不发布宽泛效果胜出或编码任务效果胜出声明，直到
 [`docs/release-lifecycle.md`](docs/release-lifecycle.md) 中的 public claim
 gate 通过。
 
