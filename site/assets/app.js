@@ -161,7 +161,7 @@ const copy = {
     metric_policy_label: "Policy suite",
     metric_policy: "覆盖 secrets、credentials、unsafe claim、stale anchor 和 unresolved conflict。",
     metric_claim_label: "Claim gate",
-    metric_claim: "public gate 通过前，不声明 SOTA 或 coding-task superiority。",
+    metric_claim: "public gate 通过前，不发布最强类或编码任务效果优越类公开声明。",
     usage_kicker: "用量与费用",
     usage_title: "本地计量，按估算报告。",
     usage_lead: "remem 会记录自身后台抽取、总结、压缩和提升记忆时产生的 AI 用量。CLI 可以按天、周、来源、项目和执行器报告 token 与估算美元成本。",

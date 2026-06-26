@@ -304,7 +304,7 @@ artifact 和 125 个 artifact 文件。它包含：
   smoke subset，并为 `remem` run 记录 memory-contract 字段。
 
 该报告有意标记为 `directional_only_no_public_claim`。README 和 release
-文案不能声明 SOTA、宽泛优越性或 coding-task superiority，直到
+文案不能发布最强类、宽泛优越性或编码任务效果优越类公开声明，直到
 [`docs/release-lifecycle.md`](docs/release-lifecycle.md) 中的 public claim
 gate 通过。
 
