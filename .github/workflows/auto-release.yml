@@ -1,0 +1,167 @@
+name: Auto Release
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-main
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag staged source release
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release secrets
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          missing=0
+          for name in CRATES_IO_TOKEN NPM_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required release secret: ${name}"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify completed main CI run
+        if: github.event_name == 'workflow_run'
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.workflow_run.head_branch }}" != "main" ]; then
+            echo "::error::auto-release only accepts CI runs from main"
+            exit 1
+          fi
+          if [ "${{ github.event.workflow_run.head_sha }}" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::checked-out SHA does not match the completed CI run"
+            exit 1
+          fi
+
+      - name: Verify manual dispatch target
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::manual auto-release dispatch must target main"
+            exit 1
+          fi
+
+      - name: Check release metadata
+        run: python3 scripts/ci/check_plugin_version_sync.py
+
+      - name: Resolve staged release version
+        id: version
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          cargo = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
+          version = cargo.get("package", {}).get("version")
+          if not isinstance(version, str) or not version:
+              print("Cargo.toml package.version is missing", file=sys.stderr)
+              raise SystemExit(1)
+
+          manifest = json.loads(
+              Path("plugins/remem/runtimes/remem-releases.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          release = manifest.get("versions", {}).get(version)
+          if not isinstance(release, dict):
+              print(f"remem-releases.json has no entry for {version}", file=sys.stderr)
+              raise SystemExit(1)
+          if release.get("state") != "unreleased":
+              print(
+                  f"{version} is not staged as state='unreleased'; nothing to tag",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          if release.get("assets"):
+              print(
+                  f"{version} already has runtime assets in remem-releases.json",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
+          print(f"version={version}")
+          print(f"tag=v{version}")
+          PY
+
+      - name: Check tag state
+        id: tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          head_sha="$(git rev-parse HEAD)"
+
+          if git show-ref --tags --verify --quiet "refs/tags/${TAG}"; then
+            tag_sha="$(git rev-list -n 1 "${TAG}")"
+            if [ "$tag_sha" = "$head_sha" ]; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "${TAG} already points at ${head_sha}; no-op"
+              exit 0
+            fi
+            echo "::error::${TAG} already points at ${tag_sha}, not ${head_sha}"
+            exit 1
+          fi
+
+          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1 || true)"
+          if [ -n "$latest" ]; then
+            LATEST_TAG="$latest" python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          def parse(version: str) -> tuple[int, int, int]:
+              match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version)
+              if not match:
+                  print(f"unsupported release tag: {version}", file=sys.stderr)
+                  raise SystemExit(1)
+              return tuple(int(part) for part in match.groups())
+
+          current = os.environ["VERSION"]
+          latest = os.environ["LATEST_TAG"]
+          if parse(current) <= parse(latest):
+              print(
+                  f"source version {current} is not newer than latest tag {latest}",
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+          PY
+          fi
+
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create release tag
+        if: steps.tag.outputs.exists != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "refs/tags/$TAG"
+          echo "Created ${TAG} for $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"

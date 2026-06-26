@@ -12,6 +12,8 @@
 ### Changed
 - Added repository public-surface and file-size guardrails for release
   readiness.
+- Added the `Auto Release` workflow so a passing `main` CI run tags staged
+  source versions and lets the existing release workflow publish the assets.
 - Staged source version `0.5.126` for the current-memory contract gates.
 - Staged source version `0.5.127` for coding-bench contract artifacts.
 - Staged source version `0.5.128` for workstream identity continuity.
