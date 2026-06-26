@@ -42,6 +42,8 @@
   bot-created release tags.
 - Staged source version `0.5.142` for memory-candidate observation-type
   normalization.
+- Updated extraction-eval candidate prompt fingerprints for the
+  memory-candidate type-vocabulary prompt change.
 
 ## [0.5.109] - 2026-06-20
 
