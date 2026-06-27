@@ -519,15 +519,21 @@ pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {
         );
     }
 
-    let pending_review_candidates = db::query_system_stats(conn)
-        .map(|stats| stats.pending_review_memory_candidates)
+    let review_gated_candidates = db::query_system_stats(conn)
+        .ok()
+        .and_then(|stats| {
+            (stats.total_memory_candidates > 0
+                && stats.promoted_memory_candidates == 0
+                && stats.pending_review_memory_candidates == stats.total_memory_candidates)
+                .then_some(stats.pending_review_memory_candidates)
+        })
         .unwrap_or(0);
-    if stats.total == 0 && pending_review_candidates > 0 {
+    if stats.total == 0 && review_gated_candidates > 0 {
         return Check::new(
             "Temporal facts",
             Status::Warn,
             format!(
-                "memory_facts has 0 row(s) while {pending_review_candidates} memory candidate(s) are pending review; promotion is review-gated: {}",
+                "memory_facts has 0 row(s) while {review_gated_candidates} memory candidate(s) are pending review; promotion is review-gated: {}",
                 pending_review_action_hint(conn)
             ),
         );

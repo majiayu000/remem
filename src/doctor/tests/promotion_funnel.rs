@@ -122,3 +122,47 @@ fn temporal_facts_distinguishes_review_gated_candidates_from_extraction_gap() ->
     );
     Ok(())
 }
+
+#[test]
+fn temporal_facts_keeps_mixed_promoted_and_pending_candidates_on_extraction_gap(
+) -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-temporal-facts-mixed-candidates");
+    let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-mixed-candidates"),
+        "/repo/a",
+        None,
+        "promoted source memory",
+        "A promoted memory exists while another candidate waits for review.",
+        "decision",
+        None,
+    )?;
+    seed_review_gated_candidate(&conn, "/repo/a")?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (scope, memory_type, topic_key, text, evidence_event_ids, confidence,
+          risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES ('project', 'decision', 'already-promoted',
+                 'A promoted candidate already exists.', '[]', 0.9,
+                 'low', 'approved', 1, 1)",
+        [],
+    )?;
+
+    let check = check_temporal_facts(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check
+            .detail
+            .contains("production fact extraction is not populating"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        !check.detail.contains("promotion is review-gated"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
