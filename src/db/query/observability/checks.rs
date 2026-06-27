@@ -94,7 +94,10 @@ fn push_promotion_checks(
             )
             .metric("candidates", metrics.candidates)
             .metric("pending_review", metrics.pending_review)
-            .action("review memory candidates before expecting active memories"),
+            .action("run `remem review list --limit 20`")
+            .action(
+                "approve only supported candidates with `remem review approve <id>`; approval writes an active memory and linked temporal fact",
+            ),
         );
     }
 }

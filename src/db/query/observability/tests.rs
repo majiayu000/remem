@@ -281,10 +281,18 @@ fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> 
         Some(&0)
     );
     assert!(!worker_check.metrics.contains_key("heartbeat_age_secs"));
-    assert!(report
+    let pending_review_check = report
         .checks
         .iter()
-        .any(|check| check.code == "promotion_funnel_all_pending_review"));
+        .find(|check| check.code == "promotion_funnel_all_pending_review")
+        .ok_or_else(|| anyhow::anyhow!("missing all-pending promotion check"))?;
+    assert!(pending_review_check
+        .actions
+        .iter()
+        .any(|action| { action == "run `remem review list --limit 20`" }));
+    assert!(pending_review_check.actions.iter().any(|action| {
+        action.contains("remem review approve <id>") && action.contains("linked temporal fact")
+    }));
     Ok(())
 }
 
