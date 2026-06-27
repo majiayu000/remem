@@ -96,7 +96,7 @@ fn push_promotion_checks(
             .metric("pending_review", metrics.pending_review)
             .action("run `remem review list --limit 20`")
             .action(
-                "approve only supported candidates with `remem review approve <id>`; approval writes an active memory and linked temporal fact",
+                "approve only supported, non-duplicate candidates with `remem review approve <id>`; promoted candidates write an active memory and linked temporal fact",
             ),
         );
     }

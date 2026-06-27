@@ -450,7 +450,7 @@ fn pending_review_action_hint(conn: &Connection) -> String {
         None => "`remem review list --limit 20`".to_string(),
     };
     format!(
-        "inspect pending candidates with {list_command}; approve only supported candidates with `remem review approve <id>` to write an active memory and linked temporal fact"
+        "inspect pending candidates with {list_command}; approve only supported, non-duplicate candidates with `remem review approve <id>`; promoted candidates write an active memory and linked temporal fact"
     )
 }
 

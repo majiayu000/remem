@@ -291,7 +291,9 @@ fn observability_report_exposes_current_memory_contract_metrics() -> Result<()> 
         .iter()
         .any(|action| { action == "run `remem review list --limit 20`" }));
     assert!(pending_review_check.actions.iter().any(|action| {
-        action.contains("remem review approve <id>") && action.contains("linked temporal fact")
+        action.contains("remem review approve <id>")
+            && action.contains("non-duplicate")
+            && action.contains("linked temporal fact")
     }));
     Ok(())
 }

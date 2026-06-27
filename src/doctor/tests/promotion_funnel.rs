@@ -75,6 +75,7 @@ fn promotion_funnel_points_all_pending_candidates_to_review_flow() -> anyhow::Re
         "{}",
         check.detail
     );
+    assert!(check.detail.contains("non-duplicate"), "{}", check.detail);
     assert!(
         check.detail.contains("linked temporal fact"),
         "{}",
