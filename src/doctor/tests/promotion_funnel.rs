@@ -3,7 +3,9 @@ use rusqlite::{params, Connection};
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
-use super::super::database::{check_promotion_funnel, check_temporal_facts};
+use super::super::database::{
+    check_declared_empty_surfaces, check_promotion_funnel, check_temporal_facts,
+};
 
 fn seed_review_gated_candidate(conn: &Connection, project: &str) -> anyhow::Result<()> {
     let capture = db::record_captured_event(
@@ -78,6 +80,30 @@ fn promotion_funnel_points_all_pending_candidates_to_review_flow() -> anyhow::Re
     assert!(check.detail.contains("non-duplicate"), "{}", check.detail);
     assert!(
         check.detail.contains("linked temporal fact"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn declared_empty_surfaces_defers_zero_facts_cause_to_temporal_check() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-declared-empty-review-gated");
+    let conn = db::open_db()?;
+    seed_review_gated_candidate(&conn, "/repo/a")?;
+
+    let check = check_declared_empty_surfaces(Some(&conn));
+
+    assert_eq!(check.icon(), "WARN");
+    assert!(
+        check
+            .detail
+            .contains("memory_facts=0; check Temporal facts"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        !check.detail.contains("memory_facts=0 despite"),
         "{}",
         check.detail
     );

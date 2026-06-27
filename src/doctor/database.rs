@@ -359,7 +359,9 @@ pub(super) fn check_declared_empty_surfaces(conn: Option<&Connection>) -> Check 
 
     let mut findings = Vec::new();
     if memory_facts == 0 && (stats.active_memories > 0 || stats.captured_events > 0) {
-        findings.push("memory_facts=0 despite memory/event source data");
+        findings.push(
+            "memory_facts=0; check Temporal facts for review-gated candidates vs extraction gap",
+        );
     }
     if graph_edges == 0 && (stats.active_memories > 0 || stats.captured_events > 0) {
         findings.push("graph_edges=0 despite graph schema/read path");
