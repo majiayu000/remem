@@ -359,7 +359,9 @@ pub(super) fn check_declared_empty_surfaces(conn: Option<&Connection>) -> Check 
 
     let mut findings = Vec::new();
     if memory_facts == 0 && (stats.active_memories > 0 || stats.captured_events > 0) {
-        findings.push("memory_facts=0 despite memory/event source data");
+        findings.push(
+            "memory_facts=0; check Temporal facts for review-gated candidates vs extraction gap",
+        );
     }
     if graph_edges == 0 && (stats.active_memories > 0 || stats.captured_events > 0) {
         findings.push("graph_edges=0 despite graph schema/read path");
@@ -423,15 +425,63 @@ pub(super) fn check_promotion_funnel(conn: Option<&Connection>) -> Check {
         && stats.promoted_memory_candidates == 0
         && stats.pending_review_memory_candidates == stats.total_memory_candidates
     {
+        let action_hint = pending_review_action_hint(conn);
         Check::new(
             "Promotion funnel",
             Status::Warn,
             format!(
-                "{detail}; candidates are all pending review, so automatic capture is not producing usable memories"
+                "{detail}; candidates are all pending review, so promotion is review-gated: {action_hint}"
             ),
         )
     } else {
         Check::new("Promotion funnel", Status::Ok, detail)
+    }
+}
+
+fn pending_review_action_hint(conn: &Connection) -> String {
+    let project = top_pending_review_project(conn);
+    let list_command = match project
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(project) => format!(
+            "`remem review list --project {} --limit 20`",
+            shell_quote(project)
+        ),
+        None => "`remem review list --limit 20`".to_string(),
+    };
+    format!(
+        "inspect pending candidates with {list_command}; approve only supported, non-duplicate candidates with `remem review approve <id>`; promoted candidates write an active memory and linked temporal fact"
+    )
+}
+
+fn top_pending_review_project(conn: &Connection) -> Option<String> {
+    conn.query_row(
+        "SELECT p.project_path
+         FROM memory_candidates c
+         LEFT JOIN projects p ON p.id = c.project_id
+         WHERE c.review_status = 'pending_review'
+           AND p.project_path IS NOT NULL
+         GROUP BY p.project_path
+         ORDER BY COUNT(*) DESC, p.project_path ASC
+         LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+fn shell_quote(value: &str) -> String {
+    let safe = value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '@'));
+    if safe {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
     }
 }
 
@@ -468,6 +518,26 @@ pub(super) fn check_temporal_facts(conn: Option<&Connection>) -> Check {
             "Temporal facts",
             Status::Ok,
             "memory_facts table is empty because this store has no memories or captured events yet",
+        );
+    }
+
+    let review_gated_candidates = db::query_system_stats(conn)
+        .ok()
+        .and_then(|stats| {
+            (stats.total_memory_candidates > 0
+                && stats.promoted_memory_candidates == 0
+                && stats.pending_review_memory_candidates == stats.total_memory_candidates)
+                .then_some(stats.pending_review_memory_candidates)
+        })
+        .unwrap_or(0);
+    if stats.total == 0 && review_gated_candidates > 0 {
+        return Check::new(
+            "Temporal facts",
+            Status::Warn,
+            format!(
+                "memory_facts has 0 row(s) while {review_gated_candidates} memory candidate(s) are pending review; promotion is review-gated: {}",
+                pending_review_action_hint(conn)
+            ),
         );
     }
 
