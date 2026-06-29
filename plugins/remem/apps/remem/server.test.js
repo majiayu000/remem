@@ -782,22 +782,16 @@ test("activation summary is explicit about dry-run content", () => {
   assert.equal(summary.mentions_mcp, true);
   assert.equal(summary.writes_config, true);
   assert.equal(summary.line_count, 2);
-  assert.equal(summary.packaged_hooks.available, true);
-  assert.deepEqual(summary.packaged_hooks.events, ["SessionStart", "Stop"]);
-  assert.deepEqual(
-    summary.packaged_hooks.commands.map((hook) => [hook.event, hook.command]),
-    [
-      ["SessionStart", 'node "${PLUGIN_ROOT}/scripts/remem-hook.js" session-start'],
-      ["Stop", 'node "${PLUGIN_ROOT}/scripts/remem-hook.js" stop']
-    ]
-  );
+  assert.equal(summary.packaged_hooks.available, false);
+  assert.deepEqual(summary.packaged_hooks.events, []);
+  assert.deepEqual(summary.packaged_hooks.commands, []);
 });
-test("packaged hooks summary reads reviewable plugin hook definitions", () => {
+test("packaged hooks summary reports that plugin hooks are intentionally absent", () => {
   const summary = packagedHooksSummary();
 
-  assert.equal(summary.available, true);
+  assert.equal(summary.available, false);
   assert.match(summary.path, /plugins\/remem\/hooks\/hooks\.json$/);
-  assert.deepEqual(summary.events, ["SessionStart", "Stop"]);
-  assert.equal(summary.commands[0].timeout, 15);
-  assert.equal(summary.commands[1].timeout, 120);
+  assert.match(summary.error, /no such file/i);
+  assert.deepEqual(summary.events, []);
+  assert.deepEqual(summary.commands, []);
 });

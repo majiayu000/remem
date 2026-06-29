@@ -77,7 +77,6 @@ plugins/remem/
   .mcp.json
   README.md
   assets/
-  hooks/hooks.json
   scripts/
     remem-mcp.js
     remem-hook.js
@@ -172,37 +171,29 @@ Add plugin-facing utility tools or commands:
 
 ### Layer 4: hooks
 
-Automatic memory capture should use plugin-bundled hooks where possible:
+Automatic memory capture should use explicit host-level activation until Codex
+plugin hook runners guarantee plugin-root resolution for hook commands. The
+plugin should not ship auto-loaded `hooks/hooks.json` definitions that depend on
+`PLUGIN_ROOT`; if that environment is missing, SessionStart fails before remem
+can inject context.
+
+Activation delegates to the normal Codex install path:
 
 ```text
-plugins/remem/hooks/hooks.json
-```
-
-The hook commands should call a plugin script, not a global binary:
-
-```text
-node ${PLUGIN_ROOT}/scripts/remem-hook.js session-start
-node ${PLUGIN_ROOT}/scripts/remem-hook.js stop
-```
-
-`remem-hook.js` resolves the plugin-managed runtime and then delegates to:
-
-```text
-remem session-init
-remem summarize
+remem install --target codex --hooks-only
 ```
 
 Important behavior:
 
-- Plugin hooks are not trusted automatically. The user must review and trust
-  the current hook definition before they run.
-- The first-run UI and skill should explain this explicitly.
-- If hooks are not trusted, manual MCP tools still work.
+- Plugin MCP tools work before hook activation.
+- Hook activation is explicit and reviewable through the app/skill dry run.
+- The written hook commands must be executable in the host environment without
+  plugin-only environment variables.
 - Hook failures must be visible in `plugin_status` and `doctor --json`.
 
-This removes the need for the plugin to edit global Codex hook config for the
-common path. The existing `remem install --target codex` path can remain as a
-legacy or advanced installation mode.
+If Codex later supports a manifest hook pointer with guaranteed plugin-root
+substitution, plugin-bundled hooks can be reconsidered behind a regression test
+that executes the packaged hook command with the same environment Codex uses.
 
 ### Layer 5: Apps SDK GUI
 
@@ -392,7 +383,6 @@ Acceptance:
 
 Deliverables:
 
-- `hooks/hooks.json`
 - `scripts/remem-hook.js`
 - hook trust/status reporting
 - migration guidance from global `remem install --target codex`
