@@ -19,6 +19,17 @@ For new substantial work, prefer `docs/specs/<id>/PRODUCT.md` and `docs/specs/<i
 
 Specs are contracts, not proof that implementation is done.
 
+## SpecRail Issue Packets
+
+This repository also carries a repo-local SpecRail workflow. New
+issue-first/spec-first SpecRail packets use `specs/GH<issue-number>/product.md`,
+`tech.md`, and `tasks.md` as declared in `workflow.yaml`.
+
+Keep this `docs/specs/` directory as the remem implementation-contract index
+and historical spec archive. When a SpecRail issue changes behavior already
+covered by a current contract below, update the relevant `docs/specs/` contract
+as part of the implementation or spec handoff.
+
 Use this handoff for substantial behavior, API, DB, hook, plugin, or
 cross-module architecture work:
 
