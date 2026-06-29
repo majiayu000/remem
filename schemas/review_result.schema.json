@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specrail.local/schemas/review_result.schema.json",
+  "title": "Review Result",
+  "type": "object",
+  "required": [
+    "verdict",
+    "body",
+    "comments"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {
+      "enum": [
+        "APPROVE",
+        "REJECT"
+      ]
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "pattern": "(^|\\n)## Summary[ \\t]*(\\n|$)"
+        },
+        {
+          "pattern": "(^|\\n)## Verdict[ \\t]*(\\n|$)"
+        }
+      ]
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "line",
+          "side",
+          "severity",
+          "body"
+        ],
+        "additionalProperties": false,
+        "dependentRequired": {
+          "start_line": [
+            "start_side"
+          ],
+          "start_side": [
+            "start_line"
+          ]
+        },
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "side": {
+            "enum": [
+              "RIGHT",
+              "LEFT"
+            ]
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "important",
+              "suggestion",
+              "nit"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "start_side": {
+            "enum": [
+              "RIGHT",
+              "LEFT"
+            ]
+          },
+          "suggestion": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "spec_alignment": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "matched",
+            "drift",
+            "not_applicable"
+          ]
+        },
+        "spec": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "details": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
