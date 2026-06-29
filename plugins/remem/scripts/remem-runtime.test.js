@@ -348,21 +348,10 @@ test("activation dry-run uses local runtime without writing plugin runtime files
   assert.equal(fs.existsSync(runtimeMetadataPath(fx)), false);
 });
 
-test("packaged Codex hooks call the plugin runtime hook wrapper", () => {
+test("plugin package does not ship auto-loaded Codex hooks", () => {
   const hooksPath = path.join(__dirname, "..", "hooks", "hooks.json");
-  const hooks = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
 
-  assert.equal(
-    hooks.hooks.SessionStart[0].hooks[0].command,
-    'node "${PLUGIN_ROOT}/scripts/remem-hook.js" session-start'
-  );
-  assert.equal(hooks.hooks.SessionStart[0].hooks[0].timeout, 15);
-  assert.equal(
-    hooks.hooks.Stop[0].hooks[0].command,
-    'node "${PLUGIN_ROOT}/scripts/remem-hook.js" stop'
-  );
-  assert.equal(hooks.hooks.Stop[0].hooks[0].timeout, 120);
-  assert.equal(hooks.hooks.PostToolUse, undefined);
+  assert.equal(fs.existsSync(hooksPath), false);
 });
 
 test("remem-hook session-start delegates to Codex context through explicit runtime", () => {

@@ -2,7 +2,7 @@
 
 This directory contains a local Codex plugin wrapper for remem.
 
-The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install hooks. Automatic SessionStart context injection and Stop summarization require explicit hook trust or activation.
+The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install or ship auto-loaded hooks. Automatic SessionStart context injection and Stop summarization require explicit activation.
 
 This is a development foundation. The plugin now manages a version-matched
 local runtime under plugin storage for local checkout testing, so it no longer
@@ -82,29 +82,6 @@ The same server exposes `/mcp` with tool descriptors and the
 `apps` to `.codex-plugin/plugin.json` until `.app.json` can point at a real app
 id.
 
-## Packaged Hooks
-
-The plugin ships reviewable Codex hook definitions in
-`hooks/hooks.json`. Those hooks call the plugin wrapper, not a global remem
-binary:
-
-```bash
-node "${PLUGIN_ROOT}/scripts/remem-hook.js" session-start
-node "${PLUGIN_ROOT}/scripts/remem-hook.js" stop
-```
-
-`remem-hook.js` resolves the version-matched plugin runtime and delegates to:
-
-```bash
-remem context --host codex-cli
-remem summarize --host codex-cli
-```
-
-The plugin manifest intentionally does not add a top-level `hooks` field
-because current plugin validation rejects that field. Keep these hook files as
-the trust-review source until Codex plugin hook ingestion accepts a manifest
-hook pointer.
-
 ## Hook Activation
 
 MCP tools work without hook activation. To enable automatic memory injection and Stop summarization for Codex:
@@ -124,3 +101,6 @@ remem install --target codex --hooks-only
 
 That command enables Codex hooks without adding another global `remem` MCP
 server entry, because the plugin already provides MCP through `.mcp.json`.
+This explicit activation path writes verified host-level hook commands instead
+of relying on plugin hook environment variables such as `PLUGIN_ROOT`, which are
+not guaranteed in every Codex hook runner.

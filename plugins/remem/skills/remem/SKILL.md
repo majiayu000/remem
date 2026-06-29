@@ -32,11 +32,10 @@ user preferences.
 
 The plugin exposes MCP tools as soon as Codex loads `.mcp.json` and the runtime
 manager can resolve a matching `remem` binary. Automatic context injection and
-Stop summarization require explicit hook trust or activation. Packaged hook
-definitions live in `plugins/remem/hooks/hooks.json` and call
-`plugins/remem/scripts/remem-hook.js`, which resolves the plugin-managed
-runtime before delegating to `remem context --host codex-cli` and
-`remem summarize --host codex-cli`.
+Stop summarization require explicit activation. The plugin does not ship
+auto-loaded hook definitions because Codex hook runners do not always provide a
+plugin root environment. Activation writes verified host-level hooks through
+`remem install --target codex --hooks-only`.
 
 For a local repo checkout, activate with:
 
