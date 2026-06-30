@@ -18,6 +18,8 @@ jobs:
         run: python3 scripts/ci/check_public_claims.py
       - name: Check source file size guard
         run: python3 scripts/ci/check_file_size.py
+      - name: Check release workflows
+        run: python3 scripts/ci/check_release_workflows.py
       - name: Test plugin runtime scripts
         run: node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js
       - name: Check spec lifecycle

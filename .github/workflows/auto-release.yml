@@ -18,7 +18,7 @@ concurrency:
 jobs:
   tag:
     name: Tag staged source release
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
       - name: Check release secrets
@@ -42,13 +42,21 @@ jobs:
 
       - name: Verify completed main CI run
         if: github.event_name == 'workflow_run'
+        env:
+          CI_EVENT: ${{ github.event.workflow_run.event }}
+          CI_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CI_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event.workflow_run.head_branch }}" != "main" ]; then
+          if [ "$CI_EVENT" != "push" ]; then
+            echo "::error::auto-release only accepts push CI runs"
+            exit 1
+          fi
+          if [ "$CI_HEAD_BRANCH" != "main" ]; then
             echo "::error::auto-release only accepts CI runs from main"
             exit 1
           fi
-          if [ "${{ github.event.workflow_run.head_sha }}" != "$(git rev-parse HEAD)" ]; then
+          if [ "$CI_HEAD_SHA" != "$(git rev-parse HEAD)" ]; then
             echo "::error::checked-out SHA does not match the completed CI run"
             exit 1
           fi
@@ -112,48 +120,7 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          git fetch --force --tags origin
-          head_sha="$(git rev-parse HEAD)"
-
-          if git show-ref --tags --verify --quiet "refs/tags/${TAG}"; then
-            tag_sha="$(git rev-list -n 1 "${TAG}")"
-            if [ "$tag_sha" = "$head_sha" ]; then
-              echo "exists=true" >> "$GITHUB_OUTPUT"
-              echo "${TAG} already points at ${head_sha}; no-op"
-              exit 0
-            fi
-            echo "::error::${TAG} already points at ${tag_sha}, not ${head_sha}"
-            exit 1
-          fi
-
-          latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1 || true)"
-          if [ -n "$latest" ]; then
-            LATEST_TAG="$latest" python3 - <<'PY'
-          import os
-          import re
-          import sys
-
-          def parse(version: str) -> tuple[int, int, int]:
-              match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version)
-              if not match:
-                  print(f"unsupported release tag: {version}", file=sys.stderr)
-                  raise SystemExit(1)
-              return tuple(int(part) for part in match.groups())
-
-          current = os.environ["VERSION"]
-          latest = os.environ["LATEST_TAG"]
-          if parse(current) <= parse(latest):
-              print(
-                  f"source version {current} is not newer than latest tag {latest}",
-                  file=sys.stderr,
-              )
-              raise SystemExit(1)
-          PY
-          fi
-
-          echo "exists=false" >> "$GITHUB_OUTPUT"
+        run: bash scripts/ci/auto_release_check_tag_state.sh
 
       - name: Create release tag
         if: steps.tag.outputs.exists != 'true'
