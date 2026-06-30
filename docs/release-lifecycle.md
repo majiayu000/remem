@@ -22,6 +22,7 @@ python3 scripts/ci/check_plugin_version_sync.py
 python3 scripts/ci/check_public_surface.py
 python3 scripts/ci/check_public_claims.py
 python3 scripts/ci/check_file_size.py
+python3 scripts/ci/check_release_workflows.py
 ```
 
 ## Automatic Tagging
@@ -30,17 +31,25 @@ python3 scripts/ci/check_file_size.py
 passes on `main`, `.github/workflows/auto-release.yml` verifies that:
 
 - required release secrets are present (`CRATES_IO_TOKEN` and `NPM_TOKEN`)
-- the checked-out commit is the exact `main` commit that passed CI
+- the completed `CI` run was a trusted `push` event on `main`
+- the checked-out commit is the exact `main` push commit that passed CI
 - release metadata is synchronized with `Cargo.toml`
 - `plugins/remem/runtimes/remem-releases.json` marks the current version as
   `state: "unreleased"` with empty `assets`
-- the matching `vX.Y.Z` tag does not already point at another commit
-- the source version is newer than the latest existing semver release tag
+- an existing matching `vX.Y.Z` tag is treated as immutable instead of being
+  moved
+- when creating a new tag, the source version is newer than the latest existing
+  semver release tag
 
 When all gates pass, the workflow creates the annotated `vX.Y.Z` tag and then
 dispatches `.github/workflows/release.yml` against that tag ref. The explicit
 dispatch is required because GitHub suppresses downstream workflow triggers
 from tags created with the default `GITHUB_TOKEN`.
+
+If the matching tag already exists, Auto Release does not move it. If the
+GitHub Release for that tag already exists, the dispatch step is a no-op; if the
+tag exists but the Release is missing, Auto Release dispatches `release.yml`
+against the existing tag ref.
 
 The release workflow builds assets, creates the GitHub Release, publishes
 crates.io, and publishes npm. It also accepts manual `workflow_dispatch`, but
