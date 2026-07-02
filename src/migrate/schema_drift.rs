@@ -550,6 +550,17 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "workstream_identity_continuity",
         "idx_workstreams_merged_into",
     ),
+    SchemaInvariant::column(
+        54,
+        "memory_candidate_source_kind",
+        "memory_candidates",
+        "source_kind",
+    ),
+    SchemaInvariant::index(
+        54,
+        "memory_candidate_source_kind",
+        "idx_memory_candidates_source_review",
+    ),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {
