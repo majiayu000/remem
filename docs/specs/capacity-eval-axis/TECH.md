@@ -61,13 +61,17 @@ New module `src/eval/capacity/`:
   set.
 - JSON output: `{seed, scales, embedding_provider, per_scale: {scale, channels:
   {…}, fused: {…}, p95_latency_ms}}` plus `degradation`: positive quality loss,
-  computed as 1x fused metrics minus largest-scale fused metrics.
+  computed as 1x metrics minus largest-scale metrics for every active channel
+  and for fused output.
 
 ### Gating
 
-- `eval-gates` gains a capacity slice: fail when positive quality loss
-  `degradation.fused.r_at_5 > budget` (budget in the gates config; initial
-  value set after one week of nightly data per the rollout plan).
+- `eval-gates` gains a capacity slice: fail when positive quality loss exceeds
+  budget for fused output or for any active retrieval channel
+  (`degradation.<channel>.r_at_5 > budget` or the configured nDCG budget).
+  Failure output must name the offending channel and metric, so a channel-level
+  regression cannot be hidden by fused ranking. Initial budgets are set after
+  one week of nightly data per the rollout plan.
 - PR CI runs scales 1,10; nightly runs 1,10,50 and publishes the JSON trend
   artifact for the #384 dashboard.
 - Latency fields excluded from determinism assertions and from gating.
@@ -79,7 +83,7 @@ New module `src/eval/capacity/`:
 | P1 deterministic synthesis | eval/capacity generator | test: two runs same seed -> identical corpus hash and metrics JSON |
 | P2 fixed judgments | disjointness guardrail | test: guardrail rejects a crafted colliding template |
 | P3 per-channel report | explain integration | test: JSON contains all active channels at each scale |
-| P4 budget gate | eval-gates slice | test: injected synthetic regression fails the gate |
+| P4 budget gate | eval-gates slice | test: injected fused regression fails; injected single-channel regression also fails with channel named |
 | P5 realistic noise | template pools | review + test that pools cover paths/crates/errors |
 
 ## Data Flow

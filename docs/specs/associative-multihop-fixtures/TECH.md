@@ -36,11 +36,16 @@ Tracking:
 
 ### Fixture construction
 
-Extend `eval/golden.json` with a `query_type: "associative"` slice:
+Extend `eval/golden.json` with entries that use the existing golden harness
+slice field:
 
 1. Each fixture is a triple: query text, intermediate memory (shares the
-   linking entity with the target), target memory (judged relevant), plus
-   `hop_path` documentation (`query -> <entity> -> target`).
+   linking entity with the target), target memory (judged relevant),
+   `category: "multi_hop"`, `slice: "associative"`, plus `hop_path`
+   documentation (`query -> <entity> -> target`). The implementation may add
+   an explicit optional `hop_path` field to `GoldenQuery`, or use another
+   loader-validated metadata field, but it must not rely on a new ignored
+   `query_type` key.
 2. Linking entity classes: file path, crate name, error signature, issue
    number — at least 3 fixtures per class, >= 15 total.
 3. Mechanical overlap check in the golden loader tests: token overlap
@@ -48,8 +53,11 @@ Extend `eval/golden.json` with a `query_type: "associative"` slice:
    between query and target content must be below a documented threshold;
    embedding-cosine between query and target (current provider) is recorded
    in the report for transparency.
-4. Fixture setup writes `graph_edges` rows for the hop links via
-   `graph_contract.rs` constructors with fixture provenance ids.
+4. Fixture setup writes trusted provenance rows before graph edges. It seeds
+   fixture `captured_events` rows (or an existing test helper that creates the
+   same rows) and passes their ids through `GraphEdgeProvenance` with
+   confidence and reason before calling `insert_graph_edge`; no raw trusted
+   `graph_edges` insert may bypass `validate_trusted_provenance`.
 
 ### Discriminative-power baseline
 
@@ -86,11 +94,12 @@ Cross-link from #676.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 associative construction | golden.json + loader | loader test enforces triple + hop_path presence |
+| P1 associative construction | golden.json + loader | loader test enforces `slice: "associative"`, triple, and hop_path presence |
 | P1/edge overlap rejection | overlap check | test: crafted leaky fixture rejected |
 | P2 verified headroom | baseline report | committed report artifact; harness test asserts report generation |
 | P3 documented hop path | fixture schema | loader test requires hop_path |
-| P4 both arms, same slice | eval arms | harness test runs both arms on the slice in test profile, including reverse traversal from entity seed to memory |
+| P4 both arms, same slice | eval arms | harness test runs both arms on the associative slice in test profile, including reverse traversal from entity seed to memory |
+| P4/trusted provenance | fixture setup | test: graph fixture seeds captured_events and trusted edge insertion succeeds through insert_graph_edge |
 | P5 decision recorded | ADR follow-up | PR review checklist item; link on #676 |
 
 ## Data Flow
