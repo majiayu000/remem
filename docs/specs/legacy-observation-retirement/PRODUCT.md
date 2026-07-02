@@ -10,17 +10,23 @@ Tracking:
 
 ## Problem
 
-Two storage generations run side by side:
+Two storage generations run side by side. The 2026-07-02 verification pass
+(inventory in TECH.md) sharpened what "legacy" actually means here:
 
-- Legacy pre-capture-ledger path: `pending_observations`, `observations`
-  (+ `observations_fts`), `session_summaries` write/finalize, and legacy
-  migration shims.
-- Current path: `captured_events` -> `extraction_tasks` ->
-  `memory_candidates` -> `memories`.
+- `pending_observations` is a dead queue: no default-path writer remains,
+  and the dogfood database shows zero rows in every state. Its claim/lease
+  machinery ships in the binary with no production caller.
+- `session_summaries` is dual-written on every session end: the current
+  `SessionRollup` task and the pre-v006 summarize job chain
+  (`JobType::Summary` -> `finalize_summarize`) both fire from the same Stop
+  hook, unconditionally. The legacy chain also accounts for thousands of
+  failed jobs and unattributed AI spend on the dogfood database.
+- `observations` (+ `observations_fts`) turned out to be a live intermediate
+  of the current extraction pipeline — but MCP still advertises it as
+  "legacy observations", which misleads both users and future contributors.
 
-The legacy path still reaches users: MCP `get_observations` advertises
-`source='observation'` as "legacy observations", timeline and context read
-`session_summaries`, and doctor tracks `pending_observations` liveness.
+So the debt is one dead surface, one duplicated writer chain, and one
+mislabeled current surface — not a wholesale parallel pipeline.
 
 Costs of the dual path:
 

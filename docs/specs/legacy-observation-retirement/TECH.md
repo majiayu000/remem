@@ -9,45 +9,74 @@ Tracking:
 
 ## Existing Implementation Facts
 
-Grep-based starter inventory (2026-07-02, to be completed and re-verified in
-Phase 1):
+Verified inventory (2026-07-02): static writer/reader classification of every
+production reference (tests and migrations excluded), cross-checked against a
+production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 
-### `pending_observations` (legacy queue)
+### `pending_observations` (legacy queue) — verdict: pure legacy
 
-- Writers: `src/observe/hook.rs`, `src/summarize/summary_job/hook.rs`
-  (hook-side enqueue paths), `src/db/pending/queue.rs`.
-- Queue/claim machinery: `src/db/pending/{claim,query,queue}.rs`,
-  `src/db/pending/admin/{migration,mutate,query}.rs` (includes
-  `migrate_legacy_pending` and truncation shims).
-- Readers/reporting: `src/cli/actions/query/status.rs`,
-  `src/db/query/observability/*`, `src/db/query/stats.rs`,
-  `src/doctor/{capture_liveness,database,health_action}.rs`.
-- Schema: `v001_baseline.sql`, touched by `v003`, `v006`.
+- Writers on the default runtime path: none. `enqueue_pending`
+  (`src/db/pending/queue.rs`) has no production caller; only test bodies call
+  it. The PostToolUse observe hook writes `captured_events` +
+  `ObservationExtract` tasks, not this queue; the Stop hook only reads a
+  count to log an "ignored N legacy pending" warning.
+- Remaining writers are manual admin: `remem pending migrate-legacy`
+  (`src/db/pending/admin/migration.rs`, re-records rows as `captured_events`
+  and marks them `migrated`), `retry-failed` / `purge-failed`
+  (`src/db/pending/admin/mutate.rs`). The claim/lease machinery
+  (`src/db/pending/claim.rs`) has no production consumer.
+- Readers: status/stats counters, doctor capture-liveness and queue-health,
+  observability metrics, `remem pending` listings.
+- Dogfood evidence: queue fully empty — ready/delayed/processing/expired/
+  failed all 0.
 
-### `observations` + `observations_fts` (legacy derived store)
+### `observations` — verdict: reclassify-current (NOT legacy)
 
-- FTS/search readers: `src/db/query/search.rs`,
-  `src/retrieval/search/observation.rs`.
-- MCP exposure: `get_observations` with `source='observation'` documented as
-  "legacy observations" (`src/mcp/server/context_tools.rs`).
-- Writer paths to be confirmed in Phase 1 (legacy flush machinery).
+- Default-path writers exist in the current pipeline:
+  `persist_observations` (`src/observation_extract.rs` →
+  `src/db/observation.rs`) runs inside the `ObservationExtract` extraction
+  task; `src/summarize/compress.rs` inserts compressed observations from the
+  Stop-hook compress job. Staleness marking, dedup access bumps, and
+  retention cleanup also mutate it.
+- Readers are live features: MCP `get_observations(source='observation')`,
+  `remem timeline`, memory-candidate promotion evidence
+  (`src/memory_candidate.rs`), staleness, `remem why` git trace,
+  status/stats.
+- The promotion funnel counts it as a current stage:
+  `captured_events -> observations -> candidates -> promoted`.
+- The actual defect is naming: the MCP tool description calls this source
+  "legacy observations" (`src/mcp/server/context_tools.rs`), which
+  misdescribes a live intermediate store.
 
-### `session_summaries` (shared surface — NOT purely legacy)
+### `observations_fts` — verdict: current but narrow
 
-- Current-pipeline writers: `src/session_rollup/persist.rs`,
-  `src/summarize/summary_job/persist.rs`, finalize in
-  `src/db/summarize/session/finalize.rs`.
-- Readers: `src/context/query.rs`, `src/context/claude_memory/runtime.rs`,
-  `src/context/injection_gate/data_version_hint.rs`,
-  `src/timeline/{summary,detail}.rs`, `src/git_trace.rs`,
-  `src/user_context/{extraction/source,recall/sources,summary}.rs`,
-  `src/observation_extract.rs`, `src/worker.rs`, stats/status/doctor.
-- Schema: `v001`, `v007`, `v019`, `v035`.
+- No Rust writer: maintained by migration-defined SQL triggers on
+  `observations`.
+- Single production read path: `remem timeline` anchor resolution
+  (`src/cli/actions/query/timeline.rs` → `src/retrieval/search/observation.rs`
+  → `src/db/query/search.rs`). It is NOT reachable from the main `search`
+  MCP tool or `remem search`, which query `memories` only.
+- Disposition follows `observations`.
 
-The `session_summaries` finding matters: the current session-rollup pipeline
-still writes this table, so it is a live shared surface, not a retirement
-candidate by default. Its disposition needs the Phase 1 analysis before any
-freeze decision.
+### `session_summaries` — verdict: shared, DUAL-WRITE (the real target)
+
+- Two writers, both unconditionally reachable from the same Stop hook:
+  1. Current: `persist_session_rollup` (`src/session_rollup/persist.rs`)
+     via the `SessionRollup` extraction task.
+  2. Legacy pre-v006: `enqueue_summary_jobs`
+     (`src/summarize/summary_job/hook.rs`) → worker `JobType::Summary`
+     (`src/worker.rs`) → `finalize_summarize`
+     (`src/db/summarize/session/finalize.rs`, DELETE+INSERT).
+  Neither is behind a flag; every session end drives both chains.
+- Readers are load-bearing current features: context injection sessions
+  section + data-version hint, user-context recall/extraction/summary,
+  timeline, `remem why`, observation-extract context, status/doctor.
+- Governance mutations (`src/memory/scope_cleanup/mutate.rs`) are manual.
+- The retirement target is therefore the legacy summarize job chain, not
+  the table. The table stays; one of its two writers goes.
+- Dogfood corroboration: the jobs queue shows 2479 failed legacy jobs, and
+  AI usage attribution reports 24019 unattributed legacy calls — the legacy
+  chain is not just redundant, it is actively failing and unaccounted.
 
 ## Design Rules
 
@@ -82,10 +111,26 @@ Decision inputs required per surface:
   promoted memories do not represent;
 - consumer list and replacement source for each.
 
-Expected (to validate, not assume): `pending_observations` and
-`observations(+fts)` -> `retire`; `session_summaries` ->
-`reclassify-current` or a narrower split (legacy columns/rows vs rollup
-output).
+Verified dispositions (2026-07-02 static + dogfood analysis, recorded in
+Existing Implementation Facts above):
+
+| Surface | Disposition |
+|---|---|
+| `pending_observations` | `retire` — no default-path writer, dogfood queue empty; drop table + claim/queue machinery after window |
+| `observations` | `reclassify-current` — live intermediate of the extraction pipeline; fix the "legacy" MCP wording instead |
+| `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
+| `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
+| legacy summarize chain (`enqueue_summary_jobs` → `JobType::Summary` → `finalize_summarize`) | `retire` — dual-writer duplicating `SessionRollup`; also the source of 2479 failed jobs and unattributed AI spend |
+
+Remaining Phase 1 analysis before freeze decisions execute:
+
+- Output equivalence between the two `session_summaries` writers: does
+  `finalize_summarize` produce fields or quality the `SessionRollup` path
+  does not (compare row shape and content on dogfood data)? If yes, port the
+  delta into the rollup before removing the legacy chain.
+- Confirm `pending_observations` has zero rows across other real databases,
+  not only the primary dogfood one; `remem pending migrate-legacy` remains
+  the escape hatch for stragglers.
 
 ## Phase 2: Doctor Visibility
 
@@ -98,33 +143,51 @@ output).
 
 Tests: fixture DBs per state; frozen-write detection test.
 
-## Phase 3: Reader Migration + Freeze
+## Phase 3: Writer Freeze (per verified retire set)
 
-Per surface classified `retire`:
+### Legacy summarize chain
 
-1. Build ledger-backed replacements for each reader (search over
-   `captured_events`/memories instead of `observations_fts`, etc.).
-2. Equivalence fixtures: committed test comparing old-source and new-source
-   output on seeded data; acceptable deltas documented in the fixture.
-3. Flip readers to the new source behind the same public API; MCP
-   `source='observation'` remains as a deprecated, documented audit
-   passthrough.
-4. Remove/guard writers; surface enters `frozen`.
+1. Equivalence fixtures first: committed test comparing `finalize_summarize`
+   output rows against `persist_session_rollup` output for the same seeded
+   session; document every field-level delta.
+2. Port any load-bearing delta into the rollup path (readers must not lose
+   fields they consume today).
+3. Remove the `enqueue_summary_jobs` -> `JobType::Summary` ->
+   `finalize_summarize` chain from the Stop hook path; the worker keeps a
+   rejecting arm for in-flight legacy jobs during the window.
+4. Doctor: a `session_summaries` row written by anything other than the
+   rollup path after freeze is an error finding.
+
+### `pending_observations`
+
+Readers are counters and admin listings only, so no reader migration is
+needed. Freeze means: delete the dead claim/lease machinery
+(`src/db/pending/claim.rs`) and the test-only `enqueue_pending` write path;
+status/doctor keep reporting row counts until the drop ships.
+
+### Reclassification (no freeze)
+
+`observations` + `observations_fts` stay current. The only change is
+accuracy: update the MCP `get_observations` tool description to stop calling
+the source "legacy observations", and update `docs/ARCHITECTURE.md`
+accordingly.
 
 ## Phase 4: Value Migration + Drop
 
-1. `remem migrate legacy-observations` (idempotent): moves rows with unique
-   value into the ledger (as `captured_events` with a legacy retention
-   class) or promotes them where the Phase 1 decision says so; reports
-   migrated/skipped/valueless counts.
+1. `remem pending migrate-legacy` (already exists) is the migration path for
+   any non-empty `pending_observations` in the wild; extend its report to
+   print migrated/skipped/valueless counts if it does not already.
 2. Deprecation window: at least one minor release where doctor announces
    the upcoming drop and the release notes carry it.
-3. Drop migration per table with the guarded pre-check; `observations_fts`
-   drops with its base table; MCP legacy source parameter removed in the
-   same release, with the MCP tool description updated.
+3. Guarded drop migration for `pending_observations` (pre-check refuses when
+   unmigrated rows exist). No drop for `observations`, `observations_fts`,
+   or `session_summaries` — they stay.
+4. Retire `JobType::Summary` handling and `finalize_summarize` code after
+   the window; clean up the 2479-failed-legacy-jobs class in the jobs table
+   with an explicit `remem cleanup` action rather than a silent migration.
 
 Tests: migration idempotency; guarded-drop refusal; post-drop schema-drift
-tests (`src/migrate/schema_drift.rs`) updated in the same PR as each drop.
+tests (`src/migrate/schema_drift.rs`) updated in the same PR as the drop.
 
 ## Compatibility Notes
 
@@ -149,9 +212,11 @@ epic before each drop ships.
 
 ## Open Questions
 
-- Does `observations` hold rows predating `raw_messages` whose text exists
-  nowhere else (true unique value), and how many?
-- Is a `legacy` retention class in `captured_events` the right landing zone,
-  or should valuable legacy rows become `pending_review` candidates instead?
-- Timeline output contract: do we pin current rendering with snapshot tests
-  before switching its source, or accept documented deltas?
+- `finalize_summarize` vs `persist_session_rollup` output equivalence: which
+  fields differ, and do any current readers depend on legacy-only fields?
+  (This gates the legacy-chain removal.)
+- Do in-flight `JobType::Summary` jobs at upgrade time get drained, rejected,
+  or converted to `SessionRollup` tasks?
+- Should the `get_observations` MCP source keep the name
+  `source='observation'` after the description fix, or is a rename worth the
+  client churn?
