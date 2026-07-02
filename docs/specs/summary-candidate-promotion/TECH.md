@@ -52,11 +52,16 @@ both cases.
    `CandidateSourcePath::{ObservationExtract, SummaryJob}`) and applies
    `summary_auto_promote_min_confidence` (config; default equal to
    `AUTO_PROMOTE_MIN_CONFIDENCE`, tunable stricter) for the summary path.
-3. Support checking: reuse `support.rs` against the summary's source
+3. The summary candidate builder stops hardcoding every candidate as medium
+   risk. It assigns `risk_class='low'` only for source-supported,
+   auto-promotable memory types that pass the same unsafe-marker and trust
+   checks as observation candidates; ambiguous summary candidates remain
+   `medium` and therefore stay pending_review under the existing gate.
+4. Support checking: reuse `support.rs` against the summary's source
    observation texts; if the summary path cannot produce observation texts for
    a candidate, the support check fails closed (block reason
    `summary_support_unavailable`).
-4. Config flag `summary_auto_promote` (default off at merge, flipped on after
+5. Config flag `summary_auto_promote` (default off at merge, flipped on after
    the sampling window in the rollout plan).
 
 ### B-part shipped regardless: observability
@@ -72,8 +77,10 @@ both cases.
 
 - Replace `finalize_summary_creates_candidates_without_active_memories` with:
   - flag off: summary candidates stay pending_review (current behavior);
-  - flag on + qualifying candidate: promotes, embedding upserted, operation
-    logged;
+  - flag on + qualifying low-risk summary candidate: promotes, embedding
+    upserted, operation logged;
+  - flag on + current medium-risk summary candidate: stays pending_review with
+    the expected risk block reason;
   - flag on + below-floor or missing-support candidate: pending_review with
     the expected block reason.
 
@@ -81,7 +88,7 @@ both cases.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| A1 same gate, stricter floor | should_auto_promote | boundary tests at both floors |
+| A1 same gate, stricter floor | should_auto_promote | boundary tests at both floors and summary risk classes |
 | A2 block-reason parity | persist.rs + gate | test asserts structured reason on summary block |
 | A3 evidence required | support batch construction | test: no evidence -> pending, reason logged |
 | B1/B2 observability | schema + doctor | test: counts grouped by source_path; label rendered |

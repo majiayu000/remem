@@ -65,10 +65,14 @@ Reusing the frozen-gate procedure from the ADR:
 - Arm 1 — entity-BFS proxy: existing `src/retrieval/entity/graph/` path via
   `--multi-hop`.
 - Arm 2 — literal traversal: a new eval-only retrieval arm that seeds from
-  the query's entities, traverses `graph_edges` (1-2 hops, typed edges,
-  provenance intact), and scores reached memories into the fusion set. Lives
-  under `src/eval/` or a feature-gated module so it cannot ship into
-  production retrieval accidentally.
+  the query's entities and traverses the real directional `graph_edges`
+  contract. Because current trusted mention/file/topic edges are written from
+  memories or episodes to entities/files/topics, the eval arm must build a
+  reverse lookup for allowed edge types such as `Mentions`, `TouchesFile`, and
+  `HasTopic` instead of inventing unsupported `Entity -> Memory` rows. It
+  traverses 1-2 hops, preserves typed provenance, and scores reached memories
+  into the fusion set. Lives under `src/eval/` or a feature-gated module so it
+  cannot ship into production retrieval accidentally.
 - Both arms report delta vs baseline on the associative slice and on the full
   golden set (to catch regressions elsewhere), same metrics as the ADR run.
 
@@ -86,7 +90,7 @@ Cross-link from #676.
 | P1/edge overlap rejection | overlap check | test: crafted leaky fixture rejected |
 | P2 verified headroom | baseline report | committed report artifact; harness test asserts report generation |
 | P3 documented hop path | fixture schema | loader test requires hop_path |
-| P4 both arms, same slice | eval arms | harness test runs both arms on the slice in test profile |
+| P4 both arms, same slice | eval arms | harness test runs both arms on the slice in test profile, including reverse traversal from entity seed to memory |
 | P5 decision recorded | ADR follow-up | PR review checklist item; link on #676 |
 
 ## Data Flow

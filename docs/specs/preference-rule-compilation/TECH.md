@@ -15,8 +15,10 @@ Tracking:
 - Lesson/preference metadata carries `reinforcement_count`
   (`src/memory_candidate/apply.rs`).
 - Hooks are dispatched through `src/cli/dispatch.rs`; Claude Code fires
-  SessionStart, UserPromptSubmit, PostToolUse, and Stop; Codex fires
-  SessionStart/Stop with PostToolUse(Bash) opt-in.
+  SessionStart, UserPromptSubmit, PostToolUse, PreCompact, and Stop today;
+  Codex fires SessionStart/Stop with PostToolUse(Bash) opt-in. The existing
+  Claude Code PostToolUse observe hook is after command execution and cannot
+  provide block-mode enforcement.
 - The background worker (`src/worker.rs`) already runs extraction and
   consolidation off the interactive path.
 - `memory_suppressions` (v051) and soft supersession
@@ -35,7 +37,9 @@ Tracking:
 
 ### Rule artifact
 
-Derived file per project at `~/.remem/compiled_rules/<project-hash>.json`:
+Derived file per project at
+`<data_dir>/compiled_rules/<project-hash>.json`, where `<data_dir>` is the
+resolved `REMEM_DATA_DIR` / `db::absolute_data_dir()` location:
 
 ```json
 {
@@ -59,8 +63,10 @@ Derived file per project at `~/.remem/compiled_rules/<project-hash>.json`:
 
 Predicate kinds in the first implementation:
 
-- `command_regex`: matched against PostToolUse command input (Bash tool input
-  on Claude Code, Codex Bash observe when enabled).
+- `command_regex`: matched against pre-execution Bash command input on hosts
+  with a pre-tool hook. Claude Code support requires adding a `PreToolUse`
+  Bash hook that invokes a read-only `remem rules eval` path before the
+  command runs.
 - `commit_trailer_forbidden`: matched against `git commit` command strings for
   forbidden trailer substrings.
 
@@ -78,14 +84,23 @@ Nothing else. New kinds require a spec update.
 3. Drop rules whose source memory is superseded, suppressed, expired, or
    deleted. Contradictory predicates: keep the rule with the newest source
    memory, log the conflict.
-4. Write the artifact atomically (temp file + rename).
+4. Load user overrides from canonical SQLite state, then write the artifact
+   atomically (temp file + rename). The artifact is never the source of truth
+   for disabled/enabled/action override state.
 
 ### Hook evaluation
 
-- PostToolUse: load artifact (mtime-cached in process), evaluate predicates
-  against the tool command, append warning text to hook output on match.
+- PreToolUse (Claude Code Bash): load artifact (mtime-cached in process),
+  evaluate predicates against the command before execution, and return the
+  host's warning or blocking contract on match.
+- PostToolUse observe remains capture-only; it may record violations for
+  diagnostics but must not be the enforcement path for warning/block behavior.
+- Codex command rules are reported as unsupported for enforcement until Codex
+  exposes a pre-execution Bash hook; `set-action ... block` returns an error
+  for Codex-only projects instead of implying protection exists.
 - Block action: only honored when the rule has `"action": "block"` set via
-  explicit user CLI opt-in; hook returns the host's blocking exit contract.
+  explicit user CLI opt-in and the current host supports pre-execution
+  enforcement.
 - Evaluation errors are caught, logged at error level once per session, and
   never propagate.
 
@@ -98,8 +113,10 @@ remem rules enable <rule_id>
 remem rules set-action <rule_id> warn|block
 ```
 
-Disable is stored in the artifact (worker preserves user overrides across
-recompiles by rule_id).
+Disable/enable and action overrides are stored in SQLite (for example a
+`rule_overrides` table keyed by rule_id plus project scope). The worker emits
+the merged result into the derived artifact; deleting or regenerating the
+artifact cannot revert a user override.
 
 ### Doctor
 
@@ -115,14 +132,16 @@ error.
 | P3 deterministic eval | hook evaluator | unit test: same input, same verdict; no DB handle in evaluator |
 | P4 warn default | compile pass | unit test: compiled action is warn unless user override exists |
 | P5 supersession removal | compile pass | test: soft_supersede source, recompile, rule gone |
-| P6 CLI round-trip | rules CLI | test: disable persists across recompile |
+| P6 CLI round-trip | rules CLI + SQLite overrides | test: disable/action override persists across artifact deletion and recompile |
 | P7 fail open | hook evaluator | test: corrupt artifact -> hook succeeds, error logged |
+| P8 pre-execution enforcement | install + evaluator | test: Claude PreToolUse Bash hook blocks before command; PostToolUse-only path cannot claim enforcement |
 
 ## Data Flow
 
-Preferences (SQLite) -> worker compile pass -> rules artifact (JSON) ->
-hook evaluator (read-only) -> warning text in hook output. User overrides flow
-CLI -> artifact -> preserved by recompiles. No hook-side writes.
+Preferences + rule overrides (SQLite) -> worker compile pass -> rules artifact
+(JSON) -> pre-execution hook evaluator (read-only) -> warning/block result in
+hook output. User overrides flow CLI -> SQLite -> next artifact build. No
+hook-side writes.
 
 ## Alternatives Considered
 
@@ -131,6 +150,9 @@ CLI -> artifact -> preserved by recompiles. No hook-side writes.
   hook-safe DB open path in #467).
 - LLM-judged compliance at Stop time: rejected for v1; non-deterministic,
   post-hoc rather than preventive, and adds LLM cost per session.
+- PostToolUse-only enforcement: rejected; commands have already run by then,
+  so it cannot satisfy block-mode semantics for package-manager or forbidden
+  command rules.
 - Compiling into host-native hook config (Claude Code settings hooks):
   rejected; remem must not rewrite high-context host config files.
 
@@ -139,9 +161,10 @@ CLI -> artifact -> preserved by recompiles. No hook-side writes.
 - Security: rule artifact is an instruction-adjacent surface; it is derived
   from reviewed memories only, written atomically, and never contains
   executable code (predicates are data). Block-mode is user-opt-in only.
-- Compatibility: Codex without Bash observe cannot enforce command rules;
-  doctor must label per-host enforcement capability honestly.
-- Performance: regex evaluation per PostToolUse event; bounded by rule count
+- Compatibility: Codex and any host without pre-execution Bash hooks cannot
+  enforce command rules; doctor must label per-host enforcement capability
+  honestly and CLI must reject unsupported block-mode claims.
+- Performance: regex evaluation per pre-execution Bash event; bounded by rule count
   (expected < 20); covered by the latency acceptance criterion.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
@@ -150,7 +173,8 @@ CLI -> artifact -> preserved by recompiles. No hook-side writes.
 - [ ] Unit tests: compile eligibility, conflict resolution, supersession
       removal, artifact atomicity, evaluator determinism, fail-open.
 - [ ] Integration test: end-to-end fixture (preference reinforced 3x -> rule
-      compiled -> simulated PostToolUse violation -> warning in output).
+      compiled -> simulated PreToolUse Bash violation -> warning/block before
+      execution).
 - [ ] Manual verification: real Claude Code session with a seeded preference;
       confirm warning appears and `remem rules list` shows provenance.
 
