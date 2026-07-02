@@ -58,6 +58,8 @@ pub struct GoldenQuery {
     pub category: String,
     #[serde(default)]
     pub slice: Option<String>,
+    #[serde(default)]
+    pub hop_path: Option<GoldenHopPath>,
     pub project: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
@@ -94,6 +96,14 @@ impl GoldenQuery {
         }));
         refs
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct GoldenHopPath {
+    pub source: String,
+    pub entity_type: String,
+    pub entity: String,
+    pub target: String,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
@@ -168,7 +178,7 @@ impl EvidenceRef {
     }
 }
 
-fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
+pub(super) fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
     haystack.to_lowercase().contains(&needle.to_lowercase())
 }
 

@@ -777,6 +777,336 @@
         }
       ],
       "notes": "Requires linking the system owner fact to the team pager fact."
+    },
+    {
+      "id": "associative-file-01",
+      "query": "Which answer follows signal arachne?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-file-source-01",
+        "entity_type": "file_path",
+        "entity": "src/aurora/cache.rs",
+        "target": "assoc-file-target-01"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-file-target-01",
+          "memory_type": "decision",
+          "text_contains": "roster code cedar-14"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-file-02",
+      "query": "Which answer follows signal briar?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-file-source-02",
+        "entity_type": "file_path",
+        "entity": "src/brass/ledger.rs",
+        "target": "assoc-file-target-02"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-file-target-02",
+          "memory_type": "decision",
+          "text_contains": "roster code slate-27"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-file-03",
+      "query": "Which answer follows signal cinder?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-file-source-03",
+        "entity_type": "file_path",
+        "entity": "src/cobalt/retry.rs",
+        "target": "assoc-file-target-03"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-file-target-03",
+          "memory_type": "decision",
+          "text_contains": "roster code onyx-33"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-file-04",
+      "query": "Which answer follows signal dahlia?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-file-source-04",
+        "entity_type": "file_path",
+        "entity": "src/dune/vector.rs",
+        "target": "assoc-file-target-04"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-file-target-04",
+          "memory_type": "decision",
+          "text_contains": "roster code amber-58"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-crate-01",
+      "query": "Which value trails beacon hazel?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-crate-source-01",
+        "entity_type": "crate",
+        "entity": "quartz-loom",
+        "target": "assoc-crate-target-01"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-crate-target-01",
+          "memory_type": "decision",
+          "text_contains": "rollout slot violet-61"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-crate-02",
+      "query": "Which value trails beacon iris?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-crate-source-02",
+        "entity_type": "crate",
+        "entity": "ember-vault",
+        "target": "assoc-crate-target-02"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-crate-target-02",
+          "memory_type": "decision",
+          "text_contains": "rollout slot cobalt-72"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-crate-03",
+      "query": "Which value trails beacon jasper?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-crate-source-03",
+        "entity_type": "crate",
+        "entity": "harbor-calc",
+        "target": "assoc-crate-target-03"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-crate-target-03",
+          "memory_type": "decision",
+          "text_contains": "rollout slot pewter-84"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-crate-04",
+      "query": "Which value trails beacon kelp?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-crate-source-04",
+        "entity_type": "crate",
+        "entity": "mesa-index",
+        "target": "assoc-crate-target-04"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-crate-target-04",
+          "memory_type": "decision",
+          "text_contains": "rollout slot topaz-95"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-error-01",
+      "query": "Which response follows marker lumen?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-error-source-01",
+        "entity_type": "error_signature",
+        "entity": "E_ASSOC_017",
+        "target": "assoc-error-target-01"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-error-target-01",
+          "memory_type": "decision",
+          "text_contains": "mitigation delta-fox"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-error-02",
+      "query": "Which response follows marker mallow?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-error-source-02",
+        "entity_type": "error_signature",
+        "entity": "E_ASSOC_029",
+        "target": "assoc-error-target-02"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-error-target-02",
+          "memory_type": "decision",
+          "text_contains": "mitigation river-lark"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-error-03",
+      "query": "Which response follows marker nimbus?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-error-source-03",
+        "entity_type": "error_signature",
+        "entity": "E_ASSOC_041",
+        "target": "assoc-error-target-03"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-error-target-03",
+          "memory_type": "decision",
+          "text_contains": "mitigation solar-mint"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-error-04",
+      "query": "Which response follows marker orchid?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-error-source-04",
+        "entity_type": "error_signature",
+        "entity": "E_ASSOC_053",
+        "target": "assoc-error-target-04"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-error-target-04",
+          "memory_type": "decision",
+          "text_contains": "mitigation velvet-ash"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-issue-01",
+      "query": "Which person follows trail opal?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-issue-source-01",
+        "entity_type": "issue_number",
+        "entity": "#9102",
+        "target": "assoc-issue-target-01"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-issue-target-01",
+          "memory_type": "decision",
+          "text_contains": "reviewer Mira Kade"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-issue-02",
+      "query": "Which person follows trail pearl?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-issue-source-02",
+        "entity_type": "issue_number",
+        "entity": "#9137",
+        "target": "assoc-issue-target-02"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-issue-target-02",
+          "memory_type": "decision",
+          "text_contains": "reviewer Tomas Vale"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "associative-issue-03",
+      "query": "Which person follows trail quartz?",
+      "category": "multi_hop",
+      "slice": "associative",
+      "hop_path": {
+        "source": "assoc-issue-source-03",
+        "entity_type": "issue_number",
+        "entity": "#9188",
+        "target": "assoc-issue-target-03"
+      },
+      "project": "synthetic/assoclab",
+      "branch": "main",
+      "evidence_refs": [
+        {
+          "topic_key": "assoc-issue-target-03",
+          "memory_type": "decision",
+          "text_contains": "reviewer Nia Holt"
+        }
+      ],
+      "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
     }
   ],
   "corpus": [
@@ -1151,6 +1481,246 @@
       "title": "Failureforge Cargo Check Loop Lesson",
       "content": "Lesson: After the third identical cargo check failure, stop editing and challenge the hypothesis before changing more code.",
       "memory_type": "lesson"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-source-01",
+      "title": "associative-file-01 source",
+      "content": "Signal arachne resolves through file path src/aurora/cache.rs.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-target-01",
+      "title": "associative-file-01 target",
+      "content": "src/aurora/cache.rs carries roster code cedar-14.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-source-02",
+      "title": "associative-file-02 source",
+      "content": "Signal briar resolves through file path src/brass/ledger.rs.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-target-02",
+      "title": "associative-file-02 target",
+      "content": "src/brass/ledger.rs carries roster code slate-27.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-source-03",
+      "title": "associative-file-03 source",
+      "content": "Signal cinder resolves through file path src/cobalt/retry.rs.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-target-03",
+      "title": "associative-file-03 target",
+      "content": "src/cobalt/retry.rs carries roster code onyx-33.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-source-04",
+      "title": "associative-file-04 source",
+      "content": "Signal dahlia resolves through file path src/dune/vector.rs.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-file-target-04",
+      "title": "associative-file-04 target",
+      "content": "src/dune/vector.rs carries roster code amber-58.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-source-01",
+      "title": "associative-crate-01 source",
+      "content": "Beacon hazel resolves through crate quartz-loom.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-target-01",
+      "title": "associative-crate-01 target",
+      "content": "crate quartz-loom stores rollout slot violet-61.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-source-02",
+      "title": "associative-crate-02 source",
+      "content": "Beacon iris resolves through crate ember-vault.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-target-02",
+      "title": "associative-crate-02 target",
+      "content": "crate ember-vault stores rollout slot cobalt-72.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-source-03",
+      "title": "associative-crate-03 source",
+      "content": "Beacon jasper resolves through crate harbor-calc.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-target-03",
+      "title": "associative-crate-03 target",
+      "content": "crate harbor-calc stores rollout slot pewter-84.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-source-04",
+      "title": "associative-crate-04 source",
+      "content": "Beacon kelp resolves through crate mesa-index.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-crate-target-04",
+      "title": "associative-crate-04 target",
+      "content": "crate mesa-index stores rollout slot topaz-95.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-source-01",
+      "title": "associative-error-01 source",
+      "content": "Marker lumen resolves through error signature E_ASSOC_017.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-target-01",
+      "title": "associative-error-01 target",
+      "content": "E_ASSOC_017 requires mitigation delta-fox.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-source-02",
+      "title": "associative-error-02 source",
+      "content": "Marker mallow resolves through error signature E_ASSOC_029.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-target-02",
+      "title": "associative-error-02 target",
+      "content": "E_ASSOC_029 requires mitigation river-lark.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-source-03",
+      "title": "associative-error-03 source",
+      "content": "Marker nimbus resolves through error signature E_ASSOC_041.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-target-03",
+      "title": "associative-error-03 target",
+      "content": "E_ASSOC_041 requires mitigation solar-mint.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-source-04",
+      "title": "associative-error-04 source",
+      "content": "Marker orchid resolves through error signature E_ASSOC_053.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-error-target-04",
+      "title": "associative-error-04 target",
+      "content": "E_ASSOC_053 requires mitigation velvet-ash.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-issue-source-01",
+      "title": "associative-issue-01 source",
+      "content": "Trail opal resolves through issue number #9102.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-issue-target-01",
+      "title": "associative-issue-01 target",
+      "content": "Issue #9102 assigns reviewer Mira Kade.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-issue-source-02",
+      "title": "associative-issue-02 source",
+      "content": "Trail pearl resolves through issue number #9137.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-issue-target-02",
+      "title": "associative-issue-02 target",
+      "content": "Issue #9137 assigns reviewer Tomas Vale.",
+      "memory_type": "decision",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-issue-source-03",
+      "title": "associative-issue-03 source",
+      "content": "Trail quartz resolves through issue number #9188.",
+      "memory_type": "discovery",
+      "branch": "main"
+    },
+    {
+      "project": "synthetic/assoclab",
+      "topic_key": "assoc-issue-target-03",
+      "title": "associative-issue-03 target",
+      "content": "Issue #9188 assigns reviewer Nia Holt.",
+      "memory_type": "decision",
+      "branch": "main"
     }
   ]
 }
