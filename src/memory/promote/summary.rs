@@ -46,6 +46,7 @@ pub fn promote_summary_to_memory_candidates(
         source.project_id,
         project,
         &source.evidence_event_ids,
+        &source.source_texts,
         &candidates,
     )?;
 
@@ -340,6 +341,7 @@ fn is_summary_semantic_stopword(term: &str) -> bool {
 struct SummaryCandidateSource {
     project_id: i64,
     evidence_event_ids: Vec<i64>,
+    source_texts: Vec<String>,
 }
 
 fn summary_candidate_source(
@@ -358,10 +360,40 @@ fn summary_candidate_source(
             project
         );
     };
+    let source_texts = load_summary_source_texts(conn, &[event_id])?;
     Ok(SummaryCandidateSource {
         project_id,
         evidence_event_ids: vec![event_id],
+        source_texts,
     })
+}
+
+fn load_summary_source_texts(conn: &Connection, evidence_event_ids: &[i64]) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(
+                    CASE
+                        WHEN b.content_encoding = 'plain' THEN CAST(b.content_bytes AS TEXT)
+                        ELSE NULL
+                    END,
+                    e.content_text,
+                    ''
+                ) AS content
+         FROM captured_events e
+         LEFT JOIN event_blobs b ON b.id = e.content_blob_id
+         WHERE e.id = ?1",
+    )?;
+    let mut texts = Vec::new();
+    for event_id in evidence_event_ids {
+        if let Some(text) = stmt
+            .query_row(params![event_id], |row| row.get::<_, String>(0))
+            .optional()?
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+        {
+            texts.push(text);
+        }
+    }
+    Ok(texts)
 }
 
 fn latest_captured_event(

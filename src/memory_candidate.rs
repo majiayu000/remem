@@ -9,6 +9,7 @@ use crate::memory::format::{xml_escape_attr, xml_escape_text};
 use crate::memory::MemoryType;
 
 mod apply;
+mod auto_promote;
 mod parse;
 pub(crate) mod review;
 mod route;
@@ -17,10 +18,13 @@ pub(crate) mod support;
 use apply::{
     promote_candidate_to_memory_with_route, update_candidate_after_lifecycle, CandidateApplyOutcome,
 };
+pub(crate) use auto_promote::contains_unsafe_memory_marker;
+use auto_promote::{
+    auto_promote_block_reason, should_auto_promote, summary_auto_promote_block_reason,
+};
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
 pub(super) use route::{route_candidate, CandidateRoute};
-use support::has_conservative_source_support;
 
 const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
@@ -33,22 +37,8 @@ If there is no durable memory candidate, return exactly <no_candidates reason=\"
 If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/> so it can be retried or reviewed.
 Use only provided observations and evidence; do not invent files, outcomes, decisions, or facts.";
 
-const AUTO_PROMOTE_MIN_CONFIDENCE: f64 = 0.80;
-const AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE: f64 = 0.75;
-const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
-    "api key",
-    "apikey",
-    "authorization:",
-    "bearer ",
-    "credential",
-    "credit card",
-    "password",
-    "payment",
-    "private key",
-    "secret",
-    "sk-",
-    "token",
-];
+const SOURCE_KIND_OBSERVATION: &str = "observation";
+const SOURCE_KIND_SUMMARY: &str = "summary";
 const CANDIDATE_PROMPT_PREFERENCE_LIMIT: usize = 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemoryCandidateResult {
@@ -156,6 +146,7 @@ pub(crate) struct CandidatePersistSummary {
     pub(crate) candidates: usize,
     pub(crate) promoted: usize,
     pub(crate) pending_review: usize,
+    pub(crate) summary_shadow_promoted: usize,
 }
 
 pub(crate) async fn process(task: &db::ExtractionTask) -> Result<MemoryCandidateResult> {
@@ -347,11 +338,12 @@ fn persist_candidates(
     batch: &ObservationBatch,
     candidates: &[ParsedMemoryCandidate],
 ) -> Result<CandidatePersistSummary> {
-    let route_texts = batch
+    let source_texts = batch
         .observations
         .iter()
         .map(|observation| observation.text.as_str())
         .collect::<Vec<_>>();
+    let route_texts = source_texts.clone();
     persist_candidate_rows(
         conn,
         CandidatePersistSource {
@@ -359,7 +351,9 @@ fn persist_candidates(
             project: &task.project,
             session_id: task.session_id.as_deref(),
             evidence_event_ids: &batch.evidence_event_ids,
+            source_kind: SOURCE_KIND_OBSERVATION,
             route_texts,
+            source_texts,
         },
         candidates,
         Some(batch),
@@ -372,12 +366,11 @@ pub(crate) fn persist_summary_candidates(
     project_id: i64,
     project: &str,
     evidence_event_ids: &[i64],
+    source_texts: &[String],
     candidates: &[ParsedMemoryCandidate],
 ) -> Result<CandidatePersistSummary> {
-    let route_texts = candidates
-        .iter()
-        .map(|candidate| candidate.text.as_str())
-        .collect::<Vec<_>>();
+    let source_texts = source_texts.iter().map(String::as_str).collect::<Vec<_>>();
+    let route_texts = source_texts.clone();
     persist_candidate_rows(
         conn,
         CandidatePersistSource {
@@ -385,7 +378,9 @@ pub(crate) fn persist_summary_candidates(
             project,
             session_id: Some(session_id),
             evidence_event_ids,
+            source_kind: SOURCE_KIND_SUMMARY,
             route_texts,
+            source_texts,
         },
         candidates,
         None,
@@ -397,7 +392,9 @@ struct CandidatePersistSource<'a> {
     project: &'a str,
     session_id: Option<&'a str>,
     evidence_event_ids: &'a [i64],
+    source_kind: &'a str,
     route_texts: Vec<&'a str>,
+    source_texts: Vec<&'a str>,
 }
 
 fn persist_candidate_rows(
@@ -446,10 +443,11 @@ fn persist_candidate_rows(
               confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
               source_project, target_project, owner_scope, owner_key, topic_domain,
               routing_confidence, routing_reason, context_class, expires_at_epoch,
-              valid_from_epoch, state_key, state_key_confidence, state_key_reason)
+              valid_from_epoch, state_key, state_key_confidence, state_key_reason,
+              source_kind)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
                      ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                     ?21, ?22, ?23)",
+                     ?21, ?22, ?23, ?24)",
             params![
                 source.project_id,
                 candidate.scope,
@@ -475,7 +473,8 @@ fn persist_candidate_rows(
                     .as_ref()
                     .map(|decision| decision.state_key.as_str()),
                 state_key.as_ref().map(|decision| decision.confidence),
-                state_key.as_ref().map(|decision| decision.reason.as_str())
+                state_key.as_ref().map(|decision| decision.reason.as_str()),
+                source.source_kind,
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();
@@ -504,12 +503,30 @@ fn persist_candidate_rows(
                 summary.promoted += 1;
             }
         } else {
-            let block_reason =
-                auto_promote_block_reason(candidate, auto_promote_batch, &route, &evidence_json);
+            let block_reason = if source.source_kind == SOURCE_KIND_SUMMARY {
+                summary_auto_promote_block_reason(
+                    candidate,
+                    &route,
+                    &evidence_json,
+                    &source.source_texts,
+                )
+            } else {
+                auto_promote_block_reason(candidate, auto_promote_batch, &route, &evidence_json)
+            };
             tx.execute(
                 "UPDATE memory_candidates SET auto_promote_block_reason = ?1 WHERE id = ?2",
                 params![block_reason, candidate_id],
             )?;
+            if block_reason == "summary_gate_shadow" {
+                summary.summary_shadow_promoted += 1;
+                crate::log::info(
+                    "memory-candidate",
+                    &format!(
+                        "summary gate shadow would promote: id={} type={} confidence={:.2}",
+                        candidate_id, candidate.memory_type, candidate.confidence
+                    ),
+                );
+            }
             crate::log::warn(
                 "memory-candidate",
                 &format!(
@@ -582,109 +599,6 @@ fn promote_source_candidate(
         evidence_json,
         route,
     )
-}
-
-fn should_auto_promote(
-    candidate: &ParsedMemoryCandidate,
-    batch: &ObservationBatch,
-    route: &CandidateRoute,
-    evidence_json: &str,
-) -> bool {
-    candidate.scope == "project"
-        && candidate.risk_class == "low"
-        && candidate.confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
-        && route.is_repo_owned()
-        && route.routing_confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
-        && has_evidence_ids(evidence_json)
-        && MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote)
-        && !contains_auto_promote_unsafe_marker(&candidate.text)
-        && is_supported_by_source_observation(candidate, batch)
-}
-
-fn has_evidence_ids(evidence_json: &str) -> bool {
-    serde_json::from_str::<Vec<i64>>(evidence_json).is_ok_and(|ids| !ids.is_empty())
-}
-
-/// Explain why a candidate did not auto-promote, mirroring the checks in
-/// `should_auto_promote`. Used for observability when a candidate is routed to
-/// pending_review (U-29: a downgrade with user-visible effect must be logged).
-fn auto_promote_block_reason(
-    candidate: &ParsedMemoryCandidate,
-    batch: Option<&ObservationBatch>,
-    route: &CandidateRoute,
-    evidence_json: &str,
-) -> &'static str {
-    if candidate.scope != "project" {
-        return "scope_not_project";
-    }
-    if candidate.risk_class != "low" {
-        return "risk_class_not_low";
-    }
-    if candidate.confidence < AUTO_PROMOTE_MIN_CONFIDENCE {
-        return "confidence_below_threshold";
-    }
-    if !route.is_repo_owned() {
-        return "route_not_repo_owned";
-    }
-    if route.routing_confidence < AUTO_PROMOTE_MIN_CONFIDENCE {
-        return "routing_confidence_below_threshold";
-    }
-    if !has_evidence_ids(evidence_json) {
-        return "missing_evidence_ids";
-    }
-    if !MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote) {
-        return "memory_type_not_auto_promotable";
-    }
-    if contains_auto_promote_unsafe_marker(&candidate.text) {
-        return "contains_unsafe_marker";
-    }
-    let Some(batch) = batch else {
-        return "missing_source_observation_batch";
-    };
-    if !is_supported_by_source_observation(candidate, batch) {
-        return "no_supporting_source_observation";
-    }
-    "unknown"
-}
-
-fn is_supported_by_source_observation(
-    candidate: &ParsedMemoryCandidate,
-    batch: &ObservationBatch,
-) -> bool {
-    let candidate_text = normalize_evidence_text(&candidate.text);
-    if candidate_text.chars().count() < 24 {
-        return false;
-    }
-    let Some(candidate_type) = MemoryType::parse(&candidate.memory_type) else {
-        return false;
-    };
-    batch.observations.iter().any(|observation| {
-        if observation.confidence < AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
-            || !candidate_type.supports_observation_type(&observation.observation_type)
-        {
-            return false;
-        }
-        let observation_text = normalize_evidence_text(&observation.text);
-        has_conservative_source_support(&candidate_text, &observation_text)
-    })
-}
-
-fn contains_auto_promote_unsafe_marker(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    AUTO_PROMOTE_UNSAFE_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker))
-}
-
-pub(crate) fn contains_unsafe_memory_marker(text: &str) -> bool {
-    contains_auto_promote_unsafe_marker(text)
-}
-
-fn normalize_evidence_text(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
 }
 
 fn candidate_title(candidate: &ParsedMemoryCandidate) -> String {

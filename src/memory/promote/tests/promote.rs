@@ -17,7 +17,13 @@ pub(super) fn record_summary_evidence(
     session_id: &str,
     project: &str,
 ) -> Result<i64> {
-    record_summary_evidence_with_host(conn, "codex-cli", session_id, project)
+    record_summary_evidence_with_content(
+        conn,
+        "codex-cli",
+        session_id,
+        project,
+        "summary source payload",
+    )
 }
 
 fn record_summary_evidence_with_host(
@@ -25,6 +31,16 @@ fn record_summary_evidence_with_host(
     host: &str,
     session_id: &str,
     project: &str,
+) -> Result<i64> {
+    record_summary_evidence_with_content(conn, host, session_id, project, "summary source payload")
+}
+
+pub(super) fn record_summary_evidence_with_content(
+    conn: &Connection,
+    host: &str,
+    session_id: &str,
+    project: &str,
+    content: &str,
 ) -> Result<i64> {
     let outcome = db::record_captured_event(
         conn,
@@ -36,58 +52,11 @@ fn record_summary_evidence_with_host(
             event_type: "session_stop",
             role: None,
             tool_name: None,
-            content: "summary source payload",
+            content,
             task_kind: Some(db::ExtractionTaskKind::SessionRollup),
         },
     )?;
     Ok(outcome.event_row_id)
-}
-
-#[test]
-fn test_summary_candidates_multi_decisions_do_not_create_memories() -> Result<()> {
-    let mut conn = setup_conn()?;
-    let session_id = "session-decisions";
-    let project = "test/proj";
-    let evidence_id = record_summary_evidence(&conn, session_id, project)?;
-
-    let decisions = "• Use RwLock instead of Mutex for concurrent read support\n\
-                     • Switch to trigram tokenizer for CJK text search\n\
-                     • Set compression threshold to 100 observations";
-    let count = promote_summary_to_memory_candidates(
-        &mut conn,
-        session_id,
-        project,
-        Some("Optimize search and concurrency"),
-        Some(decisions),
-        None,
-        None,
-    )?;
-    assert_eq!(count, 3);
-
-    let memory_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
-    let candidate_rows = conn
-        .prepare(
-            "SELECT memory_type, review_status, evidence_event_ids
-             FROM memory_candidates
-             ORDER BY id ASC",
-        )?
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    let evidence_json = serde_json::to_string(&vec![evidence_id])?;
-
-    assert_eq!(memory_count, 0);
-    assert_eq!(candidate_rows.len(), 3);
-    assert!(candidate_rows
-        .iter()
-        .all(|row| row.0 == "decision" && row.1 == "pending_review" && row.2 == evidence_json));
-    Ok(())
 }
 
 #[test]
