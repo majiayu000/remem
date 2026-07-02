@@ -130,6 +130,22 @@ The hidden `--simulate-golden-regression` flag is exercised in CI to prove the
 gate fails on a constructed per-slice retrieval regression before changing
 defaults.
 
+## Capacity Eval
+
+`remem eval-capacity` runs the first deterministic capacity curve for issue #675.
+It grows the committed golden fixture with seeded, non-relevant synthetic
+memories and reports fused retrieval metrics at each requested scale:
+
+```bash
+remem eval-capacity --seed 42 --scales 1,10 --json-out /tmp/remem-capacity.json --json
+```
+
+The JSON artifact records the seed, scale factors, corpus size, synthetic noise
+count, SHA-256 corpus hash, fused metrics, p95 retrieval latency, and loss
+against the 1x baseline. This slice intentionally does not enforce an
+`eval-gates` budget, per-channel attribution, dashboard ingestion, or 50x
+nightly scheduling; those remain follow-up work under #675.
+
 ## Graph Decision Gate
 
 `remem eval-graph-decision` runs the issue #382 wire-or-freeze gate. It compares
