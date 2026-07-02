@@ -45,6 +45,7 @@
 - Staged source version `0.5.143` for review-gated temporal fact diagnostics.
 - Staged source version `0.5.144` for summary promotion shadow-gate telemetry.
 - Staged source version `0.5.145` for deterministic capacity eval scale curves.
+- Staged source version `0.5.146` for associative multi-hop fixture headroom.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 

@@ -327,6 +327,9 @@ fn validate_expected_refs_backed_by_corpus(dataset: &GoldenDataset) -> Result<()
         if query.expects_abstention() {
             continue;
         }
+        if query.slice_label() == "associative" {
+            super::validation::validate_associative_query(query, &fixture_memories)?;
+        }
         for expected_ref in query.expected_refs() {
             let backed = fixture_memories.iter().any(|memory| {
                 corpus_memory_matches_query_filter(memory, query) && expected_ref.matches(memory)
@@ -361,7 +364,10 @@ fn fixture_memory_for_validation(index: usize, memory: &GoldenMemory) -> crate::
     }
 }
 
-fn corpus_memory_matches_query_filter(memory: &crate::memory::Memory, query: &GoldenQuery) -> bool {
+pub(super) fn corpus_memory_matches_query_filter(
+    memory: &crate::memory::Memory,
+    query: &GoldenQuery,
+) -> bool {
     if memory.status != "active" {
         return false;
     }

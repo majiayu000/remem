@@ -21,9 +21,9 @@ mod user_summary;
 pub(super) use admin::run_admin;
 pub(super) use config_command::run_config;
 pub(super) use eval::{
-    run_bench, run_eval, run_eval_capacity, run_eval_coding_bench, run_eval_e2e,
-    run_eval_extraction, run_eval_gates, run_eval_governance, run_eval_graph_decision,
-    run_eval_local, run_eval_weight_grid,
+    run_bench, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
+    run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
+    run_eval_graph_decision, run_eval_local, run_eval_weight_grid,
 };
 pub(super) use import::run_import;
 pub(super) use maintenance::{

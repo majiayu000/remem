@@ -470,6 +470,8 @@ pub(super) enum Commands {
     EvalExtraction(super::eval_types::EvalExtractionArgs),
     #[command(name = "eval-graph-decision")]
     EvalGraphDecision(super::eval_types::EvalGraphDecisionArgs),
+    #[command(name = "eval-associative-baseline")]
+    EvalAssociativeBaseline(super::eval_types::EvalAssociativeBaselineArgs),
     #[command(name = "eval-capacity")]
     EvalCapacity(super::eval_types::EvalCapacityArgs),
     #[command(name = "eval-weight-grid")]

@@ -281,6 +281,39 @@ pub(in crate::cli) fn run_eval_capacity(args: EvalCapacityArgs) -> Result<()> {
     Ok(())
 }
 
+pub(in crate::cli) fn run_eval_associative_baseline(
+    dataset_path: &str,
+    k: usize,
+    json_out: &str,
+    json: bool,
+) -> Result<()> {
+    let report = crate::eval::associative::run_associative_baseline(
+        crate::eval::associative::AssociativeBaselineOptions {
+            dataset_path: dataset_path.to_string(),
+            k,
+        },
+    )?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create associative baseline eval directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    fs::write(json_out, &report_json)
+        .with_context(|| format!("write associative baseline eval JSON {json_out}"))?;
+    if json {
+        println!("{report_json}");
+    } else {
+        print!("{report}");
+    }
+    Ok(())
+}
+
 fn parse_capacity_scales(value: &str) -> Result<Vec<usize>> {
     let scales = value
         .split(',')

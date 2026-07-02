@@ -247,6 +247,31 @@ fn cli_parses_eval_capacity_options() {
 }
 
 #[test]
+fn cli_parses_eval_associative_baseline_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-associative-baseline",
+        "--dataset",
+        "fixtures/golden.json",
+        "--json-out",
+        "/tmp/associative-baseline.json",
+        "--json",
+        "-k",
+        "7",
+    ]);
+
+    match cli.command {
+        Commands::EvalAssociativeBaseline(args) => {
+            assert_eq!(args.dataset, "fixtures/golden.json");
+            assert_eq!(args.json_out, "/tmp/associative-baseline.json");
+            assert_eq!(args.k, 7);
+            assert!(args.json);
+        }
+        _ => panic!("expected eval-associative-baseline command"),
+    }
+}
+
+#[test]
 fn cli_parses_eval_weight_grid_options() {
     let cli = Cli::parse_from([
         "remem",

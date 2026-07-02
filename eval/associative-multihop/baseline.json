@@ -1,0 +1,143 @@
+{
+  "version": "2026-07-02",
+  "dataset_path": "eval/golden.json",
+  "slice": "associative",
+  "k": 5,
+  "query_count": 15,
+  "entity_type_counts": {
+    "crate": 4,
+    "error_signature": 4,
+    "file_path": 4,
+    "issue_number": 3
+  },
+  "max_query_target_shared_tokens": 0,
+  "baseline_fused": {
+    "scored_queries": 15,
+    "hit_at_k": 0.0,
+    "mrr_at_10": 0.0,
+    "precision_at_k": 0.0,
+    "recall_at_k": 0.0,
+    "ndcg_at_10": 0.0,
+    "evidence_recall_at_k": 0.0
+  },
+  "headroom": {
+    "hit_at_k": 1.0,
+    "recall_at_k": 1.0,
+    "ndcg_at_10": 1.0,
+    "evidence_recall_at_k": 1.0
+  },
+  "fixtures": [
+    {
+      "id": "associative-file-01",
+      "entity_type": "file_path",
+      "source": "assoc-file-source-01",
+      "target": "assoc-file-target-01",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-file-02",
+      "entity_type": "file_path",
+      "source": "assoc-file-source-02",
+      "target": "assoc-file-target-02",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-file-03",
+      "entity_type": "file_path",
+      "source": "assoc-file-source-03",
+      "target": "assoc-file-target-03",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-file-04",
+      "entity_type": "file_path",
+      "source": "assoc-file-source-04",
+      "target": "assoc-file-target-04",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-crate-01",
+      "entity_type": "crate",
+      "source": "assoc-crate-source-01",
+      "target": "assoc-crate-target-01",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-crate-02",
+      "entity_type": "crate",
+      "source": "assoc-crate-source-02",
+      "target": "assoc-crate-target-02",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-crate-03",
+      "entity_type": "crate",
+      "source": "assoc-crate-source-03",
+      "target": "assoc-crate-target-03",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-crate-04",
+      "entity_type": "crate",
+      "source": "assoc-crate-source-04",
+      "target": "assoc-crate-target-04",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-error-01",
+      "entity_type": "error_signature",
+      "source": "assoc-error-source-01",
+      "target": "assoc-error-target-01",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-error-02",
+      "entity_type": "error_signature",
+      "source": "assoc-error-source-02",
+      "target": "assoc-error-target-02",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-error-03",
+      "entity_type": "error_signature",
+      "source": "assoc-error-source-03",
+      "target": "assoc-error-target-03",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-error-04",
+      "entity_type": "error_signature",
+      "source": "assoc-error-source-04",
+      "target": "assoc-error-target-04",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-issue-01",
+      "entity_type": "issue_number",
+      "source": "assoc-issue-source-01",
+      "target": "assoc-issue-target-01",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-issue-02",
+      "entity_type": "issue_number",
+      "source": "assoc-issue-source-02",
+      "target": "assoc-issue-target-02",
+      "shared_tokens": []
+    },
+    {
+      "id": "associative-issue-03",
+      "entity_type": "issue_number",
+      "source": "assoc-issue-source-03",
+      "target": "assoc-issue-target-03",
+      "shared_tokens": []
+    }
+  ],
+  "omitted_followups": [
+    "per_channel_attribution",
+    "entity_bfs_proxy_delta",
+    "literal_graph_edges_traversal",
+    "adr_decision_followup",
+    "production_retrieval_wiring"
+  ]
+}
