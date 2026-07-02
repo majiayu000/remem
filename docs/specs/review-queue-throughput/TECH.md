@@ -49,9 +49,12 @@ Add aggregate readers (new module `src/memory/review_stats.rs` or extension
 of existing status queries):
 
 - pending count total and per project;
-- median and max `created_at` age of `pending_review` rows;
-- inflow (candidates created last 7d) vs resolved (approved+discarded last
-  7d);
+- median and max `created_at` age of `pending_review` rows, total and per
+  project;
+- inflow (candidates created last 7d) vs resolved last 7d, total and per
+  project. Resolved is counted by review time, not candidate creation time,
+  and includes `approved`, `edited`, `discarded`, and `noop` memory
+  candidates.
 - count per `auto_promote_block_reason`.
 
 Indexes: verify `memory_candidates(review_status, created_at)` is covered;
@@ -76,6 +79,7 @@ add a migration only if the query plan shows a scan.
 
 ```text
 remem review approve-batch [--project P] [--type T] [--block-reason R]
+                           [--topic-key K] [--contains TEXT]
                            [--min-confidence C] [--older-than DAYS]
                            [--limit N] [--yes]
 remem review discard-batch  (same filters) [--reason TEXT] [--yes]
@@ -87,9 +91,16 @@ Behavior:
 - Both batch commands resolve filters to a candidate id set, print a preview
   (count, per-type and per-project breakdown, first K sample rows), then
   prompt unless `--yes`.
-- Approval reuses the existing single-candidate promotion path per id inside
-  one transaction, so provenance (`source_candidate_id`, evidence ids)
-  stays identical to individual approval.
+- Approval uses a shared transactionless promotion helper extracted from the
+  current `approve_candidate` / `edit_candidate` implementation. Single-row
+  actions keep opening their own transaction; batch actions call the helper
+  inside one outer transaction, so provenance (`source_candidate_id`,
+  evidence ids) stays identical to individual approval without nested
+  `TransactionBehavior::Immediate` failures.
+- Individual and batch actions persist review metadata on each candidate:
+  actor, reviewed-at epoch, action source (`single` / `batch`), and optional
+  batch id. Batch status metrics read those fields instead of inferring the
+  reviewer from the promoted memory operation actor.
 - `--limit` defaults to a documented cap (e.g. 200) to bound blast radius;
   exceeding it requires an explicit higher `--limit`.
 - `blocked` prints counts per `auto_promote_block_reason` with up to 3
@@ -106,6 +117,12 @@ Behavior:
 - Filter-resolution parity test: preview set == mutated set.
 - Transactionality test: induced failure mid-batch leaves no partial state.
 - Cap test: default limit enforced, override honored.
+- Throughput fixtures for old backlog cleared today: rows created outside
+  the 7-day inflow window but reviewed with `approved`, `edited`,
+  `discarded`, or `noop` inside the 7-day resolved window all count as
+  resolved for the correct project.
+- Actor persistence fixture: CLI/API/batch actor values survive the review
+  mutation and are visible to status/doctor/reporting.
 
 ## Phase 3: Sequential Review Flow
 

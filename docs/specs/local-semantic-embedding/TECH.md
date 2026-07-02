@@ -18,10 +18,14 @@ Tracking:
   vectors. `"local" | "offline" | "feature-hash" | "feature_hash"` all parse
   to the same variant, so "local" and "feature-hash" are currently the same
   thing.
-- Config is env-only: `REMEM_EMBEDDINGS_PROVIDER`, `_MODEL`, `_BASE_URL`,
+- Config already reads a flat `[embeddings]` table from
+  `~/.remem/config.toml` via `src/retrieval/embedding.rs::config_from_file()`,
+  then applies `REMEM_EMBEDDINGS_PROVIDER`, `_MODEL`, `_BASE_URL`,
   `_DIMENSIONS`, `_API_KEY`, `_API_KEY_ENV`, `_TIMEOUT_SECS`.
-- `memory_embeddings` (v029) stores blob + model id + dims, so multi-model
-  coexistence is already representable.
+- `memory_embeddings` (v029) stores blob + model id + dims, but
+  `memory_id INTEGER PRIMARY KEY` currently allows only one vector row per
+  memory. Multi-model coexistence requires a schema migration before the
+  default can flip.
 - Vector channel weight is 3.0 with `MAX_VECTOR_DISTANCE = 0.51`
   (`src/retrieval/search/memory/weights.rs`); fusion is weighted RRF.
 - The dedup funnel has one open TODO for vector-based dedup
@@ -38,8 +42,9 @@ Tracking:
   model; candidate set is filtered by model id before scoring.
 - No silent degradation (U-29): resolved-provider != configured-provider is
   an error-level log plus a status/doctor surface, never a quiet fallback.
-- Model weights are never bundled; download target lives under
-  `~/.remem/models/<model-id>/` with checksum verification.
+- Model weights are never bundled; the default download target is derived
+  from `REMEM_DATA_DIR` (`<data-dir>/models/<model-id>/`) with checksum
+  verification so eval and smoke runs never touch a real user's home data.
 - Hook latency budget: hooks must never block on model download. If the
   active model is unavailable inside a hook path, embedding work defers to
   the worker; hooks write no vectors rather than wrong vectors.
@@ -49,25 +54,29 @@ Tracking:
 
 ### Config
 
-Add an `[embedding]` section to `~/.remem/config.toml`, parsed by the
-existing runtime-config loader:
+Extend the existing `[embeddings]` section in `~/.remem/config.toml`; do not
+introduce a second singular `[embedding]` namespace:
 
 ```toml
-[embedding]
+[embeddings]
 provider = "local"        # api | local | feature-hash | off
 fallback = "feature-hash" # optional; omit for fail-closed
 model = ""                # optional override per provider
-model_dir = "~/.remem/models"
-
-[embedding.api]
 base_url = "https://api.openai.com/v1"
-model = "text-embedding-3-small"
 api_key_env = "OPENAI_API_KEY"
+model_dir = ""            # default: <REMEM_DATA_DIR>/models
 ```
 
 Resolution order: CLI/env override > config file > built-in default.
 Env variables keep their current names and win over the file for
 automation compatibility.
+
+`provider = "off"` is an explicit disabled state, not a degraded fallback:
+search skips query embedding and vector fusion, write/backfill paths do not
+write vectors, `status --json` reports `active_provider = "off"` and
+`disabled = true`, and `doctor` does not warn about vector coverage. Stale
+vectors from an earlier provider remain stored but are ignored until a
+non-off provider is selected.
 
 ### Visibility
 
@@ -108,9 +117,11 @@ automation compatibility.
 
 ### Backfill
 
-- `remem embedding backfill [--batch N]`: embeds all active memories lacking
-  vectors for the active model; idempotent; reports coverage at completion;
-  prunes other-model vectors only after coverage reaches 100% and only with
+- `remem embedding backfill [--batch N]`: embeds every searchable memory
+  status that retrieval can expose for the active model, including stale and
+  archived rows surfaced through explicit history/audit flags. It is
+  idempotent, reports coverage at completion, and prunes other-model vectors
+  only after coverage reaches 100% for that same searchable set and only with
   an explicit `--prune` flag.
 
 ### Tests
@@ -133,17 +144,23 @@ automation compatibility.
 
 ## Phase 4: Downstream Adoption
 
-- Dedup funnel: implement the vector stage against the active semantic
-  space; thresholds calibrated per model id (the 0.55 feature-hash threshold
-  from #643 does not transfer automatically).
+- Observation dedup funnel: implement the vector stage against the active
+  semantic space; thresholds calibrated per model id (the 0.55 feature-hash
+  threshold from #643 does not transfer automatically).
+- Curated-memory semantic dedup: update the existing
+  `src/memory/semantic_dedup.rs` call sites used by `save_memory`,
+  `src/memory/store/write.rs`, and `src/memory/operation.rs` so manual and
+  candidate-promoted memories use the same active-model semantics.
 - Preference consolidation: same recalibration rule; keep the bidirectional
   polarity guard.
 
 ## Migration & Compatibility
 
-- No schema change expected: `memory_embeddings` already stores model id +
-  dims. If a dimension-mismatch constraint exists anywhere, Phase 2 removes
-  it in favor of per-model dims.
+- Add a migration that preserves existing rows while replacing the
+  single-row-per-memory constraint with a multi-model key such as
+  `(memory_id, model, dimensions)`. Update upsert and delete paths in the
+  same PR so a memory can carry feature-hash, local semantic, and API vectors
+  concurrently.
 - Existing feature-hash vectors stay valid under their model id until the
   user backfills and prunes.
 

@@ -71,11 +71,14 @@ first, with equivalence evidence (fixtures comparing old vs new output).
 Only then do legacy writers stop, so no user-visible feature regresses
 during the window.
 
-### Legacy Is Opt-In After Freeze
+### Legacy-Only Surfaces Are Opt-In After Freeze
 
-Once frozen, default surfaces stop advertising legacy sources.
-`source='observation'` on MCP becomes an explicit audit path documented as
-deprecated, and is removed at the end of the window.
+Once frozen, default surfaces stop advertising surfaces that are truly
+legacy-only, such as `pending_observations` and the legacy Summary writer
+chain. `observations` is different: it is reclassified as a current
+intermediate of the capture pipeline, so MCP `source='observation'` remains
+an explicit observation audit path after the wording is fixed. It is not
+deprecated or removed by this contract.
 
 ## User Stories
 

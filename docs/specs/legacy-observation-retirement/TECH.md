@@ -120,7 +120,7 @@ Existing Implementation Facts above):
 | `observations` | `reclassify-current` — live intermediate of the extraction pipeline; fix the "legacy" MCP wording instead |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
-| legacy summarize chain (`enqueue_summary_jobs` → `JobType::Summary` → `finalize_summarize`) | `retire` — dual-writer duplicating `SessionRollup`; also the source of 2479 failed jobs and unattributed AI spend |
+| legacy summary writer (`enqueue_summary_jobs` → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job is the dual-writer duplicating `SessionRollup`; the surrounding Stop hook also schedules Compress and Dream jobs and those side effects must be preserved or ported before the shared helper is removed |
 
 Remaining Phase 1 analysis before freeze decisions execute:
 
@@ -152,9 +152,17 @@ Tests: fixture DBs per state; frozen-write detection test.
    session; document every field-level delta.
 2. Port any load-bearing delta into the rollup path (readers must not lose
    fields they consume today).
-3. Remove the `enqueue_summary_jobs` -> `JobType::Summary` ->
-   `finalize_summarize` chain from the Stop hook path; the worker keeps a
-   rejecting arm for in-flight legacy jobs during the window.
+3. Remove only the `JobType::Summary` enqueue/worker/finalize path from the
+   Stop hook path. Before deleting or renaming the shared helper, port or
+   preserve its other Stop side effects: `JobType::Compress` enqueueing,
+   Dream enqueueing with cooldown/dedup behavior, and profile payload
+   preservation. Also preserve or explicitly replace the load-bearing
+   `process_summary_job_input` side effects that currently happen before or
+   around the summary AI call: raw archive ingest, failure-lesson distillation,
+   memory citation/final-session summary persistence, summary-derived
+   candidate finalization, and native-memory sync. Add regression tests
+   proving Stop still schedules Compress and Dream and that each retained
+   side effect has a new owner before Summary retirement.
 4. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 

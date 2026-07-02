@@ -88,10 +88,13 @@ topic, after seeing a preview.
 Acceptance:
 
 - `remem review approve-batch` / `discard-batch` accept filters (project,
-  type, block reason, minimum confidence, age) and print a preview requiring
-  confirmation (`--yes` for automation).
+  type, block reason, minimum confidence, age, topic key, topic/text
+  contains) and print a preview requiring confirmation (`--yes` for
+  automation).
 - Batch outcomes are recorded like individual review outcomes, including
-  who/what initiated them.
+  who/what initiated them. This requires durable per-candidate review
+  metadata, such as `review_actor`, `reviewed_at_epoch`, and a batch/run id
+  when the action came from a batch.
 
 ### Fast Sequential Review
 
