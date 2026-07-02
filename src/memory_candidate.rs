@@ -15,13 +15,12 @@ pub(crate) mod review;
 mod route;
 pub(crate) mod support;
 
+use crate::runtime_config::SummaryGateMode;
 use apply::{
     promote_candidate_to_memory_with_route, update_candidate_after_lifecycle, CandidateApplyOutcome,
 };
 pub(crate) use auto_promote::contains_unsafe_memory_marker;
-use auto_promote::{
-    auto_promote_block_reason, should_auto_promote, summary_auto_promote_block_reason,
-};
+use auto_promote::{candidate_promotion_decision, CandidatePromotionDecision};
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
 pub(super) use route::{route_candidate, CandidateRoute};
@@ -352,6 +351,7 @@ fn persist_candidates(
             session_id: task.session_id.as_deref(),
             evidence_event_ids: &batch.evidence_event_ids,
             source_kind: SOURCE_KIND_OBSERVATION,
+            summary_gate_mode: None,
             route_texts,
             source_texts,
         },
@@ -379,6 +379,37 @@ pub(crate) fn persist_summary_candidates(
             session_id: Some(session_id),
             evidence_event_ids,
             source_kind: SOURCE_KIND_SUMMARY,
+            summary_gate_mode: Some(crate::runtime_config::summary_gate_mode()?),
+            route_texts,
+            source_texts,
+        },
+        candidates,
+        None,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn persist_summary_candidates_with_gate_mode(
+    conn: &mut Connection,
+    session_id: &str,
+    project_id: i64,
+    project: &str,
+    evidence_event_ids: &[i64],
+    source_texts: &[String],
+    candidates: &[ParsedMemoryCandidate],
+    summary_gate_mode: SummaryGateMode,
+) -> Result<CandidatePersistSummary> {
+    let source_texts = source_texts.iter().map(String::as_str).collect::<Vec<_>>();
+    let route_texts = source_texts.clone();
+    persist_candidate_rows(
+        conn,
+        CandidatePersistSource {
+            project_id,
+            project,
+            session_id: Some(session_id),
+            evidence_event_ids,
+            source_kind: SOURCE_KIND_SUMMARY,
+            summary_gate_mode: Some(summary_gate_mode),
             route_texts,
             source_texts,
         },
@@ -393,6 +424,7 @@ struct CandidatePersistSource<'a> {
     session_id: Option<&'a str>,
     evidence_event_ids: &'a [i64],
     source_kind: &'a str,
+    summary_gate_mode: Option<SummaryGateMode>,
     route_texts: Vec<&'a str>,
     source_texts: Vec<&'a str>,
 }
@@ -480,66 +512,68 @@ fn persist_candidate_rows(
         let candidate_id = tx.last_insert_rowid();
         summary.candidates += 1;
 
-        if auto_promote_batch
-            .is_some_and(|batch| should_auto_promote(candidate, batch, &route, &evidence_json))
-        {
-            let outcome = promote_source_candidate(
-                &tx,
-                source.session_id,
-                source.project,
-                candidate_id,
-                candidate,
-                &evidence_json,
-                &route,
-            )?;
-            update_candidate_after_lifecycle(
-                &tx,
-                candidate_id,
-                candidate,
-                &route,
-                outcome.review_status_for("auto_promoted"),
-            )?;
-            if outcome.promoted {
-                summary.promoted += 1;
-            }
-        } else {
-            let block_reason = if source.source_kind == SOURCE_KIND_SUMMARY {
-                summary_auto_promote_block_reason(
+        match candidate_promotion_decision(
+            candidate,
+            auto_promote_batch,
+            &route,
+            &evidence_json,
+            source.source_kind,
+            source.summary_gate_mode,
+            &source.source_texts,
+        ) {
+            CandidatePromotionDecision::Promote => {
+                let outcome = promote_source_candidate(
+                    &tx,
+                    source.session_id,
+                    source.project,
+                    candidate_id,
+                    candidate,
+                    &evidence_json,
+                    &route,
+                )?;
+                update_candidate_after_lifecycle(
+                    &tx,
+                    candidate_id,
                     candidate,
                     &route,
-                    &evidence_json,
-                    &source.source_texts,
-                )
-            } else {
-                auto_promote_block_reason(candidate, auto_promote_batch, &route, &evidence_json)
-            };
-            tx.execute(
-                "UPDATE memory_candidates SET auto_promote_block_reason = ?1 WHERE id = ?2",
-                params![block_reason, candidate_id],
-            )?;
-            if block_reason == "summary_gate_shadow" {
-                summary.summary_shadow_promoted += 1;
-                crate::log::info(
+                    outcome.review_status_for("auto_promoted"),
+                )?;
+                if outcome.promoted {
+                    summary.promoted += 1;
+                }
+            }
+            CandidatePromotionDecision::PendingReview {
+                block_reason,
+                summary_shadow_promoted,
+            } => {
+                tx.execute(
+                    "UPDATE memory_candidates SET auto_promote_block_reason = ?1 WHERE id = ?2",
+                    params![block_reason, candidate_id],
+                )?;
+                if summary_shadow_promoted {
+                    summary.summary_shadow_promoted += 1;
+                    crate::log::info(
+                        "memory-candidate",
+                        &format!(
+                            "summary gate shadow would promote: id={} type={} confidence={:.2}",
+                            candidate_id, candidate.memory_type, candidate.confidence
+                        ),
+                    );
+                }
+                crate::log::warn(
                     "memory-candidate",
                     &format!(
-                        "summary gate shadow would promote: id={} type={} confidence={:.2}",
-                        candidate_id, candidate.memory_type, candidate.confidence
+                        "candidate routed to pending_review: id={} type={} scope={} risk={} confidence={:.2} reason={}",
+                        candidate_id,
+                        candidate.memory_type,
+                        candidate.scope,
+                        candidate.risk_class,
+                        candidate.confidence,
+                        block_reason
                     ),
                 );
+                summary.pending_review += 1;
             }
-            crate::log::warn(
-                "memory-candidate",
-                &format!(
-                    "candidate routed to pending_review: id={} type={} scope={} risk={} confidence={:.2} reason={}",
-                    candidate_id,
-                    candidate.memory_type,
-                    candidate.scope,
-                    candidate.risk_class,
-                    candidate.confidence,
-                    block_reason
-                ),
-            );
-            summary.pending_review += 1;
         }
     }
     tx.commit()?;

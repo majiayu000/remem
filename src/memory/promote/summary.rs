@@ -4,7 +4,10 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::lesson::is_lesson_candidate;
+#[cfg(test)]
+use crate::memory_candidate::persist_summary_candidates_with_gate_mode;
 use crate::memory_candidate::{persist_summary_candidates, ParsedMemoryCandidate};
+use crate::runtime_config::SummaryGateMode;
 
 use super::format::{build_content, split_into_items, MIN_DECISION_LEN};
 use super::slug::content_hash;
@@ -25,6 +28,51 @@ pub fn promote_summary_to_memory_candidates(
     learned: Option<&str>,
     preferences: Option<&str>,
 ) -> Result<usize> {
+    promote_summary_to_memory_candidates_inner(
+        conn,
+        session_id,
+        project,
+        request,
+        decisions,
+        learned,
+        preferences,
+        None,
+    )
+}
+
+#[cfg(test)]
+pub(super) fn promote_summary_to_memory_candidates_with_gate_mode(
+    conn: &mut Connection,
+    session_id: &str,
+    project: &str,
+    request: Option<&str>,
+    decisions: Option<&str>,
+    learned: Option<&str>,
+    preferences: Option<&str>,
+    summary_gate_mode: SummaryGateMode,
+) -> Result<usize> {
+    promote_summary_to_memory_candidates_inner(
+        conn,
+        session_id,
+        project,
+        request,
+        decisions,
+        learned,
+        preferences,
+        Some(summary_gate_mode),
+    )
+}
+
+fn promote_summary_to_memory_candidates_inner(
+    conn: &mut Connection,
+    session_id: &str,
+    project: &str,
+    request: Option<&str>,
+    decisions: Option<&str>,
+    learned: Option<&str>,
+    preferences: Option<&str>,
+    summary_gate_mode: Option<SummaryGateMode>,
+) -> Result<usize> {
     let candidates = summary_memory_candidates(request, decisions, learned, preferences);
     if candidates.is_empty() {
         return Ok(0);
@@ -40,15 +88,30 @@ pub fn promote_summary_to_memory_candidates(
     }
 
     let source = summary_candidate_source(conn, session_id, project)?;
-    let summary = persist_summary_candidates(
-        conn,
-        session_id,
-        source.project_id,
-        project,
-        &source.evidence_event_ids,
-        &source.source_texts,
-        &candidates,
-    )?;
+    let summary = match summary_gate_mode {
+        #[cfg(test)]
+        Some(mode) => persist_summary_candidates_with_gate_mode(
+            conn,
+            session_id,
+            source.project_id,
+            project,
+            &source.evidence_event_ids,
+            &source.source_texts,
+            &candidates,
+            mode,
+        )?,
+        #[cfg(not(test))]
+        Some(_) => unreachable!("summary gate mode override is test-only"),
+        None => persist_summary_candidates(
+            conn,
+            session_id,
+            source.project_id,
+            project,
+            &source.evidence_event_ids,
+            &source.source_texts,
+            &candidates,
+        )?,
+    };
 
     if summary.candidates > 0 {
         crate::log::info(
