@@ -1,10 +1,14 @@
 # Summary Candidate Promotion Technical Spec
 
-Status: Current contract
+Status: Superseded reference
 Date: 2026-07-02
 
 Tracking:
 - Spec/tracking issue: #674
+
+Superseded by `docs/specs/summary-promotion-gate/` after PR #685. Keep this
+file as historical evidence for the #674 survey findings; implement from the
+newer summary promotion gate contract.
 
 ## Existing Implementation Facts
 

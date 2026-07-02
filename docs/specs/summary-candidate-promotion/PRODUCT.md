@@ -1,11 +1,15 @@
 # Summary Candidate Promotion Product Spec
 
-Status: Current contract
+Status: Superseded reference
 Date: 2026-07-02
 
 Tracking:
 - Spec/tracking issue: #674
 - Related: #381, #383 (production evidence chain), #238, #357 (historical gate deadlocks), #657/#658 (extraction backlog replay)
+
+Superseded by `docs/specs/summary-promotion-gate/` after PR #685. Keep this
+file as historical evidence for the #674 survey findings; implement from the
+newer summary promotion gate contract.
 
 ## Problem
 
