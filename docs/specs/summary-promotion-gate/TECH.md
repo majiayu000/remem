@@ -92,18 +92,17 @@ Block reasons mirror the check order with summary-specific entries
 (`summary_type_not_allowlisted`, `summary_confidence_below_floor`, ...);
 the shared reasons reuse the existing vocabulary.
 
-### 3. Shadow mode (Phase 1)
+### 3. Gate modes
 
 Config key `promotion.summary_gate_mode = "off" | "shadow" | "enforce"`
-(default `shadow` on first release). In shadow mode the gate is evaluated and
+(default `enforce` after Phase 2). In `shadow` mode the gate is evaluated and
 its verdict logged (`summary-gate: would_promote id=... reasons=[]`) and
 counted, but the candidate is persisted as `pending_review`. A candidate that
 would have promoted and is blocked only because shadow mode is active records
 the explicit block reason `summary_gate_shadow`; candidates that fail a real
-predicate keep the predicate-specific reason. A counter table or reuse of
-`ai_usage_events`-style aggregate feeds the doctor line. Enforce mode performs
-the same promotion call as the observation path (`promote_source_candidate` +
-lifecycle update).
+predicate keep the predicate-specific reason. `off` records `summary_gate_off`
+without evaluating source support. `enforce` performs the same promotion call
+as the observation path (`promote_source_candidate` + lifecycle update).
 
 ### 4. Observability
 
@@ -118,14 +117,11 @@ lifecycle update).
 ### 5. Confidence derivation (open question, resolved by Phase 1)
 
 `SUMMARY_CANDIDATE_CONFIDENCE` (0.74) sits below the observation 0.80 floor.
-Phase 1 therefore uses a 0.70 shadow floor or ships deterministic per-item
-confidence derivation in the same phase. The shadow phase is not complete if
-the would-promote cohort is zero solely because all allowlisted decision and
-discovery summaries sit below the configured floor. Phase 1 telemetry must
-answer whether to (a) raise per-item confidence for decision items carrying
-strong signals (explicit decision verbs, file paths, commands), or (b) keep a
-lower summary-specific floor with evidence. The flip to `enforce` is gated on
-a recorded threshold decision in this file.
+Phase 2 selects a summary-specific 0.70 floor instead of weakening the
+observation path. Rationale: the summary path is separately constrained by the
+decision/discovery allowlist, repo-owned route, evidence ids, source-support
+check against the underlying captured content, unsafe-marker rejection, and
+medium-or-lower risk. Lesson and preference summaries remain review-gated.
 
 ## Phases and Verification
 
@@ -140,9 +136,9 @@ Phase 1 (observability + shadow):
   `cargo test doctor`
 
 Phase 2 (enforce):
-- flip default mode after thresholds recorded here; promotion fixture test
-  (qualifying decision auto-promotes; lesson does not); real-session sampling
-  recorded in the tracking issue for #381/#383
+- default mode is `enforce`; promotion fixture test (qualifying decision
+  auto-promotes; lesson does not); source-support failure fixture stays
+  pending; real-session sampling recorded in the tracking issue for #381/#383
 - verify: `cargo test`, manual `remem status` funnel delta on a live install
 
 ## Compatibility

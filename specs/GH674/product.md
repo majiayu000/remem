@@ -9,8 +9,9 @@ GH-674
 The authoritative product contract is
 `docs/specs/summary-promotion-gate/PRODUCT.md`.
 
-This SpecRail packet exists to hand the accepted #674 contract to the Phase 1
-implementation issue, GH-690. It does not replace the `docs/specs/` contract.
+This SpecRail packet hands the accepted #674 contract to implementation
+issues. Phase 1 was GH-690. The current slice is Phase 2, GH-696. It does not
+replace the `docs/specs/` contract.
 
 ## User Problem
 
@@ -32,13 +33,25 @@ Ship observability plus a shadow summary gate:
 - unsupported summary candidates get source-support block reasons instead of a
   masked `risk_class_not_low` reason.
 
+## Phase 2 Goal
+
+Enable the summary gate for supported factual summaries:
+
+- default `promotion.summary_gate_mode` becomes `enforce`;
+- qualifying summary-derived `decision` and `discovery` candidates promote
+  automatically when the source-support and route gates pass;
+- `shadow` and `off` modes remain available as rollback controls;
+- `lesson` and `preference` summary candidates remain review-gated;
+- unsupported summary candidates continue to record source-support block
+  reasons and stay pending.
+
 ## Non-Goals
 
-- Do not enable enforce-mode summary promotion by default.
 - Do not bulk approve or replay the existing `pending_review` backlog.
 - Do not relax the observation-path gate or its thresholds.
 - Do not add LLM calls to promotion.
-- Do not close GH-674 from the Phase 1 PR.
+- Do not close GH-674 until Phase 2 sampling evidence is recorded on the
+  tracking issue.
 
 ## Acceptance Criteria
 
@@ -54,8 +67,14 @@ Ship observability plus a shadow summary gate:
       `summary_source_support_failed`.
 - [ ] Doctor/status promotion output is split by source kind and includes the
       summary shadow count.
+- [ ] In enforce mode, a supported summary-derived decision/discovery candidate
+      auto-promotes with no `auto_promote_block_reason`.
+- [ ] In shadow mode, the same supported candidate stays pending with
+      `summary_gate_shadow`.
+- [ ] In off mode, summary candidates stay pending with `summary_gate_off`.
+- [ ] Summary-derived lessons and preferences stay review-gated.
 
 ## Follow-Up
 
-GH-674 remains open for Phase 2 threshold selection, enforcement, and
-real-session sampling evidence.
+GH-674 remains open until Phase 2 threshold selection, enforcement, and
+real-session sampling evidence are all recorded.

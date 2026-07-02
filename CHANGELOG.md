@@ -46,6 +46,7 @@
 - Staged source version `0.5.144` for summary promotion shadow-gate telemetry.
 - Staged source version `0.5.145` for deterministic capacity eval scale curves.
 - Staged source version `0.5.146` for associative multi-hop fixture headroom.
+- Staged source version `0.5.147` for summary promotion enforce mode.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 

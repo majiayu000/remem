@@ -1,4 +1,5 @@
 use crate::memory::MemoryType;
+use crate::runtime_config::SummaryGateMode;
 
 use super::route::CandidateRoute;
 use super::support::has_conservative_source_support;
@@ -37,6 +38,70 @@ pub(super) fn should_auto_promote(
         && MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote)
         && !contains_auto_promote_unsafe_marker(&candidate.text)
         && is_supported_by_source_observation(candidate, batch)
+}
+
+pub(super) enum CandidatePromotionDecision {
+    Promote,
+    PendingReview {
+        block_reason: &'static str,
+        summary_shadow_promoted: bool,
+    },
+}
+
+pub(super) fn candidate_promotion_decision(
+    candidate: &ParsedMemoryCandidate,
+    auto_promote_batch: Option<&ObservationBatch>,
+    route: &CandidateRoute,
+    evidence_json: &str,
+    source_kind: &str,
+    summary_gate_mode: Option<SummaryGateMode>,
+    source_texts: &[&str],
+) -> CandidatePromotionDecision {
+    if source_kind == super::SOURCE_KIND_SUMMARY {
+        let Some(mode) = summary_gate_mode else {
+            return CandidatePromotionDecision::PendingReview {
+                block_reason: "summary_gate_mode_missing",
+                summary_shadow_promoted: false,
+            };
+        };
+        if mode == SummaryGateMode::Off {
+            return CandidatePromotionDecision::PendingReview {
+                block_reason: "summary_gate_off",
+                summary_shadow_promoted: false,
+            };
+        }
+        return match summary_auto_promote_verdict(candidate, route, evidence_json, source_texts) {
+            SummaryAutoPromoteVerdict::WouldPromote if mode == SummaryGateMode::Enforce => {
+                CandidatePromotionDecision::Promote
+            }
+            SummaryAutoPromoteVerdict::WouldPromote => CandidatePromotionDecision::PendingReview {
+                block_reason: "summary_gate_shadow",
+                summary_shadow_promoted: true,
+            },
+            SummaryAutoPromoteVerdict::Blocked(block_reason) => {
+                CandidatePromotionDecision::PendingReview {
+                    block_reason,
+                    summary_shadow_promoted: false,
+                }
+            }
+        };
+    }
+
+    if auto_promote_batch
+        .is_some_and(|batch| should_auto_promote(candidate, batch, route, evidence_json))
+    {
+        CandidatePromotionDecision::Promote
+    } else {
+        CandidatePromotionDecision::PendingReview {
+            block_reason: auto_promote_block_reason(
+                candidate,
+                auto_promote_batch,
+                route,
+                evidence_json,
+            ),
+            summary_shadow_promoted: false,
+        }
+    }
 }
 
 /// Explain why a candidate did not auto-promote, mirroring the checks in
@@ -81,40 +146,50 @@ pub(super) fn auto_promote_block_reason(
     "unknown"
 }
 
-pub(super) fn summary_auto_promote_block_reason(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SummaryAutoPromoteVerdict {
+    WouldPromote,
+    Blocked(&'static str),
+}
+
+pub(super) fn summary_auto_promote_verdict(
     candidate: &ParsedMemoryCandidate,
     route: &CandidateRoute,
     evidence_json: &str,
     source_texts: &[&str],
-) -> &'static str {
+) -> SummaryAutoPromoteVerdict {
     if candidate.scope != "project" {
-        return "scope_not_project";
+        return SummaryAutoPromoteVerdict::Blocked("scope_not_project");
     }
     if !summary_type_allowlisted(&candidate.memory_type) {
-        return "summary_type_not_allowlisted";
+        return SummaryAutoPromoteVerdict::Blocked("summary_type_not_allowlisted");
     }
     if candidate.confidence < SUMMARY_AUTO_PROMOTE_MIN_CONFIDENCE {
-        return "summary_confidence_below_floor";
+        return SummaryAutoPromoteVerdict::Blocked("summary_confidence_below_floor");
     }
     if !route.is_repo_owned() {
-        return "route_not_repo_owned";
+        return SummaryAutoPromoteVerdict::Blocked("route_not_repo_owned");
     }
     if route.routing_confidence < AUTO_PROMOTE_MIN_CONFIDENCE {
-        return "routing_confidence_below_threshold";
+        return SummaryAutoPromoteVerdict::Blocked("routing_confidence_below_threshold");
     }
     if !has_evidence_ids(evidence_json) {
-        return "missing_evidence_ids";
+        return SummaryAutoPromoteVerdict::Blocked("missing_evidence_ids");
     }
     if contains_auto_promote_unsafe_marker(&candidate.text) {
-        return "contains_unsafe_marker";
+        return SummaryAutoPromoteVerdict::Blocked("contains_unsafe_marker");
     }
     if !summary_risk_allowed(&candidate.risk_class) {
-        return "summary_risk_above_medium";
+        return SummaryAutoPromoteVerdict::Blocked("summary_risk_above_medium");
     }
     match is_supported_by_summary_source(candidate, source_texts) {
-        SummarySupport::Supported => "summary_gate_shadow",
-        SummarySupport::Unavailable => "summary_source_support_unavailable",
-        SummarySupport::Failed => "summary_source_support_failed",
+        SummarySupport::Supported => SummaryAutoPromoteVerdict::WouldPromote,
+        SummarySupport::Unavailable => {
+            SummaryAutoPromoteVerdict::Blocked("summary_source_support_unavailable")
+        }
+        SummarySupport::Failed => {
+            SummaryAutoPromoteVerdict::Blocked("summary_source_support_failed")
+        }
     }
 }
 

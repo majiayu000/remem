@@ -1,7 +1,9 @@
 use anyhow::Result;
 
 use super::super::promote_summary_to_memory_candidates;
+use super::super::summary::promote_summary_to_memory_candidates_with_gate_mode;
 use super::promote::{record_summary_evidence, record_summary_evidence_with_content, setup_conn};
+use crate::runtime_config::SummaryGateMode;
 
 #[test]
 fn test_summary_candidates_multi_decisions_do_not_create_memories() -> Result<()> {
@@ -65,7 +67,7 @@ fn summary_decision_shadow_gate_records_would_promote_without_active_memory() ->
     let decision = "Use source kind telemetry for summary promotion gate";
     record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
 
-    let count = promote_summary_to_memory_candidates(
+    let count = promote_summary_to_memory_candidates_with_gate_mode(
         &mut conn,
         session_id,
         project,
@@ -73,6 +75,7 @@ fn summary_decision_shadow_gate_records_would_promote_without_active_memory() ->
         Some(decision),
         None,
         None,
+        SummaryGateMode::Shadow,
     )?;
     assert_eq!(count, 1);
 
@@ -89,5 +92,107 @@ fn summary_decision_shadow_gate_records_would_promote_without_active_memory() ->
     assert_eq!(source_kind, "summary");
     assert_eq!(review_status, "pending_review");
     assert_eq!(block_reason, "summary_gate_shadow");
+    Ok(())
+}
+
+#[test]
+fn summary_decision_enforce_gate_auto_promotes_supported_candidate() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-enforce";
+    let project = "test/proj";
+    let decision = "Use source kind telemetry for summary promotion gate";
+    record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        None,
+        Some(decision),
+        None,
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (source_kind, review_status, block_reason): (String, String, Option<String>) = conn
+        .query_row(
+            "SELECT source_kind, review_status, auto_promote_block_reason
+             FROM memory_candidates",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+    let (memory_type, content): (String, String) =
+        conn.query_row("SELECT memory_type, content FROM memories", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+
+    assert_eq!(source_kind, "summary");
+    assert_eq!(review_status, "auto_promoted");
+    assert_eq!(block_reason, None);
+    assert_eq!(memory_type, "decision");
+    assert_eq!(content, decision);
+    Ok(())
+}
+
+#[test]
+fn summary_lesson_stays_review_gated_in_enforce_mode() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-enforce-lesson";
+    let project = "test/proj";
+    let lesson = "Lesson: source support must stay mandatory before summary gate promotion.";
+    record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, lesson)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        None,
+        None,
+        Some(lesson),
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (memory_count, review_status, block_reason): (i64, String, String) = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM memories), review_status, auto_promote_block_reason
+         FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(memory_count, 0);
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(block_reason, "summary_type_not_allowlisted");
+    Ok(())
+}
+
+#[test]
+fn summary_gate_off_keeps_supported_candidate_pending_without_shadow() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-off";
+    let project = "test/proj";
+    let decision = "Use source kind telemetry for summary promotion gate";
+    record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
+
+    let count = promote_summary_to_memory_candidates_with_gate_mode(
+        &mut conn,
+        session_id,
+        project,
+        None,
+        Some(decision),
+        None,
+        None,
+        SummaryGateMode::Off,
+    )?;
+    assert_eq!(count, 1);
+
+    let (memory_count, review_status, block_reason): (i64, String, String) = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM memories), review_status, auto_promote_block_reason
+         FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(memory_count, 0);
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(block_reason, "summary_gate_off");
     Ok(())
 }
