@@ -43,6 +43,7 @@
 - Staged source version `0.5.142` for memory-candidate observation-type
   normalization.
 - Staged source version `0.5.143` for review-gated temporal fact diagnostics.
+- Staged source version `0.5.144` for summary promotion shadow-gate telemetry.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 
