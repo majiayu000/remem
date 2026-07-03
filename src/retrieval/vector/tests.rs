@@ -3,41 +3,82 @@ use rusqlite::Connection;
 
 use super::*;
 
-fn setup_vector_conn() -> Result<Connection> {
-    let conn = Connection::open_in_memory()?;
-    crate::migrate::run_migrations(&conn)?;
-    Ok(conn)
+struct ScopedEmbeddingProvider {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<String>)>,
 }
 
-fn with_embedding_provider<T>(provider: &str, f: impl FnOnce() -> T) -> T {
-    let _guard = crate::runtime_config::TEST_ENV_LOCK
-        .lock()
-        .expect("env lock should acquire");
-    let keys = [
-        "REMEM_CONFIG",
-        "REMEM_EMBEDDINGS_PROVIDER",
-        "REMEM_EMBEDDING_PROVIDER",
-        "REMEM_EMBEDDINGS_FALLBACK",
-        "REMEM_EMBEDDINGS_API_KEY",
-        "REMEM_EMBEDDING_API_KEY",
-        "OPENAI_API_KEY",
-    ];
-    let saved = keys
-        .iter()
-        .map(|key| (*key, std::env::var(key).ok()))
-        .collect::<Vec<_>>();
-    for key in keys {
-        unsafe { std::env::remove_var(key) };
-    }
-    unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
-    let result = f();
-    for (key, value) in saved {
-        match value {
-            Some(value) => unsafe { std::env::set_var(key, value) },
-            None => unsafe { std::env::remove_var(key) },
+impl ScopedEmbeddingProvider {
+    fn new(provider: &str) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+        Self {
+            _guard: guard,
+            saved,
         }
     }
-    result
+}
+
+impl Drop for ScopedEmbeddingProvider {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+struct VectorTestConn {
+    conn: Connection,
+    _provider: ScopedEmbeddingProvider,
+}
+
+impl std::ops::Deref for VectorTestConn {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
+}
+
+fn setup_vector_conn_with_provider(provider_name: &str) -> Result<VectorTestConn> {
+    let provider = ScopedEmbeddingProvider::new(provider_name);
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    Ok(VectorTestConn {
+        conn,
+        _provider: provider,
+    })
+}
+
+fn setup_vector_conn() -> Result<VectorTestConn> {
+    setup_vector_conn_with_provider("feature-hash")
+}
+
+const ENV_KEYS: &[&str] = &[
+    "REMEM_CONFIG",
+    "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDING_PROVIDER",
+    "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDING_API_KEY",
+    "OPENAI_API_KEY",
+];
+
+fn with_embedding_provider<T>(provider: &str, f: impl FnOnce() -> T) -> T {
+    let _provider = ScopedEmbeddingProvider::new(provider);
+    f()
 }
 
 fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
@@ -52,35 +93,33 @@ fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
 
 #[test]
 fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
-    with_embedding_provider("off", || -> Result<()> {
-        let conn = setup_vector_conn()?;
-        insert_test_memory(&conn, 1)?;
-        ensure_vec_table(&conn)?;
+    let conn = setup_vector_conn_with_provider("off")?;
+    insert_test_memory(&conn, 1)?;
+    ensure_vec_table(&conn)?;
 
-        upsert_memory_embedding(
-            &conn,
-            1,
-            "Credential store",
-            "SQLCipher encrypts secrets at rest.",
-            "architecture",
-            None,
-        )?;
-        assert_eq!(embedding_count(&conn)?, 0);
-        assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 0);
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+    assert_eq!(embedding_count(&conn)?, 0);
+    assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 0);
 
-        let report = reindex_memory_embeddings_with_report(&conn, 100)?;
-        assert_eq!(report.processed, 0);
-        assert_eq!(report.model, "off");
+    let report = reindex_memory_embeddings_with_report(&conn, 100)?;
+    assert_eq!(report.processed, 0);
+    assert_eq!(report.model, "off");
 
-        let query = vec![0.0; EMBEDDING_DIMENSIONS];
-        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
-        assert_eq!(
-            outcome.disabled_reason.as_deref(),
-            Some("embedding provider is off")
-        );
-        assert_eq!(embedding_count(&conn)?, 0);
-        Ok(())
-    })
+    let query = vec![0.0; EMBEDDING_DIMENSIONS];
+    let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
+    assert_eq!(
+        outcome.disabled_reason.as_deref(),
+        Some("embedding provider is off")
+    );
+    assert_eq!(embedding_count(&conn)?, 0);
+    Ok(())
 }
 
 #[test]
@@ -440,15 +479,17 @@ fn empty_vector_table_with_memories_is_reported_as_disabled() -> Result<()> {
 
 #[test]
 fn missing_vector_table_is_reported_as_disabled() -> Result<()> {
-    let conn = Connection::open_in_memory()?;
-    let query = embed_query_text("anything");
-    let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let query = embed_query_text("anything");
+        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
 
-    assert!(outcome
-        .disabled_reason
-        .as_deref()
-        .unwrap_or("")
-        .contains("memory_embeddings table is missing"));
-    assert!(outcome.hits.is_empty());
-    Ok(())
+        assert!(outcome
+            .disabled_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("memory_embeddings table is missing"));
+        assert!(outcome.hits.is_empty());
+        Ok(())
+    })
 }
