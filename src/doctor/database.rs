@@ -643,10 +643,8 @@ pub(super) fn check_disk_space() -> Check {
     let db_size = std::fs::metadata(&db_path)
         .map(|meta| meta.len())
         .unwrap_or(0);
-    let log_path = db_path.parent().map(|parent| parent.join("remem.log"));
-    let log_size = log_path
-        .and_then(|path| std::fs::metadata(&path).ok())
-        .map(|meta| meta.len())
+    let log_size = crate::log::log_health_snapshot()
+        .map(|snapshot| snapshot.total_bytes)
         .unwrap_or(0);
     let total_mb = (db_size + log_size) as f64 / 1_048_576.0;
 

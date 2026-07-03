@@ -13,6 +13,7 @@ use super::report::{run_doctor_with_writer, DoctorOptions};
 use super::schema::{check_key_format, check_schema_migration};
 
 mod health_action_tests;
+mod log_health;
 mod memory_usage_feedback;
 mod promotion_funnel;
 
