@@ -17,7 +17,7 @@ Authoritative contract:
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
 | Preference memory | `src/memory/types.rs`, `src/context/render.rs`, `src/context/sections/lessons.rs` | Preferences and lessons are stored and rendered into SessionStart context as prose. | Compiled rules derive from the same authoritative memory layer and must not replace injection. |
-| Reinforcement metadata | `src/memory_candidate/apply.rs`, `src/memory/lesson.rs`, `src/migrations/v017_memory_lessons.sql` | Lesson metadata includes `reinforcement_count` and reinforcement timestamps. | Eligibility depends on repeated corrections meeting a configured threshold. |
+| Reinforcement metadata | `src/memory_candidate/apply.rs`, `src/memory/lesson.rs`, `src/migrations/v017_memory_lessons.sql` | Existing `memory_lessons` reinforcement state is lesson-specific; active `preference` rows do not yet have canonical persisted reinforcement counts. | Eligibility depends on repeated corrections meeting a configured threshold, so implementation must add or wire real preference reinforcement state before compiling preferences. |
 | Suppression and lifecycle | `src/memory/suppression.rs`, `src/memory/lifecycle.rs`, `src/migrations/v051_memory_suppressions_feedback.sql` | Memories can be suppressed or soft-superseded. | Derived rules must disappear when source memories stop being authoritative. |
 | Worker path | `src/worker.rs`, `src/db_job.rs`, `src/summarize.rs` | Background work runs outside interactive hooks. | Rule compilation belongs off the hook hot path. |
 | Hook dispatch and install | `src/cli/dispatch.rs`, `src/install.rs`, hook configuration tests | Hooks inject context and capture observations; Claude PostToolUse is post-execution and Codex command observe is opt-in. | Warning/block enforcement needs a pre-execution Claude Bash hook and honest unsupported behavior elsewhere. |
@@ -31,6 +31,9 @@ Authoritative contract:
 - Add a migration for canonical override and diagnostic state, for example
   `rule_overrides` keyed by project scope plus `rule_id`, and a compact
   compile/evaluation status table or sidecar whose values doctor can report.
+- Add canonical preference reinforcement state or an equivalent typed metadata
+  path for active `preference` memories. The compiler must not infer repeated
+  preference eligibility from lesson-only `memory_lessons` rows.
 - Add config for `rule_compilation_enabled` and
   `rule_compile_min_reinforcement` with disabled-by-default rollout behavior
   and default threshold `3`.
@@ -40,8 +43,8 @@ Authoritative contract:
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.
-- Run compilation from the background worker or an explicit maintenance path.
-  Hooks only load and evaluate artifacts.
+- Run artifact compilation and writes only from the background worker. Hooks
+  only load and evaluate artifacts.
 - Add `remem rules list [--project <path>]`, `disable`, `enable`, and
   `set-action warn|block`. Overrides update SQLite and become effective after
   the next artifact build.
@@ -67,7 +70,7 @@ Authoritative contract:
 ## Data Flow
 
 ```text
-memories + memory_lessons + suppressions + rule_overrides
+preferences + preference reinforcement state + suppressions + rule_overrides
   -> worker compile pass
   -> atomic compiled_rules/<project-hash>.json
   -> pre-execution hook rule eval
@@ -104,8 +107,9 @@ derived artifact.
 ## Test Plan
 
 - [ ] Unit tests: config parsing, compiler eligibility, predicate classifier,
-      conflict resolution, source lifecycle removal, artifact atomicity,
-      evaluator determinism, and fail-open behavior.
+      preference reinforcement state, conflict resolution, source lifecycle
+      removal, artifact atomicity, evaluator determinism, and fail-open
+      behavior.
 - [ ] CLI tests: `rules list`, `disable`, `enable`, and `set-action` across
       artifact deletion and recompile.
 - [ ] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
