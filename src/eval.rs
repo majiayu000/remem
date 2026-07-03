@@ -412,6 +412,17 @@ pub mod gates {
                 .rate,
         );
         metrics.insert(
+            "injection.block_churn_unchanged".to_string(),
+            injection.metrics.block_churn_unchanged.rate,
+        );
+        metrics.insert(
+            "injection.block_churn_one_added_prefix_preserved".to_string(),
+            injection
+                .metrics
+                .block_churn_one_added_prefix_preserved
+                .rate,
+        );
+        metrics.insert(
             "injection.all_checks".to_string(),
             bool_metric(injection.metrics.all_checks_passed),
         );

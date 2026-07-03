@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
 use super::types::{
-    InjectionCaseReport, InjectionEvalMetadata, InjectionEvalOptions, InjectionEvalReport,
-    InjectionMetricSummary, InjectionRateMetric, CORPUS_NAME,
+    InjectionCaseReport, InjectionChurnReport, InjectionEvalMetadata, InjectionEvalOptions,
+    InjectionEvalReport, InjectionMetricSummary, InjectionRateMetric, CORPUS_NAME,
 };
 
 const PROJECT: &str = "/tmp/remem-injection-eval/repo";
@@ -18,6 +18,7 @@ const CURRENT_BRANCH: &str = "main";
 const ABSTENTION_FORBIDDEN_TITLE: &str = "Unrelated recent deployment note";
 const STALE_ANCHOR_TITLE: &str = "Stale source anchor decision";
 const USER_PROMPT_SESSION: &str = "eval-user-prompt-submit";
+const ONE_ADDED_TITLE: &str = "Renderer churn added decision";
 
 #[derive(Clone, Copy)]
 struct FixtureMemory {
@@ -177,6 +178,32 @@ fn run_sandbox_eval_inner(
     let snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render SessionStart injection context")?;
+    let unchanged_snapshot =
+        crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
+            .context("render unchanged SessionStart injection context")?;
+    let snapshot_churn_surface = snapshot.rendered_output.clone();
+    let unchanged_churn_surface = unchanged_snapshot.rendered_output.clone();
+    let unchanged_changed_bytes =
+        changed_byte_count(&snapshot_churn_surface, &unchanged_churn_surface);
+    {
+        let conn = crate::db::open_db().context("open sandbox injection eval DB for churn")?;
+        insert_one_added_memory(&conn).context("insert one-added churn fixture memory")?;
+    }
+    let one_added_snapshot =
+        crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
+            .context("render one-added SessionStart injection context")?;
+    let one_added_churn_surface = one_added_snapshot.rendered_output;
+    let one_added_changed_bytes =
+        changed_byte_count(&snapshot_churn_surface, &one_added_churn_surface);
+    let one_added_first_affected_section =
+        first_section_containing(&one_added_churn_surface, ONE_ADDED_TITLE);
+    let one_added_prefix_preserved =
+        one_added_first_affected_section
+            .as_deref()
+            .is_some_and(|section| {
+                prefix_before_section(&snapshot_churn_surface, section)
+                    == prefix_before_section(&one_added_churn_surface, section)
+            });
     let abstention_snapshot = crate::context::session_start_eval_snapshot(
         ABSTENTION_PROJECT,
         ABSTENTION_PROJECT,
@@ -217,12 +244,20 @@ fn run_sandbox_eval_inner(
     let user_prompt_submit_abstention_passed = user_prompt_abstention_context.is_none();
     let user_prompt_submit_abstention_false_positive_bound =
         InjectionRateMetric::new(usize::from(user_prompt_submit_abstention_passed), 1);
+    let block_churn_unchanged =
+        InjectionRateMetric::new(usize::from(unchanged_changed_bytes == 0), 1);
+    let block_churn_one_added_prefix_preserved = InjectionRateMetric::new(
+        usize::from(one_added_changed_bytes > 0 && one_added_prefix_preserved),
+        1,
+    );
     let all_checks_passed = expected_memory_recall.is_perfect()
         && forbidden_memory_exclusion.is_perfect()
         && abstention_false_positive_bound.is_perfect()
         && stale_anchor_labeling.is_perfect()
         && user_prompt_submit_memory_recall.is_perfect()
-        && user_prompt_submit_abstention_false_positive_bound.is_perfect();
+        && user_prompt_submit_abstention_false_positive_bound.is_perfect()
+        && block_churn_unchanged.is_perfect()
+        && block_churn_one_added_prefix_preserved.is_perfect();
     let mut failing_examples = Vec::new();
     for case in expected_cases.iter().filter(|case| !case.matched) {
         failing_examples.push(format!("missing expected memory: {}", case.title));
@@ -246,9 +281,28 @@ fn run_sandbox_eval_inner(
     if !user_prompt_submit_abstention_passed {
         failing_examples.push("UserPromptSubmit rendered unexpected additionalContext".to_string());
     }
+    if unchanged_changed_bytes != 0 {
+        failing_examples.push(format!(
+            "unchanged SessionStart churned {unchanged_changed_bytes} bytes"
+        ));
+    }
+    if one_added_changed_bytes == 0 {
+        failing_examples.push("one-added churn fixture did not change rendered bytes".to_string());
+    }
+    if !one_added_prefix_preserved {
+        failing_examples.push(
+            "one-added churn fixture changed bytes before the first affected section".to_string(),
+        );
+    }
 
     let mut cases = expected_cases;
     cases.extend(forbidden_cases);
+    let churn = InjectionChurnReport {
+        unchanged_changed_bytes,
+        one_added_changed_bytes,
+        one_added_first_affected_section,
+        one_added_prefix_preserved,
+    };
     Ok(InjectionEvalReport {
         metadata: InjectionEvalMetadata {
             corpus: CORPUS_NAME.to_string(),
@@ -260,6 +314,7 @@ fn run_sandbox_eval_inner(
             project: PROJECT.to_string(),
             host: HOST.to_string(),
             branch: CURRENT_BRANCH.to_string(),
+            render_contract_version: crate::context::RENDER_CONTRACT_VERSION,
             output_chars: snapshot.output_chars,
             memories_loaded: snapshot.memories_loaded,
             core_count: snapshot.core_count,
@@ -277,11 +332,47 @@ fn run_sandbox_eval_inner(
             stale_anchor_labeling,
             user_prompt_submit_memory_recall,
             user_prompt_submit_abstention_false_positive_bound,
+            block_churn_unchanged,
+            block_churn_one_added_prefix_preserved,
             all_checks_passed,
         },
+        churn,
         cases,
         failing_examples,
     })
+}
+
+fn changed_byte_count(left: &str, right: &str) -> usize {
+    left.as_bytes()
+        .iter()
+        .zip(right.as_bytes())
+        .filter(|(left, right)| left != right)
+        .count()
+        + left.len().abs_diff(right.len())
+}
+
+fn first_section_containing(output: &str, needle: &str) -> Option<String> {
+    let needle_pos = output.find(needle)?;
+    [
+        "## Preferences",
+        "## Lessons",
+        "## Core",
+        "## Index",
+        "## WorkStreams",
+        "## Sessions",
+    ]
+    .iter()
+    .filter_map(|section| output.find(section).map(|pos| (*section, pos)))
+    .filter(|(_, pos)| *pos <= needle_pos)
+    .max_by_key(|(_, pos)| *pos)
+    .map(|(section, _)| section.to_string())
+}
+
+fn prefix_before_section<'a>(output: &'a str, section: &str) -> &'a str {
+    output
+        .find(section)
+        .map(|pos| &output[..pos])
+        .unwrap_or(output)
 }
 
 fn evaluate_cases(output: &str, expectation: InjectionExpectation) -> Vec<InjectionCaseReport> {
@@ -413,6 +504,20 @@ fn seed_stale_anchor_commits(tx: &rusqlite::Transaction<'_>, now: i64) -> Result
             later_epoch,
             serde_json::to_string(&["src/stale_anchor.rs"])?
         ],
+    )?;
+    Ok(())
+}
+
+fn insert_one_added_memory(conn: &Connection) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (1001, 'eval-one-added-session', ?1, 'renderer-churn-added',
+                 ?2, 'Added memory used by the one-added context churn eval.',
+                 'decision', NULL, ?3, ?3, 'active', NULL, 'project')",
+        params![PROJECT, ONE_ADDED_TITLE, now],
     )?;
     Ok(())
 }

@@ -97,6 +97,8 @@
     "golden.total_queries": 66,
     "injection.abstention_false_positive_bound": 1,
     "injection.all_checks": 1,
+    "injection.block_churn_one_added_prefix_preserved": 1,
+    "injection.block_churn_unchanged": 1,
     "injection.expected_memory_recall": 1,
     "injection.forbidden_memory_exclusion": 1,
     "injection.user_prompt_submit_abstention_false_positive_bound": 1,

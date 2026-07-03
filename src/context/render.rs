@@ -31,6 +31,8 @@ use timer::log_context_timer;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
+pub(crate) const RENDER_CONTRACT_VERSION: u32 = 1;
+
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
     pub(in crate::context) stats: ContextRenderStats,
@@ -415,6 +417,7 @@ fn render_context_output_from_inputs(
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+            loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         lesson_ids = lesson_summary.ids;
@@ -435,6 +438,7 @@ fn render_context_output_from_inputs(
             &mut output,
             &loaded.memories,
             &render_limits,
+            loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         let core_count = core_summary.count;
@@ -455,6 +459,7 @@ fn render_context_output_from_inputs(
             &loaded.memories,
             &render_limits,
             &core_ids,
+            loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         index_ids = index_summary.ids;

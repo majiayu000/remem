@@ -16,7 +16,7 @@ pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<
                    OR (owner_scope = 'repo' AND target_project = ?1)
                    OR (owner_scope = 'workstream' AND target_project = ?1)
                    OR (owner_scope IS NULL AND project = ?1))
-              ORDER BY updated_at_epoch DESC",
+              ORDER BY updated_at_epoch DESC, id ASC",
         SELECT_FIELDS
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -38,7 +38,7 @@ pub fn query_workstreams(
                            OR (owner_scope = 'repo' AND target_project = ?1)
                            OR (owner_scope = 'workstream' AND target_project = ?1)
                            OR (owner_scope IS NULL AND project = ?1))
-                      ORDER BY updated_at_epoch DESC",
+                      ORDER BY updated_at_epoch DESC, id ASC",
                 SELECT_FIELDS
             ),
             Some(status.to_string()),
@@ -51,7 +51,7 @@ pub fn query_workstreams(
                            OR (owner_scope = 'repo' AND target_project = ?1)
                            OR (owner_scope = 'workstream' AND target_project = ?1)
                            OR (owner_scope IS NULL AND project = ?1))
-                      ORDER BY updated_at_epoch DESC",
+                      ORDER BY updated_at_epoch DESC, id ASC",
                 SELECT_FIELDS
             ),
             None,
