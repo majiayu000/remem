@@ -30,9 +30,14 @@ New `remem procedures` namespace:
   confidence). Reads existing rows; no schema change needed for v1 listing.
 - `export <memory_id> --format claude-skill|codex-prompt|runbook-md
   [--out <dir>]`: renders one procedure to one draft file. Refuses (exit
-  non-zero, actionable message) when the procedure is stale, expired, or
-  outside the verification freshness window — export eligibility reuses the
-  promotion-gate freshness predicate rather than defining a second one.
+  non-zero, actionable message) unless the source row has
+  `status = 'active'`, `memory_type = 'procedure'`, the trace-promotion
+  evidence required by `docs/procedural-memory.md` (at least two successful
+  verified runs and source evidence event ids), and is inside the verification
+  freshness window. Any non-active status (`stale`, `rejected`, `deleted`,
+  `archived`, `superseded`, or future inactive statuses) is ineligible.
+  Export eligibility reuses the promotion-gate freshness predicate rather
+  than defining a second one.
 
 MCP: read-only `procedures` listing/status tooling may follow; export stays
 CLI-only in v1. MCP must not render or write draft artifacts because writing
@@ -42,10 +47,11 @@ files from MCP expands the attack surface without a driving use case.
 
 One template module, three output profiles, rendering stored fields verbatim:
 
-- `claude-skill`: `SKILL.md`-shaped file — frontmatter name/description
-  derived from the workflow key, body sections for when-to-use (reuse
-  condition), steps (command), preconditions (project, branch), files
-  touched.
+- `claude-skill`: `SKILL.md`-shaped file — frontmatter name derived from the
+  workflow key, frontmatter description derived from the workflow key plus a
+  bounded sanitized summary of the stored reuse condition/preconditions, body
+  sections for when-to-use (reuse condition), steps (command), preconditions
+  (project, branch), files touched.
 - `codex-prompt`: prompt Markdown with the same sections in Codex prompt
   conventions.
 - `runbook-md`: plain runbook with a verification-evidence section.
@@ -60,8 +66,23 @@ Every profile emits:
 For `claude-skill`, `SKILL.md` YAML frontmatter is first-line content. The
 draft marker and human-visible warning are emitted immediately after the
 closing `---` delimiter so the file remains loadable by Claude skill tooling.
+The `description` field is the skill activation hint, so it must include the
+bounded reuse-condition summary and must be pinned by snapshot tests to avoid
+regressing to workflow-key-only descriptions.
 For `codex-prompt` and `runbook-md`, the draft marker may be the first
 nonblank content.
+
+Before any template renders or writer opens a target path, the exporter
+re-scans every field that will be rendered into the draft: workflow key,
+command/content, reuse condition, project/branch preconditions, files
+touched, evidence ids, generated title/name/description, and provenance
+strings. Secret detection uses the concrete capture redaction contract in
+`src/adapter/redaction.rs`, including the `redact_hook_payload_preview`
+option-argument, URL-userinfo, cookie, authorization, and sensitive-key tests.
+Instruction-pattern detection uses the `memory-poisoning-defense` pattern set.
+A positive match aborts export with an explicit error and leaves no partial
+file or registry row; v1 does not silently redact and continue because a
+reviewed draft must not hide that its source procedure is unsafe to publish.
 
 Snapshot tests pin all three renderings for a fixture procedure.
 
@@ -78,9 +99,11 @@ the CLI action. Enforcement is layered:
 
 Default `--out` is `./remem-drafts/` (created on demand). The writer refuses
 paths that resolve into high-context locations (`.claude/`, `.codex/`,
-`AGENTS.md`, `CLAUDE.md` and nested variants) even when passed explicitly —
-moving a reviewed draft there is deliberately a human `mv`/`git` action
-(SEC-13 surface; path check is by canonicalized prefix/basename, SEC-07).
+`AGENTS.md`, `CLAUDE.md`, repo-local `skills/`, repo-local `.agents/skills/`,
+configured skill roots, discovered skill roots, and nested variants) even
+when passed explicitly, regardless of export format or final file name. Moving
+a reviewed draft there is deliberately a human `mv`/`git` action (SEC-13
+surface; path check is by canonicalized prefix/basename, SEC-07).
 
 The writer never silently replaces an existing draft path:
 
@@ -102,8 +125,8 @@ path, content digest at export, source procedure digest/version at export,
 source `updated_at` at export, exported_at_epoch, remem version. On each doctor
 run:
 
-- flag rows whose source memory is now `stale`/expired
-  (`export drifted: source procedure invalidated`);
+- flag rows whose source memory is now any non-active status or expired
+  (`export drifted: source procedure inactive`);
 - flag rows whose source verification freshness lapsed;
 - flag rows whose source memory is still active but whose source digest,
   version, or `updated_at` no longer matches the exported source snapshot
