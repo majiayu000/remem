@@ -157,21 +157,29 @@ storms.
   manual escape hatch for observations and extraction ranges.
 - Add an explicit legacy observation replay path:
   `remem pending retry-failed-observations --include-archived --id <id>` (or
-  `--project <p> --limit <n>`). It clears `archived_at_epoch`, resets the row
-  to `status='pending'`, and then invokes the existing legacy pending
-  migration/replay flow that consumes pending/expired-processing rows. This is
-  manual only; it does not re-enable automatic pending-observation retries.
+  `--project <p> --limit <n> [--host claude-code|codex-cli]`). The `--id`
+  form must run an id-constrained migration/replay path so the selected row is
+  the one consumed, not an older pending row from the same project. For
+  archived rows it clears `archived_at_epoch`, resets the row to
+  `status='pending'`, supplies the explicit `--host` fallback when the row has
+  legacy/unknown host identity, and then invokes the legacy pending
+  migration/replay flow. Project-wide forms require an explicit or default
+  bounded `--limit` and support dry-run preview. This is manual only; it does
+  not re-enable automatic pending-observation retries.
 - Add extraction-task escape hatches for no-range archived failures:
   `remem pending list-failed-extraction-tasks --include-archived` and
   `remem pending retry-extraction-task --id <id> --include-archived`. The
-  retry command reuses the no-range direct requeue path and clears
-  `archived_at_epoch` (or creates a fresh linked retry row) before work is
-  made pending.
+  retry command reuses the no-range direct requeue path and either clears
+  `archived_at_epoch` plus resets the table-native retry counter to 0 before
+  work is made pending, or creates a fresh linked retry row for exhausted
+  historical rows.
 - Add job-specific escape hatches:
   `remem pending list-failed-jobs --include-archived` and
-  `remem pending retry-jobs --include-archived --id <id>|--project <p>` so an
-  archived job that was misclassified as permanent remains explicitly
-  replayable.
+  `remem pending retry-jobs --include-archived --id <id>|--project <p>
+  [--limit <n>] [--dry-run]` so an archived job that was misclassified as
+  permanent remains explicitly replayable. Project-wide retry has a safe
+  default limit, requires dry-run preview for large result sets, and must not
+  re-enqueue an unbounded project backlog in one command.
 - No change to failure-marking semantics (#365 invariant); W-12 applies to
   the pinned tests around honest marking.
 
