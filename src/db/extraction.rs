@@ -89,6 +89,22 @@ pub fn enqueue_followup_extraction_task(
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
                  ELSE extraction_tasks.next_retry_epoch
              END,
+             last_error = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.last_error
+             END,
+             failure_class = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.failure_class
+             END,
+             failed_at_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.failed_at_epoch
+             END,
+             archived_at_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.archived_at_epoch
+             END,
              replay_range_id = COALESCE(extraction_tasks.replay_range_id, excluded.replay_range_id),
              updated_at_epoch = excluded.updated_at_epoch",
         params![
@@ -191,6 +207,18 @@ pub fn enqueue_bounded_followup_extraction_task(
              last_error = CASE
                  WHEN extraction_tasks.status = 'failed' THEN NULL
                  ELSE extraction_tasks.last_error
+             END,
+             failure_class = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.failure_class
+             END,
+             failed_at_epoch = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.failed_at_epoch
+             END,
+             archived_at_epoch = CASE
+                 WHEN extraction_tasks.status = 'failed' THEN NULL
+                 ELSE extraction_tasks.archived_at_epoch
              END,
              updated_at_epoch = excluded.updated_at_epoch",
         params![
@@ -367,6 +395,9 @@ pub fn mark_extraction_task_done(
              lease_expires_epoch = NULL,
              next_retry_epoch = NULL,
              last_error = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?1
          WHERE id = ?2 AND lease_owner = ?3 AND status = 'processing'",
         params![now, task_id, lease_owner, completed_high_watermark_event_id],
@@ -390,10 +421,14 @@ pub fn mark_extraction_task_failed(
              lease_expires_epoch = NULL,
              next_retry_epoch = NULL,
              last_error = ?1,
-             updated_at_epoch = ?2
-         WHERE id = ?3 AND lease_owner = ?4 AND status = 'processing'",
+             failure_class = ?2,
+             failed_at_epoch = COALESCE(failed_at_epoch, ?3),
+             archived_at_epoch = NULL,
+             updated_at_epoch = ?3
+         WHERE id = ?4 AND lease_owner = ?5 AND status = 'processing'",
         params![
             crate::db::truncate_str(err, 2000),
+            crate::db::classify_failure(err).as_str(),
             now,
             task_id,
             lease_owner
@@ -435,6 +470,9 @@ pub fn defer_claimed_extraction_task(
              lease_expires_epoch = NULL,
              next_retry_epoch = ?2,
              last_error = ?3,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?4
          WHERE id = ?5 AND lease_owner = ?6 AND status = 'processing'",
         params![
@@ -464,6 +502,9 @@ pub fn wait_extraction_task(
              lease_expires_epoch = NULL,
              next_retry_epoch = ?1,
              last_error = ?2,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?3
          WHERE id = ?4 AND lease_owner = ?5 AND status = 'processing'",
         params![
@@ -583,9 +624,18 @@ fn exhaust_extraction_task_locked(
              SET status = 'failed',
                  attempts = ?1,
                  last_error = ?2,
-                 updated_at_epoch = ?3
-             WHERE id = ?4",
-            params![attempts, crate::db::truncate_str(err, 2000), now, range_id],
+                 failure_class = ?3,
+                 failed_at_epoch = COALESCE(failed_at_epoch, ?4),
+                 archived_at_epoch = NULL,
+                 updated_at_epoch = ?4
+             WHERE id = ?5",
+            params![
+                attempts,
+                crate::db::truncate_str(err, 2000),
+                crate::db::classify_failure(err).as_str(),
+                now,
+                range_id
+            ],
         )?;
         Some(range_id)
     } else if skipped_through > cursor {
@@ -625,13 +675,17 @@ fn exhaust_extraction_task_locked(
                  lease_expires_epoch = NULL,
                  next_retry_epoch = NULL,
                  last_error = ?4,
-                 updated_at_epoch = ?5
-             WHERE id = ?6 AND lease_owner = ?7 AND status = 'processing'",
+                 failure_class = CASE WHEN ?1 = 'failed' THEN ?5 ELSE NULL END,
+                 failed_at_epoch = CASE WHEN ?1 = 'failed' THEN COALESCE(failed_at_epoch, ?6) ELSE NULL END,
+                 archived_at_epoch = NULL,
+                 updated_at_epoch = ?6
+             WHERE id = ?7 AND lease_owner = ?8 AND status = 'processing'",
         params![
             next_status,
             next_attempts,
             skipped_through,
             crate::db::truncate_str(err, 2000),
+            crate::db::classify_failure(err).as_str(),
             now,
             task.id,
             lease_owner
@@ -673,6 +727,9 @@ pub fn mark_claimed_extraction_task_failed_or_retry(
              lease_owner = NULL,
              lease_expires_epoch = NULL,
              last_error = ?3,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?4
          WHERE id = ?5 AND lease_owner = ?6 AND status = 'processing'",
         params![

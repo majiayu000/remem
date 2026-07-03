@@ -65,7 +65,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         }
     };
     let detail = format!(
-        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing ({} expired), {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
+        "{} ready, {} delayed, {} processing ({} expired), {} actionable failed pending; {} extraction tasks pending, {} processing ({} expired), {} actionable failed; {} jobs pending, {} processing, {} actionable failed, {} stuck",
         stats.ready_pending_observations,
         stats.delayed_pending_observations,
         stats.processing_pending_observations,
@@ -80,6 +80,40 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         stats.failed_jobs,
         stats.stuck_jobs,
     );
+    let archived_history = stats.failure_lifecycle.pending_observation.archived
+        + stats.failure_lifecycle.extraction_task.archived
+        + stats.failure_lifecycle.extraction_replay_range.archived
+        + stats.failure_lifecycle.job.archived;
+    let oldest_actionable = [
+        stats
+            .failure_lifecycle
+            .pending_observation
+            .oldest_actionable_epoch,
+        stats
+            .failure_lifecycle
+            .extraction_task
+            .oldest_actionable_epoch,
+        stats
+            .failure_lifecycle
+            .extraction_replay_range
+            .oldest_actionable_epoch,
+        stats.failure_lifecycle.job.oldest_actionable_epoch,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .map(|epoch| chrono::Utc::now().timestamp().saturating_sub(epoch));
+    let lifecycle_detail = if archived_history > 0 || oldest_actionable.is_some() {
+        format!(
+            "; failure lifecycle oldest_actionable={} archived_history={}",
+            oldest_actionable
+                .map(|age| format!("{age}s"))
+                .unwrap_or_else(|| "none".to_string()),
+            archived_history
+        )
+    } else {
+        String::new()
+    };
     let replay_detail = if stats.retryable_extraction_replay_ranges > 0
         || stats.active_extraction_replay_ranges > 0
         || stats.quarantined_extraction_replay_ranges > 0
@@ -93,7 +127,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     } else {
         String::new()
     };
-    let detail = format!("{detail}{replay_detail}");
+    let detail = format!("{detail}{replay_detail}{lifecycle_detail}");
 
     let actions = if stats.retryable_extraction_replay_ranges > 0 {
         queue_actions_with_replay(

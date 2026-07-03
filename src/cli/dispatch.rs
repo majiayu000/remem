@@ -72,7 +72,11 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             dry_run,
         } => install::install(target, dry_run, hooks_only)?,
         Commands::Uninstall { target, dry_run } => install::uninstall(target, dry_run)?,
-        Commands::Cleanup { dry_run, json } => run_cleanup(dry_run, json)?,
+        Commands::Cleanup {
+            dry_run,
+            json,
+            archived_failures,
+        } => run_cleanup(dry_run, json, archived_failures)?,
         Commands::SyncMemory { cwd } => {
             let cwd = resolve_cwd_arg(cwd);
             let project = db::project_from_cwd(&cwd);

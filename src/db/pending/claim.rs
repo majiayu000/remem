@@ -154,16 +154,20 @@ pub fn fail_pending_claimed(
              status = 'failed',
              next_retry_epoch = NULL,
              last_error = ?2,
-             updated_at_epoch = ?3
+             failure_class = ?3,
+             failed_at_epoch = COALESCE(failed_at_epoch, ?4),
+             archived_at_epoch = NULL,
+             updated_at_epoch = ?4
          WHERE lease_owner = ?1
            AND status = 'processing'
            AND id IN ({})",
-        id_placeholders(ids, 4)
+        id_placeholders(ids, 5)
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(lease_owner.to_string()),
         Box::new(clamp_error(error)),
+        Box::new(crate::db::classify_failure(error).as_str().to_string()),
         Box::new(now),
     ];
     append_ids(&mut param_values, ids);

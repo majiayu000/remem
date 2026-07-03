@@ -575,6 +575,7 @@ remem user review reject <id>
 remem user review suppress <id>
 remem context --cwd .
 remem cleanup --dry-run --json
+remem cleanup --dry-run --json --archived-failures
 remem cleanup
 remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm
 remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm --json
@@ -643,8 +644,8 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `today`, `top_projects` |
-| `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied` |
+| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `failure_lifecycle`, `today`, `top_projects` |
+| `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied`; archived failure purge counts stay zero unless `--archived-failures[=DAYS]` is supplied |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem memory suppress <target> --json` | `status`, `suppression` |

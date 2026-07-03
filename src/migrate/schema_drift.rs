@@ -561,6 +561,80 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "memory_candidate_source_kind",
         "idx_memory_candidates_source_review",
     ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "pending_observations",
+        "failure_class",
+    ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "pending_observations",
+        "failed_at_epoch",
+    ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "pending_observations",
+        "archived_at_epoch",
+    ),
+    SchemaInvariant::column(55, "failure_lifecycle", "extraction_tasks", "failure_class"),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "extraction_tasks",
+        "failed_at_epoch",
+    ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "extraction_tasks",
+        "archived_at_epoch",
+    ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "extraction_replay_ranges",
+        "failure_class",
+    ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "extraction_replay_ranges",
+        "failed_at_epoch",
+    ),
+    SchemaInvariant::column(
+        55,
+        "failure_lifecycle",
+        "extraction_replay_ranges",
+        "archived_at_epoch",
+    ),
+    SchemaInvariant::column(55, "failure_lifecycle", "jobs", "failure_class"),
+    SchemaInvariant::column(55, "failure_lifecycle", "jobs", "failed_at_epoch"),
+    SchemaInvariant::column(55, "failure_lifecycle", "jobs", "archived_at_epoch"),
+    SchemaInvariant::table(55, "failure_lifecycle", "failure_lifecycle_daily"),
+    SchemaInvariant::index(
+        55,
+        "failure_lifecycle",
+        "idx_failure_lifecycle_daily_surface",
+    ),
+    SchemaInvariant::index(
+        55,
+        "failure_lifecycle",
+        "idx_pending_observations_failure_lifecycle",
+    ),
+    SchemaInvariant::index(
+        55,
+        "failure_lifecycle",
+        "idx_extraction_tasks_failure_lifecycle",
+    ),
+    SchemaInvariant::index(
+        55,
+        "failure_lifecycle",
+        "idx_extraction_replay_ranges_failure_lifecycle",
+    ),
+    SchemaInvariant::index(55, "failure_lifecycle", "idx_jobs_failure_lifecycle"),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {

@@ -143,7 +143,7 @@ pub fn quarantine_extraction_replay_ranges(
     Ok(range_ids.len())
 }
 
-fn enqueue_replay_extraction_task(conn: &Connection, range_id: i64) -> Result<i64> {
+pub(crate) fn enqueue_replay_extraction_task(conn: &Connection, range_id: i64) -> Result<i64> {
     let (task_kind, host_id, workspace_id, project_id, session_row_id, from_event_id, to_event_id) =
         conn.query_row(
             "SELECT task_kind, host_id, workspace_id, project_id, session_row_id,
@@ -197,6 +197,18 @@ fn enqueue_replay_extraction_task(conn: &Connection, range_id: i64) -> Result<i6
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
                  ELSE extraction_tasks.last_error
              END,
+             failure_class = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.failure_class
+             END,
+             failed_at_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.failed_at_epoch
+             END,
+             archived_at_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.archived_at_epoch
+             END,
              replay_range_id = excluded.replay_range_id,
              updated_at_epoch = excluded.updated_at_epoch",
         params![
@@ -223,6 +235,9 @@ fn enqueue_replay_extraction_task(conn: &Connection, range_id: i64) -> Result<i6
          SET status = 'requeued',
              replay_task_id = ?1,
              attempts = attempts + 1,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?2
          WHERE id = ?3",
         params![replay_task_id, now, range_id],
@@ -241,23 +256,25 @@ pub(crate) fn record_exhausted_replay_range(
     session_row_id: Option<i64>,
     from_event_id: i64,
     to_event_id: i64,
-    attempts: i64,
+    _attempts: i64,
     err: &str,
     now: i64,
 ) -> Result<i64> {
     conn.execute(
         "INSERT INTO extraction_replay_ranges
          (source_task_id, task_kind, host_id, workspace_id, project_id, session_row_id,
-          from_event_id, to_event_id, status, attempts, last_error, created_at_epoch,
-          updated_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10, ?11, ?11)
+          from_event_id, to_event_id, status, attempts, last_error, failure_class,
+          failed_at_epoch, archived_at_epoch, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', 0, ?9, ?10, ?11, NULL, ?11, ?11)
          ON CONFLICT(source_task_id, from_event_id, to_event_id) DO UPDATE SET
              status = CASE
                  WHEN extraction_replay_ranges.status = 'quarantined' THEN 'quarantined'
                  ELSE 'pending'
              END,
-             attempts = excluded.attempts,
              last_error = excluded.last_error,
+             failure_class = excluded.failure_class,
+             failed_at_epoch = COALESCE(extraction_replay_ranges.failed_at_epoch, excluded.failed_at_epoch),
+             archived_at_epoch = NULL,
              updated_at_epoch = excluded.updated_at_epoch",
         params![
             source_task_id,
@@ -268,8 +285,8 @@ pub(crate) fn record_exhausted_replay_range(
             session_row_id,
             from_event_id,
             to_event_id,
-            attempts,
             crate::db::truncate_str(err, 2000),
+            crate::db::classify_failure(err).as_str(),
             now
         ],
     )?;
@@ -293,6 +310,9 @@ pub(crate) fn mark_replay_range_replayed_if_done(
          SET status = 'replayed',
              replay_task_id = COALESCE(replay_task_id, ?1),
              last_error = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?2
          WHERE id = (
              SELECT replay_range_id FROM extraction_tasks
@@ -332,6 +352,9 @@ fn clear_terminal_failures_for_quiesced_range(
              lease_expires_epoch = NULL,
              next_retry_epoch = NULL,
              last_error = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?2
          WHERE replay_range_id = ?1
            AND status = 'failed'",
@@ -345,6 +368,9 @@ fn clear_terminal_failures_for_quiesced_range(
              lease_expires_epoch = NULL,
              next_retry_epoch = NULL,
              last_error = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?2
          WHERE id = (
              SELECT source_task_id
@@ -375,12 +401,20 @@ pub(crate) fn mark_replay_range_failed(
              replay_task_id = COALESCE(replay_task_id, ?1),
              attempts = COALESCE((SELECT attempts FROM extraction_tasks WHERE id = ?1), attempts),
              last_error = ?2,
-             updated_at_epoch = ?3
+             failure_class = ?3,
+             failed_at_epoch = COALESCE(failed_at_epoch, ?4),
+             archived_at_epoch = NULL,
+             updated_at_epoch = ?4
          WHERE id = (
              SELECT replay_range_id FROM extraction_tasks
              WHERE id = ?1 AND replay_range_id IS NOT NULL
          )",
-        params![task_id, crate::db::truncate_str(err, 2000), now],
+        params![
+            task_id,
+            crate::db::truncate_str(err, 2000),
+            crate::db::classify_failure(err).as_str(),
+            now
+        ],
     )?;
     Ok(())
 }

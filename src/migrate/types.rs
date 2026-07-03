@@ -275,6 +275,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_candidate_source_kind",
         sql: include_str!("../migrations/v054_memory_candidate_source_kind.sql"),
     },
+    Migration {
+        version: 55,
+        name: "failure_lifecycle",
+        sql: include_str!("../migrations/v055_failure_lifecycle.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

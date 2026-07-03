@@ -126,6 +126,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                 ),
             );
         }
+        db::maintain_failure_lifecycle(&conn)?;
         if let Some(job) = db::claim_next_job(&mut conn, &lease_owner, JOB_LEASE_SECS)? {
             crate::log::info(
                 "worker",

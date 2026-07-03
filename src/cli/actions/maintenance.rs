@@ -193,6 +193,7 @@ struct CleanupRetentionDays {
     old_events: i64,
     compressed_source_observations: i64,
     stale_memories: i64,
+    archived_failures: i64,
     workstream_auto_pause: i64,
     workstream_auto_abandon: i64,
 }
@@ -205,6 +206,7 @@ struct CleanupPlan {
     old_events_to_delete: usize,
     compressed_source_observations_to_delete: usize,
     stale_memories_to_archive: usize,
+    archived_failures_to_purge: db::ArchivedFailurePurgePlan,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -215,6 +217,7 @@ struct CleanupApplied {
     old_events_deleted: usize,
     compressed_source_observations_deleted: usize,
     stale_memories_archived: usize,
+    archived_failures_purged: db::ArchivedFailurePurgePlan,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -225,10 +228,14 @@ struct CleanupReport {
     applied: Option<CleanupApplied>,
 }
 
-pub(in crate::cli) fn run_cleanup(dry_run: bool, json: bool) -> Result<()> {
+pub(in crate::cli) fn run_cleanup(
+    dry_run: bool,
+    json: bool,
+    archived_failures: Option<i64>,
+) -> Result<()> {
     let conn = db::open_db()?;
     let now_epoch = chrono::Utc::now().timestamp();
-    let report = build_cleanup_report(&conn, now_epoch, dry_run)?;
+    let report = build_cleanup_report(&conn, now_epoch, dry_run, archived_failures)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -264,6 +271,13 @@ pub(in crate::cli) fn run_cleanup(dry_run: bool, json: bool) -> Result<()> {
                 "  Stale memories archived: {}",
                 applied.stale_memories_archived
             );
+            println!(
+                "  Archived failures purged: pending={} extraction_tasks={} replay_ranges={} jobs={}",
+                applied.archived_failures_purged.pending_observations,
+                applied.archived_failures_purged.extraction_tasks,
+                applied.archived_failures_purged.extraction_replay_ranges,
+                applied.archived_failures_purged.jobs
+            );
         }
     }
     Ok(())
@@ -273,19 +287,31 @@ fn build_cleanup_report(
     conn: &rusqlite::Connection,
     now_epoch: i64,
     dry_run: bool,
+    archived_failure_days: Option<i64>,
 ) -> Result<CleanupReport> {
+    let purge_archived_failures = archived_failure_days.is_some();
+    let archived_failure_days = archived_failure_days.unwrap_or(db::ARCHIVED_FAILURE_PURGE_DAYS);
     let retention_days = CleanupRetentionDays {
         old_events: memory::OLD_EVENT_RETENTION_DAYS,
         compressed_source_observations: memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
         stale_memories: memory::STALE_MEMORY_ARCHIVE_DAYS,
+        archived_failures: archived_failure_days,
         workstream_auto_pause: crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
         workstream_auto_abandon: crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
     };
-    let plan = build_cleanup_plan(conn, now_epoch)?;
+    let plan = build_cleanup_plan(
+        conn,
+        now_epoch,
+        purge_archived_failures.then_some(archived_failure_days),
+    )?;
     let applied = if dry_run {
         None
     } else {
-        Some(apply_cleanup_plan(conn, now_epoch)?)
+        Some(apply_cleanup_plan(
+            conn,
+            now_epoch,
+            purge_archived_failures.then_some(archived_failure_days),
+        )?)
     };
     Ok(CleanupReport {
         dry_run,
@@ -295,7 +321,11 @@ fn build_cleanup_report(
     })
 }
 
-fn build_cleanup_plan(conn: &rusqlite::Connection, now_epoch: i64) -> Result<CleanupPlan> {
+fn build_cleanup_plan(
+    conn: &rusqlite::Connection,
+    now_epoch: i64,
+    archived_failure_days: Option<i64>,
+) -> Result<CleanupPlan> {
     Ok(CleanupPlan {
         expired_memories_to_stale: memory::lifecycle::count_expired_active_memories(
             conn, now_epoch,
@@ -326,10 +356,18 @@ fn build_cleanup_plan(conn: &rusqlite::Connection, now_epoch: i64) -> Result<Cle
             now_epoch,
             memory::STALE_MEMORY_ARCHIVE_DAYS,
         )?,
+        archived_failures_to_purge: match archived_failure_days {
+            Some(days) => db::count_archived_failures_to_purge_at(conn, now_epoch, days)?,
+            None => db::ArchivedFailurePurgePlan::default(),
+        },
     })
 }
 
-fn apply_cleanup_plan(conn: &rusqlite::Connection, now_epoch: i64) -> Result<CleanupApplied> {
+fn apply_cleanup_plan(
+    conn: &rusqlite::Connection,
+    now_epoch: i64,
+    archived_failure_days: Option<i64>,
+) -> Result<CleanupApplied> {
     Ok(CleanupApplied {
         expired_memories_marked_stale: memory::lifecycle::expire_active_memories(conn, now_epoch)?,
         inactive_workstreams_paused: crate::workstream::auto_pause_all_inactive_at(
@@ -357,6 +395,10 @@ fn apply_cleanup_plan(conn: &rusqlite::Connection, now_epoch: i64) -> Result<Cle
             now_epoch,
             memory::STALE_MEMORY_ARCHIVE_DAYS,
         )?,
+        archived_failures_purged: match archived_failure_days {
+            Some(days) => db::purge_archived_failures_at(conn, now_epoch, days)?,
+            None => db::ArchivedFailurePurgePlan::default(),
+        },
     })
 }
 
@@ -384,6 +426,13 @@ fn print_cleanup_plan(plan: &CleanupPlan) {
     println!(
         "  Stale memories to archive (>180 days): {}",
         plan.stale_memories_to_archive
+    );
+    println!(
+        "  Archived failures to purge: pending={} extraction_tasks={} replay_ranges={} jobs={}",
+        plan.archived_failures_to_purge.pending_observations,
+        plan.archived_failures_to_purge.extraction_tasks,
+        plan.archived_failures_to_purge.extraction_replay_ranges,
+        plan.archived_failures_to_purge.jobs
     );
 }
 
@@ -762,6 +811,7 @@ mod tests {
                 old_events: 30,
                 compressed_source_observations: 90,
                 stale_memories: 180,
+                archived_failures: 90,
                 workstream_auto_pause: 14,
                 workstream_auto_abandon: 30,
             },
@@ -772,6 +822,12 @@ mod tests {
                 old_events_to_delete: 4,
                 compressed_source_observations_to_delete: 5,
                 stale_memories_to_archive: 6,
+                archived_failures_to_purge: db::ArchivedFailurePurgePlan {
+                    pending_observations: 7,
+                    extraction_tasks: 8,
+                    extraction_replay_ranges: 9,
+                    jobs: 10,
+                },
             },
             applied: None,
         };
@@ -781,6 +837,10 @@ mod tests {
         assert_eq!(parsed["dry_run"], true);
         assert_eq!(parsed["applied"], Value::Null);
         assert_eq!(parsed["plan"]["old_events_to_delete"], 4);
+        assert_eq!(
+            parsed["plan"]["archived_failures_to_purge"]["extraction_tasks"],
+            8
+        );
         assert_eq!(
             parsed["plan"]["compressed_source_observations_to_delete"],
             5

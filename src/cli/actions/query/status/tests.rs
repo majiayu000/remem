@@ -92,6 +92,7 @@ fn status_report_fixture() -> StatusReport {
             failed: 0,
             stuck: 0,
         },
+        failure_lifecycle: crate::db::FailureLifecycleStats::default(),
         worker_daemon: WorkerDaemonStatus {
             health: "healthy".to_string(),
             heartbeat_age_secs: Some(23),

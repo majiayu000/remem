@@ -143,6 +143,7 @@ fn load_status_report() -> Result<StatusReport> {
             failed: stats.failed_jobs,
             stuck: stats.stuck_jobs,
         },
+        failure_lifecycle: stats.failure_lifecycle,
         worker_daemon: WorkerDaemonStatus {
             health: worker_health_tag(stats.worker_daemon_healthy, stats.worker_heartbeat_age_secs)
                 .to_string(),
@@ -413,6 +414,15 @@ fn print_status_report(report: &StatusReport) {
     println!("  Failed:       {:>6}", report.jobs.failed);
     println!("  Stuck:        {:>6}", report.jobs.stuck);
     println!();
+    println!("Failures:");
+    print_failure_surface("Pending obs", &report.failure_lifecycle.pending_observation);
+    print_failure_surface("Extraction", &report.failure_lifecycle.extraction_task);
+    print_failure_surface(
+        "Replay rng",
+        &report.failure_lifecycle.extraction_replay_range,
+    );
+    print_failure_surface("Jobs", &report.failure_lifecycle.job);
+    println!();
     println!("Worker daemon:");
     println!("  Health:       {:>7}", report.worker_daemon.health);
     if let Some(age_secs) = report.worker_daemon.heartbeat_age_secs {
@@ -481,6 +491,18 @@ fn print_status_report(report: &StatusReport) {
     }
 }
 
+fn print_failure_surface(label: &str, stats: &db::FailureSurfaceStats) {
+    println!(
+        "  {:<11} actionable={:>5} 7d={:>5} transient={:>5} permanent={:>5} archived={:>5}",
+        label,
+        stats.actionable_total,
+        stats.actionable_7d,
+        stats.transient,
+        stats.permanent,
+        stats.archived
+    );
+}
+
 fn worker_health_tag(healthy: bool, heartbeat_age_secs: Option<i64>) -> &'static str {
     if healthy {
         "healthy"
@@ -523,6 +545,7 @@ pub(super) struct StatusReport {
     pub pending_observations: PendingObservationStatus,
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
     pub jobs: JobStatus,
+    pub failure_lifecycle: db::FailureLifecycleStats,
     pub worker_daemon: WorkerDaemonStatus,
     pub latest_session_memory_spend: Option<LatestSessionMemorySpendStatus>,
     pub today: DailyStatus,
