@@ -398,6 +398,8 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | Preference section character budget |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
+| `REMEM_LOG_MAX_ROTATED_FILES` | `3` | Number of rotated `remem.log.N` files to retain; accepts `0` through `100`, and `0` disables retained suffixes |
+| `REMEM_LOG_LOCK_TIMEOUT_MS` | `250` | Maximum wait for the cross-process log rotation lock before append-only fallback |
 | `REMEM_SAVE_MEMORY_LOCAL_COPY` | `true` | Enable local Markdown backup for save_memory |
 | `REMEM_SAVE_MEMORY_LOCAL_DIR` | `~/.remem/manual-notes` | Local backup directory |
 | `REMEM_PRICE_INPUT_PER_MTOK` | model default | Override all models input price (USD/M tokens) |
@@ -542,6 +544,7 @@ memories_fts (title, content)                                    -- FTS5 trigram
 - **SQLite constraint compensation**: No in-memory Map dedup capability, DB tables (`summarize_cooldown`) simulate rate limiting
 - **Executor-specific AI calls**: Anthropic HTTP is preferred when API credentials exist; Codex hosts can use `codex exec` with explicit model control
 - **Stop hook async**: Dispatcher returns in 6ms, `std::process::Command` spawns independent worker
+- **Worker stderr descriptor**: Worker stderr is attached to the log file opened at worker launch; later rotation by another process may leave that descriptor writing to the already-open file until the worker exits
 - **SQLite single-file + WAL**: Zero dependencies, FTS5 full-text search, WAL concurrent read/write
 - **Coalesced capture processing**: Claude Code PostToolUse records capture evidence quickly; workers process coalesced extraction tasks
 - **Decision priority**: Summary fields ordered decisions > completed > learned, architectural knowledge most valuable
