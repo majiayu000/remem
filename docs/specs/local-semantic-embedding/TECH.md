@@ -11,17 +11,17 @@ Tracking:
 ## Existing Implementation Facts
 
 - `src/retrieval/embedding.rs` defines `EmbeddingProvider { Auto, Local,
-  OpenAi }` with `DEFAULT_PROVIDER = Auto`. `Auto` resolves to OpenAI when an
-  API key is available (`REMEM_EMBEDDINGS_API_KEY` /
+  FeatureHash, OpenAi, Off }` with `DEFAULT_PROVIDER = Auto`. `Auto` resolves
+  to OpenAI when an API key is available (`REMEM_EMBEDDINGS_API_KEY` /
   `REMEM_EMBEDDINGS_API_KEY_ENV`), otherwise `Local`.
-- `Local` produces `remem-local-feature-hash-v1`, 768-dim hashing-trick
-  vectors. `"local" | "offline" | "feature-hash" | "feature_hash"` all parse
-  to the same variant, so "local" and "feature-hash" are currently the same
-  thing.
+- `Local` and `FeatureHash` are distinct provider states. In Phase 1 they both
+  produce `remem-local-feature-hash-v1`, 768-dim hashing-trick vectors until
+  Phase 2 adds the real local semantic runtime.
 - Config already reads a flat `[embeddings]` table from
   `~/.remem/config.toml` via `src/retrieval/embedding.rs::config_from_file()`,
-  then applies `REMEM_EMBEDDINGS_PROVIDER`, `_MODEL`, `_BASE_URL`,
-  `_DIMENSIONS`, `_API_KEY`, `_API_KEY_ENV`, `_TIMEOUT_SECS`.
+  then applies `REMEM_EMBEDDINGS_PROVIDER`, `_FALLBACK`, `_MODEL`,
+  `_BASE_URL`, `_DIMENSIONS`, `_API_KEY`, `_API_KEY_ENV`, `_MODEL_DIR`,
+  `_TIMEOUT_SECS`.
 - `memory_embeddings` (v029) stores blob + model id + dims, but
   `memory_id INTEGER PRIMARY KEY` currently allows only one vector row per
   memory. Multi-model coexistence requires a schema migration before the

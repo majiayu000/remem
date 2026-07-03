@@ -102,6 +102,9 @@ pub fn ensure_vec_table(conn: &Connection) -> Result<()> {
 }
 
 pub fn upsert_embedding(conn: &Connection, memory_id: i64, embedding: &[f32]) -> Result<()> {
+    if super::embedding::embedding_provider_status()?.disabled {
+        return Ok(());
+    }
     upsert_embedding_with_metadata(
         conn,
         memory_id,
@@ -120,6 +123,9 @@ pub fn upsert_memory_embedding(
     memory_type: &str,
     topic_key: Option<&str>,
 ) -> Result<()> {
+    if super::embedding::embedding_provider_status()?.disabled {
+        return Ok(());
+    }
     let embedding = super::embedding::embed_memory(title, content, memory_type, topic_key)?;
     let content_hash =
         super::embedding::embedding_content_hash(title, content, memory_type, topic_key);
@@ -191,6 +197,16 @@ pub fn reindex_memory_embeddings_with_report(
 ) -> Result<EmbeddingReindexReport> {
     let total_start = Instant::now();
     let mut timings = vec![];
+    if super::embedding::embedding_provider_status()?.disabled {
+        crate::perf::push_elapsed(&mut timings, "total", total_start);
+        return Ok(EmbeddingReindexReport {
+            selected: 0,
+            processed: 0,
+            model: "off".to_string(),
+            dimensions: 0,
+            timings,
+        });
+    }
     if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
         crate::perf::push_elapsed(&mut timings, "total", total_start);
         return Ok(EmbeddingReindexReport {
@@ -402,6 +418,9 @@ fn prepare_memory_embedding(
 }
 
 fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
+    if super::embedding::embedding_provider_status()?.disabled {
+        return Ok(0);
+    }
     if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
         return Ok(0);
     }
@@ -473,6 +492,9 @@ pub fn vector_search_embedding_filtered(
 ) -> Result<VectorSearchOutcome> {
     if limit == 0 {
         return Ok(VectorSearchOutcome::ready(vec![]));
+    }
+    if super::embedding::embedding_provider_status()?.disabled {
+        return Ok(VectorSearchOutcome::disabled("embedding provider is off"));
     }
     if !table_exists(conn, "memory_embeddings")? {
         return Ok(VectorSearchOutcome::disabled(
@@ -582,6 +604,109 @@ pub fn find_similar_observations(
         .collect();
 
     Ok(similar)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActiveEmbeddingCoverage {
+    pub embedded: i64,
+    pub total: i64,
+    pub percent: f64,
+    pub mixed_profile_count: i64,
+}
+
+pub fn active_embedding_coverage(conn: &Connection) -> Result<ActiveEmbeddingCoverage> {
+    let status = super::embedding::embedding_provider_status()?;
+    active_embedding_coverage_for_status(conn, &status)
+}
+
+pub fn active_embedding_coverage_for_status(
+    conn: &Connection,
+    status: &super::embedding::EmbeddingProviderStatus,
+) -> Result<ActiveEmbeddingCoverage> {
+    if !table_exists(conn, "memories")? {
+        return Ok(ActiveEmbeddingCoverage {
+            embedded: 0,
+            total: 0,
+            percent: 0.0,
+            mixed_profile_count: 0,
+        });
+    }
+    let total = searchable_memory_count(conn)?;
+    if status.disabled || !table_exists(conn, "memory_embeddings")? {
+        return Ok(ActiveEmbeddingCoverage {
+            embedded: 0,
+            total,
+            percent: percent(0, total),
+            mixed_profile_count: 0,
+        });
+    }
+    let Some(model) = status.active_model_id.as_deref() else {
+        return Ok(ActiveEmbeddingCoverage {
+            embedded: 0,
+            total,
+            percent: percent(0, total),
+            mixed_profile_count: embedding_profile_count(conn)?,
+        });
+    };
+    let embedded = match status.active_dimensions {
+        Some(dimensions) => conn.query_row(
+            "SELECT COUNT(DISTINCT m.id)
+             FROM memories m
+             JOIN memory_embeddings e ON e.memory_id = m.id
+             WHERE m.status IN ('active', 'stale', 'archived')
+               AND e.model = ?1
+               AND e.dimensions = ?2",
+            params![model, dimensions as i64],
+            |row| row.get(0),
+        )?,
+        None => conn.query_row(
+            "SELECT COUNT(DISTINCT m.id)
+             FROM memories m
+             JOIN memory_embeddings e ON e.memory_id = m.id
+             WHERE m.status IN ('active', 'stale', 'archived')
+               AND e.model = ?1",
+            [model],
+            |row| row.get(0),
+        )?,
+    };
+    Ok(ActiveEmbeddingCoverage {
+        embedded,
+        total,
+        percent: percent(embedded, total),
+        mixed_profile_count: embedding_profile_count(conn)?,
+    })
+}
+
+fn searchable_memory_count(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE status IN ('active', 'stale', 'archived')",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+fn embedding_profile_count(conn: &Connection) -> Result<i64> {
+    if !table_exists(conn, "memory_embeddings")? {
+        return Ok(0);
+    }
+    Ok(conn.query_row(
+        "SELECT COUNT(*)
+         FROM (
+             SELECT model, dimensions
+             FROM memory_embeddings
+             GROUP BY model, dimensions
+         )",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+fn percent(numerator: i64, denominator: i64) -> f64 {
+    if denominator <= 0 {
+        0.0
+    } else {
+        (numerator as f64 * 100.0) / denominator as f64
+    }
 }
 
 fn create_embedding_table(conn: &Connection) -> Result<()> {

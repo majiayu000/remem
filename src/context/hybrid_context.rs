@@ -454,6 +454,9 @@ fn query_local_vector_channel(
     if !sqlite_table_available(conn, "memory_embeddings")? {
         return Ok(vec![]);
     }
+    if crate::retrieval::embedding::embedding_provider_status()?.disabled {
+        return Ok(vec![]);
+    }
 
     let query_embedding = crate::retrieval::embedding::embed_query(query)?;
     let profile = query_embedding.profile();

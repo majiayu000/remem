@@ -38,6 +38,9 @@ fn load_status_report() -> Result<StatusReport> {
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
     let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
     let usage_feedback = crate::memory::usage::query_memory_usage_feedback_stats(&conn)?;
+    let embedding_provider = crate::retrieval::embedding::embedding_provider_status()?;
+    let embedding_coverage =
+        crate::retrieval::vector::active_embedding_coverage_for_status(&conn, &embedding_provider)?;
 
     Ok(StatusReport {
         version,
@@ -51,6 +54,22 @@ fn load_status_report() -> Result<StatusReport> {
             observations: stats.active_observations,
             sessions: stats.session_summaries,
             raw_messages: stats.raw_messages,
+        },
+        embedding: EmbeddingStatus {
+            configured_provider: embedding_provider.configured_provider,
+            fallback_provider: embedding_provider.fallback_provider,
+            active_provider: embedding_provider.active_provider,
+            active_model_id: embedding_provider.active_model_id,
+            degraded: embedding_provider.degraded,
+            disabled: embedding_provider.disabled,
+            unavailable_reason: embedding_provider.unavailable_reason,
+            degradation_reason: embedding_provider.degradation_reason,
+            coverage: EmbeddingCoverageStatus {
+                embedded: embedding_coverage.embedded,
+                total: embedding_coverage.total,
+                percent: embedding_coverage.percent,
+                mixed_profile_count: embedding_coverage.mixed_profile_count,
+            },
         },
         raw_archive: RawArchiveStatus {
             messages: stats.raw_messages,
@@ -256,6 +275,44 @@ fn print_status_report(report: &StatusReport) {
     println!("  Observations:  {:>6}", report.totals.observations);
     println!("  Sessions:      {:>6}", report.totals.sessions);
     println!("  Raw messages:  {:>6}", report.totals.raw_messages);
+    println!();
+    println!("Embedding:");
+    println!(
+        "  Provider:     {} -> {}",
+        report.embedding.configured_provider, report.embedding.active_provider
+    );
+    if let Some(fallback) = &report.embedding.fallback_provider {
+        println!("  Fallback:     {}", fallback);
+    }
+    println!(
+        "  Model:        {}",
+        report
+            .embedding
+            .active_model_id
+            .as_deref()
+            .unwrap_or("none")
+    );
+    println!(
+        "  State:        degraded={} disabled={}",
+        report.embedding.degraded, report.embedding.disabled
+    );
+    if let Some(reason) = &report.embedding.unavailable_reason {
+        println!("  Unavailable:  {}", reason);
+    } else if let Some(reason) = &report.embedding.degradation_reason {
+        println!("  Degraded:     {}", reason);
+    }
+    println!(
+        "  Coverage:     {}/{} ({:.1}%)",
+        report.embedding.coverage.embedded,
+        report.embedding.coverage.total,
+        report.embedding.coverage.percent
+    );
+    if report.embedding.coverage.mixed_profile_count > 1 {
+        println!(
+            "  Profiles:     {} mixed model/dimension profiles",
+            report.embedding.coverage.mixed_profile_count
+        );
+    }
     println!();
     println!("Raw archive:");
     println!("  Messages:     {:>6}", report.raw_archive.messages);
@@ -516,6 +573,7 @@ pub(super) struct StatusReport {
     pub version: String,
     pub database: StatusDatabase,
     pub totals: StatusTotals,
+    pub embedding: EmbeddingStatus,
     pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
     pub promotion_funnel: PromotionFunnelStatus,
@@ -542,6 +600,27 @@ pub(super) struct StatusTotals {
     pub observations: i64,
     pub sessions: i64,
     pub raw_messages: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct EmbeddingStatus {
+    pub configured_provider: String,
+    pub fallback_provider: Option<String>,
+    pub active_provider: String,
+    pub active_model_id: Option<String>,
+    pub degraded: bool,
+    pub disabled: bool,
+    pub unavailable_reason: Option<String>,
+    pub degradation_reason: Option<String>,
+    pub coverage: EmbeddingCoverageStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct EmbeddingCoverageStatus {
+    pub embedded: i64,
+    pub total: i64,
+    pub percent: f64,
+    pub mixed_profile_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

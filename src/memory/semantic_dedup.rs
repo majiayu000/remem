@@ -52,6 +52,9 @@ pub(crate) fn find_curated_duplicate(
     {
         return Ok(None);
     }
+    if crate::retrieval::embedding::embedding_provider_status()?.disabled {
+        return Ok(None);
+    }
 
     let scope = if scope.trim().is_empty() {
         "project"

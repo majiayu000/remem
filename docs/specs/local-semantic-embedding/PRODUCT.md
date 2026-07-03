@@ -66,7 +66,7 @@ does not have.
 Provider selection follows the config contract designed in #358:
 
 ```toml
-[embedding]
+[embeddings]
 # "api"          - remote embedding API (highest quality, needs network + key)
 # "local"        - local ONNX small model (offline-capable, first run downloads weights)
 # "feature-hash" - hashing-trick bag-of-features (no deps, no real semantics; legacy fallback)

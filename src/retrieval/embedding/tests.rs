@@ -18,6 +18,8 @@ const ENV_KEYS: &[&str] = &[
     ENV_API_KEY_LEGACY,
     ENV_API_KEY_ENV,
     ENV_TIMEOUT_SECS,
+    ENV_FALLBACK,
+    ENV_MODEL_DIR,
     DEFAULT_API_KEY_ENV,
     TEST_API_KEY_ENV,
 ];
@@ -92,9 +94,110 @@ api_key_env = "REMEM_TEST_EMBEDDING_KEY"
         let active = active_provider(&config)?;
 
         assert_eq!(config.provider, EmbeddingProvider::OpenAi);
+        assert_eq!(config.fallback, None);
         assert_eq!(config.model, "text-embedding-3-large");
         assert_eq!(config.dimensions, Some(256));
         assert!(matches!(active, ActiveEmbeddingProvider::OpenAi { .. }));
+        std::fs::remove_file(path).ok();
+        Ok(())
+    })
+}
+
+#[test]
+fn local_and_feature_hash_are_distinct_configured_providers() -> Result<()> {
+    with_clean_env(|| {
+        unsafe { std::env::set_var(ENV_PROVIDER, "local") };
+        let local = resolve_embedding_config()?;
+        let local_status = embedding_provider_status()?;
+        assert_eq!(local.provider, EmbeddingProvider::Local);
+        assert_eq!(local_status.configured_provider, "local");
+        assert_eq!(local_status.active_provider, "local");
+        assert_eq!(
+            local_status.active_model_id.as_deref(),
+            Some(LOCAL_EMBEDDING_MODEL)
+        );
+
+        unsafe { std::env::set_var(ENV_PROVIDER, "feature-hash") };
+        let feature_hash = resolve_embedding_config()?;
+        let feature_hash_status = embedding_provider_status()?;
+        assert_eq!(feature_hash.provider, EmbeddingProvider::FeatureHash);
+        assert_eq!(feature_hash_status.configured_provider, "feature-hash");
+        assert_eq!(feature_hash_status.active_provider, "feature-hash");
+        assert_eq!(
+            feature_hash_status.active_model_id.as_deref(),
+            Some(LOCAL_EMBEDDING_MODEL)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn off_provider_reports_disabled_and_refuses_embedding() {
+    with_clean_env(|| {
+        unsafe { std::env::set_var(ENV_PROVIDER, "off") };
+
+        let status = embedding_provider_status().expect("status should resolve");
+        let err = embed_query("hello").unwrap_err();
+
+        assert_eq!(status.configured_provider, "off");
+        assert_eq!(status.active_provider, "off");
+        assert!(status.disabled);
+        assert!(err.to_string().contains("provider is off"));
+    });
+}
+
+#[test]
+fn api_provider_without_key_uses_configured_fallback_visibly() -> Result<()> {
+    with_clean_env(|| {
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+            std::env::set_var(ENV_FALLBACK, "feature-hash");
+        }
+
+        let config = resolve_embedding_config()?;
+        let active = active_provider(&config)?;
+        let status = embedding_provider_status()?;
+
+        assert_eq!(config.provider, EmbeddingProvider::OpenAi);
+        assert_eq!(config.fallback, Some(EmbeddingProvider::FeatureHash));
+        assert!(matches!(active, ActiveEmbeddingProvider::FeatureHash));
+        assert!(status.degraded);
+        assert!(!status.disabled);
+        assert_eq!(status.active_provider, "feature-hash");
+        assert!(status
+            .degradation_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("using fallback feature-hash"));
+        Ok(())
+    })
+}
+
+#[test]
+fn config_file_reads_fallback_and_model_dir() -> Result<()> {
+    with_clean_env(|| {
+        let path = std::env::temp_dir().join(format!(
+            "remem-embedding-config-contract-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(
+            &path,
+            r#"[embeddings]
+provider = "api"
+fallback = "feature-hash"
+model_dir = "/tmp/remem-models"
+"#,
+        )?;
+        unsafe {
+            std::env::set_var("REMEM_CONFIG", &path);
+        }
+
+        let config = resolve_embedding_config()?;
+
+        assert_eq!(config.provider, EmbeddingProvider::OpenAi);
+        assert_eq!(config.fallback, Some(EmbeddingProvider::FeatureHash));
+        assert_eq!(config.model_dir.as_deref(), Some("/tmp/remem-models"));
         std::fs::remove_file(path).ok();
         Ok(())
     })

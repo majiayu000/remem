@@ -9,6 +9,37 @@ fn setup_vector_conn() -> Result<Connection> {
     Ok(conn)
 }
 
+fn with_embedding_provider<T>(provider: &str, f: impl FnOnce() -> T) -> T {
+    let _guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("env lock should acquire");
+    let keys = [
+        "REMEM_CONFIG",
+        "REMEM_EMBEDDINGS_PROVIDER",
+        "REMEM_EMBEDDING_PROVIDER",
+        "REMEM_EMBEDDINGS_FALLBACK",
+        "REMEM_EMBEDDINGS_API_KEY",
+        "REMEM_EMBEDDING_API_KEY",
+        "OPENAI_API_KEY",
+    ];
+    let saved = keys
+        .iter()
+        .map(|key| (*key, std::env::var(key).ok()))
+        .collect::<Vec<_>>();
+    for key in keys {
+        unsafe { std::env::remove_var(key) };
+    }
+    unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+    let result = f();
+    for (key, value) in saved {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+    result
+}
+
 fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
     conn.execute(
         "INSERT INTO memories
@@ -17,6 +48,39 @@ fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
         params![id],
     )?;
     Ok(())
+}
+
+#[test]
+fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
+    with_embedding_provider("off", || -> Result<()> {
+        let conn = setup_vector_conn()?;
+        insert_test_memory(&conn, 1)?;
+        ensure_vec_table(&conn)?;
+
+        upsert_memory_embedding(
+            &conn,
+            1,
+            "Credential store",
+            "SQLCipher encrypts secrets at rest.",
+            "architecture",
+            None,
+        )?;
+        assert_eq!(embedding_count(&conn)?, 0);
+        assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 0);
+
+        let report = reindex_memory_embeddings_with_report(&conn, 100)?;
+        assert_eq!(report.processed, 0);
+        assert_eq!(report.model, "off");
+
+        let query = vec![0.0; EMBEDDING_DIMENSIONS];
+        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
+        assert_eq!(
+            outcome.disabled_reason.as_deref(),
+            Some("embedding provider is off")
+        );
+        assert_eq!(embedding_count(&conn)?, 0);
+        Ok(())
+    })
 }
 
 #[test]
