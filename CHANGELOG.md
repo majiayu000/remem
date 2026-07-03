@@ -49,6 +49,7 @@
 - Staged source version `0.5.147` for summary promotion enforce mode.
 - Staged source version `0.5.148` for cross-process log rotation hardening.
 - Staged source version `0.5.149` for foreground status schema convergence.
+- Staged source version `0.5.150` for capacity degradation eval gates.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 
