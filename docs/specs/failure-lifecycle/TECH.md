@@ -71,12 +71,17 @@ source surface, and outcome. On cap exhaustion the row is marked exhausted
 (attempts = cap) and becomes eligible for archiving. Permanent-class rows
 are archive-eligible immediately.
 
-Recovery paths are surface-specific:
+Recovery paths are surface-specific. Any retry/requeue path that targets an
+archived row must either clear `archived_at_epoch` in the same transaction
+before making work pending again, or create a fresh retry row linked to the
+archived source; no pending work may retain an archived marker.
 
-- `pending_observations`: re-enter the existing pending-observation claim
-  path by setting `status='pending'`, clearing lease fields, and setting
-  `next_retry_epoch`; this keeps legacy failed rows from remaining a
-  permanent headline WARN.
+- `pending_observations`: no automatic retry in v1 because the current runtime
+  no longer has a production worker consumer for this legacy queue. Failed
+  legacy rows are classified, reported, and archived so they stop polluting
+  headline counts, while manual inspection remains available. If a production
+  consumer is reintroduced later, this spec must be updated before automatic
+  pending-observation retry is enabled.
 - `extraction_replay_ranges`: invoke the existing
   `retry_extraction_replay_ranges` machinery for retryable ranges.
 - `extraction_tasks` with a replay range: route through that range.
@@ -112,18 +117,22 @@ purge only). Cleanup must be FK-safe for replay ranges:
   extraction tasks;
 - if an extraction task is still referenced by a non-purged replay range,
   cleanup keeps the task and reports it as skipped;
-- for a replay range and its archived replay task purged in the same
-  transaction, nullable `extraction_tasks.replay_range_id` references are
-  cleared before deleting the range, then archived tasks are deleted.
+- before deleting any replay range, cleanup clears nullable
+  `extraction_tasks.replay_range_id` references for every task pointing at
+  that range, including successful/non-archived replay tasks that are not
+  purged in the same transaction; archived source/replay tasks are then
+  deleted only after the range FK references are clear.
 
 ### 4. Reporting split
 
 - Status/doctor headline counters exclude archived rows across all four
-  surfaces. Actionable = not-archived failures plus retryable replay ranges;
-  the probe prints `actionable (7d)`, oldest actionable age, per-class
-  counts, and `archived: <n>` as a secondary line.
-- Severity: FAIL/WARN thresholds evaluate actionable counts only; a store
-  with thousands of archived and zero actionable failures reports ok.
+  surfaces. Actionable total = all non-archived failures plus retryable replay
+  ranges; actionable 7d is a subcount for freshness/scanning context. The
+  probe prints `actionable total`, `actionable 7d`, oldest actionable age,
+  per-class counts, and `archived: <n>` as a secondary line.
+- Severity: FAIL/WARN thresholds evaluate actionable total only; a store with
+  thousands of archived and zero actionable-total failures reports ok. An
+  8-14 day failure continues to affect severity until it archives.
 - `remem status --json` adds `failures: {actionable_7d, actionable_total,
   transient, permanent, exhausted, archived, historical_archived,
   historical_purged, oldest_actionable_epoch}` per surface.
@@ -146,11 +155,32 @@ storms.
 - `remem pending list-failed` / `retry-extraction-ranges` keep working and
   can target archived rows explicitly (`--include-archived`), preserving the
   manual escape hatch for observations and extraction ranges.
+- Add an explicit legacy observation replay path:
+  `remem pending retry-failed-observations --include-archived --id <id>
+  [--host claude-code|codex-cli]` (or `--project <p> --limit <n>
+  [--host claude-code|codex-cli]`). The `--id`
+  form must run an id-constrained migration/replay path so the selected row is
+  the one consumed, not an older pending row from the same project. For
+  archived rows it clears `archived_at_epoch`, resets the row to
+  `status='pending'`, supplies the explicit `--host` fallback when the row has
+  legacy/unknown host identity, and then invokes the legacy pending
+  migration/replay flow. Project-wide forms require an explicit or default
+  bounded `--limit` and support dry-run preview. This is manual only; it does
+  not re-enable automatic pending-observation retries.
+- Add extraction-task escape hatches for no-range archived failures:
+  `remem pending list-failed-extraction-tasks --include-archived` and
+  `remem pending retry-extraction-task --id <id> --include-archived`. The
+  retry command reuses the no-range direct requeue path and either clears
+  `archived_at_epoch` plus resets the table-native retry counter to 0 before
+  work is made pending, or creates a fresh linked retry row for exhausted
+  historical rows.
 - Add job-specific escape hatches:
   `remem pending list-failed-jobs --include-archived` and
-  `remem pending retry-jobs --include-archived --id <id>|--project <p>` so an
-  archived job that was misclassified as permanent remains explicitly
-  replayable.
+  `remem pending retry-jobs --include-archived --id <id>|--project <p>
+  [--limit <n>] [--dry-run]` so an archived job that was misclassified as
+  permanent remains explicitly replayable. Project-wide retry has a safe
+  default limit, requires dry-run preview for large result sets, and must not
+  re-enqueue an unbounded project backlog in one command.
 - No change to failure-marking semantics (#365 invariant); W-12 applies to
   the pinned tests around honest marking.
 
