@@ -48,8 +48,9 @@ surface that #381/#383 evidence collection depends on.
 ## User-Visible Behavior
 
 - `remem status` / `remem doctor` split failure reporting into
-  `actionable (7d)` and `archived history`; FAIL/WARN severity keys off the
-  actionable count only, and shows the oldest actionable failure age.
+  `actionable total`, `actionable 7d`, and `archived history`; FAIL/WARN
+  severity keys off actionable total (all non-archived failures), and shows
+  the oldest actionable failure age.
 - `remem status --json` exposes per-class counts (transient/permanent),
   attempt counts, and archived totals.
 - Worker logs every automatic retry with class, attempt number, and backoff;
@@ -60,8 +61,10 @@ surface that #381/#383 evidence collection depends on.
 
 ## Acceptance Criteria
 
-- Seeded transient failure auto-recovers through replay with backoff;
-  attempts and class visible in logs and `remem status --json`.
+- Seeded transient extraction/job failure auto-recovers through replay/requeue
+  with backoff; attempts and class visible in logs and `remem status --json`.
+  Legacy pending-observation failures are archive-only unless a production
+  consumer is reintroduced.
 - Seeded permanent failure never auto-retries and archives after the window;
   headline counters drop while the row remains queryable until explicit
   cleanup and aggregate history remains queryable after cleanup.
