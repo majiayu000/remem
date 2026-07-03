@@ -181,8 +181,8 @@ fn run_sandbox_eval_inner(
     let unchanged_snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render unchanged SessionStart injection context")?;
-    let snapshot_churn_surface = stable_churn_surface(&snapshot.rendered_output);
-    let unchanged_churn_surface = stable_churn_surface(&unchanged_snapshot.rendered_output);
+    let snapshot_churn_surface = snapshot.rendered_output.clone();
+    let unchanged_churn_surface = unchanged_snapshot.rendered_output.clone();
     let unchanged_changed_bytes =
         changed_byte_count(&snapshot_churn_surface, &unchanged_churn_surface);
     {
@@ -192,7 +192,7 @@ fn run_sandbox_eval_inner(
     let one_added_snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render one-added SessionStart injection context")?;
-    let one_added_churn_surface = stable_churn_surface(&one_added_snapshot.rendered_output);
+    let one_added_churn_surface = one_added_snapshot.rendered_output;
     let one_added_changed_bytes =
         changed_byte_count(&snapshot_churn_surface, &one_added_churn_surface);
     let one_added_first_affected_section =
@@ -349,19 +349,6 @@ fn changed_byte_count(left: &str, right: &str) -> usize {
         .filter(|(left, right)| left != right)
         .count()
         + left.len().abs_diff(right.len())
-}
-
-fn stable_churn_surface(output: &str) -> String {
-    output
-        .lines()
-        .filter(|line| {
-            !line.starts_with("└─ updated:")
-                && !line.starts_with("├─ updated:")
-                && !line.starts_with("└─ \u{1b}[1mupdated\u{1b}[0m:")
-                && !line.starts_with("├─ \u{1b}[1mupdated\u{1b}[0m:")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn first_section_containing(output: &str, needle: &str) -> Option<String> {

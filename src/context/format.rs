@@ -2,10 +2,6 @@ use chrono::{Local, TimeZone};
 
 use crate::memory::MemoryType;
 
-pub(super) fn format_header_datetime() -> String {
-    Local::now().format("%Y-%m-%d %-I:%M%P %:z").to_string()
-}
-
 pub(super) fn type_label(memory_type: &str) -> &'static str {
     MemoryType::parse(memory_type)
         .map(MemoryType::label)
