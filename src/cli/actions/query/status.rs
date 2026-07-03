@@ -18,7 +18,7 @@ pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
 }
 
 fn load_status_report() -> Result<StatusReport> {
-    let conn = db::open_db_read_only()?;
+    let conn = db::open_db()?;
     let db_path = db::db_path();
     let db_size = std::fs::metadata(&db_path)
         .with_context(|| format!("failed to stat database path {}", db_path.display()))?
