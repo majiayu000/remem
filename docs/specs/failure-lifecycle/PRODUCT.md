@@ -12,9 +12,10 @@ Tracking:
 Terminal failure counters grow monotonically with no retention or
 auto-recovery policy. A live long-running install (2026-07-02) shows 2919
 failed extraction tasks and 2470 failed jobs, with 27 replay ranges
-retryable — and every recovery action is manual. Nothing distinguishes
-"failed last night, actionable" from "failed six weeks ago on a since-fixed
-version, historical".
+retryable; current doctor/status paths also surface failed legacy
+`pending_observations`. Nothing distinguishes "failed last night,
+actionable" from "failed six weeks ago on a since-fixed version,
+historical".
 
 Once failed counts reach the thousands, every doctor run cries wolf. The
 alarm-fatigue effect is documented in practice: the same doctor WARN lines
@@ -62,14 +63,15 @@ surface that #381/#383 evidence collection depends on.
 - Seeded transient failure auto-recovers through replay with backoff;
   attempts and class visible in logs and `remem status --json`.
 - Seeded permanent failure never auto-retries and archives after the window;
-  headline counters drop while the row and aggregate history remain
-  queryable.
+  headline counters drop while the row remains queryable until explicit
+  cleanup and aggregate history remains queryable after cleanup.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.
-- Migration back-classifies existing failed rows (best-effort by error
-  string, else transient-with-exhausted-attempts) so long-running installs
-  converge without manual surgery.
+- Migration back-classifies existing failed extraction tasks, replay ranges,
+  pending observations, and jobs (best-effort by error string, exhausted by
+  default) so long-running installs converge without manual surgery or retry
+  storms.
 - `docs/memory-lifecycle.md` or `docs/ARCHITECTURE.md` documents the failure
   lifecycle states.
 
@@ -79,7 +81,7 @@ surface that #381/#383 evidence collection depends on.
   retries (capped, acceptable); a transient labeled permanent archives
   something recoverable — mitigated by conservative mapping (unknown
   defaults to transient) and by archived rows remaining replayable via
-  explicit `remem pending` tooling.
+  explicit `remem pending` tooling, including failed jobs.
 - Retention window hides a recurring failure that re-fires after archiving:
   mitigated because each new occurrence is a fresh actionable row; only
   stale rows age out.
