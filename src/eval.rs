@@ -25,6 +25,7 @@ pub mod gates {
         pub thresholds_path: String,
         pub golden_dataset_path: String,
         pub simulate_golden_regression: bool,
+        pub simulate_capacity_regression: bool,
     }
 
     impl Default for EvalGateOptions {
@@ -34,6 +35,7 @@ pub mod gates {
                 thresholds_path: DEFAULT_THRESHOLDS_PATH.to_string(),
                 golden_dataset_path: DEFAULT_GOLDEN_DATASET_PATH.to_string(),
                 simulate_golden_regression: false,
+                simulate_capacity_regression: false,
             }
         }
     }
@@ -55,7 +57,10 @@ pub mod gates {
 
     #[derive(Debug, Clone, Deserialize, Serialize)]
     pub struct EvalGateThreshold {
+        #[serde(default)]
         pub max_drop: f64,
+        #[serde(default)]
+        pub max_increase: Option<f64>,
     }
 
     #[derive(Debug, Clone, Serialize)]
@@ -97,6 +102,7 @@ pub mod gates {
     #[derive(Debug, Clone, Serialize)]
     pub struct EvalSourceReports {
         pub current_memory_contracts: serde_json::Value,
+        pub capacity: serde_json::Value,
         pub golden: serde_json::Value,
         pub injection: serde_json::Value,
         pub extraction: serde_json::Value,
@@ -106,19 +112,38 @@ pub mod gates {
         let baseline = load_baseline(&options.baseline_path)?;
         let thresholds = load_thresholds(&options.thresholds_path)?;
         let golden = run_golden(&options.golden_dataset_path)?;
+        let capacity =
+            crate::eval::capacity::run_capacity_eval(crate::eval::capacity::CapacityEvalOptions {
+                dataset_path: options.golden_dataset_path.clone(),
+                seed: 42,
+                scales: vec![1, 10],
+                k: 5,
+            })?;
         let current_memory_contracts =
             crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
         let injection = crate::eval::injection::run_sandbox_eval(Default::default())?;
         let extraction = crate::eval::extraction::run_corpus_path(Default::default())?;
 
-        let mut current_metrics =
-            collect_metrics(&golden, &current_memory_contracts, &injection, &extraction);
+        let mut current_metrics = collect_metrics(
+            &golden,
+            &capacity,
+            &current_memory_contracts,
+            &injection,
+            &extraction,
+        );
         if options.simulate_golden_regression {
             current_metrics.insert("golden.slice.temporal.hit_at_k".to_string(), 0.0);
+        }
+        if options.simulate_capacity_regression {
+            current_metrics.insert(
+                "capacity.degradation.fused.recall_at_k_loss".to_string(),
+                1.0,
+            );
         }
         let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current_metrics);
         let source_reports = EvalSourceReports {
             current_memory_contracts: serde_json::to_value(&current_memory_contracts)?,
+            capacity: serde_json::to_value(&capacity)?,
             golden: serde_json::to_value(&golden)?,
             injection: serde_json::to_value(&injection)?,
             extraction: serde_json::to_value(&extraction)?,
@@ -164,6 +189,7 @@ pub mod gates {
 
     fn collect_metrics(
         golden: &crate::eval::golden::GoldenEvalReport,
+        capacity: &crate::eval::capacity::CapacityEvalReport,
         current_memory_contracts: &crate::eval::current_memory_contracts::CurrentMemoryContractEvalReport,
         injection: &crate::eval::injection::InjectionEvalReport,
         extraction: &crate::eval::extraction::ExtractionEvalReport,
@@ -192,6 +218,7 @@ pub mod gates {
                 );
             }
         }
+        insert_capacity_metrics(&mut metrics, capacity);
         metrics.insert(
             "current_memory_contracts.current_state.current".to_string(),
             current_memory_contracts.metrics.current_state.current.rate,
@@ -394,6 +421,39 @@ pub mod gates {
         metrics
     }
 
+    fn insert_capacity_metrics(
+        metrics: &mut BTreeMap<String, f64>,
+        capacity: &crate::eval::capacity::CapacityEvalReport,
+    ) {
+        metrics.insert(
+            "capacity.degradation.fused.recall_at_k_loss".to_string(),
+            capacity.degradation.fused_recall_at_k_loss,
+        );
+        metrics.insert(
+            "capacity.degradation.fused.ndcg_at_10_loss".to_string(),
+            capacity.degradation.fused_ndcg_at_10_loss,
+        );
+        metrics.insert(
+            "capacity.degradation.fused.evidence_recall_at_k_loss".to_string(),
+            capacity.degradation.fused_evidence_recall_at_k_loss,
+        );
+        for (channel, degradation) in &capacity.degradation.channels {
+            let prefix = format!("capacity.degradation.channel.{channel}");
+            metrics.insert(
+                format!("{prefix}.recall_at_k_loss"),
+                degradation.recall_at_k_loss,
+            );
+            metrics.insert(
+                format!("{prefix}.ndcg_at_10_loss"),
+                degradation.ndcg_at_10_loss,
+            );
+            metrics.insert(
+                format!("{prefix}.evidence_recall_at_k_loss"),
+                degradation.evidence_recall_at_k_loss,
+            );
+        }
+    }
+
     fn insert_golden_metrics(
         metrics: &mut BTreeMap<String, f64>,
         prefix: &str,
@@ -432,11 +492,11 @@ pub mod gates {
         let mut deltas = Vec::new();
         let mut failures = Vec::new();
         for key in keys {
-            let max_drop = thresholds
-                .metrics
-                .get(&key)
+            let threshold = thresholds.metrics.get(&key);
+            let max_drop = threshold
                 .map(|threshold| threshold.max_drop)
                 .unwrap_or(thresholds.default_max_drop);
+            let max_increase = threshold.and_then(|threshold| threshold.max_increase);
             match (baseline.metrics.get(&key), current.get(&key)) {
                 (Some(expected), Some(actual)) => {
                     let delta = actual - expected;
@@ -445,6 +505,15 @@ pub mod gates {
                             "{key} regressed: baseline={expected:.4} current={actual:.4} max_drop={max_drop:.4}"
                         ));
                         EvalGateStatus::Fail
+                    } else if let Some(max_increase) = max_increase {
+                        if *actual > *expected + max_increase + f64::EPSILON {
+                            failures.push(format!(
+                                "{key} increased: baseline={expected:.4} current={actual:.4} max_increase={max_increase:.4}"
+                            ));
+                            EvalGateStatus::Fail
+                        } else {
+                            EvalGateStatus::Pass
+                        }
                     } else {
                         EvalGateStatus::Pass
                     };
@@ -558,6 +627,38 @@ pub mod gates {
             assert_eq!(deltas[0].status, EvalGateStatus::Fail);
             assert_eq!(failures.len(), 1);
             assert!(failures[0].contains("golden.slice.temporal.hit_at_k regressed"));
+        }
+
+        #[test]
+        fn gate_blocks_constructed_capacity_loss_increase() {
+            let baseline = EvalGateBaseline {
+                version: "test".to_string(),
+                metrics: BTreeMap::from([(
+                    "capacity.degradation.fused.recall_at_k_loss".to_string(),
+                    0.0,
+                )]),
+            };
+            let thresholds = EvalGateThresholds {
+                version: "test".to_string(),
+                default_max_drop: 0.0,
+                metrics: BTreeMap::from([(
+                    "capacity.degradation.fused.recall_at_k_loss".to_string(),
+                    EvalGateThreshold {
+                        max_drop: 0.0,
+                        max_increase: Some(0.05),
+                    },
+                )]),
+            };
+            let current = BTreeMap::from([(
+                "capacity.degradation.fused.recall_at_k_loss".to_string(),
+                0.10,
+            )]);
+
+            let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current);
+
+            assert_eq!(deltas[0].status, EvalGateStatus::Fail);
+            assert_eq!(failures.len(), 1);
+            assert!(failures[0].contains("capacity.degradation.fused.recall_at_k_loss increased"));
         }
 
         #[test]

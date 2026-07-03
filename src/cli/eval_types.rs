@@ -129,6 +129,8 @@ pub(in crate::cli) struct EvalGatesArgs {
     pub(in crate::cli) json: bool,
     #[arg(long, hide = true)]
     pub(in crate::cli) simulate_golden_regression: bool,
+    #[arg(long, hide = true)]
+    pub(in crate::cli) simulate_capacity_regression: bool,
 }
 
 #[derive(Args)]

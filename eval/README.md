@@ -119,7 +119,7 @@ The JSON report includes:
 ## Eval Regression Gates
 
 `remem eval-gates` runs the CI regression gate for golden retrieval,
-SessionStart injection, and aggregate extraction quality:
+capacity degradation, SessionStart injection, and aggregate extraction quality:
 
 ```bash
 remem eval-gates --json-out /tmp/remem-eval-gates.json
@@ -130,29 +130,35 @@ The gate compares current deterministic eval metrics with
 It prints a delta table in CI and writes the full JSON artifact, including the
 source eval reports. Golden eval artifacts include per-slice estimated
 tokens/query plus p50/p95 retrieval latency for trend inspection; latency is not
-used as a hard gate. CI also keeps the exact `eval-extraction --check-baseline`
-gate so extraction prompt, parser, replay fixture, and request-fingerprint
-changes cannot pass on aggregate rates alone.
+used as a hard gate. Capacity artifacts include the fused degradation curve and
+per-channel loss metrics for `fts`, `entity`, `fact`, `temporal`, `vector`, and
+`like_fallback`; quality-loss increases are gated through the thresholds file.
+CI also keeps the exact `eval-extraction --check-baseline` gate so extraction
+prompt, parser, replay fixture, and request-fingerprint changes cannot pass on
+aggregate rates alone.
 
-The hidden `--simulate-golden-regression` flag is exercised in CI to prove the
-gate fails on a constructed per-slice retrieval regression before changing
+The hidden `--simulate-golden-regression` and
+`--simulate-capacity-regression` flags are exercised in CI to prove the gate
+fails on constructed retrieval and capacity regressions before changing
 defaults.
 
 ## Capacity Eval
 
 `remem eval-capacity` runs the first deterministic capacity curve for issue #675.
 It grows the committed golden fixture with seeded, non-relevant synthetic
-memories and reports fused retrieval metrics at each requested scale:
+memories and reports fused plus per-channel retrieval metrics at each requested
+scale:
 
 ```bash
 remem eval-capacity --seed 42 --scales 1,10 --json-out /tmp/remem-capacity.json --json
 ```
 
 The JSON artifact records the seed, scale factors, corpus size, synthetic noise
-count, SHA-256 corpus hash, fused metrics, p95 retrieval latency, and loss
-against the 1x baseline. This slice intentionally does not enforce an
-`eval-gates` budget, per-channel attribution, dashboard ingestion, or 50x
-nightly scheduling; those remain follow-up work under #675.
+count, SHA-256 corpus hash, fused metrics, channel metrics, p95 retrieval
+latency, and loss against the 1x baseline. The committed gate currently runs
+1x/10x and enforces zero quality-loss increase for fused and channel-level
+degradation metrics. Dashboard ingestion and 50x nightly scheduling remain
+follow-up work under #675.
 
 ## Associative Multi-Hop Baseline
 
