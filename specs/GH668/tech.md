@@ -62,10 +62,7 @@ Product: `product.md`
 
 ## Test Plan
 
-- `cargo test context::tests::render::codex_session_start_hook_stdout_uses_structured_additional_context`
-- `cargo test context::tests::render::codex_session_start_hook_stdout_strips_ansi_before_model_context`
-- `cargo test context::tests::render::codex_direct_context_stdout_stays_plain_text`
-- `cargo test context::tests::render::codex_suppressed_context_stdout_stays_silent`
+- `cargo test context::tests::codex_hook_stdout --no-fail-fast`
 - `cargo fmt --check`
 - `cargo check`
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH668`
