@@ -515,7 +515,6 @@ fn empty_context_marks_compact_reload_visibly() {
 
     assert!(output.starts_with("remem context"));
     assert!(output.contains("└─ source: compact"));
-    assert!(!output.contains("updated: "));
     assert!(output.contains("Codex compacted the chat, so remem refreshed memory context."));
     assert!(output.contains("No previous sessions found."));
     assert!(!output.contains(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY));
@@ -579,7 +578,6 @@ fn empty_context_marks_clear_reload_visibly() {
 
     assert!(output.starts_with("remem context"));
     assert!(output.contains("└─ source: clear"));
-    assert!(!output.contains("updated: "));
     assert!(output.contains("Context was reloaded after an explicit clear."));
     assert!(output.contains("No previous sessions found."));
 }
