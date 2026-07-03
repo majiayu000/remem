@@ -100,7 +100,7 @@ pub(crate) fn prompt_submit_additional_context(
         return Ok(None);
     }
 
-    let render_reference_epoch = chrono::Utc::now().timestamp();
+    let render_reference_epoch = prompt_submit_render_reference_epoch(&rendered);
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
     audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
         ContextAuditItem::injected_memory_with_labels(
@@ -189,6 +189,14 @@ fn render_prompt_submit_context(
         }
     }
     output
+}
+
+fn prompt_submit_render_reference_epoch(memories: &[Memory]) -> i64 {
+    memories
+        .iter()
+        .map(|memory| memory.updated_at_epoch)
+        .max()
+        .unwrap_or(0)
 }
 
 fn prompt_submit_staleness_labels(
@@ -590,11 +598,15 @@ mod tests {
     fn prompt_submit_repeated_identical_inputs_are_byte_identical() -> Result<()> {
         let conn = setup_prompt_submit_conn()?;
         let project = "/tmp/remem-prompt-submit-deterministic";
-        insert_prompt_submit_memory(
+        let memory_id = insert_prompt_submit_memory(
             &conn,
             project,
             "SQLCipher storage decision",
             "Persist private data with SQLCipher encryption at rest.",
+        )?;
+        conn.execute(
+            "UPDATE memories SET updated_at_epoch = ?1 WHERE id = ?2",
+            rusqlite::params![1_600_000_000_i64, memory_id],
         )?;
 
         let first = prompt_submit_additional_context(
@@ -617,7 +629,40 @@ mod tests {
         .ok_or_else(|| anyhow::anyhow!("second prompt should inject context"))?;
 
         assert_eq!(first, second);
+        assert!(first.contains("staleness=fresh"), "{first}");
         Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_reference_epoch_is_memory_state_derived() {
+        let older = Memory {
+            id: 1,
+            session_id: None,
+            project: "/tmp/remem-prompt-submit-reference".to_string(),
+            topic_key: None,
+            title: "Older memory".to_string(),
+            text: "Body".to_string(),
+            memory_type: "decision".to_string(),
+            files: None,
+            created_at_epoch: 1_500_000_000,
+            updated_at_epoch: 1_500_000_000,
+            status: "active".to_string(),
+            branch: None,
+            scope: "project".to_string(),
+        };
+        let mut newer = older.clone();
+        newer.id = 2;
+        newer.title = "Newer memory".to_string();
+        newer.updated_at_epoch = 1_600_000_000;
+
+        assert_eq!(
+            prompt_submit_render_reference_epoch(&[older]),
+            1_500_000_000
+        );
+        assert_eq!(
+            prompt_submit_render_reference_epoch(&[newer.clone(), newer]),
+            1_600_000_000
+        );
     }
 
     #[test]

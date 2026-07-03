@@ -359,8 +359,8 @@ fn first_section_containing(output: &str, needle: &str) -> Option<String> {
         "## Lessons",
         "## Core",
         "## Index",
-        "## Workstreams",
-        "## Recent Sessions",
+        "## WorkStreams",
+        "## Sessions",
     ]
     .iter()
     .filter_map(|section| output.find(section).map(|pos| (*section, pos)))
