@@ -155,6 +155,12 @@ storms.
 - `remem pending list-failed` / `retry-extraction-ranges` keep working and
   can target archived rows explicitly (`--include-archived`), preserving the
   manual escape hatch for observations and extraction ranges.
+- Add an explicit legacy observation replay path:
+  `remem pending retry-failed-observations --include-archived --id <id>` (or
+  `--project <p> --limit <n>`). It clears `archived_at_epoch`, resets the row
+  to `status='pending'`, and then invokes the existing legacy pending
+  migration/replay flow that consumes pending/expired-processing rows. This is
+  manual only; it does not re-enable automatic pending-observation retries.
 - Add extraction-task escape hatches for no-range archived failures:
   `remem pending list-failed-extraction-tasks --include-archived` and
   `remem pending retry-extraction-task --id <id> --include-archived`. The
