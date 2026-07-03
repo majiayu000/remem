@@ -32,29 +32,30 @@ external database.
 
 ## Install
 
-For Codex CLI:
+Install the `remem` binary:
 
 ```bash
 brew install majiayu000/tap/remem
-remem install --target codex
-remem doctor
 ```
 
-For Claude Code:
+Then configure hooks and MCP for your installed coding agents:
 
 ```bash
-brew install majiayu000/tap/remem
-remem install --target claude
-remem doctor
+remem install
 ```
 
 If you do not use Homebrew:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
-~/.local/bin/remem install --target codex
-~/.local/bin/remem doctor
+~/.local/bin/remem install
 ```
+
+`remem install` auto-detects existing Claude Code and Codex CLI config
+directories. To force a specific integration, use `--target codex`,
+`--target claude`, or `--target all`.
+
+Run `remem doctor` when you want to verify or troubleshoot the integration.
 
 ## Success Check
 
@@ -67,7 +68,7 @@ remem status
 remem search "last decision"
 ```
 
-`remem install --target codex` creates or updates:
+For Codex CLI, `remem install` creates or updates:
 
 - `~/.remem/.key` and the encrypted `~/.remem/remem.db`
 - `~/.remem/config.toml` memory-AI profiles
@@ -76,9 +77,10 @@ remem search "last decision"
 
 For a Codex-only setup, `remem doctor` reports Schema, Key format, Database,
 and the Codex Hooks/MCP rows as ok. If Claude Code config directories already
-exist, Claude rows can warn until you also run `remem install --target claude`
-or `remem install --target all`. If it warns about multiple `remem` binaries,
-follow the printed install-path fix so hooks keep using the intended binary.
+exist but were not auto-detected during installation, run
+`remem install --target claude` or `remem install --target all`. If doctor warns
+about multiple `remem` binaries, follow the printed install-path fix so hooks
+keep using the intended binary.
 
 ## Install With Your Coding Agent
 
@@ -116,28 +118,28 @@ project-scoped, and recoverable:
 ```bash
 # Quick install options
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_VERSION=vX.Y.Z sh
-~/.local/bin/remem install --target codex
+~/.local/bin/remem install
 
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
-~/.local/bin/remem install --target codex
+~/.local/bin/remem install
 
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
-remem install --target codex
+remem install
 
 # npm wrapper
 npm install -g @remem-ai/remem
-remem install --target codex
+remem install
 
 # Cargo
 cargo install remem-ai --bin remem
-remem install --target codex
+remem install
 
 # Manual GitHub Release download
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
-remem install --target codex
+remem install
 
 # Build from source
 git clone https://github.com/majiayu000/remem.git
@@ -145,7 +147,7 @@ cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
-remem install --target codex
+remem install
 ```
 
 Use one canonical `remem` command on PATH. Standalone and source installs

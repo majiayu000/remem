@@ -23,10 +23,11 @@ jobs:
       - name: Check release secrets
         env:
           CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           missing=0
-          for name in CRATES_IO_TOKEN NPM_TOKEN; do
+          for name in CRATES_IO_TOKEN HOMEBREW_TAP_TOKEN NPM_TOKEN; do
             if [ -z "${!name}" ]; then
               echo "::error::Missing required release secret: ${name}"
               missing=1
@@ -100,6 +101,118 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/SHA256SUMS
             artifacts/remem-releases.json
+
+  update-homebrew-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: majiayu000/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+      - name: Update remem formula
+        working-directory: homebrew-tap
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          version="${RELEASE_TAG#v}"
+          base_url="https://github.com/majiayu000/remem/releases/download/v${version}"
+          tmp_dir="$(mktemp -d)"
+          sums="${tmp_dir}/SHA256SUMS"
+          curl -fsSL "${base_url}/SHA256SUMS" -o "$sums"
+
+          sha_for() {
+            local stem="$1"
+            awk -v path="./${stem}/${stem}.tar.gz" '$2 == path { print $1 }' "$sums"
+          }
+
+          darwin_arm64="$(sha_for remem-darwin-arm64)"
+          darwin_x64="$(sha_for remem-darwin-x64)"
+          linux_arm64="$(sha_for remem-linux-arm64)"
+          linux_x64="$(sha_for remem-linux-x64)"
+
+          for name in darwin_arm64 darwin_x64 linux_arm64 linux_x64; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing checksum for ${name} in ${base_url}/SHA256SUMS"
+              exit 1
+            fi
+          done
+
+          cat > Formula/remem.rb <<RUBY
+          # typed: false
+          # frozen_string_literal: true
+
+          class Remem < Formula
+            desc "Persistent memory for Claude Code and Codex"
+            homepage "https://github.com/majiayu000/remem"
+            version "${version}"
+            license "MIT"
+
+            on_macos do
+              on_intel do
+                url "${base_url}/remem-darwin-x64.tar.gz"
+                sha256 "${darwin_x64}"
+              end
+              on_arm do
+                url "${base_url}/remem-darwin-arm64.tar.gz"
+                sha256 "${darwin_arm64}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "${base_url}/remem-linux-x64.tar.gz"
+                sha256 "${linux_x64}"
+              end
+              on_arm do
+                url "${base_url}/remem-linux-arm64.tar.gz"
+                sha256 "${linux_arm64}"
+              end
+            end
+
+            def install
+              bin.install "remem"
+            end
+
+            def caveats
+              <<~EOS
+                Finish agent integration after installing the binary:
+
+                  remem install
+
+                That auto-detects Claude Code and Codex CLI config directories.
+                To force a host:
+
+                  remem install --target codex
+                  remem install --target claude
+                  remem install --target all
+
+                Run remem doctor to verify or troubleshoot the integration.
+              EOS
+            end
+
+            test do
+              assert_match "remem ${version}", shell_output("#{bin}/remem --version")
+            end
+          end
+          RUBY
+
+          ruby -c Formula/remem.rb
+
+          if git diff --quiet -- Formula/remem.rb; then
+            echo "Formula/remem.rb already up to date for v${version}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/remem.rb
+          git commit -m "remem: update formula to v${version}"
+          git push
 
   publish-crate:
     needs: release
