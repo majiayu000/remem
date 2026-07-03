@@ -71,7 +71,12 @@ from passively injected text to actively executable capability.
 - Fixture procedure exports to all three formats; rendered output pinned by
   snapshot tests; provenance header and evidence ids present.
 - Claude skill snapshot proves YAML frontmatter is first-line content and the
-  draft warning marker is emitted only after frontmatter.
+  draft warning marker is emitted only after frontmatter; the skill
+  description includes a bounded reuse-condition summary, not only the
+  workflow key.
+- Export rejects non-active, non-procedure, or insufficiently verified source
+  memories, and rejects stored procedure text that fails the export-time
+  secret/instruction scan.
 - Existing user-edited draft files are not overwritten; the CLI exits with an
   explicit error and instructions for choosing a new output path.
 - Negative test: worker/dream/hook code paths cannot reach the export writer
