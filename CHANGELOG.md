@@ -48,6 +48,7 @@
 - Staged source version `0.5.146` for associative multi-hop fixture headroom.
 - Staged source version `0.5.147` for summary promotion enforce mode.
 - Staged source version `0.5.148` for cross-process log rotation hardening.
+- Staged source version `0.5.149` for foreground status schema convergence.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 

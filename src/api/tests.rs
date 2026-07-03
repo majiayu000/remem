@@ -587,19 +587,6 @@ async fn status_router_reports_cache_hits_and_refresh() -> anyhow::Result<()> {
         .as_i64()
         .expect("status memories should be numeric");
 
-    let conn = db::open_db()?;
-    memory::insert_memory(
-        &conn,
-        Some("session-cache"),
-        "proj-cache",
-        None,
-        "status cache memory",
-        "visible after refresh",
-        "decision",
-        None,
-    )?;
-    drop(conn);
-
     let cached = app
         .clone()
         .oneshot(authorized_request(
@@ -615,6 +602,19 @@ async fn status_router_reports_cache_hits_and_refresh() -> anyhow::Result<()> {
     assert_eq!(cached_payload["cache"]["hit"], true);
     assert_eq!(cached_payload["cache"]["stale"], false);
     assert_eq!(cached_payload["memories"], first_memories);
+
+    let conn = db::open_db()?;
+    memory::insert_memory(
+        &conn,
+        Some("session-cache"),
+        "proj-cache",
+        None,
+        "status cache memory",
+        "visible after refresh",
+        "decision",
+        None,
+    )?;
+    drop(conn);
 
     let refreshed = app
         .oneshot(authorized_request(

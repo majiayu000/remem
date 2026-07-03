@@ -1,5 +1,5 @@
 use crate::db::test_support::ScopedTestDataDir;
-use crate::log::test_support::with_log_envs as with_doctor_log_envs;
+use crate::log::test_support::with_log_test_data_dir as with_doctor_log_data_dir;
 
 use super::super::logging::check_log_health;
 use super::super::report::{run_doctor_with_writer, DoctorOptions};
@@ -7,15 +7,14 @@ use super::super::types::Status;
 
 #[test]
 fn check_log_health_warns_on_invalid_env_without_exposing_values() {
-    let _data_dir = ScopedTestDataDir::new("doctor-log-invalid-env");
-
-    with_doctor_log_envs(
+    with_doctor_log_data_dir(
+        "doctor-log-invalid-env",
         &[
             ("REMEM_LOG_MAX_BYTES", Some("not-a-size-secret")),
             ("REMEM_LOG_MAX_ROTATED_FILES", Some("invalid-retention")),
             ("REMEM_LOG_LOCK_TIMEOUT_MS", Some("0")),
         ],
-        || {
+        |_| {
             let check = check_log_health();
             assert!(matches!(check.status, Status::Warn));
             assert!(check.detail.contains("invalid env fallback"));
@@ -30,15 +29,14 @@ fn check_log_health_warns_on_invalid_env_without_exposing_values() {
 
 #[test]
 fn check_log_health_reports_recent_rotation_issue() {
-    let data_dir = ScopedTestDataDir::new("doctor-log-rotation-issue");
-
-    with_doctor_log_envs(
+    with_doctor_log_data_dir(
+        "doctor-log-rotation-issue",
         &[
             ("REMEM_LOG_MAX_BYTES", Some("1")),
             ("REMEM_LOG_MAX_ROTATED_FILES", Some("1")),
             ("REMEM_STDERR_TO_LOG", Some("1")),
         ],
-        || {
+        |data_dir| {
             let path = data_dir.path.join("remem.log");
             std::fs::create_dir_all(path.parent().expect("log should have parent"))
                 .expect("log parent should create");

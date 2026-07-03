@@ -9,7 +9,7 @@ use super::config::{
     with_log_dir, DEFAULT_LOG_LOCK_TIMEOUT_MS, DEFAULT_LOG_MAX_BYTES,
     DEFAULT_LOG_MAX_ROTATED_FILES, MAX_LOG_ROTATED_FILES,
 };
-use super::test_support::with_log_envs;
+use super::test_support::{with_log_envs, with_log_test_data_dir};
 use super::write::{rotate_if_needed, LogRotationIssue};
 use super::{info, open_log_append};
 use crate::db::test_support::ScopedTestDataDir;
@@ -37,15 +37,14 @@ fn log_max_bytes_rejects_zero_and_invalid() {
 
 #[test]
 fn log_policy_parses_rotation_env_and_collects_invalid_values() {
-    let _data_dir = ScopedTestDataDir::new("log-policy");
-
-    with_log_envs(
+    with_log_test_data_dir(
+        "log-policy-valid",
         &[
             ("REMEM_LOG_MAX_BYTES", Some("4096")),
             ("REMEM_LOG_MAX_ROTATED_FILES", Some("0")),
             ("REMEM_LOG_LOCK_TIMEOUT_MS", Some("50")),
         ],
-        || {
+        |_| {
             let policy = log_policy().expect("log policy should resolve");
             assert_eq!(policy.max_bytes, 4096);
             assert_eq!(policy.max_rotated_files, 0);
@@ -54,13 +53,14 @@ fn log_policy_parses_rotation_env_and_collects_invalid_values() {
         },
     );
 
-    with_log_envs(
+    with_log_test_data_dir(
+        "log-policy-invalid",
         &[
             ("REMEM_LOG_MAX_BYTES", Some("0")),
             ("REMEM_LOG_MAX_ROTATED_FILES", Some("invalid")),
             ("REMEM_LOG_LOCK_TIMEOUT_MS", Some("0")),
         ],
-        || {
+        |_| {
             let policy = log_policy().expect("log policy should resolve");
             assert_eq!(policy.max_bytes, DEFAULT_LOG_MAX_BYTES);
             assert_eq!(policy.max_rotated_files, DEFAULT_LOG_MAX_ROTATED_FILES);
@@ -81,9 +81,10 @@ fn log_policy_parses_rotation_env_and_collects_invalid_values() {
         },
     );
 
-    with_log_envs(
+    with_log_test_data_dir(
+        "log-policy-huge-retention",
         &[("REMEM_LOG_MAX_ROTATED_FILES", Some("999999999"))],
-        || {
+        |_| {
             let policy = log_policy().expect("log policy should resolve");
             assert_eq!(policy.max_rotated_files, DEFAULT_LOG_MAX_ROTATED_FILES);
             assert_eq!(policy.invalid_env.len(), 1);
@@ -257,14 +258,13 @@ fn rotate_if_needed_zero_retention_removes_active_and_suffixes() {
 
 #[test]
 fn write_log_lock_timeout_preserves_line_and_records_issue() {
-    let _data_dir = ScopedTestDataDir::new("log-lock-timeout");
-
-    with_log_envs(
+    with_log_test_data_dir(
+        "log-lock-timeout",
         &[
             ("REMEM_LOG_LOCK_TIMEOUT_MS", Some("1")),
             ("REMEM_STDERR_TO_LOG", Some("1")),
         ],
-        || {
+        |_| {
             let path = log_path().expect("log path should resolve");
             let lock_path = log_lock_path(&path);
             std::fs::create_dir_all(lock_path.parent().expect("lock should have parent"))
@@ -297,37 +297,38 @@ fn write_log_lock_timeout_preserves_line_and_records_issue() {
 
 #[test]
 fn write_log_lock_open_failure_preserves_line_and_records_issue() {
-    let _data_dir = ScopedTestDataDir::new("log-lock-open-failure");
+    with_log_test_data_dir(
+        "log-lock-open-failure",
+        &[("REMEM_STDERR_TO_LOG", Some("1"))],
+        |_| {
+            let path = log_path().expect("log path should resolve");
+            let lock_path = log_lock_path(&path);
+            std::fs::create_dir_all(&lock_path).expect("lock path directory should create");
 
-    with_log_envs(&[("REMEM_STDERR_TO_LOG", Some("1"))], || {
-        let path = log_path().expect("log path should resolve");
-        let lock_path = log_lock_path(&path);
-        std::fs::create_dir_all(&lock_path).expect("lock path directory should create");
+            info("log-lock-open-failure-test", "preserved-lock-open-line");
 
-        info("log-lock-open-failure-test", "preserved-lock-open-line");
-
-        assert!(
-            std::fs::read_to_string(&path)
-                .expect("active log should read")
-                .contains("preserved-lock-open-line"),
-            "fallback should preserve log line when lock file cannot open"
-        );
-        let issue = read_issue(&log_rotation_issue_path(&path));
-        assert_eq!(issue.kind, "lock_open_failed");
-    });
+            assert!(
+                std::fs::read_to_string(&path)
+                    .expect("active log should read")
+                    .contains("preserved-lock-open-line"),
+                "fallback should preserve log line when lock file cannot open"
+            );
+            let issue = read_issue(&log_rotation_issue_path(&path));
+            assert_eq!(issue.kind, "lock_open_failed");
+        },
+    );
 }
 
 #[test]
 fn write_log_rotate_failure_preserves_line_and_records_issue() {
-    let _data_dir = ScopedTestDataDir::new("log-rotate-failure");
-
-    with_log_envs(
+    with_log_test_data_dir(
+        "log-rotate-failure",
         &[
             ("REMEM_LOG_MAX_BYTES", Some("1")),
             ("REMEM_LOG_MAX_ROTATED_FILES", Some("1")),
             ("REMEM_STDERR_TO_LOG", Some("1")),
         ],
-        || {
+        |_| {
             let path = log_path().expect("log path should resolve");
             std::fs::create_dir_all(path.parent().expect("log should have parent"))
                 .expect("log parent should create");
@@ -350,30 +351,32 @@ fn write_log_rotate_failure_preserves_line_and_records_issue() {
 
 #[test]
 fn successful_prepare_does_not_clear_newer_same_second_issue() {
-    let _data_dir = ScopedTestDataDir::new("log-sidecar-newer-same-second");
+    with_log_test_data_dir(
+        "log-sidecar-newer-same-second",
+        &[("REMEM_STDERR_TO_LOG", Some("1"))],
+        |_| {
+            let path = log_path().expect("log path should resolve");
+            std::fs::create_dir_all(path.parent().expect("log should have parent"))
+                .expect("log parent should create");
+            let sidecar = log_rotation_issue_path(&path);
+            write_issue(
+                &sidecar,
+                &LogRotationIssue {
+                    kind: "lock_timeout".to_string(),
+                    message: "same-second issue".to_string(),
+                    path: path.display().to_string(),
+                    at_epoch: chrono::Utc::now().timestamp(),
+                },
+            );
 
-    with_log_envs(&[("REMEM_STDERR_TO_LOG", Some("1"))], || {
-        let path = log_path().expect("log path should resolve");
-        std::fs::create_dir_all(path.parent().expect("log should have parent"))
-            .expect("log parent should create");
-        let sidecar = log_rotation_issue_path(&path);
-        write_issue(
-            &sidecar,
-            &LogRotationIssue {
-                kind: "lock_timeout".to_string(),
-                message: "same-second issue".to_string(),
-                path: path.display().to_string(),
-                at_epoch: chrono::Utc::now().timestamp(),
-            },
-        );
+            info("log-sidecar-test", "healthy-line");
 
-        info("log-sidecar-test", "healthy-line");
-
-        assert!(
-            sidecar.exists(),
-            "same-second issue must not be cleared by a successful writer"
-        );
-    });
+            assert!(
+                sidecar.exists(),
+                "same-second issue must not be cleared by a successful writer"
+            );
+        },
+    );
 }
 
 #[cfg(unix)]
@@ -381,15 +384,14 @@ fn successful_prepare_does_not_clear_newer_same_second_issue() {
 fn log_files_are_created_private_on_unix() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _data_dir = ScopedTestDataDir::new("log-permissions");
-
-    with_log_envs(
+    with_log_test_data_dir(
+        "log-permissions",
         &[
             ("REMEM_LOG_MAX_BYTES", Some("1")),
             ("REMEM_LOG_MAX_ROTATED_FILES", Some("1")),
             ("REMEM_STDERR_TO_LOG", Some("1")),
         ],
-        || {
+        |_| {
             info("log-permission-test", "first-line");
             info("log-permission-test", "second-line");
 

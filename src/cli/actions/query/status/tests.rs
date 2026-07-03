@@ -1,3 +1,4 @@
+use rusqlite::{params, Connection};
 use serde_json::Value;
 
 use super::*;
@@ -230,4 +231,141 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     assert!(text.contains("3 stuck jobs"));
     assert!(text.contains("inspect counts: remem status --json"));
     assert!(text.contains("recover: remem worker --once"));
+}
+
+#[test]
+fn status_report_refuses_missing_database_without_initializing() {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("status-missing-db");
+
+    let err = load_status_report().expect_err("missing database should fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("database not found"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        !test_dir.path.exists(),
+        "status must not create data dir for a missing database"
+    );
+    assert!(
+        !test_dir.db_path().exists(),
+        "status must not initialize a missing database"
+    );
+}
+
+#[test]
+fn status_report_refuses_empty_database_file_without_initializing() -> anyhow::Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("status-empty-db");
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.db_path(), [])?;
+
+    let err = load_status_report().expect_err("empty database file should fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("not an initialized remem database"),
+        "unexpected error: {message}"
+    );
+    assert_eq!(
+        std::fs::metadata(test_dir.db_path())?.len(),
+        0,
+        "status must not initialize an empty existing database file"
+    );
+    Ok(())
+}
+
+#[test]
+fn status_report_refuses_non_remem_migration_table_without_initializing() -> anyhow::Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("status-non-remem-migration-table");
+    std::fs::create_dir_all(&test_dir.path)?;
+    let conn = Connection::open(test_dir.db_path())?;
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (
+             version INTEGER PRIMARY KEY,
+             name TEXT NOT NULL,
+             applied_at_epoch INTEGER NOT NULL
+         );
+         INSERT INTO _schema_migrations VALUES (1, 'other_app_baseline', 0);",
+    )?;
+    drop(conn);
+
+    let err = load_status_report().expect_err("non-remem migration table should fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("not an initialized remem database"),
+        "unexpected error: {message}"
+    );
+    let conn = Connection::open(test_dir.db_path())?;
+    let memories_created: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memories'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(memories_created, 0);
+    Ok(())
+}
+
+#[test]
+fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<()> {
+    let _test_dir = crate::db::test_support::ScopedTestDataDir::new("status-v053-source-kind");
+    std::fs::create_dir_all(crate::db::data_dir())?;
+    let conn = Connection::open(crate::db::db_path())?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         CREATE TABLE IF NOT EXISTS _schema_migrations (
+             version INTEGER PRIMARY KEY,
+             name TEXT NOT NULL,
+             applied_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+    for migration in crate::migrate::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= 53)
+    {
+        conn.execute_batch(migration.sql)?;
+        conn.execute(
+            "INSERT OR IGNORE INTO _schema_migrations (version, name, applied_at_epoch)
+             VALUES (?1, ?2, 0)",
+            params![migration.version, migration.name],
+        )?;
+    }
+    conn.execute_batch("PRAGMA user_version = 65")?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
+                                       evidence_event_ids, confidence, risk_class,
+                                       review_status, auto_promote_block_reason,
+                                       created_at_epoch, updated_at_epoch)
+         VALUES (1, 'project', 'decision', 'summary-gate', 'summary fact',
+                 '[1]', 0.9, 'low', 'pending_review', 'summary_gate_shadow',
+                 ?1, ?1)",
+        params![now],
+    )?;
+    drop(conn);
+
+    let report = load_status_report()?;
+
+    assert_eq!(report.candidate_promotion.len(), 1);
+    let stat = &report.candidate_promotion[0];
+    assert_eq!(stat.source_kind, "unattributed");
+    assert_eq!(stat.review_status, "pending_review");
+    assert_eq!(stat.block_reason.as_deref(), Some("summary_gate_shadow"));
+    assert_eq!(stat.total, 1);
+
+    let conn = Connection::open(crate::db::db_path())?;
+    let source_kind: String =
+        conn.query_row("SELECT source_kind FROM memory_candidates", [], |row| {
+            row.get(0)
+        })?;
+    let v054_applied: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM _schema_migrations WHERE version = 54",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(source_kind, "unattributed");
+    assert_eq!(v054_applied, 1);
+    Ok(())
 }

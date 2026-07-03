@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::sync::{Mutex, OnceLock};
 
+use crate::db::test_support::ScopedTestDataDir;
+
 fn log_env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -12,6 +14,19 @@ pub(crate) fn with_log_envs<T>(vars: &[(&'static str, Option<&str>)], f: impl Fn
         .unwrap_or_else(|error| error.into_inner());
     let _env = ScopedLogEnv::set(vars);
     f()
+}
+
+pub(crate) fn with_log_test_data_dir<T>(
+    label: &str,
+    vars: &[(&'static str, Option<&str>)],
+    f: impl FnOnce(&ScopedTestDataDir) -> T,
+) -> T {
+    let _guard = log_env_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let data_dir = ScopedTestDataDir::new(label);
+    let _env = ScopedLogEnv::set(vars);
+    f(&data_dir)
 }
 
 struct ScopedLogEnv {
