@@ -46,8 +46,8 @@ enabled across many agent sessions.
    counters, or other data that changes without a memory-state change.
 3. P3: Section order and within-section order are total and deterministic,
    including stable tie-breaks for equal scores.
-4. P4: Adding one memory changes only the section that logically contains it;
-   bytes before the first affected section remain unchanged.
+4. P4: Adding one memory changes only the section or sections that logically
+   contain it; bytes before the first affected section remain unchanged.
 5. P5: UserPromptSubmit or prompt-time retrieval additions are appended after
    the SessionStart prefix and never rewrite the standing prefix.
 6. P6: Eval JSON includes a render-contract version so intentional renderer
@@ -55,16 +55,22 @@ enabled across many agent sessions.
 
 ## Acceptance Criteria
 
-- [ ] Two consecutive `remem context` renders on an unchanged fixture database
-      produce identical bytes in CI.
+- [ ] Two consecutive renderer-harness renders on an unchanged fixture database
+      produce identical bytes in CI, or the CLI proof runs `remem context`
+      with injection gating disabled (`--force --gate off`) so the test
+      measures renderer byte stability instead of duplicate-output suppression.
 - [ ] Renderer tests reject relative timestamps and run-local counters inside
       the stable prefix.
 - [ ] Equal-score or equal-priority items are ordered by stable keys, not
       iteration order.
 - [ ] The one-memory-added churn eval reports changed-byte count and asserts
-      unchanged-prefix preservation before the first affected section.
+      unchanged-prefix preservation before the first affected section, allowing
+      all sections that logically receive, lose, or move the affected memory to
+      change.
 - [ ] Prompt-time/additional-context injection tests prove the SessionStart
-      prefix bytes are unchanged after additive injection.
+      prefix bytes are unchanged after additive injection and that repeated
+      prompt-time renders for identical prompt/retrieval inputs produce
+      identical appended-block bytes.
 - [ ] Eval JSON includes `render_contract_version`.
 
 ## Edge Cases

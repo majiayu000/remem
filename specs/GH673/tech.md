@@ -35,10 +35,12 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 - `render.rs` must not call wall-clock APIs or depend on unordered collection
   iteration.
 - Ordering keys are total and stable, with explicit tie-breaks such as memory
-  id or topic key.
+  id or topic key. Score-based ordering must use documented buckets or
+  quantization before tie-break keys.
 - Budget enforcement drops complete items from the tail of a stable order.
 - Prompt-time injection renders as a separate additive block after the
-  SessionStart prefix.
+  SessionStart prefix, and that block has its own deterministic contract for
+  identical prompt and retrieval inputs.
 
 ## Proposed Design
 
@@ -49,18 +51,19 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
    with stable state-derived labels.
 3. Move time-sensitive label resolution into render input construction so the
    renderer receives resolved labels and does not read the current time.
-4. Normalize section ordering by adding explicit secondary keys for every list
-   that can have equal score, priority, or timestamp.
+4. Normalize section ordering by adding documented score buckets or
+   quantization before explicit secondary keys for every list that can have
+   equal score, priority, or timestamp.
 5. Update budget/truncation behavior so items are kept or dropped whole after
    stable ordering is established.
 6. Include `render_contract_version` in the injection gate data-version hash
    and in eval JSON output.
-7. Add a churn eval path that renders fixture state twice for the unchanged
-   case, then renders after adding one fixture memory and reports the changed
-   bytes plus unchanged-prefix assertion.
-8. Add or update tests for forbidden volatile tokens, deterministic ordering,
-   item-boundary truncation, additive prompt-time injection, and eval JSON
-   shape.
+7. Add a churn eval path wired into `eval-gates` that renders fixture state
+   twice for the unchanged case, then renders after adding one fixture memory
+   and reports the changed bytes plus unchanged-prefix assertion.
+8. Add or update tests for forbidden volatile tokens, score bucketing,
+   deterministic ordering, item-boundary truncation, additive and deterministic
+   prompt-time injection, and eval JSON shape.
 
 ## Product-to-Test Mapping
 
@@ -68,9 +71,9 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 | --- | --- | --- |
 | P1 byte identity | `src/context/render.rs`, fixture render harness | Determinism test renders unchanged fixture inputs twice and compares bytes. |
 | P2 no volatile fields | render input boundary, renderer output tests | Unit test scans stable prefix for relative time/counter patterns. |
-| P3 deterministic order | section sort keys and stable tie-breaks | Equal-score fixture test asserts memory-id or topic-key ordering. |
-| P4 localized delta | churn eval fixture | One-memory-added eval asserts unchanged prefix before the affected section. |
-| P5 additive prompt block | prompt-time injection renderer/path | Integration test asserts SessionStart prefix bytes are unchanged after additive injection. |
+| P3 deterministic order | section sort keys, score buckets, and stable tie-breaks | Equal-score and near-score fixture tests assert bucketed ordering before memory-id or topic-key tie-breaks. |
+| P4 localized delta | churn eval fixture | One-memory-added eval asserts unchanged prefix before the first affected section and permits every logically affected section to change. |
+| P5 additive prompt block | prompt-time injection renderer/path | Integration test asserts SessionStart prefix bytes are unchanged after additive injection and repeated prompt-time renders are byte-identical for identical prompt/retrieval inputs. |
 | P6 versioned contract | render constant, injection gate, eval JSON | JSON shape test and gate hash test include `render_contract_version`. |
 
 ## Data Flow
@@ -79,8 +82,9 @@ Database state and host inputs feed context selection. Selection and input
 construction resolve age-sensitive labels and stable ordering metadata. The
 renderer consumes those resolved inputs plus `render_contract_version` and emits
 the SessionStart stable prefix. Prompt-time retrieval renders a separate block
-that is appended after the prefix. Eval commands consume the same renderer
-boundary and emit block-churn metrics.
+that is appended after the prefix and remains deterministic for identical
+prompt-time inputs. Eval commands consume the same renderer boundary and emit
+block-churn metrics through `eval-gates`.
 
 ## Alternatives Considered
 
@@ -105,12 +109,13 @@ boundary and emit block-churn metrics.
 ## Test Plan
 
 - [ ] Unit tests: renderer purity boundary, forbidden volatile fields,
-      equal-score ordering, and deterministic item-boundary truncation.
+      score bucket ordering, equal-score ordering, and deterministic
+      item-boundary truncation.
 - [ ] Integration tests: unchanged fixture byte identity, one-memory-added
-      localized churn, and prompt-time additive layering.
+      localized churn, and prompt-time additive deterministic layering.
 - [ ] Eval tests: block-churn JSON contains `render_contract_version`,
-      unchanged bytes are zero, and one-memory-added prefix preservation is
-      asserted.
+      unchanged bytes are zero, one-memory-added prefix preservation is
+      asserted, and the check is wired into `eval-gates`.
 - [ ] Manual verification: run `remem context` twice on an idle project and
       compare bytes; then add one memory and confirm the diff is localized.
 - [ ] Repository verification: `cargo fmt --check`, `cargo check`, focused
