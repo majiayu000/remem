@@ -53,6 +53,18 @@ jobs:
             exit 1
           fi
           grep -q "golden.slice.temporal.hit_at_k regressed" /tmp/remem-eval-gates-regression.log
+      - name: Prove capacity gate blocks constructed regression
+        run: |
+          set +e
+          cargo run -- eval-gates --simulate-capacity-regression --json-out /tmp/remem-eval-gates-capacity-regression.json > /tmp/remem-eval-gates-capacity-regression.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/remem-eval-gates-capacity-regression.log
+          if [ "$code" -eq 0 ]; then
+            echo "expected simulated capacity regression to fail"
+            exit 1
+          fi
+          grep -q "capacity.degradation.fused.recall_at_k_loss increased" /tmp/remem-eval-gates-capacity-regression.log
       - name: Upload eval gate artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -63,4 +75,6 @@ jobs:
             /tmp/remem-eval-gates.json
             /tmp/remem-eval-gates-regression.json
             /tmp/remem-eval-gates-regression.log
+            /tmp/remem-eval-gates-capacity-regression.json
+            /tmp/remem-eval-gates-capacity-regression.log
       - run: cargo test

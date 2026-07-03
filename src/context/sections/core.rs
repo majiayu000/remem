@@ -27,13 +27,20 @@ pub(in crate::context) fn render_core_memory_with_limits(
     memories: &[Memory],
     limits: &ContextLimits,
 ) -> CoreRenderSummary {
-    render_core_memory_with_limits_and_staleness(output, memories, limits, &HashMap::new())
+    render_core_memory_with_limits_and_staleness(
+        output,
+        memories,
+        limits,
+        chrono::Utc::now().timestamp(),
+        &HashMap::new(),
+    )
 }
 
 pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
     output: &mut String,
     memories: &[Memory],
     limits: &ContextLimits,
+    render_reference_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> CoreRenderSummary {
     if limits.core_item_limit == 0 || limits.core_char_limit == 0 {
@@ -46,29 +53,26 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         return CoreRenderSummary::default();
     }
 
-    let now = chrono::Utc::now().timestamp();
-    let mut scored: Vec<(&Memory, f64)> = memories
+    let mut scored: Vec<(usize, &Memory, i64, f64)> = memories
         .iter()
-        .filter_map(|memory| {
+        .enumerate()
+        .filter_map(|(retrieval_rank, memory)| {
             let memory_type = MemoryType::parse(&memory.memory_type)?;
-            memory_type
-                .is_core()
-                .then(|| (memory, calculate_memory_score(memory, memory_type, now)))
+            if !memory_type.is_core() {
+                return None;
+            }
+            let score = calculate_memory_score(memory, memory_type, render_reference_epoch);
+            Some((retrieval_rank, memory, score_bucket(score), score))
         })
         .collect();
-    scored.sort_by(|left, right| {
-        right
-            .1
-            .partial_cmp(&left.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    scored.sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.0.cmp(&right.0)));
 
     let mut selected: Vec<(&Memory, String)> = Vec::new();
     let mut total_chars = header_chars + trailer_chars;
     let mut selected_ids = std::collections::HashSet::new();
     let mut type_counts: HashMap<&str, usize> = HashMap::new();
 
-    for (memory, score) in &scored {
+    for (_retrieval_rank, memory, _score_bucket, score) in &scored {
         if selected.len() >= limits.core_item_limit {
             break;
         }
@@ -87,7 +91,7 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
             &mut total_chars,
             memory,
             limits.core_char_limit,
-            now,
+            render_reference_epoch,
             staleness_labels,
         ) {
             selected_ids.insert(memory.id);
@@ -95,7 +99,7 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         }
     }
 
-    for (memory, score) in &scored {
+    for (_retrieval_rank, memory, _score_bucket, score) in &scored {
         if selected.len() >= limits.core_item_limit {
             break;
         }
@@ -110,7 +114,7 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
             &mut total_chars,
             memory,
             limits.core_char_limit,
-            now,
+            render_reference_epoch,
             staleness_labels,
         );
     }
@@ -133,7 +137,7 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
             memory.title,
             memory.memory_type,
             date,
-            memory_render_metadata_with_labels(memory, now, staleness_labels)
+            memory_render_metadata_with_labels(memory, render_reference_epoch, staleness_labels)
         ));
         output.push_str(&preview);
         output.push('\n');
@@ -195,4 +199,8 @@ fn calculate_memory_score(memory: &Memory, memory_type: MemoryType, now_epoch: i
     };
 
     memory_type.weight() * time_decay * meta_penalty
+}
+
+fn score_bucket(score: f64) -> i64 {
+    (score * 100.0).round() as i64
 }

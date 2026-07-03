@@ -31,6 +31,8 @@ use timer::log_context_timer;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
+pub(crate) const RENDER_CONTRACT_VERSION: u32 = 1;
+
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
     pub(in crate::context) stats: ContextRenderStats,
@@ -116,7 +118,10 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     &decision_for_debug,
                 );
             }
-            print!("{}", decision.output);
+            print!(
+                "{}",
+                context_stdout_for_invocation(&decision.output, &invocation)?
+            );
             log_context_timer(
                 timer,
                 &request,
@@ -217,7 +222,10 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             audit_write_start,
         ));
     }
-    print!("{}", decision.output);
+    print!(
+        "{}",
+        context_stdout_for_invocation(&decision.output, &invocation)?
+    );
     log_context_timer(timer, &request, &decision, &stats, precheck);
     Ok(())
 }
@@ -409,6 +417,7 @@ fn render_context_output_from_inputs(
             &loaded.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
+            loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         lesson_ids = lesson_summary.ids;
@@ -429,6 +438,7 @@ fn render_context_output_from_inputs(
             &mut output,
             &loaded.memories,
             &render_limits,
+            loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         let core_count = core_summary.count;
@@ -449,6 +459,7 @@ fn render_context_output_from_inputs(
             &loaded.memories,
             &render_limits,
             &core_ids,
+            loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         index_ids = index_summary.ids;
@@ -731,4 +742,37 @@ fn build_context_header_with_style(
     use_colors: bool,
 ) -> String {
     super::style::context_header(project, current_branch, hook_source, host, use_colors)
+}
+
+pub(in crate::context) fn context_stdout_for_invocation(
+    output: &str,
+    invocation: &ContextInvocation,
+) -> Result<String> {
+    if output.is_empty() || !is_codex_session_start_hook(invocation) {
+        return Ok(output.to_string());
+    }
+
+    let additional_context = super::style::strip_ansi(output);
+    let hook_output = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": additional_context,
+        }
+    });
+    Ok(format!("{}\n", serde_json::to_string(&hook_output)?))
+}
+
+fn is_codex_session_start_hook(invocation: &ContextInvocation) -> bool {
+    if invocation.host != super::host::HostKind::CodexCli {
+        return false;
+    }
+
+    matches!(
+        invocation
+            .source
+            .as_deref()
+            .map(|source| source.trim().to_ascii_lowercase()),
+        Some(source)
+            if matches!(source.as_str(), "startup" | "resume" | "clear" | "compact")
+    )
 }

@@ -200,12 +200,14 @@ pub(in crate::cli) fn run_eval_gates(
     json_out: Option<&str>,
     json: bool,
     simulate_golden_regression: bool,
+    simulate_capacity_regression: bool,
 ) -> Result<()> {
     let report = crate::eval::gates::run_eval_gates(crate::eval::gates::EvalGateOptions {
         baseline_path: baseline_path.to_string(),
         thresholds_path: thresholds_path.to_string(),
         golden_dataset_path: golden_dataset_path.to_string(),
         simulate_golden_regression,
+        simulate_capacity_regression,
     })?;
     let report_json = serde_json::to_string_pretty(&report)?;
     if let Some(path) = json_out {

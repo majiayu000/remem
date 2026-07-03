@@ -27,6 +27,7 @@ pub(super) struct SessionSummaryBrief {
 
 #[derive(Debug)]
 pub(super) struct LoadedContext {
+    pub render_reference_epoch: i64,
     pub memories: Vec<Memory>,
     pub staleness_labels: HashMap<i64, MemoryStalenessLabel>,
     pub lessons: Vec<LessonMemory>,

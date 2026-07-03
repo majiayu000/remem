@@ -32,6 +32,7 @@ mod types;
 pub(crate) use prompt_submit::prompt_submit_additional_context;
 pub(crate) use render::governance_eval_snapshot;
 pub(crate) use render::session_start_eval_snapshot;
+pub(crate) use render::RENDER_CONTRACT_VERSION;
 pub use render::{generate_context, generate_context_from_cli};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::super::invocation::ContextInvocation;
 use super::super::policy::{ContextPolicy, SectionKind};
+use super::super::render::RENDER_CONTRACT_VERSION;
 use super::super::types::ContextRequest;
 
 const SUMMARY_VERSION_SCAN_LIMIT: i64 = 200;
@@ -30,6 +31,10 @@ pub(in crate::context) fn compute_data_version_hint(
     version.push("colors", if request.use_colors { "1" } else { "0" });
     version.push("gate_mode", invocation.gate_mode.as_deref().unwrap_or(""));
     version.push("package", env!("CARGO_PKG_VERSION"));
+    version.push(
+        "render_contract_version",
+        &RENDER_CONTRACT_VERSION.to_string(),
+    );
     version.push(
         "schema",
         &crate::migrate::latest_schema_version().to_string(),

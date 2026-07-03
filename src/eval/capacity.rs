@@ -1,14 +1,31 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::time::Instant;
 
 use anyhow::{bail, ensure, Context, Result};
+use rusqlite::Connection;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::eval::golden::{self, GoldenDataset, GoldenEvalReport, GoldenMemory, MetricAverages};
+use crate::eval::golden::{self, GoldenDataset, GoldenMemory, QueryEvaluation, QueryMetrics};
+use crate::memory::Memory;
+use crate::retrieval::search::SearchExplain;
+
+mod noise;
+
+use noise::{COMMANDS, CRATE_NAMES, ERROR_SIGNATURES, FILE_PATHS, MEMORY_TYPES, OWNERS};
 
 pub const DEFAULT_DATASET_PATH: &str = "eval/golden.json";
-const REPORT_VERSION: &str = "2026-07-02";
+const REPORT_VERSION: &str = "2026-07-03";
+const RANK_K: usize = 10;
+const TRACKED_CHANNELS: [&str; 6] = [
+    "fts",
+    "entity",
+    "fact",
+    "temporal",
+    "vector",
+    "like_fallback",
+];
 
 #[derive(Debug, Clone)]
 pub struct CapacityEvalOptions {
@@ -49,6 +66,7 @@ pub struct CapacityScaleReport {
     pub noise_count: usize,
     pub corpus_hash: String,
     pub fused: CapacityFusedMetrics,
+    pub channels: BTreeMap<String, CapacityFusedMetrics>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +85,14 @@ pub struct CapacityDegradation {
     pub fused_recall_at_k_loss: f64,
     pub fused_ndcg_at_10_loss: f64,
     pub fused_evidence_recall_at_k_loss: f64,
+    pub channels: BTreeMap<String, CapacityChannelDegradation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CapacityChannelDegradation {
+    pub recall_at_k_loss: f64,
+    pub ndcg_at_10_loss: f64,
+    pub evidence_recall_at_k_loss: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -92,15 +118,10 @@ pub(in crate::eval) fn run_capacity_eval_for_dataset(
 
     for scale in &scales {
         let scaled = synthesize_capacity_dataset(&dataset, options.seed, *scale)?;
-        let golden_report = golden::evaluate_dataset_with_fixture_corpus(&scaled.dataset, k)
-            .with_context(|| format!("run capacity eval scale {scale}"))?;
-        scale_reports.push(CapacityScaleReport {
-            scale: *scale,
-            corpus_size: scaled.dataset.corpus.len(),
-            noise_count: scaled.noise_count,
-            corpus_hash: scaled.corpus_hash,
-            fused: fused_metrics(&golden_report),
-        });
+        scale_reports.push(
+            evaluate_capacity_scale(*scale, scaled, k)
+                .with_context(|| format!("run capacity eval scale {scale}"))?,
+        );
     }
 
     let baseline = scale_reports
@@ -122,6 +143,7 @@ pub(in crate::eval) fn run_capacity_eval_for_dataset(
             baseline.fused.evidence_recall_at_k,
             largest.fused.evidence_recall_at_k,
         ),
+        channels: channel_degradation(&baseline.channels, &largest.channels),
     };
 
     Ok(CapacityEvalReport {
@@ -133,12 +155,68 @@ pub(in crate::eval) fn run_capacity_eval_for_dataset(
         base_corpus_size: dataset.corpus.len(),
         scales: scale_reports,
         degradation,
-        omitted_followups: vec![
-            "per_channel_attribution",
-            "eval_gates_budget",
-            "nightly_dashboard_ingestion",
-            "50x_nightly_scale",
-        ],
+        omitted_followups: vec!["nightly_dashboard_ingestion", "50x_nightly_scale"],
+    })
+}
+
+fn evaluate_capacity_scale(
+    scale: usize,
+    scaled: ScaledDataset,
+    k: usize,
+) -> Result<CapacityScaleReport> {
+    let conn = Connection::open_in_memory().context("open in-memory capacity eval DB")?;
+    crate::migrate::run_migrations(&conn).context("migrate in-memory capacity eval DB")?;
+    golden::run::seed_fixture_corpus(&conn, &scaled.dataset.corpus)?;
+
+    let mut fused = MetricAccumulator::default();
+    let mut channels = TRACKED_CHANNELS
+        .iter()
+        .map(|channel| ((*channel).to_string(), MetricAccumulator::default()))
+        .collect::<BTreeMap<_, _>>();
+    let fetch_limit = k.max(RANK_K) as i64;
+
+    for query in &scaled.dataset.queries {
+        let query_tokens = golden::run::estimate_query_tokens(&query.query);
+        let started = Instant::now();
+        let (results, explain) = crate::retrieval::search::search_with_branch_explain(
+            &conn,
+            Some(&query.query),
+            query.project.as_deref(),
+            query.memory_type.as_deref(),
+            fetch_limit,
+            0,
+            false,
+            query.branch.as_deref(),
+        )?;
+        let retrieval_latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let fused_evaluation =
+            golden::run::evaluate_query(query, &results, k, query_tokens, retrieval_latency_ms);
+        fused.add(&fused_evaluation);
+
+        let channel_hit_ids = channel_hit_ids(explain.as_ref());
+        for channel in TRACKED_CHANNELS {
+            let ids = channel_hit_ids.get(channel).cloned().unwrap_or_default();
+            let memories = load_ordered_memories(&conn, &ids)?;
+            let latency_ms = channel_latency_ms(explain.as_ref(), channel);
+            let channel_evaluation =
+                golden::run::evaluate_query(query, &memories, k, query_tokens, latency_ms);
+            channels
+                .entry(channel.to_string())
+                .or_default()
+                .add(&channel_evaluation);
+        }
+    }
+
+    Ok(CapacityScaleReport {
+        scale,
+        corpus_size: scaled.dataset.corpus.len(),
+        noise_count: scaled.noise_count,
+        corpus_hash: scaled.corpus_hash,
+        fused: fused.finish(),
+        channels: channels
+            .into_iter()
+            .map(|(channel, accumulator)| (channel, accumulator.finish()))
+            .collect(),
     })
 }
 
@@ -203,28 +281,141 @@ fn validate_capacity_dataset(dataset: &GoldenDataset) -> Result<()> {
     Ok(())
 }
 
-fn fused_metrics(report: &GoldenEvalReport) -> CapacityFusedMetrics {
-    let empty = MetricAverages::default();
-    let metrics = report.overall.as_ref().unwrap_or(&empty);
-    CapacityFusedMetrics {
-        scored_queries: metrics.count,
-        hit_at_k: metrics.hit_at_k,
-        recall_at_k: metrics.recall_at_k,
-        ndcg_at_10: metrics.ndcg_at_10,
-        evidence_recall_at_k: metrics.evidence_recall_at_k,
-        p95_latency_ms: golden::run::percentile(
-            report
-                .queries
-                .iter()
-                .map(|query| query.retrieval_latency_ms)
-                .collect(),
-            95.0,
-        ),
+fn positive_loss(baseline: f64, current: f64) -> f64 {
+    (baseline - current).max(0.0)
+}
+
+#[derive(Default)]
+struct MetricAccumulator {
+    scored_queries: usize,
+    hit_at_k: f64,
+    recall_at_k: f64,
+    ndcg_at_10: f64,
+    evidence_recall_at_k: f64,
+    latencies_ms: Vec<f64>,
+}
+
+impl MetricAccumulator {
+    fn add(&mut self, evaluation: &QueryEvaluation) {
+        self.latencies_ms.push(evaluation.retrieval_latency_ms);
+        if let Some(metrics) = evaluation.metrics.as_ref() {
+            self.add_metrics(metrics);
+        }
+    }
+
+    fn add_metrics(&mut self, metrics: &QueryMetrics) {
+        self.scored_queries += 1;
+        self.hit_at_k += metrics.hit_at_k;
+        self.recall_at_k += metrics.recall_at_k;
+        self.ndcg_at_10 += metrics.ndcg_at_10;
+        self.evidence_recall_at_k += metrics.evidence_recall_at_k;
+    }
+
+    fn finish(self) -> CapacityFusedMetrics {
+        let denominator = self.scored_queries as f64;
+        CapacityFusedMetrics {
+            scored_queries: self.scored_queries,
+            hit_at_k: mean(self.hit_at_k, denominator),
+            recall_at_k: mean(self.recall_at_k, denominator),
+            ndcg_at_10: mean(self.ndcg_at_10, denominator),
+            evidence_recall_at_k: mean(self.evidence_recall_at_k, denominator),
+            p95_latency_ms: positive_zero(golden::run::percentile(self.latencies_ms, 95.0)),
+        }
     }
 }
 
-fn positive_loss(baseline: f64, current: f64) -> f64 {
-    (baseline - current).max(0.0)
+fn mean(sum: f64, denominator: f64) -> f64 {
+    if denominator == 0.0 {
+        0.0
+    } else {
+        sum / denominator
+    }
+}
+
+fn positive_zero(value: f64) -> f64 {
+    if value == 0.0 {
+        0.0
+    } else {
+        value
+    }
+}
+
+fn channel_hit_ids(explain: Option<&SearchExplain>) -> BTreeMap<String, Vec<i64>> {
+    explain
+        .map(|explain| {
+            explain
+                .channels
+                .iter()
+                .filter(|channel| channel.enabled)
+                .map(|channel| {
+                    (
+                        channel.name.clone(),
+                        channel
+                            .hits
+                            .iter()
+                            .map(|hit| hit.memory_id)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn channel_latency_ms(explain: Option<&SearchExplain>, channel: &str) -> f64 {
+    positive_zero(
+        explain
+            .map(|explain| {
+                explain
+                    .timings
+                    .iter()
+                    .filter(|timing| timing.phase == channel)
+                    .map(|timing| timing.elapsed_ms as f64)
+                    .sum()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+fn load_ordered_memories(conn: &Connection, ids: &[i64]) -> Result<Vec<Memory>> {
+    let loaded = crate::memory::get_memories_by_ids_with_suppressed_policy(conn, ids, None, false)?;
+    let id_to_memory = loaded
+        .into_iter()
+        .map(|memory| (memory.id, memory))
+        .collect::<HashMap<_, _>>();
+    Ok(ids
+        .iter()
+        .filter_map(|id| id_to_memory.get(id).cloned())
+        .collect())
+}
+
+fn channel_degradation(
+    baseline: &BTreeMap<String, CapacityFusedMetrics>,
+    largest: &BTreeMap<String, CapacityFusedMetrics>,
+) -> BTreeMap<String, CapacityChannelDegradation> {
+    baseline
+        .iter()
+        .filter_map(|(channel, baseline_metrics)| {
+            let largest_metrics = largest.get(channel)?;
+            Some((
+                channel.clone(),
+                CapacityChannelDegradation {
+                    recall_at_k_loss: positive_loss(
+                        baseline_metrics.recall_at_k,
+                        largest_metrics.recall_at_k,
+                    ),
+                    ndcg_at_10_loss: positive_loss(
+                        baseline_metrics.ndcg_at_10,
+                        largest_metrics.ndcg_at_10,
+                    ),
+                    evidence_recall_at_k_loss: positive_loss(
+                        baseline_metrics.evidence_recall_at_k,
+                        largest_metrics.evidence_recall_at_k,
+                    ),
+                },
+            ))
+        })
+        .collect()
 }
 
 fn topic_keys(corpus: &[GoldenMemory]) -> HashSet<String> {
@@ -330,6 +521,18 @@ impl Display for CapacityEvalReport {
                 scale.fused.p95_latency_ms,
                 scale.corpus_hash
             )?;
+            for (channel, metrics) in &scale.channels {
+                writeln!(
+                    f,
+                    "    {channel}: R@{}={:.3} nDCG@10={:.3} evidence@{}={:.3} p95={:.2}ms",
+                    self.k,
+                    metrics.recall_at_k,
+                    metrics.ndcg_at_10,
+                    self.k,
+                    metrics.evidence_recall_at_k,
+                    metrics.p95_latency_ms
+                )?;
+            }
         }
         writeln!(
             f,
@@ -343,54 +546,6 @@ impl Display for CapacityEvalReport {
         )
     }
 }
-
-const MEMORY_TYPES: [&str; 4] = ["decision", "bugfix", "discovery", "lesson"];
-const FILE_PATHS: [&str; 8] = [
-    "src/noise/cache_guard.rs",
-    "src/noise/retry_plan.rs",
-    "crates/noise_runtime/src/lib.rs",
-    "apps/noise_panel/src/main.ts",
-    "tests/noise_contract.rs",
-    "docs/noise/runbook.md",
-    "src/noise/vector_probe.rs",
-    "src/noise/ledger_sink.rs",
-];
-const CRATE_NAMES: [&str; 8] = [
-    "aurora-cache",
-    "brass-ledger",
-    "cipher-ridge",
-    "drift-panel",
-    "ember-index",
-    "frost-runner",
-    "garnet-store",
-    "harbor-signal",
-];
-const ERROR_SIGNATURES: [&str; 8] = [
-    "E_CAPACITY_001",
-    "E_CAPACITY_017",
-    "E_CAPACITY_029",
-    "E_CAPACITY_041",
-    "E_CAPACITY_053",
-    "E_CAPACITY_067",
-    "E_CAPACITY_079",
-    "E_CAPACITY_083",
-];
-const COMMANDS: [&str; 6] = [
-    "cargo test noise_contract",
-    "cargo run -- noise-probe",
-    "node --test noise-runtime.test.js",
-    "python3 scripts/noise_check.py",
-    "cargo clippy --package noise-runtime",
-    "remem eval --dataset eval/noise.json",
-];
-const OWNERS: [&str; 6] = [
-    "Ari Vale",
-    "Bea Stone",
-    "Cato Reed",
-    "Dina Moss",
-    "Eli Park",
-    "Faye Holt",
-];
 
 #[cfg(test)]
 mod tests {
@@ -432,11 +587,20 @@ mod tests {
         assert_eq!(report.scales[1].scale, 3);
         assert_eq!(report.scales[1].noise_count, 4);
         assert_eq!(report.degradation.largest_scale, 3);
+        assert!(report.scales[0].channels.contains_key("fts"));
+        assert!(report.scales[0].channels.contains_key("vector"));
+        assert!(report.degradation.channels.contains_key("fts"));
 
         let json = serde_json::to_value(&report)?;
         assert_eq!(json["seed"], 9);
         assert_eq!(json["scales"][1]["fused"]["scored_queries"], 2);
+        assert_eq!(json["scales"][1]["channels"]["fts"]["scored_queries"], 2);
+        assert!(json["degradation"]["channels"]["fts"]["recall_at_k_loss"].is_number());
         assert!(json["omitted_followups"]
+            .as_array()
+            .expect("omitted followups should be an array")
+            .contains(&serde_json::json!("nightly_dashboard_ingestion")));
+        assert!(!json["omitted_followups"]
             .as_array()
             .expect("omitted followups should be an array")
             .contains(&serde_json::json!("per_channel_attribution")));
@@ -479,7 +643,15 @@ mod tests {
 
     fn quality_signature(
         report: &CapacityEvalReport,
-    ) -> Vec<(usize, String, usize, f64, f64, f64)> {
+    ) -> Vec<(
+        usize,
+        String,
+        usize,
+        f64,
+        f64,
+        f64,
+        Vec<(String, f64, f64, f64)>,
+    )> {
         report
             .scales
             .iter()
@@ -491,6 +663,18 @@ mod tests {
                     scale.fused.recall_at_k,
                     scale.fused.ndcg_at_10,
                     scale.fused.evidence_recall_at_k,
+                    scale
+                        .channels
+                        .iter()
+                        .map(|(channel, metrics)| {
+                            (
+                                channel.clone(),
+                                metrics.recall_at_k,
+                                metrics.ndcg_at_10,
+                                metrics.evidence_recall_at_k,
+                            )
+                        })
+                        .collect(),
                 )
             })
             .collect()

@@ -2,11 +2,13 @@ use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
+mod codex_hook_stdout;
 mod diagnostics;
 mod gate_pipeline;
 mod load;
 mod ownership;
 mod render;
+mod render_stability;
 mod retrieval;
 mod sessions;
 mod staleness;

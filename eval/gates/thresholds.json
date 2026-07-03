@@ -1,7 +1,91 @@
 {
-  "version": "2026-06-23",
+  "version": "2026-07-03",
   "default_max_drop": 0.0,
   "metrics": {
+    "capacity.degradation.channel.entity.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.entity.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.entity.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.fact.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.fact.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.fact.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.fts.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.fts.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.fts.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.like_fallback.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.like_fallback.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.like_fallback.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.temporal.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.temporal.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.temporal.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.vector.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.vector.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.channel.vector.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.fused.evidence_recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.fused.ndcg_at_10_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
+    "capacity.degradation.fused.recall_at_k_loss": {
+      "max_drop": 0.0,
+      "max_increase": 0.0
+    },
     "current_memory_contracts.all_checks": {
       "max_drop": 0.0
     },
@@ -63,6 +147,12 @@
       "max_drop": 0.0
     },
     "injection.abstention_false_positive_bound": {
+      "max_drop": 0.0
+    },
+    "injection.block_churn_one_added_prefix_preserved": {
+      "max_drop": 0.0
+    },
+    "injection.block_churn_unchanged": {
       "max_drop": 0.0
     },
     "injection.user_prompt_submit_abstention_false_positive_bound": {

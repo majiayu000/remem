@@ -114,8 +114,8 @@ Source of host selection:
 Install hooks should eventually set this explicitly:
 
 ```text
-REMEM_CONTEXT_HOST=claude-code remem context
-REMEM_CONTEXT_HOST=codex-cli remem context
+remem context --host claude-code
+remem context --host codex-cli
 ```
 
 ### 6.2 ContextRequest

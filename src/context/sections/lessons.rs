@@ -28,6 +28,7 @@ pub(in crate::context) fn render_lessons_with_limit_and_staleness(
     lessons: &[LessonMemory],
     item_limit: usize,
     char_limit: usize,
+    render_reference_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> usize {
     render_lessons_with_summary_and_staleness(
@@ -35,6 +36,7 @@ pub(in crate::context) fn render_lessons_with_limit_and_staleness(
         lessons,
         item_limit,
         char_limit,
+        render_reference_epoch,
         staleness_labels,
     )
     .count
@@ -52,6 +54,7 @@ pub(in crate::context) fn render_lessons_with_summary(
         lessons,
         item_limit,
         char_limit,
+        chrono::Utc::now().timestamp(),
         &HashMap::new(),
     )
 }
@@ -61,6 +64,7 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
     lessons: &[LessonMemory],
     item_limit: usize,
     char_limit: usize,
+    render_reference_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> LessonRenderSummary {
     if lessons.is_empty() || item_limit == 0 || char_limit == 0 {
@@ -73,7 +77,6 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
         return LessonRenderSummary::default();
     }
 
-    let now = chrono::Utc::now().timestamp();
     let mut body = String::new();
     let mut rendered = 0usize;
     let mut ids = Vec::new();
@@ -87,7 +90,7 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
             metadata.confidence,
             metadata.reinforcement_count,
             format_epoch_short(metadata.last_reinforced_at_epoch),
-            memory_render_metadata_with_labels(memory, now, staleness_labels)
+            memory_render_metadata_with_labels(memory, render_reference_epoch, staleness_labels)
         );
         let fixed_chars = char_len(&title) + 1;
         if total_chars + fixed_chars >= char_limit {
