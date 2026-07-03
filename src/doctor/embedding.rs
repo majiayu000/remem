@@ -141,6 +141,8 @@ fn mixed_model_check(mixed_profile_count: i64) -> Check {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+
     use rusqlite::{params, Connection};
 
     use super::*;
@@ -149,6 +151,9 @@ mod tests {
         "REMEM_CONFIG",
         "REMEM_EMBEDDINGS_PROVIDER",
         "REMEM_EMBEDDING_PROVIDER",
+        "REMEM_EMBEDDINGS_MODEL",
+        "REMEM_EMBEDDINGS_DIMENSIONS",
+        "REMEM_EMBEDDINGS_BASE_URL",
         "REMEM_EMBEDDINGS_FALLBACK",
         "REMEM_EMBEDDINGS_API_KEY",
         "REMEM_EMBEDDING_API_KEY",
@@ -270,6 +275,62 @@ mod tests {
                 .expect("coverage check should exist");
             assert!(matches!(coverage.status, Status::Warn));
             assert!(coverage.detail.contains("1/10"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn api_coverage_uses_provider_returned_profile() -> anyhow::Result<()> {
+        with_clean_embedding_env(|| -> anyhow::Result<()> {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let addr = listener.local_addr()?;
+            let handle = std::thread::spawn(move || -> anyhow::Result<()> {
+                let (mut stream, _) = listener.accept()?;
+                let mut buffer = [0_u8; 8192];
+                stream.read(&mut buffer)?;
+                let body =
+                    r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes())?;
+                Ok(())
+            });
+            unsafe {
+                std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+                std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
+                std::env::set_var("REMEM_EMBEDDINGS_MODEL", "requested-model");
+                std::env::set_var("REMEM_EMBEDDINGS_DIMENSIONS", "256");
+                std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", format!("http://{addr}/v1"));
+            }
+            let conn = setup_conn()?;
+            conn.execute(
+                "INSERT INTO memories
+                 (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+                 VALUES (1, '/repo', 'Memory', 'Content', 'decision', 1, 1, 'active')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO memory_embeddings
+                 (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+                 VALUES (1, ?1, 4, 'normalized-model', 'hash', 1)",
+                params![vec![0_u8; 16]],
+            )?;
+
+            let checks = check_embedding_provider(Some(&conn));
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+            let coverage = checks
+                .iter()
+                .find(|check| check.name == "Embedding coverage")
+                .ok_or_else(|| anyhow::anyhow!("coverage check should exist"))?;
+
+            assert!(matches!(coverage.status, Status::Ok));
+            assert!(coverage.detail.contains("1/1"));
+            assert!(coverage.detail.contains("normalized-model"));
             Ok(())
         })
     }

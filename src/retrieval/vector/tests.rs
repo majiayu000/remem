@@ -26,6 +26,29 @@ impl ScopedEmbeddingProvider {
             saved,
         }
     }
+
+    fn api_fallback_off(base_url: &str) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+            std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
+            std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", base_url);
+        }
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
 }
 
 impl Drop for ScopedEmbeddingProvider {
@@ -71,6 +94,8 @@ const ENV_KEYS: &[&str] = &[
     "REMEM_EMBEDDINGS_PROVIDER",
     "REMEM_EMBEDDING_PROVIDER",
     "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_BASE_URL",
+    "REMEM_EMBEDDING_BASE_URL",
     "REMEM_EMBEDDINGS_API_KEY",
     "REMEM_EMBEDDING_API_KEY",
     "OPENAI_API_KEY",
@@ -118,6 +143,51 @@ fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
         outcome.disabled_reason.as_deref(),
         Some("embedding provider is off")
     );
+    assert_eq!(embedding_count(&conn)?, 0);
+    Ok(())
+}
+
+#[test]
+fn api_failure_fallback_off_skips_vector_writes_and_backfill() -> Result<()> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let handle = std::thread::spawn(move || -> Result<()> {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0_u8; 8192];
+            std::io::Read::read(&mut stream, &mut buffer)?;
+            let body = "provider unavailable";
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes())?;
+        }
+        Ok(())
+    });
+    let _provider = ScopedEmbeddingProvider::api_fallback_off(&format!("http://{addr}/v1"));
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    insert_test_memory(&conn, 1)?;
+    ensure_vec_table(&conn)?;
+
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+    assert_eq!(embedding_count(&conn)?, 0);
+
+    let report = reindex_memory_embeddings_with_report(&conn, 100)?;
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+    assert_eq!(report.processed, 0);
+    assert_eq!(report.model, "off");
     assert_eq!(embedding_count(&conn)?, 0);
     Ok(())
 }

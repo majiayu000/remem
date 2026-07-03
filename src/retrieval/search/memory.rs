@@ -1,6 +1,8 @@
 mod claim;
 mod explain;
 mod listing;
+#[cfg(test)]
+mod provider_fallback_tests;
 mod runner;
 mod source_anchor;
 mod suppression_filter;

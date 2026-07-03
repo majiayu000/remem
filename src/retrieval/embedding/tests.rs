@@ -292,6 +292,46 @@ fn backfill_target_uses_provider_returned_profile() -> Result<()> {
 }
 
 #[test]
+fn api_provider_status_uses_provider_returned_profile() -> Result<()> {
+    with_clean_env(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0u8; 8192];
+            let read = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let body = r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(request)
+        });
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "openai");
+            std::env::set_var(ENV_API_KEY, "test-key");
+            std::env::set_var(ENV_MODEL, "requested-model");
+            std::env::set_var(ENV_DIMENSIONS, "256");
+            std::env::set_var(ENV_BASE_URL, format!("http://{addr}/v1"));
+        }
+
+        let status = embedding_provider_status()?;
+        let request = handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+
+        assert_eq!(status.active_model_id.as_deref(), Some("normalized-model"));
+        assert_eq!(status.active_dimensions, Some(4));
+        assert!(request.contains("\"model\":\"requested-model\""));
+        assert!(request.contains("\"dimensions\":256"));
+        Ok(())
+    })
+}
+
+#[test]
 fn truncates_provider_error_body_on_char_boundary() {
     let body = format!("{}猫", "x".repeat(499));
 

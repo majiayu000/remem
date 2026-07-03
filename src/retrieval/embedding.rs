@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod config;
+mod status;
 
 use config::env_value;
 pub(crate) use config::resolve_embedding_config;
+pub(crate) use status::is_embedding_provider_off_error;
 
 pub const LOCAL_EMBEDDING_DIMENSIONS: usize = 768;
 pub const LOCAL_EMBEDDING_MODEL: &str = "remem-local-feature-hash-v1";
@@ -158,6 +160,14 @@ pub fn embed_query(query: &str) -> Result<TextEmbedding> {
     embed_text(query)
 }
 
+pub(crate) fn embed_query_if_enabled(query: &str) -> Result<Option<TextEmbedding>> {
+    match embed_query(query) {
+        Ok(embedding) => Ok(Some(embedding)),
+        Err(error) if is_embedding_provider_off_error(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn embed_memory(
     title: &str,
     content: &str,
@@ -207,8 +217,8 @@ pub fn embedding_content_hash(
 }
 
 pub(crate) fn configured_backfill_target() -> Result<EmbeddingBackfillTarget> {
-    if embedding_provider_status()?.disabled {
-        bail!("embedding provider is off");
+    if embedding_provider_status_without_probe()?.disabled {
+        return Err(status::embedding_provider_off_error());
     }
     let probe = embed_text("remem embedding profile probe")?;
     Ok(EmbeddingBackfillTarget {
@@ -219,7 +229,14 @@ pub(crate) fn configured_backfill_target() -> Result<EmbeddingBackfillTarget> {
 
 pub fn embedding_provider_status() -> Result<EmbeddingProviderStatus> {
     let config = resolve_embedding_config()?;
-    Ok(resolve_provider_status(&config))
+    let mut status = status::resolve_provider_status(&config);
+    status::probe_active_api_profile(&config, &mut status);
+    Ok(status)
+}
+
+pub(crate) fn embedding_provider_status_without_probe() -> Result<EmbeddingProviderStatus> {
+    let config = resolve_embedding_config()?;
+    Ok(status::resolve_provider_status(&config))
 }
 
 fn embed_text(text: &str) -> Result<TextEmbedding> {
@@ -230,7 +247,7 @@ fn embed_text(text: &str) -> Result<TextEmbedding> {
         }
         ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key)
             .or_else(|error| embed_with_call_failure_fallback(text, &config, error)),
-        ActiveEmbeddingProvider::Off => bail!("embedding provider is off"),
+        ActiveEmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
     }
 }
 
@@ -242,7 +259,7 @@ fn embed_with_call_failure_fallback(
     let Some(fallback) = config.fallback else {
         return Err(error);
     };
-    let fallback_runtime = provider_runtime(config, fallback);
+    let fallback_runtime = status::provider_runtime(config, fallback);
     if let Some(reason) = fallback_runtime.unavailable_reason {
         bail!(
             "embedding provider api failed: {error}; fallback {} unavailable: {reason}",
@@ -259,7 +276,7 @@ fn embed_with_call_failure_fallback(
         EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
             TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
         }
-        EmbeddingProvider::Off => bail!("embedding provider is off"),
+        EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
         EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => Err(error),
     }
 }
@@ -292,7 +309,7 @@ enum ActiveEmbeddingProvider {
 }
 
 fn active_provider(config: &EmbeddingConfig) -> Result<ActiveEmbeddingProvider> {
-    let status = resolve_provider_status(config);
+    let status = status::resolve_provider_status(config);
     if let Some(reason) = status.unavailable_reason {
         bail!("{reason}");
     }
@@ -309,125 +326,6 @@ fn active_provider(config: &EmbeddingConfig) -> Result<ActiveEmbeddingProvider> 
         }),
         EmbeddingProvider::Off => Ok(ActiveEmbeddingProvider::Off),
         EmbeddingProvider::Auto => bail!("auto must resolve to a concrete embedding provider"),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ProviderRuntime {
-    provider: EmbeddingProvider,
-    model_id: Option<String>,
-    dimensions: Option<usize>,
-    disabled: bool,
-    unavailable_reason: Option<String>,
-}
-
-fn resolve_provider_status(config: &EmbeddingConfig) -> EmbeddingProviderStatus {
-    let configured = config.provider;
-    let mut runtime = provider_runtime(config, configured);
-    let mut degraded = false;
-    let mut degradation_reason = None;
-
-    if let Some(reason) = runtime.unavailable_reason.clone() {
-        degraded = true;
-        if let Some(fallback) = config.fallback {
-            let fallback_runtime = provider_runtime(config, fallback);
-            if fallback_runtime.unavailable_reason.is_none() {
-                let message = format!(
-                    "configured embedding provider {} unavailable: {}; using fallback {}",
-                    configured.label(),
-                    reason,
-                    fallback.label()
-                );
-                crate::log::error("embedding", &message);
-                degradation_reason = Some(message);
-                runtime = fallback_runtime;
-            } else {
-                degradation_reason = Some(format!(
-                    "configured embedding provider {} unavailable: {}; fallback {} unavailable: {}",
-                    configured.label(),
-                    reason,
-                    fallback.label(),
-                    fallback_runtime
-                        .unavailable_reason
-                        .as_deref()
-                        .unwrap_or("unknown")
-                ));
-            }
-        } else {
-            degradation_reason = Some(format!(
-                "configured embedding provider {} unavailable: {}",
-                configured.label(),
-                reason
-            ));
-        }
-    }
-
-    EmbeddingProviderStatus {
-        configured_provider: configured.label().to_string(),
-        fallback_provider: config.fallback.map(|provider| provider.label().to_string()),
-        active_provider: runtime.provider.label().to_string(),
-        active_model_id: runtime.model_id,
-        active_dimensions: runtime.dimensions,
-        degraded,
-        disabled: runtime.disabled,
-        unavailable_reason: runtime.unavailable_reason,
-        degradation_reason,
-        model_dir: config.model_dir.clone(),
-    }
-}
-
-fn provider_runtime(config: &EmbeddingConfig, provider: EmbeddingProvider) -> ProviderRuntime {
-    match provider {
-        EmbeddingProvider::Auto => match auto_api_key(config) {
-            Ok(Some(_)) => provider_runtime(config, EmbeddingProvider::OpenAi),
-            Ok(None) => provider_runtime(config, EmbeddingProvider::Local),
-            Err(error) => unavailable_runtime(provider, error.to_string()),
-        },
-        EmbeddingProvider::Local => ProviderRuntime {
-            provider: EmbeddingProvider::Local,
-            model_id: Some(LOCAL_EMBEDDING_MODEL.to_string()),
-            dimensions: Some(LOCAL_EMBEDDING_DIMENSIONS),
-            disabled: false,
-            unavailable_reason: None,
-        },
-        EmbeddingProvider::FeatureHash => ProviderRuntime {
-            provider: EmbeddingProvider::FeatureHash,
-            model_id: Some(LOCAL_EMBEDDING_MODEL.to_string()),
-            dimensions: Some(LOCAL_EMBEDDING_DIMENSIONS),
-            disabled: false,
-            unavailable_reason: None,
-        },
-        EmbeddingProvider::OpenAi => match configured_api_key(config) {
-            Ok(Some(_)) => ProviderRuntime {
-                provider: EmbeddingProvider::OpenAi,
-                model_id: Some(config.model.clone()),
-                dimensions: config.dimensions,
-                disabled: false,
-                unavailable_reason: None,
-            },
-            Ok(None) => unavailable_runtime(
-                provider,
-                format!("requires {ENV_API_KEY} or {}", config.api_key_env),
-            ),
-            Err(error) => unavailable_runtime(provider, error.to_string()),
-        },
-        EmbeddingProvider::Off => ProviderRuntime {
-            provider: EmbeddingProvider::Off,
-            model_id: None,
-            dimensions: None,
-            disabled: true,
-            unavailable_reason: None,
-        },
-    }
-}
-
-fn unavailable_runtime(provider: EmbeddingProvider, reason: String) -> ProviderRuntime {
-    ProviderRuntime {
-        provider,
-        model_id: None,
-        dimensions: None,
-        disabled: false,
-        unavailable_reason: Some(reason),
     }
 }
 

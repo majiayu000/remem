@@ -16,6 +16,9 @@ use super::{
     SearchExplainResult, SearchWeights,
 };
 
+mod format;
+use format::fts_normalized_hits;
+
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
     pub explain: SearchExplain,
@@ -438,7 +441,7 @@ fn build_query_search_plan(
         }
     }
 
-    let embedding_status = crate::retrieval::embedding::embedding_provider_status()?;
+    let embedding_status = crate::retrieval::embedding::embedding_provider_status_without_probe()?;
     if embedding_status.disabled {
         channels.push(NamedChannel::disabled(
             "vector",
@@ -446,44 +449,51 @@ fn build_query_search_plan(
             "embedding provider is off",
         ));
     } else {
-        let query_embedding = time_result(&mut timings, "query_embedding", || {
-            crate::retrieval::embedding::embed_query(query_text)
-        })?;
-        let vector_start = Instant::now();
-        let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
-            conn,
-            &query_embedding,
-            crate::retrieval::vector::VectorSearchFilters {
-                project,
-                memory_type,
-                branch,
-                include_stale,
-            },
-            fetch as usize,
-        )?;
-        push_elapsed(&mut timings, "vector", vector_start);
-        timings.append(&mut vector_outcome.timings);
-        if let Some(reason) = vector_outcome.disabled_reason {
-            channels.push(
-                NamedChannel::disabled("vector", weights.vector, reason)
-                    .with_candidates_scanned(vector_outcome.candidates_scanned),
-            );
+        if let Some(query_embedding) = time_result(&mut timings, "query_embedding", || {
+            crate::retrieval::embedding::embed_query_if_enabled(query_text)
+        })? {
+            let vector_start = Instant::now();
+            let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
+                conn,
+                &query_embedding,
+                crate::retrieval::vector::VectorSearchFilters {
+                    project,
+                    memory_type,
+                    branch,
+                    include_stale,
+                },
+                fetch as usize,
+            )?;
+            push_elapsed(&mut timings, "vector", vector_start);
+            timings.append(&mut vector_outcome.timings);
+            if let Some(reason) = vector_outcome.disabled_reason {
+                channels.push(
+                    NamedChannel::disabled("vector", weights.vector, reason)
+                        .with_candidates_scanned(vector_outcome.candidates_scanned),
+                );
+            } else {
+                let candidates_scanned = vector_outcome.candidates_scanned;
+                let hits = vector_outcome
+                    .hits
+                    .into_iter()
+                    .filter(|hit| hit.distance <= weights.max_vector_distance)
+                    .map(|hit| WeightedRankedHit {
+                        id: hit.memory_id,
+                        normalized_score: vector_similarity_score(hit.distance, weights),
+                    })
+                    .collect::<Vec<_>>();
+                let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
+                channels.push(
+                    NamedChannel::enabled_with_hits("vector", weights.vector, hits)
+                        .with_candidates_scanned(candidates_scanned),
+                );
+            }
         } else {
-            let candidates_scanned = vector_outcome.candidates_scanned;
-            let hits = vector_outcome
-                .hits
-                .into_iter()
-                .filter(|hit| hit.distance <= weights.max_vector_distance)
-                .map(|hit| WeightedRankedHit {
-                    id: hit.memory_id,
-                    normalized_score: vector_similarity_score(hit.distance, weights),
-                })
-                .collect::<Vec<_>>();
-            let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
-            channels.push(
-                NamedChannel::enabled_with_hits("vector", weights.vector, hits)
-                    .with_candidates_scanned(candidates_scanned),
-            );
+            channels.push(NamedChannel::disabled(
+                "vector",
+                weights.vector,
+                "embedding provider is off",
+            ));
         }
     }
 
@@ -754,31 +764,6 @@ fn has_trusted_non_text_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool
 fn vector_similarity_score(distance: f32, weights: SearchWeights) -> f64 {
     let threshold = f64::from(weights.max_vector_distance);
     ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
-}
-
-fn fts_normalized_hits(
-    hits: &[crate::retrieval::memory_search::FtsMemoryHit],
-) -> Vec<WeightedRankedHit> {
-    let best = hits
-        .iter()
-        .map(|hit| hit.score)
-        .fold(f64::INFINITY, f64::min);
-    let worst = hits
-        .iter()
-        .map(|hit| hit.score)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let spread = worst - best;
-    hits.iter()
-        .enumerate()
-        .map(|(rank, hit)| WeightedRankedHit {
-            id: hit.memory.id,
-            normalized_score: if spread.abs() < f64::EPSILON {
-                rank_normalized_score(rank)
-            } else {
-                ((worst - hit.score) / spread).clamp(0.0, 1.0)
-            },
-        })
-        .collect()
 }
 
 fn visibility_label(memory: &Memory, requested_project: Option<&str>) -> &'static str {
