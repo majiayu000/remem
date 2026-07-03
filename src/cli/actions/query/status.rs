@@ -18,8 +18,9 @@ pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
 }
 
 fn load_status_report() -> Result<StatusReport> {
-    let conn = db::open_db_read_only()?;
     let db_path = db::db_path();
+    ensure_status_database_can_migrate(&db_path)?;
+    let conn = db::open_db()?;
     let db_size = std::fs::metadata(&db_path)
         .with_context(|| format!("failed to stat database path {}", db_path.display()))?
         .len();
@@ -187,6 +188,61 @@ fn load_status_report() -> Result<StatusReport> {
             })
             .collect(),
     })
+}
+
+fn ensure_status_database_can_migrate(db_path: &std::path::Path) -> Result<()> {
+    if !db_path.exists() {
+        anyhow::bail!("database not found: {}", db_path.display());
+    }
+
+    let conn = db::open_db_read_only()
+        .with_context(|| format!("inspect existing remem database {}", db_path.display()))?;
+    let has_migration_table: i64 = conn
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = '_schema_migrations'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| format!("inspect remem schema markers in {}", db_path.display()))?;
+    let remem_migration_rows = if has_migration_table == 0 {
+        0
+    } else {
+        conn.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations
+             WHERE version = 1 AND name = 'baseline'",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| format!("inspect remem migration state in {}", db_path.display()))?
+    };
+    let legacy_core_tables: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name IN ('memories', 'events')",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| {
+            format!(
+                "inspect legacy remem schema markers in {}",
+                db_path.display()
+            )
+        })?;
+    let legacy_user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .with_context(|| format!("inspect legacy remem user_version in {}", db_path.display()))?;
+
+    if remem_migration_rows == 0 && !(legacy_user_version > 0 && legacy_core_tables >= 2) {
+        anyhow::bail!(
+            "database is not an initialized remem database: {}",
+            db_path.display()
+        );
+    }
+
+    Ok(())
 }
 
 fn print_status_report(report: &StatusReport) {
