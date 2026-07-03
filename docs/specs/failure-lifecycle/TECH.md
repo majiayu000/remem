@@ -156,8 +156,9 @@ storms.
   can target archived rows explicitly (`--include-archived`), preserving the
   manual escape hatch for observations and extraction ranges.
 - Add an explicit legacy observation replay path:
-  `remem pending retry-failed-observations --include-archived --id <id>` (or
-  `--project <p> --limit <n> [--host claude-code|codex-cli]`). The `--id`
+  `remem pending retry-failed-observations --include-archived --id <id>
+  [--host claude-code|codex-cli]` (or `--project <p> --limit <n>
+  [--host claude-code|codex-cli]`). The `--id`
   form must run an id-constrained migration/replay path so the selected row is
   the one consumed, not an older pending row from the same project. For
   archived rows it clears `archived_at_epoch`, resets the row to
