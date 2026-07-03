@@ -207,6 +207,17 @@ fn ensure_status_database_can_migrate(db_path: &std::path::Path) -> Result<()> {
             |row| row.get(0),
         )
         .with_context(|| format!("inspect remem schema markers in {}", db_path.display()))?;
+    let remem_migration_rows = if has_migration_table == 0 {
+        0
+    } else {
+        conn.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations
+             WHERE version = 1 AND name = 'baseline'",
+            [],
+            |row| row.get(0),
+        )
+        .with_context(|| format!("inspect remem migration state in {}", db_path.display()))?
+    };
     let legacy_core_tables: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master
@@ -220,8 +231,11 @@ fn ensure_status_database_can_migrate(db_path: &std::path::Path) -> Result<()> {
                 db_path.display()
             )
         })?;
+    let legacy_user_version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .with_context(|| format!("inspect legacy remem user_version in {}", db_path.display()))?;
 
-    if has_migration_table == 0 && legacy_core_tables < 2 {
+    if remem_migration_rows == 0 && !(legacy_user_version > 0 && legacy_core_tables >= 2) {
         anyhow::bail!(
             "database is not an initialized remem database: {}",
             db_path.display()

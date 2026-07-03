@@ -276,6 +276,39 @@ fn status_report_refuses_empty_database_file_without_initializing() -> anyhow::R
 }
 
 #[test]
+fn status_report_refuses_non_remem_migration_table_without_initializing() -> anyhow::Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("status-non-remem-migration-table");
+    std::fs::create_dir_all(&test_dir.path)?;
+    let conn = Connection::open(test_dir.db_path())?;
+    conn.execute_batch(
+        "CREATE TABLE _schema_migrations (
+             version INTEGER PRIMARY KEY,
+             name TEXT NOT NULL,
+             applied_at_epoch INTEGER NOT NULL
+         );
+         INSERT INTO _schema_migrations VALUES (1, 'other_app_baseline', 0);",
+    )?;
+    drop(conn);
+
+    let err = load_status_report().expect_err("non-remem migration table should fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("not an initialized remem database"),
+        "unexpected error: {message}"
+    );
+    let conn = Connection::open(test_dir.db_path())?;
+    let memories_created: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memories'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(memories_created, 0);
+    Ok(())
+}
+
+#[test]
 fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<()> {
     let _test_dir = crate::db::test_support::ScopedTestDataDir::new("status-v053-source-kind");
     std::fs::create_dir_all(crate::db::data_dir())?;
