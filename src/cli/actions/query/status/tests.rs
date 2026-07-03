@@ -234,6 +234,27 @@ fn cli_status_renders_action_block_for_runtime_failures() {
 }
 
 #[test]
+fn status_report_refuses_missing_database_without_initializing() {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("status-missing-db");
+
+    let err = load_status_report().expect_err("missing database should fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("database not found"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        !test_dir.path.exists(),
+        "status must not create data dir for a missing database"
+    );
+    assert!(
+        !test_dir.db_path().exists(),
+        "status must not initialize a missing database"
+    );
+}
+
+#[test]
 fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<()> {
     let _test_dir = crate::db::test_support::ScopedTestDataDir::new("status-v053-source-kind");
     std::fs::create_dir_all(crate::db::data_dir())?;

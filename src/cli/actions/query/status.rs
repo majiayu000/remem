@@ -18,8 +18,12 @@ pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
 }
 
 fn load_status_report() -> Result<StatusReport> {
-    let conn = db::open_db()?;
     let db_path = db::db_path();
+    if !db_path.exists() {
+        anyhow::bail!("database not found: {}", db_path.display());
+    }
+
+    let conn = db::open_db()?;
     let db_size = std::fs::metadata(&db_path)
         .with_context(|| format!("failed to stat database path {}", db_path.display()))?
         .len();
