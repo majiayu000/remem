@@ -15,6 +15,7 @@ pub struct InjectionEvalOptions {
 pub struct InjectionEvalReport {
     pub metadata: InjectionEvalMetadata,
     pub metrics: InjectionMetricSummary,
+    pub churn: InjectionChurnReport,
     pub cases: Vec<InjectionCaseReport>,
     pub failing_examples: Vec<String>,
 }
@@ -30,6 +31,7 @@ pub struct InjectionEvalMetadata {
     pub project: String,
     pub host: String,
     pub branch: String,
+    pub render_contract_version: u32,
     pub output_chars: usize,
     pub memories_loaded: usize,
     pub core_count: usize,
@@ -49,7 +51,17 @@ pub struct InjectionMetricSummary {
     pub stale_anchor_labeling: InjectionRateMetric,
     pub user_prompt_submit_memory_recall: InjectionRateMetric,
     pub user_prompt_submit_abstention_false_positive_bound: InjectionRateMetric,
+    pub block_churn_unchanged: InjectionRateMetric,
+    pub block_churn_one_added_prefix_preserved: InjectionRateMetric,
     pub all_checks_passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InjectionChurnReport {
+    pub unchanged_changed_bytes: usize,
+    pub one_added_changed_bytes: usize,
+    pub one_added_first_affected_section: Option<String>,
+    pub one_added_prefix_preserved: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,12 +133,34 @@ impl Display for InjectionEvalReport {
         )?;
         writeln!(
             f,
-            "rendered: memories_loaded={} core={} index={} chars={} truncated={}",
+            "block_churn_unchanged: {}/{} ({:.1}%)",
+            self.metrics.block_churn_unchanged.passed,
+            self.metrics.block_churn_unchanged.total,
+            self.metrics.block_churn_unchanged.rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "block_churn_one_added_prefix_preserved: {}/{} ({:.1}%)",
+            self.metrics.block_churn_one_added_prefix_preserved.passed,
+            self.metrics.block_churn_one_added_prefix_preserved.total,
+            self.metrics.block_churn_one_added_prefix_preserved.rate * 100.0
+        )?;
+        writeln!(
+            f,
+            "rendered: render_contract_version={} memories_loaded={} core={} index={} chars={} truncated={}",
+            self.metadata.render_contract_version,
             self.metadata.memories_loaded,
             self.metadata.core_count,
             self.metadata.index_count,
             self.metadata.output_chars,
             self.metadata.truncated
+        )?;
+        writeln!(
+            f,
+            "churn: unchanged_changed_bytes={} one_added_changed_bytes={} one_added_prefix_preserved={}",
+            self.churn.unchanged_changed_bytes,
+            self.churn.one_added_changed_bytes,
+            self.churn.one_added_prefix_preserved
         )?;
         writeln!(f, "all_checks_passed: {}", self.metrics.all_checks_passed)?;
         if self.failing_examples.is_empty() {

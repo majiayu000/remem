@@ -397,7 +397,7 @@ fn query_owner_included_memory_rows(
     let sql = format!(
         "SELECT {}, {} FROM memories \
          WHERE {} \
-         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+         ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{}",
         memory::MEMORY_COLS,
         MEMORY_OWNER_COLS,
         conditions.join(" AND "),
@@ -424,7 +424,7 @@ fn query_owner_traces_for_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT {}, {} FROM memories WHERE id IN ({}) ORDER BY updated_at_epoch DESC",
+        "SELECT {}, {} FROM memories WHERE id IN ({}) ORDER BY updated_at_epoch DESC, id ASC",
         memory::MEMORY_COLS,
         MEMORY_OWNER_COLS,
         placeholders
@@ -468,7 +468,7 @@ fn query_owner_exclusion_traces(
     let sql = format!(
         "SELECT {}, {} FROM memories \
          WHERE {} \
-         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+         ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{}",
         memory::MEMORY_COLS,
         MEMORY_OWNER_COLS,
         conditions.join(" AND "),
@@ -581,7 +581,7 @@ fn query_summary_batch(
            AND ((owner_scope = 'repo' AND owner_key = ?1) \
                 OR (owner_scope = 'repo' AND target_project = ?1) \
                 OR (owner_scope IS NULL AND project = ?1)) \
-         ORDER BY created_at_epoch DESC LIMIT ?2 OFFSET ?3",
+         ORDER BY created_at_epoch DESC, request ASC, completed ASC LIMIT ?2 OFFSET ?3",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![project, limit as i64, offset as i64],

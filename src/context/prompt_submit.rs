@@ -100,7 +100,8 @@ pub(crate) fn prompt_submit_additional_context(
         return Ok(None);
     }
 
-    let staleness_labels = prompt_submit_staleness_labels(conn, &rendered);
+    let render_reference_epoch = chrono::Utc::now().timestamp();
+    let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
     audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
         ContextAuditItem::injected_memory_with_labels(
             memory,
@@ -109,7 +110,7 @@ pub(crate) fn prompt_submit_additional_context(
             &staleness_labels,
         )
     }));
-    let output = render_prompt_submit_context(&rendered, &staleness_labels);
+    let output = render_prompt_submit_context(&rendered, &staleness_labels, render_reference_epoch);
     let decision = prompt_submit_decision(output);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))
@@ -159,13 +160,13 @@ fn prompt_relevance_passes(prompt: &str, memory: &Memory) -> bool {
 fn render_prompt_submit_context(
     memories: &[Memory],
     staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
+    render_reference_epoch: i64,
 ) -> String {
     let mut output = String::from("# remem prompt context\n\n## Relevant Memories\n");
     output.push_str(crate::memory::usage::citation_contract_line());
     output.push('\n');
     output.push_str(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY);
     output.push('\n');
-    let now = chrono::Utc::now().timestamp();
     for memory in memories {
         let header = format!(
             "**#{} {}** ({}, {}; {})\n",
@@ -173,7 +174,7 @@ fn render_prompt_submit_context(
             memory.title,
             memory.memory_type,
             format_epoch_short(memory.updated_at_epoch),
-            memory_render_metadata_with_labels(memory, now, staleness_labels)
+            memory_render_metadata_with_labels(memory, render_reference_epoch, staleness_labels)
         );
         if char_len(&output) + char_len(&header) >= PROMPT_SUBMIT_CHAR_LIMIT {
             break;
@@ -193,12 +194,12 @@ fn render_prompt_submit_context(
 fn prompt_submit_staleness_labels(
     conn: &rusqlite::Connection,
     memories: &[Memory],
+    render_reference_epoch: i64,
 ) -> HashMap<i64, crate::memory::MemoryStalenessLabel> {
-    let now_epoch = chrono::Utc::now().timestamp();
     crate::memory::staleness::memory_staleness_labels_for_memories_lossy(
         conn,
         memories,
-        now_epoch,
+        render_reference_epoch,
         |id, error| {
             crate::log::error(
                 "context",
@@ -216,7 +217,11 @@ fn prompt_submit_staleness_labels(
             .map(|memory| {
                 (
                     memory.id,
-                    crate::memory::memory_staleness_error_label(memory, now_epoch, &error),
+                    crate::memory::memory_staleness_error_label(
+                        memory,
+                        render_reference_epoch,
+                        &error,
+                    ),
                 )
             })
             .collect()
@@ -578,6 +583,73 @@ mod tests {
         assert!(output.starts_with("# remem prompt context"));
         assert!(output.contains("Migration locking fix"));
         assert!(!output.contains("# remem context delta"));
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_repeated_identical_inputs_are_byte_identical() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-deterministic";
+        insert_prompt_submit_memory(
+            &conn,
+            project,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+        )?;
+
+        let first = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-deterministic-1",
+            "How should SQLCipher protect private persisted data?",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("first prompt should inject context"))?;
+        let second = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-deterministic-2",
+            "How should SQLCipher protect private persisted data?",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("second prompt should inject context"))?;
+
+        assert_eq!(first, second);
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_context_appends_without_rewriting_session_start_prefix() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-additive";
+        insert_prompt_submit_memory(
+            &conn,
+            project,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+        )?;
+        let session_start_prefix = "# remem context\n\n## Core\nStable startup prefix\n\n";
+
+        let prompt_context = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-additive",
+            "How should SQLCipher protect private persisted data?",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("prompt should inject context"))?;
+        let combined = format!("{session_start_prefix}{prompt_context}");
+
+        assert!(combined.starts_with(session_start_prefix));
+        assert_eq!(
+            &combined.as_bytes()[..session_start_prefix.len()],
+            session_start_prefix.as_bytes()
+        );
+        assert!(prompt_context.starts_with("# remem prompt context"));
+        assert!(!prompt_context.contains("# remem context\n\n## Core"));
         Ok(())
     }
 

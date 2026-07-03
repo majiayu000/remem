@@ -31,7 +31,7 @@ use timer::log_context_timer;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
-pub(in crate::context) const RENDER_CONTRACT_VERSION: u32 = 1;
+pub(crate) const RENDER_CONTRACT_VERSION: u32 = 1;
 
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,

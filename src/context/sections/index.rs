@@ -87,13 +87,21 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
         return IndexRenderSummary::default();
     }
 
-    let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
-    for memory in memories
+    let mut indexed_memories = memories
         .iter()
         .filter(|memory| MemoryType::parse(&memory.memory_type).is_none_or(MemoryType::is_indexed))
         .filter(|memory| !excluded_ids.contains(&memory.id))
-        .take(limits.memory_index_limit)
-    {
+        .collect::<Vec<_>>();
+    indexed_memories.sort_by(|left, right| {
+        memory_index_type_order(left)
+            .cmp(&memory_index_type_order(right))
+            .then_with(|| left.memory_type.cmp(&right.memory_type))
+            .then_with(|| right.updated_at_epoch.cmp(&left.updated_at_epoch))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
+    for memory in indexed_memories.into_iter().take(limits.memory_index_limit) {
         by_type
             .entry(memory.memory_type.as_str())
             .or_default()
@@ -169,6 +177,12 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
         count: rendered_count,
         ids: rendered_ids,
     }
+}
+
+fn memory_index_type_order(memory: &Memory) -> usize {
+    MemoryType::parse(&memory.memory_type)
+        .and_then(|memory_type| memory_type.index_order())
+        .unwrap_or(usize::MAX)
 }
 
 fn push_memory_index_line(
