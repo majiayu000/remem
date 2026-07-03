@@ -181,10 +181,10 @@ fn run_sandbox_eval_inner(
     let unchanged_snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render unchanged SessionStart injection context")?;
-    let unchanged_changed_bytes = changed_byte_count(
-        &snapshot.rendered_output,
-        &unchanged_snapshot.rendered_output,
-    );
+    let snapshot_churn_surface = stable_churn_surface(&snapshot.rendered_output);
+    let unchanged_churn_surface = stable_churn_surface(&unchanged_snapshot.rendered_output);
+    let unchanged_changed_bytes =
+        changed_byte_count(&snapshot_churn_surface, &unchanged_churn_surface);
     {
         let conn = crate::db::open_db().context("open sandbox injection eval DB for churn")?;
         insert_one_added_memory(&conn).context("insert one-added churn fixture memory")?;
@@ -192,18 +192,17 @@ fn run_sandbox_eval_inner(
     let one_added_snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render one-added SessionStart injection context")?;
-    let one_added_changed_bytes = changed_byte_count(
-        &snapshot.rendered_output,
-        &one_added_snapshot.rendered_output,
-    );
+    let one_added_churn_surface = stable_churn_surface(&one_added_snapshot.rendered_output);
+    let one_added_changed_bytes =
+        changed_byte_count(&snapshot_churn_surface, &one_added_churn_surface);
     let one_added_first_affected_section =
-        first_section_containing(&one_added_snapshot.rendered_output, ONE_ADDED_TITLE);
+        first_section_containing(&one_added_churn_surface, ONE_ADDED_TITLE);
     let one_added_prefix_preserved =
         one_added_first_affected_section
             .as_deref()
             .is_some_and(|section| {
-                prefix_before_section(&snapshot.rendered_output, section)
-                    == prefix_before_section(&one_added_snapshot.rendered_output, section)
+                prefix_before_section(&snapshot_churn_surface, section)
+                    == prefix_before_section(&one_added_churn_surface, section)
             });
     let abstention_snapshot = crate::context::session_start_eval_snapshot(
         ABSTENTION_PROJECT,
@@ -350,6 +349,19 @@ fn changed_byte_count(left: &str, right: &str) -> usize {
         .filter(|(left, right)| left != right)
         .count()
         + left.len().abs_diff(right.len())
+}
+
+fn stable_churn_surface(output: &str) -> String {
+    output
+        .lines()
+        .filter(|line| {
+            !line.starts_with("└─ updated:")
+                && !line.starts_with("├─ updated:")
+                && !line.starts_with("└─ \u{1b}[1mupdated\u{1b}[0m:")
+                && !line.starts_with("├─ \u{1b}[1mupdated\u{1b}[0m:")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn first_section_containing(output: &str, needle: &str) -> Option<String> {

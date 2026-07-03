@@ -11,10 +11,7 @@ pub(super) fn sort_memories_by_branch(memories: &mut [Memory], current_branch: O
     };
 
     memories.sort_by(|left, right| {
-        branch_sort_score(left, branch)
-            .cmp(&branch_sort_score(right, branch))
-            .then_with(|| right.updated_at_epoch.cmp(&left.updated_at_epoch))
-            .then_with(|| left.id.cmp(&right.id))
+        branch_sort_score(left, branch).cmp(&branch_sort_score(right, branch))
     });
 }
 
