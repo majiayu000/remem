@@ -118,7 +118,10 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     &decision_for_debug,
                 );
             }
-            print!("{}", decision.output);
+            print!(
+                "{}",
+                context_stdout_for_invocation(&decision.output, &invocation)?
+            );
             log_context_timer(
                 timer,
                 &request,
@@ -219,7 +222,10 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             audit_write_start,
         ));
     }
-    print!("{}", decision.output);
+    print!(
+        "{}",
+        context_stdout_for_invocation(&decision.output, &invocation)?
+    );
     log_context_timer(timer, &request, &decision, &stats, precheck);
     Ok(())
 }
@@ -736,4 +742,37 @@ fn build_context_header_with_style(
     use_colors: bool,
 ) -> String {
     super::style::context_header(project, current_branch, hook_source, host, use_colors)
+}
+
+pub(in crate::context) fn context_stdout_for_invocation(
+    output: &str,
+    invocation: &ContextInvocation,
+) -> Result<String> {
+    if output.is_empty() || !is_codex_session_start_hook(invocation) {
+        return Ok(output.to_string());
+    }
+
+    let additional_context = super::style::strip_ansi(output);
+    let hook_output = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": additional_context,
+        }
+    });
+    Ok(format!("{}\n", serde_json::to_string(&hook_output)?))
+}
+
+fn is_codex_session_start_hook(invocation: &ContextInvocation) -> bool {
+    if invocation.host != super::host::HostKind::CodexCli {
+        return false;
+    }
+
+    matches!(
+        invocation
+            .source
+            .as_deref()
+            .map(|source| source.trim().to_ascii_lowercase()),
+        Some(source)
+            if matches!(source.as_str(), "startup" | "resume" | "clear" | "compact")
+    )
 }
