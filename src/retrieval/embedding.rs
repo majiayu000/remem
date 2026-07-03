@@ -228,8 +228,39 @@ fn embed_text(text: &str) -> Result<TextEmbedding> {
         ActiveEmbeddingProvider::Local | ActiveEmbeddingProvider::FeatureHash => {
             TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
         }
-        ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key),
+        ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key)
+            .or_else(|error| embed_with_call_failure_fallback(text, &config, error)),
         ActiveEmbeddingProvider::Off => bail!("embedding provider is off"),
+    }
+}
+
+fn embed_with_call_failure_fallback(
+    text: &str,
+    config: &EmbeddingConfig,
+    error: anyhow::Error,
+) -> Result<TextEmbedding> {
+    let Some(fallback) = config.fallback else {
+        return Err(error);
+    };
+    let fallback_runtime = provider_runtime(config, fallback);
+    if let Some(reason) = fallback_runtime.unavailable_reason {
+        bail!(
+            "embedding provider api failed: {error}; fallback {} unavailable: {reason}",
+            fallback.label()
+        );
+    }
+    let message = format!(
+        "configured embedding provider api failed: {}; using fallback {}",
+        error,
+        fallback.label()
+    );
+    crate::log::error("embedding", &message);
+    match fallback_runtime.provider {
+        EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+            TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
+        }
+        EmbeddingProvider::Off => bail!("embedding provider is off"),
+        EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => Err(error),
     }
 }
 

@@ -174,6 +174,42 @@ fn api_provider_without_key_uses_configured_fallback_visibly() -> Result<()> {
 }
 
 #[test]
+fn api_provider_call_failure_uses_configured_feature_hash_fallback() -> Result<()> {
+    with_clean_env(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0u8; 8192];
+            let _ = stream.read(&mut buffer)?;
+            let body = "provider unavailable";
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+            std::env::set_var(ENV_FALLBACK, "feature-hash");
+            std::env::set_var(ENV_API_KEY, "test-key");
+            std::env::set_var(ENV_BASE_URL, format!("http://{addr}/v1"));
+        }
+
+        let embedding = embed_query("remote endpoint fallback")?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+
+        assert_eq!(embedding.model(), LOCAL_EMBEDDING_MODEL);
+        assert_eq!(embedding.dimensions(), LOCAL_EMBEDDING_DIMENSIONS);
+        Ok(())
+    })
+}
+
+#[test]
 fn config_file_reads_fallback_and_model_dir() -> Result<()> {
     with_clean_env(|| {
         let path = std::env::temp_dir().join(format!(

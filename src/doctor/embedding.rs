@@ -63,13 +63,6 @@ fn provider_check(status: &crate::retrieval::embedding::EmbeddingProviderStatus)
             ),
         );
     }
-    if status.disabled {
-        return Check::new(
-            "Embedding provider",
-            Status::Ok,
-            "provider=off; vector channel disabled explicitly",
-        );
-    }
     if status.degraded {
         return Check::new(
             "Embedding provider",
@@ -78,6 +71,13 @@ fn provider_check(status: &crate::retrieval::embedding::EmbeddingProviderStatus)
                 .degradation_reason
                 .clone()
                 .unwrap_or_else(|| "embedding provider fallback active".to_string()),
+        );
+    }
+    if status.disabled {
+        return Check::new(
+            "Embedding provider",
+            Status::Ok,
+            "provider=off; vector channel disabled explicitly",
         );
     }
     Check::new(
@@ -221,6 +221,23 @@ mod tests {
             let checks = check_embedding_provider(None);
 
             assert!(matches!(checks[0].status, Status::Ok));
+            assert!(matches!(checks[1].status, Status::Ok));
+            assert!(checks[1].detail.contains("intentionally ignored"));
+        });
+    }
+
+    #[test]
+    fn fallback_to_off_reports_degraded_provider_before_coverage_skip() {
+        with_clean_embedding_env(|| {
+            unsafe {
+                std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+                std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+            }
+
+            let checks = check_embedding_provider(None);
+
+            assert!(matches!(checks[0].status, Status::Warn));
+            assert!(checks[0].detail.contains("using fallback off"));
             assert!(matches!(checks[1].status, Status::Ok));
             assert!(checks[1].detail.contains("intentionally ignored"));
         });
