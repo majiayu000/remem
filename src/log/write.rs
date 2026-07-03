@@ -1,7 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -127,22 +127,43 @@ fn with_prepared_log<T>(
     policy: &LogPolicy,
     action: impl FnOnce(File) -> std::io::Result<Option<T>>,
 ) -> std::io::Result<Option<T>> {
-    let prepare_started = SystemTime::now();
+    let prepare_started_epoch = now_epoch();
     create_parent_dir(policy)?;
     let lock_path = log_lock_path(&policy.path);
-    let lock_file = private_read_write_create_options().open(&lock_path)?;
+    let lock_file = match private_read_write_create_options().open(&lock_path) {
+        Ok(file) => file,
+        Err(error) => {
+            record_rotation_issue(
+                policy,
+                "lock_open_failed",
+                &format!("open log lock {} failed: {}", lock_path.display(), error),
+            );
+            return append_fallback(policy, action);
+        }
+    };
     set_private_permissions(&lock_path);
-    if !try_lock_until(&lock_file, Duration::from_millis(policy.lock_timeout_ms))? {
-        record_rotation_issue(
-            policy,
-            "lock_timeout",
-            &format!(
-                "timed out after {}ms waiting for {}",
-                policy.lock_timeout_ms,
-                lock_path.display()
-            ),
-        );
-        return append_fallback(policy, action);
+    match try_lock_until(&lock_file, Duration::from_millis(policy.lock_timeout_ms)) {
+        Ok(true) => {}
+        Ok(false) => {
+            record_rotation_issue(
+                policy,
+                "lock_timeout",
+                &format!(
+                    "timed out after {}ms waiting for {}",
+                    policy.lock_timeout_ms,
+                    lock_path.display()
+                ),
+            );
+            return append_fallback(policy, action);
+        }
+        Err(error) => {
+            record_rotation_issue(
+                policy,
+                "lock_failed",
+                &format!("lock {} failed: {}", lock_path.display(), error),
+            );
+            return append_fallback(policy, action);
+        }
     }
 
     let rotate_result = rotate_if_needed(&policy.path, policy.max_bytes, policy.max_rotated_files);
@@ -159,7 +180,7 @@ fn with_prepared_log<T>(
         Ok(file) => {
             let result = action(file);
             if result.is_ok() {
-                clear_stale_rotation_issue(policy, prepare_started);
+                clear_stale_rotation_issue(policy, prepare_started_epoch);
             }
             result
         }
@@ -387,16 +408,12 @@ fn read_rotation_issue(policy: &LogPolicy) -> Result<Option<LogRotationIssue>, S
         .map_err(|error| format!("parse {} failed: {}", path.display(), error))
 }
 
-fn clear_stale_rotation_issue(policy: &LogPolicy, prepare_started: SystemTime) {
+fn clear_stale_rotation_issue(policy: &LogPolicy, prepare_started_epoch: i64) {
     let path = log_rotation_issue_path(&policy.path);
-    let Ok(metadata) = std::fs::metadata(&path) else {
-        return;
-    };
-    let Ok(modified) = metadata.modified() else {
-        return;
-    };
-    if modified <= prepare_started {
-        remove_rotation_issue_file(&path);
+    if let Ok(Some(issue)) = read_rotation_issue(policy) {
+        if issue.at_epoch < prepare_started_epoch {
+            remove_rotation_issue_file(&path);
+        }
     }
 }
 

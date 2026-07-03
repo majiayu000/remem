@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 pub(crate) const DEFAULT_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
 pub(crate) const DEFAULT_LOG_MAX_ROTATED_FILES: usize = 3;
 pub(crate) const DEFAULT_LOG_LOCK_TIMEOUT_MS: u64 = 250;
+pub(crate) const MAX_LOG_ROTATED_FILES: usize = 100;
 
 thread_local! {
     static LOG_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -113,7 +114,15 @@ fn parse_non_negative_usize_env(
         return default;
     };
     match value.parse::<usize>() {
-        Ok(parsed) => parsed,
+        Ok(parsed) if parsed <= MAX_LOG_ROTATED_FILES => parsed,
+        Ok(_) => {
+            invalid_env.push(InvalidLogEnv {
+                name,
+                default: default.to_string(),
+                reason: "expected non-negative integer <= 100",
+            });
+            default
+        }
         Err(_) => {
             invalid_env.push(InvalidLogEnv {
                 name,

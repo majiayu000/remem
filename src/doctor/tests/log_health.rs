@@ -1,13 +1,9 @@
-use std::ffi::OsString;
-use std::sync::Mutex;
-
 use crate::db::test_support::ScopedTestDataDir;
+use crate::log::test_support::with_log_envs as with_doctor_log_envs;
 
 use super::super::logging::check_log_health;
 use super::super::report::{run_doctor_with_writer, DoctorOptions};
 use super::super::types::Status;
-
-static LOG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn check_log_health_warns_on_invalid_env_without_exposing_values() {
@@ -85,47 +81,6 @@ fn run_doctor_json_includes_log_health_check() {
             .any(|check| check["name"].as_str() == Some("Log health")),
         "doctor JSON should include Log health check"
     );
-}
-
-fn with_doctor_log_envs<T>(vars: &[(&'static str, Option<&str>)], f: impl FnOnce() -> T) -> T {
-    let _guard = LOG_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let _env = ScopedDoctorLogEnv::set(vars);
-    f()
-}
-
-struct ScopedDoctorLogEnv {
-    previous: Vec<(&'static str, Option<OsString>)>,
-}
-
-impl ScopedDoctorLogEnv {
-    fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
-        let previous = vars
-            .iter()
-            .map(|(name, _)| (*name, std::env::var_os(name)))
-            .collect::<Vec<_>>();
-
-        for (name, value) in vars {
-            match value {
-                Some(value) => unsafe { std::env::set_var(name, value) },
-                None => unsafe { std::env::remove_var(name) },
-            }
-        }
-
-        Self { previous }
-    }
-}
-
-impl Drop for ScopedDoctorLogEnv {
-    fn drop(&mut self) {
-        for (name, value) in self.previous.drain(..) {
-            match value {
-                Some(value) => unsafe { std::env::set_var(name, value) },
-                None => unsafe { std::env::remove_var(name) },
-            }
-        }
-    }
 }
 
 fn rotated_path(path: &std::path::Path, index: usize) -> std::path::PathBuf {

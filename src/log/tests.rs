@@ -1,27 +1,18 @@
-use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Mutex;
 
 use fs2::FileExt;
 
 use super::config::{
     log_lock_path, log_max_bytes, log_path, log_policy, log_rotation_issue_path, rotated_log_path,
     with_log_dir, DEFAULT_LOG_LOCK_TIMEOUT_MS, DEFAULT_LOG_MAX_BYTES,
-    DEFAULT_LOG_MAX_ROTATED_FILES,
+    DEFAULT_LOG_MAX_ROTATED_FILES, MAX_LOG_ROTATED_FILES,
 };
+use super::test_support::with_log_envs;
 use super::write::{rotate_if_needed, LogRotationIssue};
 use super::{info, open_log_append};
 use crate::db::test_support::ScopedTestDataDir;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-fn with_log_envs<T>(vars: &[(&'static str, Option<&str>)], f: impl FnOnce() -> T) -> T {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    let _env = ScopedLogEnv::set(vars);
-    f()
-}
 
 fn with_log_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
     with_log_envs(&[("REMEM_LOG_MAX_BYTES", value)], f)
@@ -87,6 +78,19 @@ fn log_policy_parses_rotation_env_and_collects_invalid_values() {
                     "REMEM_LOG_LOCK_TIMEOUT_MS"
                 ]
             );
+        },
+    );
+
+    with_log_envs(
+        &[("REMEM_LOG_MAX_ROTATED_FILES", Some("999999999"))],
+        || {
+            let policy = log_policy().expect("log policy should resolve");
+            assert_eq!(policy.max_rotated_files, DEFAULT_LOG_MAX_ROTATED_FILES);
+            assert_eq!(policy.invalid_env.len(), 1);
+            assert_eq!(policy.invalid_env[0].name, "REMEM_LOG_MAX_ROTATED_FILES");
+            assert!(policy.invalid_env[0]
+                .reason
+                .contains(&MAX_LOG_ROTATED_FILES.to_string()));
         },
     );
 }
@@ -292,6 +296,28 @@ fn write_log_lock_timeout_preserves_line_and_records_issue() {
 }
 
 #[test]
+fn write_log_lock_open_failure_preserves_line_and_records_issue() {
+    let _data_dir = ScopedTestDataDir::new("log-lock-open-failure");
+
+    with_log_envs(&[("REMEM_STDERR_TO_LOG", Some("1"))], || {
+        let path = log_path().expect("log path should resolve");
+        let lock_path = log_lock_path(&path);
+        std::fs::create_dir_all(&lock_path).expect("lock path directory should create");
+
+        info("log-lock-open-failure-test", "preserved-lock-open-line");
+
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("active log should read")
+                .contains("preserved-lock-open-line"),
+            "fallback should preserve log line when lock file cannot open"
+        );
+        let issue = read_issue(&log_rotation_issue_path(&path));
+        assert_eq!(issue.kind, "lock_open_failed");
+    });
+}
+
+#[test]
 fn write_log_rotate_failure_preserves_line_and_records_issue() {
     let _data_dir = ScopedTestDataDir::new("log-rotate-failure");
 
@@ -320,6 +346,34 @@ fn write_log_rotate_failure_preserves_line_and_records_issue() {
             assert_eq!(issue.kind, "rotate_failed");
         },
     );
+}
+
+#[test]
+fn successful_prepare_does_not_clear_newer_same_second_issue() {
+    let _data_dir = ScopedTestDataDir::new("log-sidecar-newer-same-second");
+
+    with_log_envs(&[("REMEM_STDERR_TO_LOG", Some("1"))], || {
+        let path = log_path().expect("log path should resolve");
+        std::fs::create_dir_all(path.parent().expect("log should have parent"))
+            .expect("log parent should create");
+        let sidecar = log_rotation_issue_path(&path);
+        write_issue(
+            &sidecar,
+            &LogRotationIssue {
+                kind: "lock_timeout".to_string(),
+                message: "same-second issue".to_string(),
+                path: path.display().to_string(),
+                at_epoch: chrono::Utc::now().timestamp(),
+            },
+        );
+
+        info("log-sidecar-test", "healthy-line");
+
+        assert!(
+            sidecar.exists(),
+            "same-second issue must not be cleared by a successful writer"
+        );
+    });
 }
 
 #[cfg(unix)]
@@ -436,6 +490,11 @@ fn read_issue(path: &Path) -> LogRotationIssue {
     serde_json::from_slice(&bytes).expect("issue sidecar should parse")
 }
 
+fn write_issue(path: &Path, issue: &LogRotationIssue) {
+    let bytes = serde_json::to_vec(issue).expect("issue should serialize");
+    std::fs::write(path, bytes).expect("issue sidecar should write");
+}
+
 fn read_all_log_text(path: &Path, max_rotated_files: usize) -> String {
     let mut text = std::fs::read_to_string(path).unwrap_or_default();
     for index in 1..=max_rotated_files {
@@ -478,37 +537,4 @@ fn unique_temp_dir(label: &str) -> std::path::PathBuf {
             .expect("system time before unix epoch")
             .as_nanos()
     ))
-}
-
-struct ScopedLogEnv {
-    previous: Vec<(&'static str, Option<OsString>)>,
-}
-
-impl ScopedLogEnv {
-    fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
-        let previous = vars
-            .iter()
-            .map(|(name, _)| (*name, std::env::var_os(name)))
-            .collect::<Vec<_>>();
-
-        for (name, value) in vars {
-            match value {
-                Some(value) => unsafe { std::env::set_var(name, value) },
-                None => unsafe { std::env::remove_var(name) },
-            }
-        }
-
-        Self { previous }
-    }
-}
-
-impl Drop for ScopedLogEnv {
-    fn drop(&mut self) {
-        for (name, value) in self.previous.drain(..) {
-            match value {
-                Some(value) => unsafe { std::env::set_var(name, value) },
-                None => unsafe { std::env::remove_var(name) },
-            }
-        }
-    }
 }
