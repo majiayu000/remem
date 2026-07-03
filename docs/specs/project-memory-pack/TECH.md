@@ -8,10 +8,11 @@ Tracking:
 
 ## Existing Implementation Facts
 
-- `memories` rows already carry the fields a pack must preserve: scope,
-  memory_type, state_key (+confidence/reason), confidence, provenance/source
-  columns, `valid_from_epoch`/`expires_at_epoch`, and status
-  (`active`/`stale`).
+- `memories` rows already carry the fields a pack must preserve: title,
+  content, scope, memory_type, state_key (+confidence/reason), confidence,
+  provenance/source columns, `valid_from_epoch`/`expires_at_epoch`, owner
+  routing fields, and status (`active`/`stale`/`archived` plus governance
+  statuses in newer schemas).
 - Suppression state lives in `memory_suppressions`; lifecycle semantics are
   invalidate-never-delete (`docs/memory-lifecycle.md`).
 - Backup import is whole-DB restore, not selective merge (#145/#171
@@ -40,18 +41,26 @@ Directory layout (versioned, committed to the consumer repo):
   `(memory_type, state_key | content_hash)`, LF line endings, no timestamps
   of the export run itself (determinism; same principle as #673). The
   manifest digest covers `memories.jsonl` bytes.
-- Exported fields per memory: content, memory_type, scope (`project` only),
-  state_key + confidence/reason, confidence, created/valid epochs, source
-  trust class, content_hash. Local row ids, session ids, and raw evidence
-  event ids are NOT exported (machine-local identifiers; provenance is
-  summarized as an origin string instead).
+- Exported fields per memory: title, content, memory_type, scope (`project`
+  only), state_key + confidence/reason, confidence, created/valid epochs,
+  owner intent (`repo`), and content_hash. Local row ids, session ids, raw
+  evidence event ids, and the row's local source trust class are NOT exported
+  (machine-local identifiers; provenance is summarized as an origin string
+  instead). Import assigns the `pack` trust class locally, so canonical bytes
+  never contain the trust class that import rewrites.
 - `format_version` starts at 1; import rejects unknown major versions with an
   actionable error.
 
 ## Export
 
-- Query: active, project-scoped memories for the resolved project id;
-  `stale`, expired, suppressed, and user-scoped rows are excluded.
+- Query: active repo-owned startup memories for the resolved local project:
+  `owner_scope = 'repo'`, owner key matching the current repository/project
+  owner, target project matching the current project where applicable, and
+  context class eligible for startup/retrieval context. Legacy rows without
+  owner fields may be included only when the startup-context compatibility
+  query would include them for the same project. `stale`, expired,
+  suppressed, tool/domain/user/workstream/session-owned rows, and other
+  non-startup rows are excluded.
 - Redaction gate: every content field is re-scanned with the capture-time
   redaction patterns; any hit aborts the export listing the offending memory
   ids (exit non-zero, U-29 — no silent skip-and-continue).
@@ -62,20 +71,31 @@ Directory layout (versioned, committed to the consumer repo):
 
 Merge algorithm per pack row, inside one transaction:
 
-1. Identity: match by `state_key` when present, else by
-   `(memory_type, content_hash)`.
-2. Skip (report `dedup`) when an identical active local row exists.
-3. Skip (report `suppressed`/`invalidated`) when the identity matches a
-   locally suppressed or stale/invalidated memory — packs never resurrect
-   local decisions (#381 semantics).
-4. Conflict (same state_key, different content): the local row wins; the pack
+1. Remap project identity first: the manifest exporter project remains
+   provenance only, while imported rows target the importing checkout's
+   resolved local project and repo owner key. Round-trip export uses the
+   local project identity in the new manifest but keeps identical
+   `memories.jsonl` bytes.
+2. Identity: match by
+   `(target_owner_scope, target_owner_key, memory_type, state_key)` when a
+   state key is present, else by
+   `(target_owner_scope, target_owner_key, memory_type, content_hash)`.
+3. Skip (report `dedup`) when an identical active local row exists.
+4. Skip (report `suppressed`/`invalidated`) when the identity or any policy
+   suppression predicate matches local policy: direct memory identity,
+   topic/state key, entity, or substring/pattern suppression. Also skip when
+   the local identity maps to any inactive local row (`stale`, `archived`,
+   `rejected`, `deleted`, `superseded`, invalidated, or equivalent
+   governance status) — packs never resurrect local decisions (#381
+   semantics).
+5. Conflict (same state_key, different content): the local row wins; the pack
    row is recorded as a `pending_review` candidate with
    `source_kind='pack'` so the user can adopt it explicitly. No silent
    overwrite in either direction.
-5. Otherwise insert as an active memory with source trust class `pack` and an
-   origin string (`pack:<manifest digest prefix>`), running the #672
-   instruction-pattern scan first; quarantined content goes to the review
-   inbox, not the store.
+6. Otherwise, after #672 lands, insert as an active memory with source trust
+   class `pack` and an origin string (`pack:<manifest digest prefix>`),
+   running the #672 instruction-pattern scan first; quarantined content goes
+   to the review inbox, not the store.
 
 `--dry-run` executes the same pipeline against a savepoint and rolls back,
 printing the add/dedup/skip/conflict/quarantine report.
@@ -106,11 +126,14 @@ ergonomics, the pack for determinism and re-import.
 
 Phase 1: pack format + export + determinism/redaction tests
 (`cargo test export`).
-Phase 2: import + merge/dry-run + round-trip and resurrection-safety tests
-(`cargo test import`).
-Phase 3: trust-class wiring (#672 dependency), doctor probe, README
+Phase 2: import dry-run + merge planner + round-trip simulation and
+resurrection-safety tests, without writing active imported memories until the
+#672 quarantine/trust-class schema is available (`cargo test import`).
+Phase 3: active import + trust-class wiring (#672 dependency), doctor probe,
+README
 walkthrough; `remem doctor` smoke on a store with an imported pack.
 
-Phase 3 depends on the #672 trust-class schema landing first; Phases 1–2 can
-ship with the origin string recorded and the trust class defaulting to the
-most restrictive treatment.
+Active import depends on the #672 trust-class schema and instruction-pattern
+scan landing first. Export and dry-run import planning can ship earlier, but
+no pack row may enter active startup memory without the #672 scan and `pack`
+trust class in place.

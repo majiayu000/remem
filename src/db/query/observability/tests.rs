@@ -71,6 +71,7 @@ fn setup_schema(conn: &Connection) -> Result<()> {
         );
         CREATE TABLE memory_candidates (
             id INTEGER PRIMARY KEY,
+            source_kind TEXT NOT NULL DEFAULT 'unattributed',
             review_status TEXT NOT NULL,
             auto_promote_block_reason TEXT,
             created_at_epoch INTEGER NOT NULL DEFAULT 0

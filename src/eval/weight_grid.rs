@@ -493,6 +493,7 @@ mod tests {
                 query: "local database encryption".to_string(),
                 category: "retrieval".to_string(),
                 slice: Some("paraphrase".to_string()),
+                hop_path: None,
                 project: Some("/repo-a".to_string()),
                 branch: Some("main".to_string()),
                 memory_type: None,

@@ -168,6 +168,7 @@ fn load_status_report() -> Result<StatusReport> {
         candidate_promotion: candidate_promotion
             .into_iter()
             .map(|stat| CandidatePromotionStatus {
+                source_kind: stat.source_kind,
                 review_status: stat.review_status,
                 block_reason: stat.block_reason,
                 total: stat.total,
@@ -338,8 +339,10 @@ fn print_status_report(report: &StatusReport) {
         println!("Candidate promotion:");
         for stat in &report.candidate_promotion {
             let label = match &stat.block_reason {
-                Some(reason) => format!("{} / {}", stat.review_status, reason),
-                None => stat.review_status.clone(),
+                Some(reason) => {
+                    format!("{} / {} / {}", stat.source_kind, stat.review_status, reason)
+                }
+                None => format!("{} / {}", stat.source_kind, stat.review_status),
             };
             println!(
                 "  {:<48} {:>6}  (7d: {})",
@@ -559,6 +562,7 @@ pub(super) struct PendingObservationStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct CandidatePromotionStatus {
+    pub source_kind: String,
     pub review_status: String,
     pub block_reason: Option<String>,
     pub total: i64,

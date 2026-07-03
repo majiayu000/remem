@@ -25,9 +25,10 @@ from passively injected text to actively executable capability.
 
 - Users can see which procedures are mature enough to externalize
   (`remem procedures list` with maturity signals).
-- An explicit CLI/MCP call renders a mature procedure into a reviewable draft
-  artifact: Claude Code skill, Codex prompt, or Markdown runbook. Committing
-  the draft stays a human git action.
+- An explicit CLI command renders a mature procedure into a reviewable draft
+  artifact: Claude Code skill, Codex prompt, or Markdown runbook. MCP may
+  expose read-only procedure discovery later, but v1 export writes remain
+  CLI-only. Committing the draft stays a human git action.
 - Exported artifacts remain linked to their source procedure: when the
   procedure is invalidated or its verification goes stale, doctor flags the
   export as drifted.
@@ -56,18 +57,27 @@ from passively injected text to actively executable capability.
   [--out <dir>]` writes a draft file containing the command, reuse condition,
   preconditions (project/branch), and a provenance footer (source procedure
   id, evidence event ids, generation date, remem version).
-- Every rendered file opens with a marker header identifying it as a
-  remem-derived draft pending human review.
+- Every rendered file carries a marker identifying it as a remem-derived draft
+  pending human review. For Claude skill exports, valid `SKILL.md` YAML
+  frontmatter remains the first bytes of the file and the draft marker follows
+  the closing frontmatter delimiter.
+- The exporter refuses to overwrite reviewed or user-edited draft files.
 - `remem doctor` reports exported artifacts whose source procedure is no
-  longer active or whose verification freshness lapsed.
+  longer active, whose verification freshness lapsed, or whose active source
+  procedure changed after export.
 
 ## Acceptance Criteria
 
 - Fixture procedure exports to all three formats; rendered output pinned by
   snapshot tests; provenance header and evidence ids present.
+- Claude skill snapshot proves YAML frontmatter is first-line content and the
+  draft warning marker is emitted only after frontmatter.
+- Existing user-edited draft files are not overwritten; the CLI exits with an
+  explicit error and instructions for choosing a new output path.
 - Negative test: worker/dream/hook code paths cannot reach the export writer
   (module visibility or runtime guard with an explicit error).
-- Doctor flags an export whose source procedure was invalidated after export.
+- Doctor flags an export whose source procedure was invalidated, freshness-
+  lapsed, or materially updated after export.
 - `docs/procedural-memory.md` non-goal paragraph is replaced with the
   review-gated export contract.
 

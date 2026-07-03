@@ -22,7 +22,9 @@ keeps the local-first principle while opening the team/onboarding scenario.
 ## Goals
 
 - `remem export --project` produces a deterministic, git-diffable pack of
-  active project-scoped memories that a repo can commit and review like code.
+  active repo-owned startup memories that a repo can commit and review like
+  code. Tool/domain/user/workstream/session-owned rows are excluded even when
+  their legacy `scope` value is `project`.
 - `remem import --pack` merges a pack into the local store safely: dedup by
   identity, never resurrecting locally suppressed or invalidated memories,
   and never granting imported content local-grade trust.

@@ -82,6 +82,7 @@ pub struct ProjectCount {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidatePromotionStat {
+    pub source_kind: String,
     pub review_status: String,
     pub block_reason: Option<String>,
     pub total: i64,
@@ -495,20 +496,22 @@ pub fn query_candidate_promotion_stats(
 ) -> Result<Vec<CandidatePromotionStat>> {
     let week_ago = now_epoch - 7 * 24 * 3600;
     let mut stmt = conn.prepare(
-        "SELECT review_status,
+        "SELECT source_kind,
+                review_status,
                 auto_promote_block_reason,
                 COUNT(*) AS total,
                 SUM(CASE WHEN created_at_epoch >= ?1 THEN 1 ELSE 0 END) AS last_7_days
          FROM memory_candidates
-         GROUP BY review_status, auto_promote_block_reason
-         ORDER BY total DESC, review_status ASC, auto_promote_block_reason ASC",
+         GROUP BY source_kind, review_status, auto_promote_block_reason
+         ORDER BY total DESC, source_kind ASC, review_status ASC, auto_promote_block_reason ASC",
     )?;
     let rows = stmt.query_map(params![week_ago], |row| {
         Ok(CandidatePromotionStat {
-            review_status: row.get(0)?,
-            block_reason: row.get(1)?,
-            total: row.get(2)?,
-            last_7_days: row.get(3)?,
+            source_kind: row.get(0)?,
+            review_status: row.get(1)?,
+            block_reason: row.get(2)?,
+            total: row.get(3)?,
+            last_7_days: row.get(4)?,
         })
     })?;
     collect_rows(rows)

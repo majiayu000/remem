@@ -6,10 +6,12 @@ use toml_edit::{value, DocumentMut, Item, Table};
 #[cfg(test)]
 mod migration_tests;
 mod model;
+mod promotion;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
 };
+pub use promotion::{summary_gate_mode, SummaryGateMode};
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
@@ -239,6 +241,8 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
     if doc.get("version").is_none() {
         doc["version"] = value(1);
     }
+
+    promotion::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);
