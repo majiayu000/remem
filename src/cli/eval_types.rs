@@ -144,6 +144,34 @@ pub(in crate::cli) struct EvalGraphDecisionArgs {
 }
 
 #[derive(Args)]
+pub(in crate::cli) struct EvalAssociativeBaselineArgs {
+    #[arg(long, default_value = crate::eval::associative::DEFAULT_DATASET_PATH)]
+    pub(in crate::cli) dataset: String,
+    #[arg(long, short = 'k', default_value = "5")]
+    pub(in crate::cli) k: usize,
+    #[arg(long, default_value = crate::eval::associative::DEFAULT_REPORT_PATH)]
+    pub(in crate::cli) json_out: String,
+    #[arg(long)]
+    pub(in crate::cli) json: bool,
+}
+
+#[derive(Args)]
+pub(in crate::cli) struct EvalCapacityArgs {
+    #[arg(long, default_value = crate::eval::capacity::DEFAULT_DATASET_PATH)]
+    pub(in crate::cli) dataset: String,
+    #[arg(long, default_value_t = 42)]
+    pub(in crate::cli) seed: u64,
+    #[arg(long, default_value = "1,10")]
+    pub(in crate::cli) scales: String,
+    #[arg(long, short = 'k', default_value = "5")]
+    pub(in crate::cli) k: usize,
+    #[arg(long)]
+    pub(in crate::cli) json_out: Option<String>,
+    #[arg(long)]
+    pub(in crate::cli) json: bool,
+}
+
+#[derive(Args)]
 pub(in crate::cli) struct EvalWeightGridArgs {
     #[arg(long, default_value = crate::eval::weight_grid::DEFAULT_DATASET_PATH)]
     pub(in crate::cli) dataset: String,

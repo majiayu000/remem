@@ -34,9 +34,9 @@ New `remem procedures` namespace:
   outside the verification freshness window — export eligibility reuses the
   promotion-gate freshness predicate rather than defining a second one.
 
-MCP: read-only `procedures` listing tool may follow; export stays CLI-only in
-v1 (writing files from MCP expands the attack surface without a driving use
-case).
+MCP: read-only `procedures` listing/status tooling may follow; export stays
+CLI-only in v1. MCP must not render or write draft artifacts because writing
+files from MCP expands the attack surface without a driving use case.
 
 ### 2. Render templates
 
@@ -57,6 +57,12 @@ Every profile emits:
 - provenance footer: source memory id, evidence event ids, verified run
   count, generation date, remem version.
 
+For `claude-skill`, `SKILL.md` YAML frontmatter is first-line content. The
+draft marker and human-visible warning are emitted immediately after the
+closing `---` delimiter so the file remains loadable by Claude skill tooling.
+For `codex-prompt` and `runbook-md`, the draft marker may be the first
+nonblank content.
+
 Snapshot tests pin all three renderings for a fixture procedure.
 
 ### 3. Write-path guard
@@ -76,20 +82,37 @@ paths that resolve into high-context locations (`.claude/`, `.codex/`,
 moving a reviewed draft there is deliberately a human `mv`/`git` action
 (SEC-13 surface; path check is by canonicalized prefix/basename, SEC-07).
 
+The writer never silently replaces an existing draft path:
+
+- absent target: write the draft and create a registry row;
+- existing target with no registry match or a content digest different from
+  the recorded export digest: refuse with an explicit error because the draft
+  may have been reviewed or user-edited;
+- existing unmodified remem-generated target: overwrite only when the user
+  passes an explicit `--overwrite-generated` flag.
+
+The error message points to `--out <new-dir>` or a renamed target as the safe
+path for a new draft. There is no flag that overwrites a reviewed/user-edited
+draft in place.
+
 ### 4. Export registry and doctor back-link
 
 New table `procedure_exports` (migration): memory_id, format, relative output
-path, content digest at export, exported_at_epoch, remem version. On each
-doctor run:
+path, content digest at export, source procedure digest/version at export,
+source `updated_at` at export, exported_at_epoch, remem version. On each doctor
+run:
 
 - flag rows whose source memory is now `stale`/expired
   (`export drifted: source procedure invalidated`);
 - flag rows whose source verification freshness lapsed;
+- flag rows whose source memory is still active but whose source digest,
+  version, or `updated_at` no longer matches the exported source snapshot
+  (`export drifted: source procedure changed after export`);
 - report count of exports per project.
 
 Doctor does not read or hash the exported files themselves (they may have
 been legitimately edited after review); drift is defined against the source
-procedure state only.
+procedure state and the source snapshot captured at export time only.
 
 ### 5. Interaction with #678
 

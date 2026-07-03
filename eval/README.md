@@ -45,7 +45,8 @@ Query fields:
 - `id`: stable case id.
 - `query`: user-facing search query.
 - `category`: bucket for per-category reporting, for example `single_session`, `multi_session`, `temporal`, `knowledge_update`, `project_scope`, `procedure`, or `abstention`.
-- `slice`: ability slice for per-slice reporting, for example `paraphrase`, `knowledge_update`, `temporal`, `abstention`, `failure_lesson`, or `multi_hop`. Defaults to `category` for older datasets.
+- `slice`: ability slice for per-slice reporting, for example `paraphrase`, `knowledge_update`, `temporal`, `abstention`, `failure_lesson`, `multi_hop`, or `associative`. Defaults to `category` for older datasets.
+- `hop_path`: optional documented query -> entity -> target path. Required for `slice: "associative"` and validated by the loader.
 - `project`: optional project filter.
 - `branch`: optional branch filter.
 - `memory_type`: optional memory type filter.
@@ -65,6 +66,13 @@ Evidence ref fields are conjunctive: every populated field must match the return
 - `scope`: expected memory scope.
 - `title_contains`: case-insensitive title substring.
 - `text_contains`: case-insensitive memory text substring.
+
+Associative `hop_path` fields:
+
+- `source`: topic key for the intermediate fixture memory.
+- `entity_type`: one of `file_path`, `crate`, `error_signature`, or `issue_number`.
+- `entity`: linking entity expected in both source and target memories.
+- `target`: topic key for the judged-relevant target memory.
 
 Example:
 
@@ -129,6 +137,38 @@ changes cannot pass on aggregate rates alone.
 The hidden `--simulate-golden-regression` flag is exercised in CI to prove the
 gate fails on a constructed per-slice retrieval regression before changing
 defaults.
+
+## Capacity Eval
+
+`remem eval-capacity` runs the first deterministic capacity curve for issue #675.
+It grows the committed golden fixture with seeded, non-relevant synthetic
+memories and reports fused retrieval metrics at each requested scale:
+
+```bash
+remem eval-capacity --seed 42 --scales 1,10 --json-out /tmp/remem-capacity.json --json
+```
+
+The JSON artifact records the seed, scale factors, corpus size, synthetic noise
+count, SHA-256 corpus hash, fused metrics, p95 retrieval latency, and loss
+against the 1x baseline. This slice intentionally does not enforce an
+`eval-gates` budget, per-channel attribution, dashboard ingestion, or 50x
+nightly scheduling; those remain follow-up work under #675.
+
+## Associative Multi-Hop Baseline
+
+`remem eval-associative-baseline` runs the first fixture-quality slice for
+issue #676. It filters `slice: "associative"` from the committed golden corpus,
+checks entity-class coverage and query-target lexical leakage, then writes the
+baseline fused metrics and headroom report:
+
+```bash
+remem eval-associative-baseline --json-out eval/associative-multihop/baseline.json --json
+```
+
+The checked-in report demonstrates that the associative slice has baseline
+retrieval headroom. It intentionally does not include per-channel attribution,
+entity-BFS deltas, literal `graph_edges` traversal, or the ADR follow-up
+decision; those remain follow-up work under #676.
 
 ## Graph Decision Gate
 

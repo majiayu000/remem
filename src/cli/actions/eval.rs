@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::db;
 
-use crate::cli::eval_types::{BenchAction, BenchCodingArgs, EvalCodingBenchArgs};
+use crate::cli::eval_types::{BenchAction, BenchCodingArgs, EvalCapacityArgs, EvalCodingBenchArgs};
 
 pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
     match action {
@@ -251,6 +251,80 @@ pub(in crate::cli) fn run_eval_graph_decision(
     }
     crate::eval::graph_decision::ensure_graph_decision_gate(&report)?;
     Ok(())
+}
+
+pub(in crate::cli) fn run_eval_capacity(args: EvalCapacityArgs) -> Result<()> {
+    let report =
+        crate::eval::capacity::run_capacity_eval(crate::eval::capacity::CapacityEvalOptions {
+            dataset_path: args.dataset,
+            seed: args.seed,
+            scales: parse_capacity_scales(&args.scales)?,
+            k: args.k,
+        })?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(path) = args.json_out.as_deref() {
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("create capacity eval directory {}", parent.display())
+                })?;
+            }
+        }
+        fs::write(path, &report_json)
+            .with_context(|| format!("write capacity eval JSON {path}"))?;
+    }
+    if args.json {
+        println!("{report_json}");
+    } else {
+        print!("{report}");
+    }
+    Ok(())
+}
+
+pub(in crate::cli) fn run_eval_associative_baseline(
+    dataset_path: &str,
+    k: usize,
+    json_out: &str,
+    json: bool,
+) -> Result<()> {
+    let report = crate::eval::associative::run_associative_baseline(
+        crate::eval::associative::AssociativeBaselineOptions {
+            dataset_path: dataset_path.to_string(),
+            k,
+        },
+    )?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create associative baseline eval directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    fs::write(json_out, &report_json)
+        .with_context(|| format!("write associative baseline eval JSON {json_out}"))?;
+    if json {
+        println!("{report_json}");
+    } else {
+        print!("{report}");
+    }
+    Ok(())
+}
+
+fn parse_capacity_scales(value: &str) -> Result<Vec<usize>> {
+    let scales = value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse::<usize>()
+                .with_context(|| format!("parse capacity scale {part:?}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    crate::eval::capacity::normalize_scales(scales)
 }
 
 pub(in crate::cli) fn run_eval_weight_grid(
