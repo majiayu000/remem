@@ -73,13 +73,16 @@ For `codex-prompt` and `runbook-md`, the draft marker may be the first
 nonblank content.
 
 Before any template renders or writer opens a target path, the exporter
-re-scans stored command/content/reuse-condition fields with the same
-export-surface controls required by `memory-poisoning-defense`: secret
-redaction detection, Bash option-argument secret heuristics for command
-strings, and instruction-pattern quarantine. A positive match aborts export
-with an explicit error and leaves no partial file or registry row; v1 does not
-silently redact and continue because a reviewed draft must not hide that its
-source procedure is unsafe to publish.
+re-scans every field that will be rendered into the draft: workflow key,
+command/content, reuse condition, project/branch preconditions, files
+touched, evidence ids, generated title/name/description, and provenance
+strings. Secret detection uses the concrete capture redaction contract in
+`src/adapter/redaction.rs`, including the `redact_hook_payload_preview`
+option-argument, URL-userinfo, cookie, authorization, and sensitive-key tests.
+Instruction-pattern detection uses the `memory-poisoning-defense` pattern set.
+A positive match aborts export with an explicit error and leaves no partial
+file or registry row; v1 does not silently redact and continue because a
+reviewed draft must not hide that its source procedure is unsafe to publish.
 
 Snapshot tests pin all three renderings for a fixture procedure.
 
@@ -97,10 +100,10 @@ the CLI action. Enforcement is layered:
 Default `--out` is `./remem-drafts/` (created on demand). The writer refuses
 paths that resolve into high-context locations (`.claude/`, `.codex/`,
 `AGENTS.md`, `CLAUDE.md`, repo-local `skills/`, repo-local `.agents/skills/`,
-and nested variants) even when passed explicitly. It also rejects any target
-`SKILL.md` under a configured or discovered skill root. Moving a reviewed
-draft there is deliberately a human `mv`/`git` action (SEC-13 surface; path
-check is by canonicalized prefix/basename, SEC-07).
+configured skill roots, discovered skill roots, and nested variants) even
+when passed explicitly, regardless of export format or final file name. Moving
+a reviewed draft there is deliberately a human `mv`/`git` action (SEC-13
+surface; path check is by canonicalized prefix/basename, SEC-07).
 
 The writer never silently replaces an existing draft path:
 
