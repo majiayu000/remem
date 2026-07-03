@@ -42,6 +42,7 @@ pub(super) fn load_context_data_with_policy(
     policy: &ContextPolicy,
     collect_diagnostics: bool,
 ) -> LoadedContext {
+    let render_reference_epoch = chrono::Utc::now().timestamp();
     let mut errors = Vec::new();
     let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
         .unwrap_or_else(|e| {
@@ -104,9 +105,15 @@ pub(super) fn load_context_data_with_policy(
         .chain(lessons.iter().map(|lesson| &lesson.memory))
         .cloned()
         .collect::<Vec<_>>();
-    let staleness_labels = load_staleness_labels(conn, &staleness_memories, &mut errors);
+    let staleness_labels = load_staleness_labels(
+        conn,
+        &staleness_memories,
+        render_reference_epoch,
+        &mut errors,
+    );
 
     LoadedContext {
+        render_reference_epoch,
         memories,
         staleness_labels,
         lessons,
@@ -123,9 +130,9 @@ pub(super) fn load_context_data_with_policy(
 fn load_staleness_labels(
     conn: &Connection,
     memories: &[Memory],
+    now_epoch: i64,
     errors: &mut Vec<ContextLoadError>,
 ) -> std::collections::HashMap<i64, memory::MemoryStalenessLabel> {
-    let now_epoch = chrono::Utc::now().timestamp();
     memory::staleness::memory_staleness_labels_for_memories_lossy(
         conn,
         memories,

@@ -38,6 +38,7 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding_and_stalenes
     memories: &[Memory],
     limits: &ContextLimits,
     excluded_ids: &HashSet<i64>,
+    render_reference_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> usize {
     render_memory_index_with_summary_and_staleness(
@@ -45,6 +46,7 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding_and_stalenes
         memories,
         limits,
         excluded_ids,
+        render_reference_epoch,
         staleness_labels,
     )
     .count
@@ -68,6 +70,7 @@ pub(in crate::context) fn render_memory_index_with_summary(
         memories,
         limits,
         excluded_ids,
+        chrono::Utc::now().timestamp(),
         &HashMap::new(),
     )
 }
@@ -77,6 +80,7 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
     memories: &[Memory],
     limits: &ContextLimits,
     excluded_ids: &HashSet<i64>,
+    render_reference_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> IndexRenderSummary {
     if limits.memory_index_limit == 0 || limits.memory_index_char_limit == 0 {
@@ -99,7 +103,6 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
         return IndexRenderSummary::default();
     }
 
-    let now = chrono::Utc::now().timestamp();
     let mut display_order = MemoryType::ALL
         .iter()
         .copied()
@@ -127,7 +130,7 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
                 limits.memory_index_char_limit,
                 &mut total_chars,
                 &mut rendered_ids,
-                now,
+                render_reference_epoch,
                 staleness_labels,
             );
         }
@@ -150,7 +153,7 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
                     limits.memory_index_char_limit,
                     &mut total_chars,
                     &mut rendered_ids,
-                    now,
+                    render_reference_epoch,
                     staleness_labels,
                 );
             }

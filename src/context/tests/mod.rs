@@ -7,6 +7,7 @@ mod gate_pipeline;
 mod load;
 mod ownership;
 mod render;
+mod render_stability;
 mod retrieval;
 mod sessions;
 mod staleness;
