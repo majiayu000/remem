@@ -1,0 +1,230 @@
+# Legacy Observation Retirement Technical Spec
+
+Status: Current contract
+Date: 2026-07-02
+
+Tracking:
+- Epic issue: #684
+- Related contracts: `current-memory-contracts/`
+
+## Existing Implementation Facts
+
+Verified inventory (2026-07-02): static writer/reader classification of every
+production reference (tests and migrations excluded), cross-checked against a
+production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
+
+### `pending_observations` (legacy queue) — verdict: pure legacy
+
+- Writers on the default runtime path: none. `enqueue_pending`
+  (`src/db/pending/queue.rs`) has no production caller; only test bodies call
+  it. The PostToolUse observe hook writes `captured_events` +
+  `ObservationExtract` tasks, not this queue; the Stop hook only reads a
+  count to log an "ignored N legacy pending" warning.
+- Remaining writers are manual admin: `remem pending migrate-legacy`
+  (`src/db/pending/admin/migration.rs`, re-records rows as `captured_events`
+  and marks them `migrated`), `retry-failed` / `purge-failed`
+  (`src/db/pending/admin/mutate.rs`). The claim/lease machinery
+  (`src/db/pending/claim.rs`) has no production consumer.
+- Readers: status/stats counters, doctor capture-liveness and queue-health,
+  observability metrics, `remem pending` listings.
+- Dogfood evidence: queue fully empty — ready/delayed/processing/expired/
+  failed all 0.
+
+### `observations` — verdict: reclassify-current (NOT legacy)
+
+- Default-path writers exist in the current pipeline:
+  `persist_observations` (`src/observation_extract.rs` →
+  `src/db/observation.rs`) runs inside the `ObservationExtract` extraction
+  task; `src/summarize/compress.rs` inserts compressed observations from the
+  Stop-hook compress job. Staleness marking, dedup access bumps, and
+  retention cleanup also mutate it.
+- Readers are live features: MCP `get_observations(source='observation')`,
+  `remem timeline`, memory-candidate promotion evidence
+  (`src/memory_candidate.rs`), staleness, `remem why` git trace,
+  status/stats.
+- The promotion funnel counts it as a current stage:
+  `captured_events -> observations -> candidates -> promoted`.
+- The actual defect is naming: the MCP tool description calls this source
+  "legacy observations" (`src/mcp/server/context_tools.rs`), which
+  misdescribes a live intermediate store.
+
+### `observations_fts` — verdict: current but narrow
+
+- No Rust writer: maintained by migration-defined SQL triggers on
+  `observations`.
+- Single production read path: `remem timeline` anchor resolution
+  (`src/cli/actions/query/timeline.rs` → `src/retrieval/search/observation.rs`
+  → `src/db/query/search.rs`). It is NOT reachable from the main `search`
+  MCP tool or `remem search`, which query `memories` only.
+- Disposition follows `observations`.
+
+### `session_summaries` — verdict: shared, DUAL-WRITE (the real target)
+
+- Two writers, both unconditionally reachable from the same Stop hook:
+  1. Current: `persist_session_rollup` (`src/session_rollup/persist.rs`)
+     via the `SessionRollup` extraction task.
+  2. Legacy pre-v006: `enqueue_summary_jobs`
+     (`src/summarize/summary_job/hook.rs`) → worker `JobType::Summary`
+     (`src/worker.rs`) → `finalize_summarize`
+     (`src/db/summarize/session/finalize.rs`, DELETE+INSERT).
+  Neither is behind a flag; every session end drives both chains.
+- Readers are load-bearing current features: context injection sessions
+  section + data-version hint, user-context recall/extraction/summary,
+  timeline, `remem why`, observation-extract context, status/doctor.
+- Governance mutations (`src/memory/scope_cleanup/mutate.rs`) are manual.
+- The retirement target is therefore the legacy summarize job chain, not
+  the table. The table stays; one of its two writers goes.
+- Dogfood corroboration: the jobs queue shows 2479 failed legacy jobs, and
+  AI usage attribution reports 24019 unattributed legacy calls — the legacy
+  chain is not just redundant, it is actively failing and unaccounted.
+
+## Design Rules
+
+- Convergence, not rewrite: every phase must leave the capture-ledger path
+  byte-identical in behavior.
+- State machine per surface: `live -> frozen -> migrated -> removed`, no
+  skipped states, each transition observable via doctor.
+- Reads move before writes die: a consumer switches to a ledger-backed
+  source only with committed equivalence fixtures (same query, old vs new
+  source, compared output).
+- Drop migrations are guarded: they refuse to run when the doctor pre-check
+  finds unmigrated rows above zero (excluding rows explicitly classified
+  valueless in the spec decision).
+- All classification decisions land in this file via spec-update PRs, so the
+  decision history is reviewable.
+
+## Phase 1: Inventory + Decision (spec-only)
+
+Deliverable: replace the starter inventory above with a verified table:
+
+| Surface | Ref | Kind (writer/reader) | Trigger path | Disposition |
+|---|---|---|---|---|
+
+Disposition values: `retire` (migrate then drop), `freeze` (read-only until
+removal date), `reclassify-current` (not legacy; document why), `keep`
+(deliberate audit surface).
+
+Decision inputs required per surface:
+
+- last-write timestamps from production-shaped databases (dogfood evidence);
+- whether any unique value exists that `captured_events`/`raw_messages`/
+  promoted memories do not represent;
+- consumer list and replacement source for each.
+
+Verified dispositions (2026-07-02 static + dogfood analysis, recorded in
+Existing Implementation Facts above):
+
+| Surface | Disposition |
+|---|---|
+| `pending_observations` | `retire` — no default-path writer, dogfood queue empty; drop table + claim/queue machinery after window |
+| `observations` | `reclassify-current` — live intermediate of the extraction pipeline; fix the "legacy" MCP wording instead |
+| `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
+| `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
+| legacy summary writer (`enqueue_summary_jobs` → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job is the dual-writer duplicating `SessionRollup`; the surrounding Stop hook also schedules Compress and Dream jobs and those side effects must be preserved or ported before the shared helper is removed |
+
+Remaining Phase 1 analysis before freeze decisions execute:
+
+- Output equivalence between the two `session_summaries` writers: does
+  `finalize_summarize` produce fields or quality the `SessionRollup` path
+  does not (compare row shape and content on dogfood data)? If yes, port the
+  delta into the rollup before removing the legacy chain.
+- Confirm `pending_observations` has zero rows across other real databases,
+  not only the primary dogfood one; `remem pending migrate-legacy` remains
+  the escape hatch for stragglers.
+
+## Phase 2: Doctor Visibility
+
+- New doctor section: per-surface row count, last-write epoch, current
+  state (live/frozen/...), and the planned next transition.
+- After a surface is frozen, any new write raises a doctor error finding
+  (and the write path itself is removed or guarded — a frozen surface with
+  active writers is a bug, not a warning).
+- `remem status --json` mirrors counts for scripting.
+
+Tests: fixture DBs per state; frozen-write detection test.
+
+## Phase 3: Writer Freeze (per verified retire set)
+
+### Legacy summarize chain
+
+1. Equivalence fixtures first: committed test comparing `finalize_summarize`
+   output rows against `persist_session_rollup` output for the same seeded
+   session; document every field-level delta.
+2. Port any load-bearing delta into the rollup path (readers must not lose
+   fields they consume today).
+3. Remove only the `JobType::Summary` enqueue/worker/finalize path from the
+   Stop hook path. Before deleting or renaming the shared helper, port or
+   preserve its other Stop side effects: `JobType::Compress` enqueueing,
+   Dream enqueueing with cooldown/dedup behavior, and profile payload
+   preservation. Also preserve or explicitly replace the load-bearing
+   `process_summary_job_input` side effects that currently happen before or
+   around the summary AI call: raw archive ingest, failure-lesson distillation,
+   memory citation/final-session summary persistence, summary-derived
+   candidate finalization, and native-memory sync. Add regression tests
+   proving Stop still schedules Compress and Dream and that each retained
+   side effect has a new owner before Summary retirement.
+4. Doctor: a `session_summaries` row written by anything other than the
+   rollup path after freeze is an error finding.
+
+### `pending_observations`
+
+Readers are counters and admin listings only, so no reader migration is
+needed. Freeze means: delete the dead claim/lease machinery
+(`src/db/pending/claim.rs`) and the test-only `enqueue_pending` write path;
+status/doctor keep reporting row counts until the drop ships.
+
+### Reclassification (no freeze)
+
+`observations` + `observations_fts` stay current. The only change is
+accuracy: update the MCP `get_observations` tool description to stop calling
+the source "legacy observations", and update `docs/ARCHITECTURE.md`
+accordingly.
+
+## Phase 4: Value Migration + Drop
+
+1. `remem pending migrate-legacy` (already exists) is the migration path for
+   any non-empty `pending_observations` in the wild; extend its report to
+   print migrated/skipped/valueless counts if it does not already.
+2. Deprecation window: at least one minor release where doctor announces
+   the upcoming drop and the release notes carry it.
+3. Guarded drop migration for `pending_observations` (pre-check refuses when
+   unmigrated rows exist). No drop for `observations`, `observations_fts`,
+   or `session_summaries` — they stay.
+4. Retire `JobType::Summary` handling and `finalize_summarize` code after
+   the window; clean up the 2479-failed-legacy-jobs class in the jobs table
+   with an explicit `remem cleanup` action rather than a silent migration.
+
+Tests: migration idempotency; guarded-drop refusal; post-drop schema-drift
+tests (`src/migrate/schema_drift.rs`) updated in the same PR as the drop.
+
+## Compatibility Notes
+
+- Downgrade is not supported across a drop migration; the schema-version
+  gate already refuses old binaries on new schemas, which covers this.
+- Encrypted databases: migration commands go through the normal open path;
+  no special casing.
+- `db/pending/admin/migration.rs` (`migrate_legacy_pending`) becomes the
+  seed for the Phase 4 command rather than a parallel mechanism.
+
+## Verification
+
+```bash
+cargo fmt --check
+cargo check
+cargo test
+```
+
+Plus per-phase: equivalence fixtures (Phase 3), migration idempotency +
+guarded-drop tests (Phase 4), and a dogfood-database dry run recorded in the
+epic before each drop ships.
+
+## Open Questions
+
+- `finalize_summarize` vs `persist_session_rollup` output equivalence: which
+  fields differ, and do any current readers depend on legacy-only fields?
+  (This gates the legacy-chain removal.)
+- Do in-flight `JobType::Summary` jobs at upgrade time get drained, rejected,
+  or converted to `SessionRollup` tasks?
+- Should the `get_observations` MCP source keep the name
+  `source='observation'` after the description fix, or is a rename worth the
+  client churn?
