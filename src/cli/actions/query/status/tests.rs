@@ -255,6 +255,27 @@ fn status_report_refuses_missing_database_without_initializing() {
 }
 
 #[test]
+fn status_report_refuses_empty_database_file_without_initializing() -> anyhow::Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("status-empty-db");
+    std::fs::create_dir_all(&test_dir.path)?;
+    std::fs::write(test_dir.db_path(), [])?;
+
+    let err = load_status_report().expect_err("empty database file should fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("not an initialized remem database"),
+        "unexpected error: {message}"
+    );
+    assert_eq!(
+        std::fs::metadata(test_dir.db_path())?.len(),
+        0,
+        "status must not initialize an empty existing database file"
+    );
+    Ok(())
+}
+
+#[test]
 fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<()> {
     let _test_dir = crate::db::test_support::ScopedTestDataDir::new("status-v053-source-kind");
     std::fs::create_dir_all(crate::db::data_dir())?;
