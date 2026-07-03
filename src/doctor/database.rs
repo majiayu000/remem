@@ -396,7 +396,7 @@ pub(super) fn check_promotion_funnel(conn: Option<&Connection>) -> Check {
             );
         }
     };
-    let detail = format!(
+    let detail = crate::doctor::promotion_funnel::with_candidate_source_kind_detail(conn, format!(
         "captured_events={} -> observations={} ({:.1}%) -> candidates={} ({:.1}%) -> promoted={} ({:.1}%), pending_review={} ({:.1}%)",
         stats.captured_events,
         stats.total_observations,
@@ -407,7 +407,7 @@ pub(super) fn check_promotion_funnel(conn: Option<&Connection>) -> Check {
         percent(stats.promoted_memory_candidates, stats.total_memory_candidates),
         stats.pending_review_memory_candidates,
         percent(stats.pending_review_memory_candidates, stats.total_memory_candidates),
-    );
+    ));
 
     if stats.captured_events > 0 && stats.total_observations == 0 {
         Check::new(

@@ -79,8 +79,9 @@ fn status_report_fixture() -> StatusReport {
             oldest_ready_age_secs: Some(18),
         },
         candidate_promotion: vec![CandidatePromotionStatus {
+            source_kind: "summary".to_string(),
             review_status: "pending_review".to_string(),
-            block_reason: Some("no_supporting_source_observation".to_string()),
+            block_reason: Some("summary_gate_shadow".to_string()),
             total: 41,
             last_7_days: 6,
         }],
@@ -163,13 +164,14 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["usage_feedback"]["unmatched_events"], 1);
     assert_eq!(parsed["usage_feedback"]["usage_events"], 6);
     assert_eq!(parsed["pending_observations"]["failed"], 16);
+    assert_eq!(parsed["candidate_promotion"][0]["source_kind"], "summary");
     assert_eq!(
         parsed["candidate_promotion"][0]["review_status"],
         "pending_review"
     );
     assert_eq!(
         parsed["candidate_promotion"][0]["block_reason"],
-        "no_supporting_source_observation"
+        "summary_gate_shadow"
     );
     assert_eq!(parsed["candidate_promotion"][0]["total"], 41);
     assert_eq!(parsed["candidate_promotion"][0]["last_7_days"], 6);

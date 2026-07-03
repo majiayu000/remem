@@ -42,8 +42,11 @@ landing first:
   summary-specific promotion gate runs in shadow mode and logs what it would
   promote without promoting anything.
 - Phase 2 (enforcement): the summary gate goes live for a conservative
-  allowlist of factual memory types, with thresholds chosen from Phase 1
-  shadow telemetry rather than invented up front.
+  allowlist of factual memory types. The initial enforce floor is 0.70 for
+  summary-derived `decision` and `discovery` candidates, because the current
+  deterministic summary extractor emits those factual candidates at 0.74 and
+  the gate still requires repo-owned routing, evidence ids, source support,
+  unsafe-marker rejection, and the type allowlist before promotion.
 
 Rationale: the non-goal in #674 forbids bulk auto-approval of the existing
 backlog without sampling evidence. Shadow mode produces that evidence on real
@@ -80,8 +83,9 @@ traffic before any behavior change.
 - During Phase 1, doctor shows a `summary gate (shadow)` line reporting how
   many candidates would have promoted under the proposed thresholds.
 - After Phase 2, summary-derived decisions and discoveries with qualifying
-  confidence and evidence appear as active memories without manual review,
-  and their promotion is logged with the gate verdict.
+  confidence and evidence appear as active memories without manual review.
+  Maintainers can roll back to `promotion.summary_gate_mode = "shadow"` or
+  `"off"` without code changes.
 
 ## Acceptance Criteria
 

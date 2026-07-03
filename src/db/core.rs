@@ -1,7 +1,7 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -12,21 +12,23 @@ thread_local! {
 }
 
 #[cfg(test)]
-static CONFIGURED_CONNECTION_OPENS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static CONFIGURED_CONNECTION_OPENS: Cell<usize> = const { Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(crate) fn reset_configured_connection_open_count() {
-    CONFIGURED_CONNECTION_OPENS.store(0, Ordering::SeqCst);
+    CONFIGURED_CONNECTION_OPENS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(crate) fn configured_connection_open_count() -> usize {
-    CONFIGURED_CONNECTION_OPENS.load(Ordering::SeqCst)
+    CONFIGURED_CONNECTION_OPENS.with(Cell::get)
 }
 
 #[cfg(test)]
 fn record_configured_connection_open() {
-    CONFIGURED_CONNECTION_OPENS.fetch_add(1, Ordering::SeqCst);
+    CONFIGURED_CONNECTION_OPENS.with(|count| count.set(count.get() + 1));
 }
 
 pub(crate) fn with_data_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {

@@ -87,6 +87,30 @@ fn promotion_funnel_points_all_pending_candidates_to_review_flow() -> anyhow::Re
 }
 
 #[test]
+fn promotion_funnel_reports_summary_shadow_source_split() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("doctor-summary-shadow-source-split");
+    let conn = db::open_db()?;
+    seed_review_gated_candidate(&conn, "/repo/a")?;
+    conn.execute(
+        "UPDATE memory_candidates
+         SET source_kind = 'summary',
+             auto_promote_block_reason = 'summary_gate_shadow'",
+        [],
+    )?;
+
+    let check = check_promotion_funnel(Some(&conn));
+
+    assert!(
+        check
+            .detail
+            .contains("candidate_sources=summary:total=1,pending=1,shadow_would_promote=1"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
 fn declared_empty_surfaces_defers_zero_facts_cause_to_temporal_check() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-declared-empty-review-gated");
     let conn = db::open_db()?;

@@ -216,6 +216,62 @@ fn cli_parses_eval_graph_decision_options() {
 }
 
 #[test]
+fn cli_parses_eval_capacity_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-capacity",
+        "--dataset",
+        "fixtures/golden.json",
+        "--seed",
+        "17",
+        "--scales",
+        "1,10",
+        "--json-out",
+        "/tmp/capacity.json",
+        "--json",
+        "-k",
+        "7",
+    ]);
+
+    match cli.command {
+        Commands::EvalCapacity(args) => {
+            assert_eq!(args.dataset, "fixtures/golden.json");
+            assert_eq!(args.seed, 17);
+            assert_eq!(args.scales, "1,10");
+            assert_eq!(args.json_out.as_deref(), Some("/tmp/capacity.json"));
+            assert_eq!(args.k, 7);
+            assert!(args.json);
+        }
+        _ => panic!("expected eval-capacity command"),
+    }
+}
+
+#[test]
+fn cli_parses_eval_associative_baseline_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-associative-baseline",
+        "--dataset",
+        "fixtures/golden.json",
+        "--json-out",
+        "/tmp/associative-baseline.json",
+        "--json",
+        "-k",
+        "7",
+    ]);
+
+    match cli.command {
+        Commands::EvalAssociativeBaseline(args) => {
+            assert_eq!(args.dataset, "fixtures/golden.json");
+            assert_eq!(args.json_out, "/tmp/associative-baseline.json");
+            assert_eq!(args.k, 7);
+            assert!(args.json);
+        }
+        _ => panic!("expected eval-associative-baseline command"),
+    }
+}
+
+#[test]
 fn cli_parses_eval_weight_grid_options() {
     let cli = Cli::parse_from([
         "remem",

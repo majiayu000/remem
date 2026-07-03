@@ -61,6 +61,7 @@ fn query(
         query: text.to_string(),
         category: category.to_string(),
         slice: None,
+        hop_path: None,
         project: project.map(str::to_string),
         branch: branch.map(str::to_string),
         memory_type: None,
@@ -239,6 +240,7 @@ fn golden_eval_scores_core_categories_and_abstention() -> Result<()> {
                 query: "MongoDB migration nonexistent".to_string(),
                 category: "abstention".to_string(),
                 slice: None,
+                hop_path: None,
                 project: Some("/repo-a".to_string()),
                 branch: Some("main".to_string()),
                 memory_type: None,
@@ -332,6 +334,7 @@ fn golden_eval_miss_records_retrieved_and_missing_ids() -> Result<()> {
             query: "wrong eval needle".to_string(),
             category: "single_hop".to_string(),
             slice: None,
+            hop_path: None,
             project: Some("/repo-a".to_string()),
             branch: Some("main".to_string()),
             memory_type: None,
@@ -475,6 +478,7 @@ fn golden_eval_ndcg_uses_best_assignment_for_overlapping_refs() -> Result<()> {
             query: "overlapping assignment shared".to_string(),
             category: "dedupe".to_string(),
             slice: Some("multi_hop".to_string()),
+            hop_path: None,
             project: Some("/repo-a".to_string()),
             branch: Some("main".to_string()),
             memory_type: None,
@@ -539,6 +543,7 @@ fn checked_in_golden_dataset_has_required_slices() -> Result<()> {
         "abstention",
         "failure_lesson",
         "multi_hop",
+        "associative",
     ] {
         assert!(slices.contains(required), "missing slice {required}");
     }
@@ -567,8 +572,8 @@ fn checked_in_golden_dataset_runs_against_fixture_corpus_without_live_db() -> Re
     let live_conn = Connection::open_in_memory()?;
     let report = run_dataset_path(&live_conn, "eval/golden.json", 5)?;
 
-    assert_eq!(report.total_queries, 51);
-    assert_eq!(report.scored_queries, 41);
+    assert_eq!(report.total_queries, 66);
+    assert_eq!(report.scored_queries, 56);
     assert!(report.queries.iter().any(|query| {
         query.id == "knowledge-update-01" && query.result_count > 0 && query.metrics.is_some()
     }));
@@ -609,6 +614,7 @@ fn golden_eval_rejects_fixture_corpus_missing_expected_ref() -> Result<()> {
             query: "expected seeded fact".to_string(),
             category: "retrieval".to_string(),
             slice: None,
+            hop_path: None,
             project: Some("/repo-a".to_string()),
             branch: Some("main".to_string()),
             memory_type: None,
@@ -702,6 +708,7 @@ fn golden_eval_reports_paraphrase_baseline_without_locking_outcome() -> Result<(
             query: "owner mauve locomotive ration".to_string(),
             category: "retrieval".to_string(),
             slice: Some("paraphrase".to_string()),
+            hop_path: None,
             project: Some("/repo-a".to_string()),
             branch: Some("main".to_string()),
             memory_type: None,
