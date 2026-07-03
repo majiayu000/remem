@@ -96,6 +96,9 @@ fn is_better_cluster_representative(
     candidate_branch_score < incumbent_branch_score
         || (candidate_branch_score == incumbent_branch_score
             && candidate.updated_at_epoch > incumbent.updated_at_epoch)
+        || (candidate_branch_score == incumbent_branch_score
+            && candidate.updated_at_epoch == incumbent.updated_at_epoch
+            && candidate.id < incumbent.id)
 }
 
 pub(super) fn limit_self_diagnostic_memories(memories: Vec<Memory>, limit: usize) -> Vec<Memory> {

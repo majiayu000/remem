@@ -42,6 +42,7 @@ pub(super) fn load_context_data_with_policy(
     policy: &ContextPolicy,
     collect_diagnostics: bool,
 ) -> LoadedContext {
+    let render_reference_epoch = chrono::Utc::now().timestamp();
     let mut errors = Vec::new();
     let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
         .unwrap_or_else(|e| {
@@ -104,9 +105,15 @@ pub(super) fn load_context_data_with_policy(
         .chain(lessons.iter().map(|lesson| &lesson.memory))
         .cloned()
         .collect::<Vec<_>>();
-    let staleness_labels = load_staleness_labels(conn, &staleness_memories, &mut errors);
+    let staleness_labels = load_staleness_labels(
+        conn,
+        &staleness_memories,
+        render_reference_epoch,
+        &mut errors,
+    );
 
     LoadedContext {
+        render_reference_epoch,
         memories,
         staleness_labels,
         lessons,
@@ -123,9 +130,9 @@ pub(super) fn load_context_data_with_policy(
 fn load_staleness_labels(
     conn: &Connection,
     memories: &[Memory],
+    now_epoch: i64,
     errors: &mut Vec<ContextLoadError>,
 ) -> std::collections::HashMap<i64, memory::MemoryStalenessLabel> {
-    let now_epoch = chrono::Utc::now().timestamp();
     memory::staleness::memory_staleness_labels_for_memories_lossy(
         conn,
         memories,
@@ -390,7 +397,7 @@ fn query_owner_included_memory_rows(
     let sql = format!(
         "SELECT {}, {} FROM memories \
          WHERE {} \
-         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+         ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{}",
         memory::MEMORY_COLS,
         MEMORY_OWNER_COLS,
         conditions.join(" AND "),
@@ -417,7 +424,7 @@ fn query_owner_traces_for_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT {}, {} FROM memories WHERE id IN ({}) ORDER BY updated_at_epoch DESC",
+        "SELECT {}, {} FROM memories WHERE id IN ({}) ORDER BY updated_at_epoch DESC, id ASC",
         memory::MEMORY_COLS,
         MEMORY_OWNER_COLS,
         placeholders
@@ -461,7 +468,7 @@ fn query_owner_exclusion_traces(
     let sql = format!(
         "SELECT {}, {} FROM memories \
          WHERE {} \
-         ORDER BY updated_at_epoch DESC LIMIT ?{}",
+         ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{}",
         memory::MEMORY_COLS,
         MEMORY_OWNER_COLS,
         conditions.join(" AND "),
@@ -574,7 +581,7 @@ fn query_summary_batch(
            AND ((owner_scope = 'repo' AND owner_key = ?1) \
                 OR (owner_scope = 'repo' AND target_project = ?1) \
                 OR (owner_scope IS NULL AND project = ?1)) \
-         ORDER BY created_at_epoch DESC LIMIT ?2 OFFSET ?3",
+         ORDER BY created_at_epoch DESC, request ASC, completed ASC LIMIT ?2 OFFSET ?3",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![project, limit as i64, offset as i64],

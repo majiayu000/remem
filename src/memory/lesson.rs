@@ -327,7 +327,8 @@ pub fn list_lessons_for_context(
            CASE WHEN m.project = ?1 THEN 0 ELSE 1 END,
            l.confidence DESC,
            l.reinforcement_count DESC,
-           l.last_reinforced_at_epoch DESC
+           l.last_reinforced_at_epoch DESC,
+           m.id ASC
          LIMIT ?5",
         cols = prefixed_memory_cols("m"),
         current_filter =

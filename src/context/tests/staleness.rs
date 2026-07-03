@@ -152,18 +152,16 @@ fn load_context_data_includes_lesson_memories_in_staleness_labels() {
 #[test]
 fn render_lessons_includes_source_anchor_staleness_labels() {
     let mut output = String::new();
+    let now = chrono::Utc::now().timestamp();
     let lessons = vec![sample_lesson(1, "Stale lesson", 0.9, 2)];
     let mut labels = HashMap::new();
     labels.insert(
         1,
-        memory_staleness_label_for_anchor(
-            &lessons[0].memory,
-            chrono::Utc::now().timestamp(),
-            "verify-before-trust",
-        ),
+        memory_staleness_label_for_anchor(&lessons[0].memory, now, "verify-before-trust"),
     );
 
-    let rendered = render_lessons_with_limit_and_staleness(&mut output, &lessons, 1, 240, &labels);
+    let rendered =
+        render_lessons_with_limit_and_staleness(&mut output, &lessons, 1, 240, now, &labels);
 
     assert_eq!(rendered, 1);
     assert!(output.contains("Stale lesson"));

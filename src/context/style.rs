@@ -1,4 +1,3 @@
-use super::format::format_header_datetime;
 use super::host::HostKind;
 use super::render::ContextRenderStats;
 
@@ -21,7 +20,6 @@ pub(in crate::context) fn context_header(
     if source != "-" {
         rows.push(("source", source.to_string()));
     }
-    rows.push(("updated", format_header_datetime()));
 
     let mut header = String::new();
     let row_indent = if host == HostKind::CodexCli && use_colors {
