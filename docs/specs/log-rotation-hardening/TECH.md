@@ -55,7 +55,7 @@ Defaults:
 
 - `REMEM_LOG_MAX_BYTES`: `10485760`
 - `REMEM_LOG_MAX_ROTATED_FILES`: `3`
-- `REMEM_LOG_LOCK_TIMEOUT_MS`: bounded default such as `250`
+- `REMEM_LOG_LOCK_TIMEOUT_MS`: `250`
 
 Parsing rules:
 
@@ -112,10 +112,12 @@ rotate_if_needed(path, max_bytes, max_rotated_files) -> Result<RotationOutcome>
 
 Rules:
 
-- If active size is below `max_bytes`, do nothing.
-- Before shifting, remove every suffix above `max_rotated_files` that exists
-  from prior higher-retention settings so reduced retention takes effect
-  immediately.
+- Before any active-size short-circuit, remove every suffix above
+  `max_rotated_files` that exists from prior higher-retention settings so
+  reduced retention takes effect immediately even when `remem.log` is below
+  `max_bytes`.
+- If active size is below `max_bytes` after stale-suffix cleanup, do not rotate
+  the active file.
 - If `max_rotated_files == 0`, remove the active file instead of renaming it
   to `.1`; the next open recreates `remem.log`.
 - For `N > 0`, remove `remem.log.N`, shift suffixes downward in reverse order,
@@ -162,7 +164,10 @@ interleaved JSON sidecar is not acceptable because it removes the durable
 diagnostic precisely when contention is highest.
 
 Successful locked prepare/rotate/open operations clear the sidecar or update it
-to a recovered state with a timestamp. Doctor only warns for unresolved issues
+to a recovered state only when the sidecar issue timestamp is known to predate
+that successful prepare attempt. A successful lock holder must not clear or
+overwrite a newer timeout/rotation issue written by a concurrent fallback
+process while it was holding the lock. Doctor only warns for unresolved issues
 or issues inside a documented freshness window; an old transient timeout must
 not make `remem doctor` warn forever after later healthy log preparations.
 
@@ -282,8 +287,9 @@ fallbacks and invalid env visibility.
 ## Test Plan
 
 - [ ] Unit tests: policy parser, rotated path generation, retention shifting
-      including reduced-retention cleanup, invalid env collection, atomic
-      sidecar serialization and recovery clearing.
+      including reduced-retention cleanup below and above the active-size
+      threshold, invalid env collection, atomic sidecar serialization, and
+      timestamp-safe recovery clearing.
 - [ ] Integration tests: `open_log_append()` rotation, subprocess concurrent
       writers, lock-timeout fallback, rotate-failure fallback, doctor
       log-health warning.

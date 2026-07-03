@@ -92,8 +92,8 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
 - `REMEM_LOG_MAX_ROTATED_FILES=0` disables retained rotated files while
   preserving the active `remem.log` path.
 - `REMEM_LOG_LOCK_TIMEOUT_MS` bounds how long a process waits for another
-  process to finish rotating. On timeout, the current log write is still
-  attempted through append-only fallback.
+  process to finish rotating. It defaults to `250`. On timeout, the current
+  log write is still attempted through append-only fallback.
 - `remem doctor` includes a log-health check. It reports `ok` for normal
   configuration, `warn` for invalid env fallbacks or recent rotation issues,
   and enough path/size/retention detail to diagnose disk-use problems.

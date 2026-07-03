@@ -27,7 +27,8 @@ Authoritative contract:
 
 - Add a central `LogPolicy` parser with defaults for active max bytes, rotated
   file count, lock timeout, invalid env diagnostics, and
-  `REMEM_LOG_MAX_ROTATED_FILES=0` support.
+  `REMEM_LOG_MAX_ROTATED_FILES=0` support. The timeout default is exactly
+  `250` ms.
 - Add a locked prepare/open/write path using `remem.log.lock` and existing
   `fs2` file-lock support. `write_log()` writes its line while the lock is
   still held; `open_log_append()` only holds the lock through preparation and
@@ -39,7 +40,8 @@ Authoritative contract:
 - On lock timeout or rotation/open failure, preserve append-only behavior where
   possible and write a non-recursive, atomic sidecar diagnostic such as
   `remem.log.rotation-issue.json`. Later healthy prepares clear or age out old
-  transient issues so doctor does not warn forever.
+  transient issues only when the issue is known to predate the successful
+  prepare, so a lock holder cannot erase a newer concurrent timeout.
 - Add a doctor log-health check reporting policy, sizes, invalid env fallbacks,
   and the most recent summarized issue without reading log contents.
 
@@ -81,8 +83,9 @@ append directly when possible, and updates the sidecar diagnostic for doctor.
 ## Test Plan
 
 - [ ] Unit tests: policy parser, retention shifting including reduced
-      retention and zero retention, invalid env collection, sidecar atomic
-      write/recovery clearing.
+      retention below and above the active-size threshold, zero retention,
+      invalid env collection, sidecar atomic write/timestamp-safe recovery
+      clearing.
 - [ ] Integration tests: subprocess concurrent writers, `open_log_append()`
       rotation, lock-timeout fallback, rotate-failure fallback, doctor
       log-health check.

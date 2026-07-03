@@ -54,7 +54,8 @@ and hides invalid env/failure diagnostics outside durable doctor surfaces.
 6. Invalid `REMEM_LOG_*` values fall back to defaults and are visible in
    `doctor`.
 7. Lock timeout and rotate/open failure fallback preserve append behavior where
-   possible and record a durable diagnostic.
+   possible and record a durable diagnostic. `REMEM_LOG_LOCK_TIMEOUT_MS`
+   defaults to `250`.
 8. Logger-internal diagnostics avoid recursive calls into the logger.
 
 ## Acceptance Criteria
