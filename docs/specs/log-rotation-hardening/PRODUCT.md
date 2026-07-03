@@ -68,8 +68,8 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
   size threshold.
 - Make invalid log configuration and recent rotation problems visible in
   `doctor` instead of disappearing into stderr.
-- Preserve private-by-default local diagnostics by keeping log and lock-related
-  files at `0600` where the platform supports it.
+- Preserve private-by-default local diagnostics by creating log and lock-related
+  files with `0600` where the platform supports it.
 
 ## Non-Goals
 
@@ -89,6 +89,8 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
   `10485760`.
 - `REMEM_LOG_MAX_ROTATED_FILES=5` keeps at most `remem.log.1` through
   `remem.log.5`; unset behavior keeps `.1` through `.3`.
+- `REMEM_LOG_MAX_ROTATED_FILES=0` disables retained rotated files while
+  preserving the active `remem.log` path.
 - `REMEM_LOG_LOCK_TIMEOUT_MS` bounds how long a process waits for another
   process to finish rotating. On timeout, the current log write is still
   attempted through append-only fallback.
@@ -106,36 +108,40 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
    `.1`, `.2`, `.3`.
 2. Retention: after rotation, no suffix above the configured retention count is
    left by the logger.
-3. Concurrency: multiple processes crossing the threshold at the same time do
-   not lose the triggering log line, do not panic, and do not produce more
-   retained files than configured.
+3. Concurrency: multiple independent `remem` processes crossing the threshold
+   at the same time through `write_log()` do not lose the triggering log line,
+   do not panic, and do not produce more retained files than configured.
 4. Worker stderr preparation: `open_log_append()` creates the parent directory,
    applies rotation when needed, and returns an append handle to the active log
    or a documented fallback.
 5. Permissions: newly created active logs, rotated logs, lock files, and
-   rotation diagnostic files use `0600` on Unix.
+   rotation diagnostic files are created with `0600` on Unix, not merely
+   chmodded after a wider initial mode.
 6. Invalid configuration: invalid `REMEM_LOG_MAX_BYTES`,
    `REMEM_LOG_MAX_ROTATED_FILES`, or `REMEM_LOG_LOCK_TIMEOUT_MS` values fall
    back to documented defaults and are visible in `doctor`.
-7. Failure visibility: lock timeouts and rotation/open/rename failures record a
-   durable diagnostic that survives the failing process.
+7. Failure visibility: lock timeouts and rotation/open/rename failures preserve
+   the current write when possible and record a durable diagnostic that
+   survives the failing process.
 8. No recursive logging: logger-internal diagnostics do not recursively call
    the same logger path while it is holding or waiting for the log lock.
 
 ## Acceptance Criteria
 
-- [ ] Concurrent writer test proves all generated lines are present after
-      rotation and retained suffixes do not exceed the configured count.
+- [ ] Subprocess concurrent-writer test proves all generated `write_log()`
+      lines are present after rotation and retained suffixes do not exceed the
+      configured count.
 - [ ] `open_log_append()` test proves worker stderr setup rotates an oversized
       active log before returning a handle.
-- [ ] `REMEM_LOG_MAX_ROTATED_FILES=5` test proves `.1` through `.5` are kept
-      and `.6` is absent.
+- [ ] Retention tests prove `REMEM_LOG_MAX_ROTATED_FILES=5` keeps `.1`
+      through `.5` only, reduced retention removes stale higher suffixes, and
+      `REMEM_LOG_MAX_ROTATED_FILES=0` leaves no retained suffixes.
 - [ ] Invalid env-value tests prove defaults are used and doctor reports a
       warning.
-- [ ] Lock-timeout fallback test proves the log line is preserved and the
-      durable diagnostic is visible to doctor.
+- [ ] Lock-timeout and rotate-failure fallback tests prove the log line is
+      preserved when possible and the durable diagnostic is visible to doctor.
 - [ ] Unix permission tests prove new active, rotated, lock, and diagnostic
-      files are `0600`.
+      files are created with `0600`.
 - [ ] Documentation update covers the new env vars and the inherited worker
       stderr file-descriptor limitation.
 

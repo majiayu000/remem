@@ -42,26 +42,32 @@ and hides invalid env/failure diagnostics outside durable doctor surfaces.
 
 1. Default behavior remains active `remem.log`, 10 MiB active threshold, and
    three rotated files.
-2. Configured retention caps suffixes at the requested count.
-3. Concurrent rotations preserve log lines and do not leave suffixes above the
-   configured retention.
+2. Configured retention caps suffixes at the requested count, supports
+   `REMEM_LOG_MAX_ROTATED_FILES=0`, and removes stale suffixes when retention is
+   reduced.
+3. Independent-process `write_log()` rotations preserve log lines and do not
+   leave suffixes above the configured retention.
 4. `open_log_append()` prepares and rotates the log before returning a worker
    stderr handle.
-5. Newly created log, lock, and diagnostic files use `0600` on Unix.
+5. Newly created log, lock, and diagnostic files are created with `0600` on
+   Unix.
 6. Invalid `REMEM_LOG_*` values fall back to defaults and are visible in
    `doctor`.
-7. Lock timeout fallback preserves append behavior and records a durable
-   diagnostic.
+7. Lock timeout and rotate/open failure fallback preserve append behavior where
+   possible and record a durable diagnostic.
 8. Logger-internal diagnostics avoid recursive calls into the logger.
 
 ## Acceptance Criteria
 
-- [ ] Concurrent writer test covers multiple writers crossing the threshold.
+- [ ] Subprocess concurrent writer test covers multiple writers crossing the
+      threshold.
 - [ ] Worker stderr setup test proves `open_log_append()` rotates before open.
-- [ ] Retention test proves `REMEM_LOG_MAX_ROTATED_FILES=5` keeps `.1` through
-      `.5` only.
+- [ ] Retention tests prove `REMEM_LOG_MAX_ROTATED_FILES=5` keeps `.1`
+      through `.5` only, reduced retention removes stale higher suffixes, and
+      `REMEM_LOG_MAX_ROTATED_FILES=0` keeps no suffixes.
 - [ ] Invalid env test proves fallback plus doctor warning.
-- [ ] Lock-timeout test proves line preservation plus doctor-visible issue.
+- [ ] Lock-timeout and rotate-failure tests prove line preservation plus
+      doctor-visible issue.
 - [ ] Unix permission test covers active, rotated, lock, and diagnostic files.
 - [ ] Docs cover new env vars and the worker stderr descriptor limitation.
 

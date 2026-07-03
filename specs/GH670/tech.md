@@ -26,16 +26,20 @@ Authoritative contract:
 ## Proposed Design
 
 - Add a central `LogPolicy` parser with defaults for active max bytes, rotated
-  file count, and lock timeout.
-- Add a locked prepare/open path using `remem.log.lock` and existing `fs2`
-  file-lock support.
+  file count, lock timeout, invalid env diagnostics, and
+  `REMEM_LOG_MAX_ROTATED_FILES=0` support.
+- Add a locked prepare/open/write path using `remem.log.lock` and existing
+  `fs2` file-lock support. `write_log()` writes its line while the lock is
+  still held; `open_log_append()` only holds the lock through preparation and
+  returns the worker stderr handle afterward.
 - Generalize rotation to accept a configured retention count, including
   zero-retention behavior.
 - Route both `write_log()` and `open_log_append()` through the same preparation
   path.
 - On lock timeout or rotation/open failure, preserve append-only behavior where
-  possible and write a non-recursive sidecar diagnostic such as
-  `remem.log.rotation-issue.json`.
+  possible and write a non-recursive, atomic sidecar diagnostic such as
+  `remem.log.rotation-issue.json`. Later healthy prepares clear or age out old
+  transient issues so doctor does not warn forever.
 - Add a doctor log-health check reporting policy, sizes, invalid env fallbacks,
   and the most recent summarized issue without reading log contents.
 
@@ -44,12 +48,12 @@ Authoritative contract:
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
 | P1 defaults | policy parser + write path | default-policy and existing log tests |
-| P2 retention | rotation helper | configured `.1` through `.5` test |
-| P3 concurrency | lock + rotate/open | multi-writer threshold test |
+| P2 retention | rotation helper | configured `.1` through `.5`, reduced-retention cleanup, and zero-retention tests |
+| P3 concurrency | lock + rotate/open/write | subprocess multi-writer threshold test |
 | P4 worker stderr | `open_log_append()` | oversized-active-log append-handle test |
 | P5 permissions | open/rotate/sidecar paths | Unix `0600` assertions |
 | P6 invalid env | policy parser + doctor | invalid env + doctor warning tests |
-| P7 fallback visibility | timeout fallback + sidecar | lock-timeout fixture |
+| P7 fallback visibility | timeout/rotate fallback + atomic sidecar | lock-timeout and rotate-failure fixtures |
 | P8 no recursion | sidecar writer | unit/code-structure test |
 
 ## Data Flow
@@ -57,15 +61,15 @@ Authoritative contract:
 ```text
 write_log/open_log_append
   -> parse LogPolicy
-  -> create parent dir
+  -> create parent dir and private lock file
   -> acquire remem.log.lock within REMEM_LOG_LOCK_TIMEOUT_MS
   -> rotate if active >= REMEM_LOG_MAX_BYTES
-  -> open active append handle
-  -> write line or attach worker stderr
+  -> open active append handle with 0600 create mode
+  -> write write_log() line under lock or return worker stderr handle
 ```
 
-On timeout, the flow skips rotation, opens append directly when possible, and
-updates the sidecar diagnostic for doctor.
+On timeout or rotation failure, the flow skips or abandons rotation, opens
+append directly when possible, and updates the sidecar diagnostic for doctor.
 
 ## Risks
 
@@ -76,9 +80,12 @@ updates the sidecar diagnostic for doctor.
 
 ## Test Plan
 
-- [ ] Unit tests: policy parser, retention shifting, invalid env collection.
-- [ ] Integration tests: concurrent writers, `open_log_append()` rotation,
-      lock-timeout fallback, doctor log-health check.
+- [ ] Unit tests: policy parser, retention shifting including reduced
+      retention and zero retention, invalid env collection, sidecar atomic
+      write/recovery clearing.
+- [ ] Integration tests: subprocess concurrent writers, `open_log_append()`
+      rotation, lock-timeout fallback, rotate-failure fallback, doctor
+      log-health check.
 - [ ] Existing checks: `cargo fmt --check`, `cargo check`, focused log/doctor
       tests, and `cargo test` before merge readiness.
 

@@ -59,8 +59,10 @@ Defaults:
 
 Parsing rules:
 
-- Accept positive integers only.
-- `max_rotated_files = 0` disables retained rotated files while keeping the
+- `REMEM_LOG_MAX_BYTES` and `REMEM_LOG_LOCK_TIMEOUT_MS` accept positive
+  integers only.
+- `REMEM_LOG_MAX_ROTATED_FILES` accepts non-negative integers.
+  `max_rotated_files = 0` disables retained rotated files while keeping the
   active log path.
 - Invalid or overflowing values fall back to defaults and produce an
   `InvalidLogEnv` entry for doctor. The logger itself must not recursively log
@@ -80,18 +82,25 @@ prepare_log_file(policy, purpose) -> PreparedLog
 Responsibilities:
 
 1. Create the parent directory.
-2. Open `remem.log.lock` with `create(true).read(true).write(true)`.
-3. Set lock-file permissions to `0600` on Unix.
+2. Open `remem.log.lock` with `create(true).read(true).write(true)` and, on
+   Unix, `OpenOptionsExt::mode(0o600)` or an equivalent atomic create mode.
+3. Ensure existing lock-file permissions are tightened to `0600` on Unix.
 4. Try to acquire an exclusive OS lock until `lock_timeout_ms` expires.
 5. Under the lock, rotate if `remem.log` is at or above `max_bytes`, then open
-   the active log in append mode and set active-file permissions to `0600`.
-6. Return the append handle to callers.
+   the active log in append mode with `0600` creation mode.
+6. For `write_log()`, write the current line while still holding the lock so a
+   later process cannot rotate away the inode before the line reaches a
+   retained file.
+7. For `open_log_append()`, return the prepared append handle after rotation
+   and handle creation; child stderr writes cannot hold the logger lock for the
+   lifetime of the worker and remain covered by the documented inherited-fd
+   limitation.
 
 Use `fs2::FileExt::try_lock_exclusive()` in a short sleep/retry loop so hook
-latency remains bounded. The lock is held only around directory creation,
-rotation, and handle creation. Normal writes can occur after opening the file
-because append mode preserves per-write append semantics; rotation decisions
-stay serialized.
+latency remains bounded. The lock is held around directory creation, rotation,
+active handle creation, and the single `write_log()` line write. This prevents a
+delayed writer from appending to an inode that another process has already
+rotated out of the retained set.
 
 ### 3. Retention-aware rotation
 
@@ -104,12 +113,17 @@ rotate_if_needed(path, max_bytes, max_rotated_files) -> Result<RotationOutcome>
 Rules:
 
 - If active size is below `max_bytes`, do nothing.
+- Before shifting, remove every suffix above `max_rotated_files` that exists
+  from prior higher-retention settings so reduced retention takes effect
+  immediately.
 - If `max_rotated_files == 0`, remove the active file instead of renaming it
   to `.1`; the next open recreates `remem.log`.
 - For `N > 0`, remove `remem.log.N`, shift suffixes downward in reverse order,
   then rename active to `.1`.
-- Set Unix `0600` permissions on every newly created retained file after
-  rotation where possible.
+- Ensure Unix `0600` permissions on every retained file after rotation where
+  possible. New files must be created with `0600` atomically where Rust's
+  platform APIs allow it; chmod is only a best-effort repair for existing
+  files.
 - Never panic on missing files. Missing rotated suffixes are normal.
 
 The implementation may keep an internal compatibility wrapper for existing
@@ -119,8 +133,10 @@ unit tests, but new tests should exercise the configurable helper.
 
 If the lock cannot be acquired within the timeout, `write_log()` must still try
 to append the current line to `remem.log` without rotating. `open_log_append()`
-must still try to return an append handle for worker stderr. Both paths record
-an issue through a non-recursive sidecar diagnostic writer.
+must still try to return an append handle for worker stderr. If the lock is
+acquired but remove/rename/open fails during rotation, the caller must also try
+append-only fallback where possible before returning the error. All fallback
+paths record an issue through a non-recursive sidecar diagnostic writer.
 
 Use a small sidecar file under `REMEM_DATA_DIR`, for example
 `remem.log.rotation-issue.json`, with `0600` permissions. It stores the most
@@ -139,6 +155,17 @@ This file must never contain log contents, secrets, hook payloads, or raw
 stderr. It is a summarized health marker only. The writer must use direct file
 I/O and must not call `crate::log::*`.
 
+Sidecar writes must be contention-safe: write to a process-unique temporary
+file in the same directory with `0600`, then atomically rename it over the
+sidecar, or serialize an equivalent direct-write path. A truncated or
+interleaved JSON sidecar is not acceptable because it removes the durable
+diagnostic precisely when contention is highest.
+
+Successful locked prepare/rotate/open operations clear the sidecar or update it
+to a recovered state with a timestamp. Doctor only warns for unresolved issues
+or issues inside a documented freshness window; an old transient timeout must
+not make `remem doctor` warn forever after later healthy log preparations.
+
 ### 5. Doctor integration
 
 Add a log-health check in `src/doctor/database.rs` or a new
@@ -151,11 +178,11 @@ The check reports:
 - total bytes across active plus retained logs;
 - configured `max_bytes`, `max_rotated_files`, and `lock_timeout_ms`;
 - invalid env fallbacks;
-- most recent rotation issue sidecar, if present.
+- most recent unresolved or fresh rotation issue sidecar, if present.
 
 Severity:
 
-- `ok`: policy parses cleanly and no recent issue exists.
+- `ok`: policy parses cleanly and no unresolved or fresh issue exists.
 - `warn`: invalid env fallback, lock timeout, rotate/open failure, unreadable
   sidecar, or retained bytes exceed a documented warning threshold.
 - `fail`: no fail state by default; logging should not block memory capture or
@@ -184,11 +211,11 @@ Implementation PRs update:
 | --- | --- | --- |
 | P1 default compatibility | `src/log/config.rs`, `src/log/write.rs` | Existing log tests plus default-policy test |
 | P2 retention | retention-aware rotation helper | `REMEM_LOG_MAX_ROTATED_FILES=5` and zero-retention tests |
-| P3 concurrency | locked prepare/open path | multi-thread or multi-process writer test crossing threshold |
+| P3 concurrency | locked prepare/open/write path | subprocess writer test crossing threshold |
 | P4 worker stderr preparation | `open_log_append()` | oversized-active-log test before returned handle writes |
 | P5 permissions | log open, lock file, sidecar writer | Unix permission assertions behind `#[cfg(unix)]` |
 | P6 invalid configuration | policy parser, doctor check | env parsing tests and doctor warning test |
-| P7 failure visibility | sidecar diagnostic, doctor check | lock-timeout fallback fixture |
+| P7 failure visibility | sidecar diagnostic, doctor check | lock-timeout and rotate-failure fallback fixtures |
 | P8 no recursive logging | sidecar writer | unit test or code structure proving it does not call `crate::log::*` |
 
 ## Data Flow
@@ -200,14 +227,15 @@ write_log/open_log_append
 parse log policy + invalid env collection
         |
         v
-create parent dir + open remem.log.lock
+create parent dir + open remem.log.lock with 0600 create mode
         |
         +-- lock acquired -> rotate if needed -> open active append handle
+        |                   -> write current write_log() line under lock
         |
-        +-- lock timeout -> append-only fallback + sidecar issue
+        +-- lock timeout or rotate failure -> append-only fallback + atomic sidecar issue
         |
         v
-caller writes log line or attaches worker stderr
+write_log completed, or open_log_append returns worker stderr handle
 ```
 
 `remem doctor` reads policy, file metadata, retained suffixes, and the sidecar
@@ -253,10 +281,12 @@ fallbacks and invalid env visibility.
 
 ## Test Plan
 
-- [ ] Unit tests: policy parser, rotated path generation, retention shifting,
-      invalid env collection, sidecar serialization.
-- [ ] Integration tests: `open_log_append()` rotation, concurrent writers,
-      lock-timeout fallback, doctor log-health warning.
+- [ ] Unit tests: policy parser, rotated path generation, retention shifting
+      including reduced-retention cleanup, invalid env collection, atomic
+      sidecar serialization and recovery clearing.
+- [ ] Integration tests: `open_log_append()` rotation, subprocess concurrent
+      writers, lock-timeout fallback, rotate-failure fallback, doctor
+      log-health warning.
 - [ ] Regression tests: existing `src/log/tests.rs` coverage remains green.
 - [ ] Manual verification: run `REMEM_LOG_MAX_BYTES=1 REMEM_LOG_MAX_ROTATED_FILES=5 cargo test log`
       or equivalent focused command in a temp data dir.
