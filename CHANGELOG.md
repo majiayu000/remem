@@ -51,6 +51,7 @@
 - Staged source version `0.5.149` for foreground status schema convergence.
 - Staged source version `0.5.150` for capacity degradation eval gates.
 - Staged source version `0.5.151` for prefix-cache-stable context rendering.
+- Staged source version `0.5.152` for Codex SessionStart context visibility.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 

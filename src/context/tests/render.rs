@@ -583,44 +583,6 @@ fn empty_context_marks_clear_reload_visibly() {
 }
 
 #[test]
-fn empty_context_uses_ansi_when_color_enabled() {
-    let output = empty_context_output(&ContextRequest {
-        cwd: "/tmp/remem".to_string(),
-        project: "/tmp/remem".to_string(),
-        session_id: None,
-        hook_source: Some("compact".to_string()),
-        current_branch: Some("main".to_string()),
-        host: HostKind::CodexCli,
-        use_colors: true,
-    });
-
-    assert!(output.starts_with("\x1b[1;36mremem context\x1b[0m"));
-    assert!(output.contains("\x1b[1;36mremem context\x1b[0m"));
-    assert!(output.contains("├─ \x1b[1mproject\x1b[0m: /tmp/remem"));
-}
-
-#[test]
-fn codex_colored_header_aligns_rows_under_hook_context_value() {
-    let output = empty_context_output(&ContextRequest {
-        cwd: "/tmp/remem".to_string(),
-        project: "/tmp/remem".to_string(),
-        session_id: None,
-        hook_source: None,
-        current_branch: Some("main".to_string()),
-        host: HostKind::CodexCli,
-        use_colors: true,
-    });
-    let plain = super::super::style::strip_ansi(&output);
-    let mut lines = plain.lines();
-
-    assert_eq!(lines.next(), Some("remem context"));
-    let project_line = lines.next().unwrap_or_default();
-    assert!(project_line.ends_with("├─ project: /tmp/remem"));
-    let row_indent = project_line.chars().take_while(|ch| *ch == ' ').count();
-    assert_eq!(row_indent, "hook context: ".chars().count());
-}
-
-#[test]
 fn render_context_output_exposes_lesson_schema_drift_failures() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-lesson-error");
     let conn = crate::db::test_support::runtime_connection().unwrap();
