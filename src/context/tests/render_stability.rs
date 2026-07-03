@@ -76,7 +76,7 @@ fn branch_sort_preserves_retrieval_order_within_branch_bucket() {
 }
 
 #[test]
-fn core_render_uses_stable_id_tiebreak_for_equal_score_bucket() {
+fn core_render_preserves_retrieval_order_for_equal_score_bucket() {
     let mut output = String::new();
     let memories = vec![
         sample_memory_with_epoch(2, "decision", "Second decision", REF_EPOCH),
@@ -93,5 +93,5 @@ fn core_render_uses_stable_id_tiebreak_for_equal_score_bucket() {
 
     let first_pos = output.find("**#1 First decision**").unwrap();
     let second_pos = output.find("**#2 Second decision**").unwrap();
-    assert!(first_pos < second_pos, "{output}");
+    assert!(second_pos < first_pos, "{output}");
 }

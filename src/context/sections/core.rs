@@ -53,30 +53,26 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         return CoreRenderSummary::default();
     }
 
-    let mut scored: Vec<(&Memory, i64, f64)> = memories
+    let mut scored: Vec<(usize, &Memory, i64, f64)> = memories
         .iter()
-        .filter_map(|memory| {
+        .enumerate()
+        .filter_map(|(retrieval_rank, memory)| {
             let memory_type = MemoryType::parse(&memory.memory_type)?;
             if !memory_type.is_core() {
                 return None;
             }
             let score = calculate_memory_score(memory, memory_type, render_reference_epoch);
-            Some((memory, score_bucket(score), score))
+            Some((retrieval_rank, memory, score_bucket(score), score))
         })
         .collect();
-    scored.sort_by(|left, right| {
-        right
-            .1
-            .cmp(&left.1)
-            .then_with(|| left.0.id.cmp(&right.0.id))
-    });
+    scored.sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.0.cmp(&right.0)));
 
     let mut selected: Vec<(&Memory, String)> = Vec::new();
     let mut total_chars = header_chars + trailer_chars;
     let mut selected_ids = std::collections::HashSet::new();
     let mut type_counts: HashMap<&str, usize> = HashMap::new();
 
-    for (memory, _score_bucket, score) in &scored {
+    for (_retrieval_rank, memory, _score_bucket, score) in &scored {
         if selected.len() >= limits.core_item_limit {
             break;
         }
@@ -103,7 +99,7 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         }
     }
 
-    for (memory, _score_bucket, score) in &scored {
+    for (_retrieval_rank, memory, _score_bucket, score) in &scored {
         if selected.len() >= limits.core_item_limit {
             break;
         }

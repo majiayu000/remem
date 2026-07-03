@@ -100,7 +100,7 @@ pub(crate) fn prompt_submit_additional_context(
         return Ok(None);
     }
 
-    let render_reference_epoch = prompt_submit_render_reference_epoch(&rendered);
+    let render_reference_epoch = chrono::Utc::now().timestamp();
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
     audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
         ContextAuditItem::injected_memory_with_labels(
@@ -189,14 +189,6 @@ fn render_prompt_submit_context(
         }
     }
     output
-}
-
-fn prompt_submit_render_reference_epoch(memories: &[Memory]) -> i64 {
-    memories
-        .iter()
-        .map(|memory| memory.updated_at_epoch)
-        .max()
-        .unwrap_or(0)
 }
 
 fn prompt_submit_staleness_labels(
@@ -629,13 +621,13 @@ mod tests {
         .ok_or_else(|| anyhow::anyhow!("second prompt should inject context"))?;
 
         assert_eq!(first, second);
-        assert!(first.contains("staleness=fresh"), "{first}");
+        assert!(first.contains("staleness=old"), "{first}");
         Ok(())
     }
 
     #[test]
-    fn prompt_submit_reference_epoch_is_memory_state_derived() {
-        let older = Memory {
+    fn prompt_submit_renderer_uses_supplied_reference_epoch() {
+        let memory = Memory {
             id: 1,
             session_id: None,
             project: "/tmp/remem-prompt-submit-reference".to_string(),
@@ -650,19 +642,24 @@ mod tests {
             branch: None,
             scope: "project".to_string(),
         };
-        let mut newer = older.clone();
-        newer.id = 2;
-        newer.title = "Newer memory".to_string();
-        newer.updated_at_epoch = 1_600_000_000;
+        let staleness_labels = HashMap::new();
 
-        assert_eq!(
-            prompt_submit_render_reference_epoch(&[older]),
-            1_500_000_000
+        let fresh = render_prompt_submit_context(
+            &[memory.clone()],
+            &staleness_labels,
+            memory.updated_at_epoch,
         );
-        assert_eq!(
-            prompt_submit_render_reference_epoch(&[newer.clone(), newer]),
-            1_600_000_000
+        let fresh_again = render_prompt_submit_context(
+            &[memory.clone()],
+            &staleness_labels,
+            memory.updated_at_epoch,
         );
+        let old =
+            render_prompt_submit_context(&[memory], &staleness_labels, 1_500_000_000 + 91 * 86_400);
+
+        assert_eq!(fresh, fresh_again);
+        assert!(fresh.contains("staleness=fresh"), "{fresh}");
+        assert!(old.contains("staleness=old"), "{old}");
     }
 
     #[test]
