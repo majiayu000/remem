@@ -199,6 +199,12 @@ tools exposed by `remem mcp`, including `search`, `get_observations`,
 
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.
+For Codex hook invocations, remem emits the supported
+`hookSpecificOutput.additionalContext` JSON shape so the memory block is
+model-visible through the hook contract instead of asking the assistant to
+repeat a separate `Remem context:` line. Codex may still show its own completed
+hook context block in the UI; remem does not add a second assistant-rendered
+status line.
 Codex uses strict duplicate-injection gating via
 `[memory_ai.hosts."codex-cli"].context_gate = "strict"`, so a mid-chat
 `SessionStart` repeat stays silent after the first injection for the same

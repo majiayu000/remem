@@ -6,15 +6,24 @@
 
 ## 1. Background
 
-Codex runs `SessionStart` hooks at the start of an agent task/turn. The hook output is recorded as developer context in the conversation history, and later model requests are built from the accumulated session history.
+Codex runs `SessionStart` hooks at the start of an agent task/turn. Plain hook
+stdout is recorded as developer context, and structured JSON stdout can carry
+the same model-visible context through
+`hookSpecificOutput.additionalContext`. Later model requests are built from the
+accumulated session history.
 
 For remem, the installed Codex hook currently runs:
 
 ```text
-REMEM_CONTEXT_HOST=codex-cli remem context
+remem context --host codex-cli
 ```
 
-`remem context` renders a full startup context block every time it is invoked. In a single visible Codex thread, multiple user requests can create multiple tasks/turns. Each task can therefore append another full remem context block to the same conversation history.
+`remem context` renders a full startup context block every time it is invoked.
+When the invocation is a Codex `SessionStart` hook, remem now serializes that
+block as `hookSpecificOutput.additionalContext` instead of plain stdout. In a
+single visible Codex thread, multiple user requests can create multiple
+tasks/turns. Each task can therefore append another full remem context block to
+the same conversation history unless duplicate-injection gating suppresses it.
 
 This is correct from Codex's hook lifecycle, but it is not the desired remem behavior.
 
@@ -59,7 +68,9 @@ Codex uses SessionStart for task/turn startup inside a persistent thread
 
 SessionStart output should be **idempotent per Codex conversation**, not per process invocation.
 
-The renderer still builds a high-quality context block. A new gate decides whether that block should be printed to stdout:
+The renderer still builds a high-quality context block. A gate decides whether
+that block should be emitted, and the Codex `SessionStart` hook path serializes
+emitted context as structured JSON:
 
 ```text
 hook stdin / CLI args
@@ -67,7 +78,7 @@ hook stdin / CLI args
   -> render candidate context
   -> fingerprint candidate context
   -> ContextInjectionGate
-  -> emit full context | emit compact update | emit nothing
+  -> emit full context JSON | emit compact update JSON | emit nothing
 ```
 
 No stdout means no developer context is injected by Codex. Diagnostics must go to remem logs or debug-only stderr, not stdout.
@@ -76,10 +87,10 @@ No stdout means no developer context is injected by Codex. Diagnostics must go t
 
 | Area | Current behavior |
 | --- | --- |
-| `src/install/config.rs` | Installs Codex `SessionStart` as `REMEM_CONTEXT_HOST=codex-cli remem context`. |
+| `src/install/config.rs` | Installs Codex `SessionStart` as `remem context --host codex-cli`. |
 | `src/cli/types.rs` | `context` already accepts `--session_id`, `--host`, `--debug`, but install does not pass session data. |
-| `src/cli/dispatch.rs` | `Commands::Context` calls `context::generate_context(...)` directly and does not parse hook stdin. |
-| `src/context/render.rs` | Opens DB, loads context data, renders all sections, prints to stdout. |
+| `src/context/invocation.rs` | `context` parses Codex hook stdin for session, cwd, transcript, and source. |
+| `src/context/render.rs` | Opens DB, loads context data, renders all sections, and wraps Codex `SessionStart` hook output as `hookSpecificOutput.additionalContext`; direct CLI output remains plain text. |
 | `src/context/host.rs` | Codex profile is host-aware and already records that Codex is Stop/context-focused. |
 | `docs/spec-context-compiler.md` | Defines the desired host-aware context compiler direction. |
 
@@ -87,7 +98,7 @@ No stdout means no developer context is injected by Codex. Diagnostics must go t
 
 ### 7.1 Default Codex Policy
 
-For `REMEM_CONTEXT_HOST=codex-cli`:
+For Codex `remem context --host codex-cli` hook invocations:
 
 1. First invocation for a Codex session emits full context.
 2. Later invocations for the same session emit nothing if the rendered context fingerprint is unchanged.
@@ -102,7 +113,8 @@ For `claude-code` and `unknown`:
 
 ### 7.2 Full Context
 
-The full context is the existing rendered output:
+The full context is the existing rendered output, carried in JSON stdout as
+`hookSpecificOutput.additionalContext` for Codex hooks:
 
 ```text
 # [project @branch] context ...
@@ -111,7 +123,7 @@ Use `search`/`get_observations` ...
 context memories loaded ...
 ```
 
-It is emitted when:
+It is emitted through the structured hook context path when:
 
 - no prior successful full context exists for the same injection key;
 - the caller uses `REMEM_CONTEXT_GATE=off`;
@@ -138,7 +150,7 @@ When the rendered context fingerprint changed within the same session, default b
 - include only changed section names, counts, and retrieval instruction;
 - stay under `REMEM_CONTEXT_DELTA_CHAR_LIMIT` default `1200`.
 
-Example:
+Example additional context body:
 
 ```text
 # [project @branch] remem context update

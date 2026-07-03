@@ -93,6 +93,11 @@ remem doctor
 remem status
 ```
 
+Codex `SessionStart` hook runs use `hookSpecificOutput.additionalContext` for
+the injected memory block. Current Codex builds may render that hook context as
+their own completed-hook UI block; remem does not instruct the assistant to
+print a second `Remem context:` status line.
+
 The activation script delegates to:
 
 ```bash
