@@ -108,12 +108,13 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
             UNIQUE(owner_scope, owner_key, memory_type, state_key)
         );
         CREATE TABLE memory_embeddings (
-            memory_id INTEGER PRIMARY KEY,
+            memory_id INTEGER NOT NULL,
             embedding BLOB NOT NULL,
             dimensions INTEGER NOT NULL,
             model TEXT NOT NULL,
             content_hash TEXT NOT NULL,
             updated_at_epoch INTEGER NOT NULL,
+            PRIMARY KEY(memory_id, model, dimensions),
             FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
         );
         CREATE INDEX idx_memory_embeddings_model

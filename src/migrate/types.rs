@@ -290,6 +290,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "failure_lifecycle",
         sql: include_str!("../migrations/v057_failure_lifecycle.sql"),
     },
+    Migration {
+        version: 58,
+        name: "memory_embeddings_multimodel_key",
+        sql: include_str!("../migrations/v058_memory_embeddings_multimodel_key.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

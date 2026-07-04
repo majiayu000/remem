@@ -623,7 +623,51 @@ fn vector_search_ignores_embeddings_from_other_models() -> Result<()> {
 }
 
 #[test]
-fn backfill_rebuilds_embeddings_from_stale_model() -> Result<()> {
+fn upsert_embedding_preserves_other_model_profiles() -> Result<()> {
+    let conn = setup_vector_conn()?;
+    insert_test_memory(&conn, 1)?;
+    let old_blob = vec![0u8; 3 * std::mem::size_of::<f32>()];
+    conn.execute(
+        "INSERT INTO memory_embeddings
+         (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+         VALUES (1, ?1, 3, 'old-model', 'old-hash', 1)",
+        params![old_blob],
+    )?;
+
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+
+    let rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(rows, 2);
+    let old_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings
+         WHERE memory_id = 1 AND model = 'old-model' AND dimensions = 3",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(old_rows, 1);
+    let active_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings
+         WHERE memory_id = 1 AND model = ?1 AND dimensions = ?2",
+        params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_rows, 1);
+    Ok(())
+}
+
+#[test]
+fn backfill_adds_active_model_without_pruning_stale_model() -> Result<()> {
     let conn = setup_vector_conn()?;
     insert_test_memory(&conn, 1)?;
     let stale_blob = vec![0u8; 3 * std::mem::size_of::<f32>()];
@@ -637,13 +681,21 @@ fn backfill_rebuilds_embeddings_from_stale_model() -> Result<()> {
     assert_eq!(pending_memory_embedding_count(&conn)?, 1);
     assert_eq!(backfill_missing_memory_embeddings(&conn, 100)?, 1);
 
-    let row: (String, i64) = conn.query_row(
-        "SELECT model, dimensions FROM memory_embeddings WHERE memory_id = 1",
+    let rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE memory_id = 1",
         [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(rows, 2);
+    let active_row: (String, i64) = conn.query_row(
+        "SELECT model, dimensions
+         FROM memory_embeddings
+         WHERE memory_id = 1 AND model = ?1 AND dimensions = ?2",
+        params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    assert_eq!(row.0, DEFAULT_EMBEDDING_MODEL);
-    assert_eq!(row.1, EMBEDDING_DIMENSIONS as i64);
+    assert_eq!(active_row.0, DEFAULT_EMBEDDING_MODEL);
+    assert_eq!(active_row.1, EMBEDDING_DIMENSIONS as i64);
     assert_eq!(pending_memory_embedding_count(&conn)?, 0);
     Ok(())
 }

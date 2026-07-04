@@ -12,6 +12,8 @@ mod tests_content_identity;
 #[cfg(test)]
 mod tests_convergence;
 #[cfg(test)]
+mod tests_memory_embeddings;
+#[cfg(test)]
 mod tests_memory_usage;
 #[cfg(test)]
 mod tests_schema;
