@@ -387,6 +387,23 @@ fn check_duplicate_vector_stage_keeps_negated_status_correction_separate() -> Re
     })
 }
 
+fn assert_feature_hash_duplicate(
+    existing: &str,
+    incoming: &str,
+    expected_duplicate: bool,
+) -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", existing)?;
+        let duplicate_id = check_duplicate(&conn, "test-project", incoming, None)?;
+
+        assert_eq!(duplicate_id.is_some(), expected_duplicate);
+        Ok(())
+    })
+}
+
 #[test]
 fn check_duplicate_vector_stage_keeps_short_numeric_observations_separate() -> Result<()> {
     with_embedding_provider("feature-hash", || -> Result<()> {
@@ -642,6 +659,34 @@ fn check_duplicate_vector_stage_dedups_identifier_number_separators() -> Result<
         assert!(duplicate_id.is_some());
         Ok(())
     })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_date_punctuation_variants() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Ran migration on 2026-07-04",
+        "Ran migration on 2026/07/04",
+        true,
+    )
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_comma_lists_separate_from_scalars() -> Result<()> {
+    assert_feature_hash_duplicate("Set allowlist 1,2", "Set allowlist 12", false)
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_version_trailing_zero_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate("Upgrade API to v1.20", "Upgrade API to v1.2", false)
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_numeric_qualifier_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Configuration update: set minimum timeout to 30 seconds",
+        "Configuration update: set maximum timeout to 30 seconds",
+        false,
+    )
 }
 
 #[test]

@@ -319,7 +319,10 @@ fn observation_token_list(text: &str) -> Vec<String> {
 
 fn is_numeric_token_separator(ch: char, previous: Option<char>, next: Option<char>) -> bool {
     match ch {
-        '+' | '-' => next.is_some_and(|next| next.is_ascii_digit()),
+        '+' | '-' => {
+            next.is_some_and(|next| next.is_ascii_digit())
+                && !previous.is_some_and(|previous| previous.is_ascii_digit())
+        }
         ',' | '.' => {
             previous.is_some_and(|previous| previous.is_ascii_digit())
                 && next.is_some_and(|next| next.is_ascii_digit())
@@ -437,6 +440,7 @@ fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
             label,
             value: normalize_numeric_value(
                 &chars[value_start..value_end].iter().collect::<String>(),
+                &unit,
             ),
             unit,
         });
@@ -471,8 +475,8 @@ fn alphabetic_prefix_before(chars: &[char], index: usize) -> String {
     prefix.into_iter().rev().collect()
 }
 
-fn normalize_numeric_value(raw: &str) -> String {
-    let raw = raw.replace(',', "");
+fn normalize_numeric_value(raw: &str, unit: &str) -> String {
+    let raw = normalize_grouped_numeric_commas(raw);
     let (sign, unsigned) = raw
         .strip_prefix('-')
         .map(|value| ("-", value))
@@ -481,7 +485,11 @@ fn normalize_numeric_value(raw: &str) -> String {
     let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
     let integer = integer.trim_start_matches('0');
     let integer = if integer.is_empty() { "0" } else { integer };
-    let fraction = fraction.trim_end_matches('0');
+    let fraction = if unit == "v" {
+        fraction
+    } else {
+        fraction.trim_end_matches('0')
+    };
     let value = if fraction.is_empty() {
         integer.to_string()
     } else {
@@ -494,22 +502,69 @@ fn normalize_numeric_value(raw: &str) -> String {
     }
 }
 
+fn normalize_grouped_numeric_commas(raw: &str) -> String {
+    if raw.contains(',') && has_valid_thousands_grouping(raw) {
+        raw.replace(',', "")
+    } else {
+        raw.to_string()
+    }
+}
+
+fn has_valid_thousands_grouping(raw: &str) -> bool {
+    let unsigned = raw
+        .strip_prefix('-')
+        .or_else(|| raw.strip_prefix('+'))
+        .unwrap_or(raw);
+    let integer = unsigned
+        .split_once('.')
+        .map_or(unsigned, |(integer, _)| integer);
+    let mut groups = integer.split(',');
+    let Some(first) = groups.next() else {
+        return false;
+    };
+    (1..=3).contains(&first.len())
+        && first.chars().all(|ch| ch.is_ascii_digit())
+        && groups.clone().count() > 0
+        && groups.all(|group| group.len() == 3 && group.chars().all(|ch| ch.is_ascii_digit()))
+}
+
 fn nearby_numeric_label(tokens: &[String], index: usize) -> String {
     tokens[..index]
         .iter()
+        .enumerate()
         .rev()
         .take(4)
-        .find(|token| is_numeric_label_token(token))
-        .cloned()
+        .find(|(_, token)| is_numeric_label_token(token))
+        .map(|(label_index, token)| numeric_label_with_qualifier(tokens, label_index, token))
         .or_else(|| {
             tokens
                 .iter()
+                .enumerate()
                 .skip(index + 1)
                 .take(4)
-                .find(|token| is_numeric_label_token(token))
-                .cloned()
+                .find(|(_, token)| is_numeric_label_token(token))
+                .map(|(label_index, token)| {
+                    numeric_label_with_qualifier(tokens, label_index, token)
+                })
         })
         .unwrap_or_default()
+}
+
+fn numeric_label_with_qualifier(tokens: &[String], label_index: usize, label: &str) -> String {
+    tokens[..label_index]
+        .iter()
+        .rev()
+        .take(2)
+        .find(|token| is_numeric_qualifier_token(token))
+        .map(|qualifier| format!("{qualifier}:{label}"))
+        .unwrap_or_else(|| label.to_string())
+}
+
+fn is_numeric_qualifier_token(token: &str) -> bool {
+    matches!(
+        token,
+        "ceiling" | "floor" | "max" | "maximum" | "min" | "minimum"
+    )
 }
 
 fn nearby_numeric_role(tokens: &[String], index: usize) -> String {
