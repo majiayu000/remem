@@ -161,6 +161,20 @@ pub(crate) struct EmbeddingFallbackCache {
     call_failure_fallback: Option<EmbeddingProvider>,
 }
 
+impl EmbeddingFallbackCache {
+    pub(crate) fn call_failure_fallback_target(&self) -> Option<EmbeddingBackfillTarget> {
+        match self.call_failure_fallback? {
+            EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+                Some(EmbeddingBackfillTarget {
+                    model: LOCAL_EMBEDDING_MODEL.to_string(),
+                    dimensions: LOCAL_EMBEDDING_DIMENSIONS,
+                })
+            }
+            EmbeddingProvider::Auto | EmbeddingProvider::OpenAi | EmbeddingProvider::Off => None,
+        }
+    }
+}
+
 pub fn embed_query(query: &str) -> Result<TextEmbedding> {
     embed_text(query)
 }

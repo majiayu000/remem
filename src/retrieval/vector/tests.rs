@@ -73,6 +73,14 @@ struct FailingEmbeddingServer {
 
 impl FailingEmbeddingServer {
     fn start() -> Result<Self> {
+        Self::start_with_successes(0)
+    }
+
+    fn success_once_then_fail() -> Result<Self> {
+        Self::start_with_successes(1)
+    }
+
+    fn start_with_successes(successes_before_failure: usize) -> Result<Self> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;
@@ -84,15 +92,24 @@ impl FailingEmbeddingServer {
             while !stop_for_thread.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        calls_for_thread.fetch_add(1, Ordering::SeqCst);
+                        let call_index = calls_for_thread.fetch_add(1, Ordering::SeqCst);
                         let mut buffer = [0u8; 8192];
                         let _ = stream.read(&mut buffer)?;
-                        let body = "provider unavailable";
-                        let response = format!(
-                            "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
-                            body.len(),
-                            body
-                        );
+                        let response = if call_index < successes_before_failure {
+                            let body = r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
+                            format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
+                        } else {
+                            let body = "provider unavailable";
+                            format!(
+                                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
+                        };
                         stream.write_all(response.as_bytes())?;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -170,11 +187,18 @@ const ENV_KEYS: &[&str] = &[
     "REMEM_CONFIG",
     "REMEM_EMBEDDINGS_PROVIDER",
     "REMEM_EMBEDDING_PROVIDER",
+    "REMEM_EMBEDDINGS_MODEL",
+    "REMEM_EMBEDDING_MODEL",
+    "REMEM_EMBEDDINGS_DIMENSIONS",
+    "REMEM_EMBEDDING_DIMENSIONS",
     "REMEM_EMBEDDINGS_FALLBACK",
     "REMEM_EMBEDDINGS_BASE_URL",
     "REMEM_EMBEDDING_BASE_URL",
     "REMEM_EMBEDDINGS_API_KEY",
     "REMEM_EMBEDDING_API_KEY",
+    "REMEM_EMBEDDINGS_API_KEY_ENV",
+    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+    "REMEM_EMBEDDINGS_MODEL_DIR",
     "OPENAI_API_KEY",
 ];
 
@@ -494,6 +518,45 @@ fn reindex_api_failure_fallback_is_cached_for_batch() -> Result<()> {
     assert_eq!(report.processed, 2);
     assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
     assert_eq!(server.call_count(), 1);
+    Ok(())
+}
+
+#[test]
+fn reindex_row_failure_fallback_reselects_fallback_target() -> Result<()> {
+    let server = FailingEmbeddingServer::success_once_then_fail()?;
+    let _provider = ScopedEmbeddingProvider::api_fallback_feature_hash(&server.base_url);
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    for id in 1_i64..=2 {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Fallback memory', 'Fallback vector content.', 'decision', 1, ?1, 'active')",
+            params![id],
+        )?;
+    }
+    ensure_vec_table(&conn)?;
+    let existing = embed_memory_text(
+        "Fallback memory",
+        "Fallback vector content.",
+        "decision",
+        None,
+    );
+    upsert_embedding(&conn, 1, &existing)?;
+
+    let report = reindex_memory_embeddings_with_report(&conn, 2)?;
+
+    assert_eq!(report.selected, 1);
+    assert_eq!(report.processed, 1);
+    assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
+    assert_eq!(report.dimensions, EMBEDDING_DIMENSIONS);
+    assert_eq!(server.call_count(), 2);
+    let fallback_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE model = ?1 AND dimensions = ?2",
+        params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64],
+        |row| row.get(0),
+    )?;
+    assert_eq!(fallback_rows, 2);
     Ok(())
 }
 

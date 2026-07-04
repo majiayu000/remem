@@ -6,6 +6,7 @@ use super::embedding::TextEmbedding;
 pub use super::vector_candidates::VECTOR_SEARCH_CANDIDATE_LIMIT;
 
 mod coverage;
+mod reindex;
 
 pub use super::embedding::{
     LOCAL_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS,
@@ -14,6 +15,7 @@ pub use super::embedding::{
 pub use coverage::{
     active_embedding_coverage, active_embedding_coverage_for_status, ActiveEmbeddingCoverage,
 };
+use reindex::select_memory_embedding_reindex_candidates;
 
 const EMBEDDING_REINDEX_WRITE_BATCH_SIZE: usize = 512;
 const UPSERT_EMBEDDING_SQL: &str = "INSERT INTO memory_embeddings
@@ -240,7 +242,7 @@ pub fn reindex_memory_embeddings_with_report(
 
     let profile_start = Instant::now();
     let mut fallback_cache = super::embedding::EmbeddingFallbackCache::default();
-    let target =
+    let mut target =
         match super::embedding::configured_backfill_target_with_fallback_cache(&mut fallback_cache)
         {
             Ok(target) => target,
@@ -259,33 +261,10 @@ pub fn reindex_memory_embeddings_with_report(
     crate::perf::push_elapsed(&mut timings, "profile_probe", profile_start);
 
     let select_start = Instant::now();
-    let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type
-         FROM memories m
-         LEFT JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE (e.memory_id IS NULL
-                OR e.model <> ?1
-                OR e.dimensions <> ?2
-                OR e.updated_at_epoch < m.updated_at_epoch)
-           AND m.status IN ('active', 'stale', 'archived')
-         ORDER BY m.updated_at_epoch DESC, m.id DESC
-         LIMIT ?3";
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(
-        params![target.model.as_str(), target.dimensions as i64, limit],
-        |row| {
-            Ok(MemoryEmbeddingReindexCandidate {
-                id: row.get(0)?,
-                topic_key: row.get(1)?,
-                title: row.get(2)?,
-                content: row.get(3)?,
-                memory_type: row.get(4)?,
-            })
-        },
-    )?;
-    let pending = crate::db::query::collect_rows(rows)?;
+    let mut pending = select_memory_embedding_reindex_candidates(conn, &target, limit)?;
     crate::perf::push_elapsed(&mut timings, "select_pending", select_start);
 
-    let selected = pending.len();
+    let mut selected = pending.len();
     if pending.is_empty() {
         crate::perf::push_elapsed(&mut timings, "total", total_start);
         return Ok(EmbeddingReindexReport {
@@ -297,8 +276,33 @@ pub fn reindex_memory_embeddings_with_report(
         });
     }
 
-    let processed =
-        reindex_memory_embedding_batch(conn, &pending, &mut timings, &mut fallback_cache)?;
+    let mut prepared = prepare_memory_embedding_batch(&pending, &mut timings, &mut fallback_cache)?;
+    if let Some(fallback_target) = fallback_cache.call_failure_fallback_target() {
+        if fallback_target != target {
+            target = fallback_target;
+            let fallback_select_start = Instant::now();
+            pending = select_memory_embedding_reindex_candidates(conn, &target, limit)?;
+            crate::perf::push_elapsed(
+                &mut timings,
+                "select_pending_after_fallback",
+                fallback_select_start,
+            );
+            selected = pending.len();
+            if pending.is_empty() {
+                crate::perf::push_elapsed(&mut timings, "total", total_start);
+                return Ok(EmbeddingReindexReport {
+                    selected,
+                    processed: 0,
+                    model: target.model,
+                    dimensions: target.dimensions,
+                    timings,
+                });
+            }
+            prepared = prepare_memory_embedding_batch(&pending, &mut timings, &mut fallback_cache)?;
+        }
+    }
+
+    let processed = upsert_prepared_memory_embedding_batch(conn, &prepared, &mut timings)?;
     crate::perf::push_elapsed(&mut timings, "total", total_start);
     Ok(EmbeddingReindexReport {
         selected,
@@ -347,14 +351,13 @@ struct PreparedMemoryEmbedding {
     updated_at_epoch: i64,
 }
 
-fn reindex_memory_embedding_batch(
-    conn: &Connection,
+fn prepare_memory_embedding_batch(
     batch: &[MemoryEmbeddingReindexCandidate],
     timings: &mut Vec<crate::perf::PhaseTiming>,
     fallback_cache: &mut super::embedding::EmbeddingFallbackCache,
-) -> Result<usize> {
+) -> Result<Vec<PreparedMemoryEmbedding>> {
     if batch.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
     let embed_start = Instant::now();
@@ -369,8 +372,19 @@ fn reindex_memory_embedding_batch(
             })?,
         );
     }
-    let prepared_count = prepared.len();
     crate::perf::push_elapsed(timings, "embed_memory", embed_start);
+    Ok(prepared)
+}
+
+fn upsert_prepared_memory_embedding_batch(
+    conn: &Connection,
+    prepared: &[PreparedMemoryEmbedding],
+    timings: &mut Vec<crate::perf::PhaseTiming>,
+) -> Result<usize> {
+    if prepared.is_empty() {
+        return Ok(0);
+    }
+    let prepared_count = prepared.len();
 
     conn.execute_batch("SAVEPOINT remem_embedding_reindex_batch")
         .context("start memory embedding reindex savepoint")?;
@@ -378,7 +392,7 @@ fn reindex_memory_embedding_batch(
         let upsert_start = Instant::now();
         {
             let mut stmt = conn.prepare(UPSERT_EMBEDDING_SQL)?;
-            for embedding in &prepared {
+            for embedding in prepared {
                 execute_embedding_upsert(
                     &mut stmt,
                     embedding.memory_id,

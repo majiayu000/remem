@@ -52,7 +52,7 @@ pub(crate) fn find_curated_duplicate(
     {
         return Ok(None);
     }
-    if crate::retrieval::embedding::embedding_provider_status()?.disabled {
+    if crate::retrieval::embedding::embedding_provider_status_without_probe()?.disabled {
         return Ok(None);
     }
 
