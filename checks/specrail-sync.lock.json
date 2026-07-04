@@ -1,0 +1,57 @@
+{
+  "upstream_repo": "https://github.com/majiayu000/specrail",
+  "upstream_sha": "f47f01859c64eada4a4cebb96506dc04d3f909fb",
+  "excluded": [
+    "checks/check_workflow.py"
+  ],
+  "files": [
+    {
+      "path": "checks/duplicate_work_gate.py",
+      "sha256": "c109124d511983b9579d11e0bf2378569435e73036a22f058ed377fb5232317c"
+    },
+    {
+      "path": "checks/github_duplicate_evidence.py",
+      "sha256": "65fb4f23f72f759c0b340fee154e9fc7188eee8177d96d2388e0e9f1ef532f56"
+    },
+    {
+      "path": "checks/github_issue_evidence.py",
+      "sha256": "fb9c84933203b971672b27b0d31834371d94682843d408b2503b7f517d760678"
+    },
+    {
+      "path": "checks/github_pr_evidence.py",
+      "sha256": "b4e9254a0b0231f974492eb721bb7e65177d193a6bfc70aca95f091c31f973c3"
+    },
+    {
+      "path": "checks/pr_gate.py",
+      "sha256": "eed9a93235b0a8789270247f422d8fc3b18d6e00fd4ee892b49f4a84ddf34c5a"
+    },
+    {
+      "path": "checks/review_json_gate.py",
+      "sha256": "47c258d0b49ff80749e57c6fec1e3f95a11b19b1ea2641d892c6e3168ae1d401"
+    },
+    {
+      "path": "checks/route_gate.py",
+      "sha256": "d5e96a2a76f8d4ddf950b2fe5429dcf742d8cefcdae5fd813489721483fa345b"
+    },
+    {
+      "path": "checks/runtime_ledger_gate.py",
+      "sha256": "d146ef50032d4468d60c0d57c4d5ad3fde9b596b91af4a84456664016b49a30a"
+    },
+    {
+      "path": "checks/specrail_lib.py",
+      "sha256": "f288d4f383a5315ea78776940d5d91c0e9a05eb89d0746ee9a1885afe5d26136"
+    },
+    {
+      "path": "schemas/duplicate_work_evidence.schema.json",
+      "sha256": "bd0db8ecc204d15afe88e85707575ddd418c6937d4dc7fa91eb4060e2f1df627"
+    },
+    {
+      "path": "schemas/pr_review_gate.schema.json",
+      "sha256": "93d6c7e11604b43cae798bfdf9454ee1128d51ad28186643e7d7c8daaa7d0324"
+    },
+    {
+      "path": "schemas/runtime_checkpoint.schema.json",
+      "sha256": "4e790407cf5efbeb808cb4e79195782afac14ecd71d1270b34a83c041e7b0d34"
+    }
+  ]
+}

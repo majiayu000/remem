@@ -6,3 +6,4 @@ eval/coding-bench/reports/artifacts/
 .env
 .omx/
 plan/
+__pycache__/

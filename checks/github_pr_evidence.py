@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -31,6 +32,9 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
           id
           isResolved
           isOutdated
+          resolvedBy {
+            login
+          }
           comments(first: 5) {
             nodes {
               url
@@ -182,6 +186,24 @@ def _first_comment_url(thread: dict[str, Any]) -> str | None:
     return None
 
 
+def _resolver_login(thread: dict[str, Any]) -> str | None:
+    for key in ["resolvedBy", "resolved_by"]:
+        value = thread.get(key)
+        if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
+            return value["login"].strip()
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _resolver_role(thread: dict[str, Any]) -> str | None:
+    for key in ["resolverRole", "resolver_role"]:
+        value = thread.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _author_login(value: Any, fallback: str) -> str:
     if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
         return value["login"].strip()
@@ -279,6 +301,12 @@ def normalize_review_threads(graphql_payload: dict[str, Any]) -> list[dict[str, 
         url = _first_comment_url(item)
         if url:
             thread["url"] = url
+        resolver = _resolver_login(item)
+        if resolver:
+            thread["resolved_by"] = resolver
+        role = _resolver_role(item)
+        if role:
+            thread["resolver_role"] = role
         normalized.append(thread)
     return normalized
 
@@ -319,12 +347,20 @@ def build_evidence(
     pr_payload: dict[str, Any],
     threads_payload: dict[str, Any],
     authorization: dict[str, str] | None = None,
+    merge_dispatched_at: str | None = None,
+    merge_head_sha: str | None = None,
 ) -> dict[str, Any]:
+    head_sha = _require_string(pr_payload, "headRefOid")
     evidence: dict[str, Any] = {
         "pr": _require_positive_int(pr_payload, "number"),
         "state": _require_string(pr_payload, "state").upper(),
         "is_draft": _require_bool(pr_payload, "isDraft"),
-        "head_sha": _require_string(pr_payload, "headRefOid"),
+        "head_sha": head_sha,
+        "gate_query_completed_at": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "gate_query_head_sha": head_sha,
         "merge_state": _require_string(pr_payload, "mergeStateStatus").upper(),
         "linked_issue": normalize_linked_issue(pr_payload.get("closingIssuesReferences")),
         "checks": normalize_checks(pr_payload.get("statusCheckRollup")),
@@ -333,6 +369,14 @@ def build_evidence(
     }
     if authorization is not None:
         evidence["human_authorization"] = authorization
+    provided_merge = [value for value in [merge_dispatched_at, merge_head_sha] if value is not None]
+    if provided_merge:
+        if not merge_dispatched_at or not merge_dispatched_at.strip() or not merge_head_sha or not merge_head_sha.strip():
+            raise EvidenceError(
+                "--merge-dispatched-at and --merge-head-sha must be provided together"
+            )
+        evidence["merge_dispatched_at"] = merge_dispatched_at.strip()
+        evidence["merge_head_sha"] = merge_head_sha.strip()
     return evidence
 
 
@@ -340,11 +384,26 @@ def collect_evidence(
     github_repo: str,
     pr_number: int,
     authorization: dict[str, str] | None,
+    merge_dispatched_at: str | None = None,
+    merge_head_sha: str | None = None,
 ) -> dict[str, Any]:
     owner, name = parse_github_repo(github_repo)
-    pr_payload = collect_pr_view(github_repo, pr_number)
+    pr_payload_before = collect_pr_view(github_repo, pr_number)
+    head_sha_before = _require_string(pr_payload_before, "headRefOid")
     threads_payload = collect_review_threads(owner, name, pr_number)
-    return build_evidence(pr_payload, threads_payload, authorization)
+    pr_payload_after = collect_pr_view(github_repo, pr_number)
+    head_sha_after = _require_string(pr_payload_after, "headRefOid")
+    if head_sha_before != head_sha_after:
+        raise EvidenceError(
+            "PR head changed while collecting gate evidence; rerun PR evidence collection"
+        )
+    return build_evidence(
+        pr_payload_after,
+        threads_payload,
+        authorization,
+        merge_dispatched_at,
+        merge_head_sha,
+    )
 
 
 def main() -> int:
@@ -356,6 +415,8 @@ def main() -> int:
     parser.add_argument("--authorization-actor", help="Human authorizing merge")
     parser.add_argument("--authorization-source", help="Where authorization was recorded")
     parser.add_argument("--authorization-summary", help="Short authorization summary")
+    parser.add_argument("--merge-dispatched-at", help="Optional merge dispatch timestamp for audit records")
+    parser.add_argument("--merge-head-sha", help="Optional merge target head SHA for audit records")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     args = parser.parse_args()
 
@@ -365,7 +426,13 @@ def main() -> int:
             args.authorization_source,
             args.authorization_summary,
         )
-        evidence = collect_evidence(args.github_repo, args.pr, authorization)
+        evidence = collect_evidence(
+            args.github_repo,
+            args.pr,
+            authorization,
+            args.merge_dispatched_at,
+            args.merge_head_sha,
+        )
     except EvidenceError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

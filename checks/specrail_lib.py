@@ -14,7 +14,53 @@ from pathlib import Path
 from typing import Any
 
 
+SCHEMA_ANNOTATION_KEYS = {"$id", "$schema", "description", "title"}
+SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
+    "additionalProperties",
+    "const",
+    "enum",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
+    "items",
+    "minItems",
+    "minLength",
+    "minimum",
+    "properties",
+    "required",
+    "type",
+}
 DECISIONS = {"allowed", "warn", "needs_human", "blocked"}
+SPEC_STATUSES = frozenset(
+    {
+        "complete",
+        "needs_tasks",
+        "needs_spec",
+        "umbrella_covered",
+        "exception_allowed",
+    }
+)
+RUNTIME_ONLY_STATE = "runtime_only"
+RUNTIME_STATE_MAPPING = {
+    "blocked": RUNTIME_ONLY_STATE,
+    "closed": RUNTIME_ONLY_STATE,
+    "complete": RUNTIME_ONLY_STATE,
+    "deferred": RUNTIME_ONLY_STATE,
+    "eligible_impl": ("ready_to_implement",),
+    "handoff": RUNTIME_ONLY_STATE,
+    "merge_ready": ("merge_ready",),
+    "merged": ("merged",),
+    "needs_ci": ("human_review",),
+    "needs_human": RUNTIME_ONLY_STATE,
+    "needs_review": ("impl_pr_open", "agent_review"),
+    "needs_spec": ("ready_to_spec",),
+    "needs_tasks": ("spec_approved",),
+    "open": RUNTIME_ONLY_STATE,
+    "planning": RUNTIME_ONLY_STATE,
+    "ready_to_merge": ("merge_ready",),
+    "review_required": ("human_review",),
+    "running": RUNTIME_ONLY_STATE,
+    "waiting_ci": ("human_review", "ci_green"),
+}
 TERMINAL_BLOCKING_STATES = {
     "abandoned",
     "duplicate",
@@ -67,9 +113,13 @@ def parse_scalar(value: str) -> Any:
 def _significant_lines(text: str) -> list[tuple[int, str]]:
     lines: list[tuple[int, str]] = []
     for raw in text.splitlines():
+        if "\t" in raw:
+            raise SpecRailError("tabs are not supported in SpecRail YAML")
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip(" "))
+        if indent % 2 != 0:
+            raise SpecRailError(f"indent must use multiples of two spaces near: {raw.strip()}")
         lines.append((indent, raw.strip()))
     return lines
 
@@ -103,6 +153,10 @@ def parse_yaml_subset(text: str) -> Any:
                     child, index = parse_block(index + 1, indent + 2)
                     container.append(child)
                 else:
+                    if re.match(r"[^'\"\s]+:\s+", item) and not (
+                        len(item) >= 2 and item[0] == item[-1] and item[0] in {"'", '"'}
+                    ):
+                        raise SpecRailError(f"unsupported list mapping near: {content}")
                     container.append(parse_scalar(item))
                     index += 1
                 continue
@@ -114,7 +168,11 @@ def parse_yaml_subset(text: str) -> Any:
                 raise SpecRailError(f"expected key/value near: {content}")
             key = key.strip()
             value = value.strip()
+            if key in container:
+                raise SpecRailError(f"duplicate key near: {content}")
             if value:
+                if value.startswith("{") and value.endswith("}"):
+                    raise SpecRailError(f"inline mappings are not supported near: {content}")
                 container[key] = parse_scalar(value)
                 index += 1
                 continue
@@ -134,6 +192,138 @@ def parse_yaml_subset(text: str) -> Any:
 
 def load_yaml_file(path: Path) -> Any:
     return parse_yaml_subset(read_text(path))
+
+
+def _json_type_matches(data: Any, expected_type: str) -> bool:
+    if expected_type == "object":
+        return isinstance(data, dict)
+    if expected_type == "array":
+        return isinstance(data, list)
+    if expected_type == "string":
+        return isinstance(data, str)
+    if expected_type == "integer":
+        return isinstance(data, int) and not isinstance(data, bool)
+    if expected_type == "number":
+        return isinstance(data, (int, float)) and not isinstance(data, bool)
+    if expected_type == "boolean":
+        return isinstance(data, bool)
+    if expected_type == "null":
+        return data is None
+    raise SpecRailError(f"unsupported JSON Schema type {expected_type!r}")
+
+
+def _schema_path(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def _data_path(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> None:
+    """Validate data against the JSON Schema subset used by SpecRail.
+
+    This intentionally implements only the local schema subset. If a schema
+    starts using a new keyword, validation fails until this checker is extended.
+    """
+
+    unsupported = sorted(set(schema) - SUPPORTED_SCHEMA_KEYS)
+    if unsupported:
+        raise SpecRailError(
+            f"{path}: unsupported JSON Schema keyword {unsupported[0]!r}"
+        )
+
+    if "type" in schema:
+        expected = schema["type"]
+        expected_types = expected if isinstance(expected, list) else [expected]
+        if not all(isinstance(item, str) for item in expected_types):
+            raise SpecRailError(f"{path}: type must be a string or list of strings")
+        if not any(_json_type_matches(data, item) for item in expected_types):
+            joined = ", ".join(expected_types)
+            raise SpecRailError(f"{path}: expected type {joined}")
+
+    if "const" in schema and data != schema["const"]:
+        raise SpecRailError(f"{path}: expected const {schema['const']!r}")
+
+    if "enum" in schema:
+        enum = schema["enum"]
+        if not isinstance(enum, list):
+            raise SpecRailError(f"{path}: enum must be a list")
+        if data not in enum:
+            raise SpecRailError(f"{path}: value {data!r} is not in enum")
+
+    if "minLength" in schema:
+        if not isinstance(data, str):
+            raise SpecRailError(f"{path}: minLength requires a string instance")
+        if len(data) < int(schema["minLength"]):
+            raise SpecRailError(f"{path}: string is shorter than minLength")
+
+    if "minItems" in schema:
+        if not isinstance(data, list):
+            raise SpecRailError(f"{path}: minItems requires an array instance")
+        if len(data) < int(schema["minItems"]):
+            raise SpecRailError(f"{path}: array is shorter than minItems")
+
+    if "minimum" in schema:
+        if not _json_type_matches(data, "number"):
+            raise SpecRailError(f"{path}: minimum requires a number instance")
+        if data < schema["minimum"]:
+            raise SpecRailError(f"{path}: value is below minimum")
+
+    if "exclusiveMinimum" in schema:
+        if not _json_type_matches(data, "number"):
+            raise SpecRailError(f"{path}: exclusiveMinimum requires a number instance")
+        if data <= schema["exclusiveMinimum"]:
+            raise SpecRailError(f"{path}: value is not above exclusiveMinimum")
+
+    if "exclusiveMaximum" in schema:
+        if not _json_type_matches(data, "number"):
+            raise SpecRailError(f"{path}: exclusiveMaximum requires a number instance")
+        if data >= schema["exclusiveMaximum"]:
+            raise SpecRailError(f"{path}: value is not below exclusiveMaximum")
+
+    if "required" in schema:
+        if not isinstance(data, dict):
+            raise SpecRailError(f"{path}: required fields need an object instance")
+        required = schema["required"]
+        if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
+            raise SpecRailError(f"{path}: required must be a list of strings")
+        for key in required:
+            if key not in data:
+                raise SpecRailError(f"{_data_path(path, key)}: missing required field")
+
+    properties = schema.get("properties", {})
+    if properties is not None and not isinstance(properties, dict):
+        raise SpecRailError(f"{path}: properties must be an object")
+    if isinstance(data, dict) and isinstance(properties, dict):
+        for key, child_schema in properties.items():
+            if key not in data:
+                continue
+            if not isinstance(child_schema, dict):
+                raise SpecRailError(f"{_schema_path(path, key)}: property schema must be an object")
+            validate_instance(child_schema, data[key], _data_path(path, key))
+
+        additional = schema.get("additionalProperties", True)
+        if additional is False:
+            extra_keys = sorted(set(data) - set(properties))
+            if extra_keys:
+                raise SpecRailError(
+                    f"{_data_path(path, extra_keys[0])}: additional property is not allowed"
+                )
+        elif isinstance(additional, dict):
+            for key in sorted(set(data) - set(properties)):
+                validate_instance(additional, data[key], _data_path(path, key))
+        elif additional is not True:
+            raise SpecRailError(f"{path}: additionalProperties must be boolean or object")
+
+    if "items" in schema:
+        if not isinstance(data, list):
+            raise SpecRailError(f"{path}: items requires an array instance")
+        item_schema = schema["items"]
+        if not isinstance(item_schema, dict):
+            raise SpecRailError(f"{path}: items must be an object")
+        for index, item in enumerate(data):
+            validate_instance(item_schema, item, f"{path}[{index}]")
 
 
 def load_pack(repo: Path) -> PackConfig:
