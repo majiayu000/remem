@@ -30,20 +30,18 @@
 
 ## 安装
 
-Codex CLI：
+安装 `remem` 二进制：
 
 ```bash
 brew install majiayu000/tap/remem
-remem install --target codex
-remem doctor
 ```
 
-Claude Code：
+然后为本机已安装的 coding agents 配置 hooks 和 MCP：
 
 ```bash
-brew install majiayu000/tap/remem
-remem install --target claude
-remem doctor
+REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target codex
+# 或：REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target claude
+# 或：REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target all
 ```
 
 如果不用 Homebrew：
@@ -51,8 +49,15 @@ remem doctor
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
 ~/.local/bin/remem install --target codex
-~/.local/bin/remem doctor
+# 或：~/.local/bin/remem install --target claude
+# 或：~/.local/bin/remem install --target all
 ```
+
+`remem install` 可以自动检测已有的 Claude Code 和 Codex CLI 配置目录。
+首次安装时请使用 `--target codex`、`--target claude` 或 `--target all`，
+这样 remem 可以创建所选配置文件。
+
+需要验证或排障时再运行 `remem doctor`。
 
 ## 成功检查
 
@@ -64,7 +69,7 @@ remem status
 remem search "last decision"
 ```
 
-`remem install --target codex` 会创建或更新：
+对于 Codex CLI，`remem install` 会创建或更新：
 
 - `~/.remem/.key` 和加密的 `~/.remem/remem.db`
 - `~/.remem/config.toml` memory-AI profiles
@@ -72,10 +77,10 @@ remem search "last decision"
 - `~/.codex/hooks.json` 中的 Codex SessionStart/Stop hooks
 
 Codex-only setup 下，`remem doctor` 会把 Schema、Key format、Database 和
-Codex Hooks/MCP 行报告为 ok。如果本机已经有 Claude Code 配置目录，Claude 行
-可能会 warning；需要时再运行 `remem install --target claude` 或
-`remem install --target all`。如果出现多个 `remem` 二进制的 install-path 警告，
-按输出里的 fix 提示处理，确保 hooks 使用预期的二进制。
+Codex Hooks/MCP 行报告为 ok。如果本机已经有 Claude Code 配置目录，但安装时
+没有被自动检测到，再运行 `remem install --target claude` 或
+`remem install --target all`。如果 doctor 出现多个 `remem` 二进制的
+install-path 警告，按输出里的 fix 提示处理，确保 hooks 使用预期的二进制。
 
 ## 让你的 coding agent 安装
 
@@ -133,7 +138,7 @@ curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darw
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
-remem install --target codex
+~/.local/bin/remem install --target codex
 
 # 源码构建
 git clone https://github.com/majiayu000/remem.git
@@ -141,7 +146,7 @@ cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # macOS ARM 必须签名
-remem install --target codex
+~/.local/bin/remem install --target codex
 ```
 
 PATH 上建议只保留一个 canonical `remem` 命令。Standalone 和源码安装通常放在
