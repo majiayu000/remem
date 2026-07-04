@@ -142,6 +142,34 @@ fn parsed_observation(narrative: &str) -> ParsedObservation {
     }
 }
 
+fn title_only_observation(title: &str) -> ParsedObservation {
+    ParsedObservation {
+        obs_type: "discovery".to_string(),
+        title: Some(title.to_string()),
+        subtitle: None,
+        narrative: None,
+        facts: Vec::new(),
+        concepts: Vec::new(),
+        files_read: Vec::new(),
+        files_modified: Vec::new(),
+        confidence: Some(0.84),
+    }
+}
+
+fn fact_only_observation(fact: &str) -> ParsedObservation {
+    ParsedObservation {
+        obs_type: "discovery".to_string(),
+        title: None,
+        subtitle: None,
+        narrative: None,
+        facts: vec![fact.to_string()],
+        concepts: Vec::new(),
+        files_read: Vec::new(),
+        files_modified: Vec::new(),
+        confidence: Some(0.84),
+    }
+}
+
 fn evidence_range_for_event(event_id: i64) -> EvidenceRange {
     EvidenceRange {
         from_event_id: event_id,
@@ -190,6 +218,70 @@ fn observation_persistence_skips_active_vector_duplicate() -> Result<()> {
         "SELECT last_accessed_epoch FROM observations WHERE status = 'active'",
         [],
         |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    assert!(last_accessed.is_some());
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_title_only_vector_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("feature-hash");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-title-vector-duplicate",
+        "SQLCipher encrypts private secrets at rest.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let first = title_only_observation("SQLCipher encrypts private secrets at rest.");
+    let second = title_only_observation("Protect private secrets at rest with encryption.");
+
+    assert_eq!(persist_observations(&mut conn, &task, &range, &[first])?, 1);
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[second])?,
+        0
+    );
+
+    let (count, last_accessed): (i64, Option<i64>) = conn.query_row(
+        "SELECT COUNT(*), MAX(last_accessed_epoch) FROM observations WHERE status = 'active'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(count, 1);
+    assert!(last_accessed.is_some());
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_fact_only_hash_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("off");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-fact-hash-duplicate",
+        "Use SQLCipher for private secrets.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let first_range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let second_range = evidence_range_for_event(first_range.to_event_id + 1);
+    let first = fact_only_observation("Use SQLCipher for private secrets.");
+    let second = fact_only_observation("Use SQLCipher for private secrets.");
+
+    assert_eq!(
+        persist_observations(&mut conn, &task, &first_range, &[first])?,
+        1
+    );
+    assert_eq!(
+        persist_observations(&mut conn, &task, &second_range, &[second])?,
+        0
+    );
+
+    let (count, last_accessed): (i64, Option<i64>) = conn.query_row(
+        "SELECT COUNT(*), MAX(last_accessed_epoch) FROM observations WHERE status = 'active'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     assert_eq!(count, 1);
     assert!(last_accessed.is_some());

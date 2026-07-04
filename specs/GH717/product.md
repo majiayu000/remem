@@ -38,7 +38,8 @@ or merge too aggressively when a higher-quality provider is selected.
 ## Behavior Invariants
 
 1. Observation dedup runs hash first, then a vector stage only when embeddings
-   are enabled and available.
+   are enabled and available, using canonical observation text from `text`,
+   `narrative`, `title`, or `facts[0]`.
 2. The vector stage compares embeddings produced by the active provider/model,
    not an implicit legacy helper detached from provider resolution.
 3. Curated-memory semantic dedup filters candidates by the query embedding's

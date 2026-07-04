@@ -24,10 +24,12 @@ Observation dedup keeps the existing hash stage as the first fast path.
 `persist_observations` checks the funnel after exact replay idempotency and
 before inserting an extracted observation. When no hash duplicate is found, the
 funnel embeds the incoming observation text through the active provider, scans
-recent active observations for the same project, embeds each candidate through
-the same active provider, computes cosine distance, and marks matches accessed.
-Provider `off` returns no vector duplicates. Other provider failures propagate
-because silently falling back would make duplicate decisions untrustworthy.
+recent active observations for the same project, derives canonical candidate
+text from `observations.text`, `narrative`, `title`, or `facts[0]`, embeds each
+candidate through the same active provider, computes cosine distance, and marks
+matches accessed. Provider `off` returns no vector duplicates. Other provider
+failures propagate because silently falling back would make duplicate decisions
+untrustworthy.
 
 Preference consolidation changes the embedding fallback from raw
 `retrieval::vector::embed_query_text` to active `TextEmbedding`. The incoming
@@ -54,7 +56,7 @@ it rather than adding a second path.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 observation vector stage | `dedup/funnel.rs`, `observation_extract.rs` | Dedup test with paraphrased narratives plus extraction persistence wiring test |
+| P1 observation vector stage | `dedup/funnel.rs`, `observation_extract.rs` | Dedup test with paraphrased narratives plus extraction persistence wiring tests for narrative, title-only, and fact-only observations |
 | P2 active provider only | dedup and preference embedding helpers | Provider-off and model-threshold tests |
 | P3 same-model curated dedup | `semantic_dedup.rs` | semantic_dedup focused test |
 | P4 preference model thresholds | `preference/consolidation.rs` | threshold unit test |

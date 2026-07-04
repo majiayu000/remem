@@ -6,4 +6,5 @@ mod tests;
 
 pub use access::mark_duplicate_accessed;
 pub use funnel::check_duplicate;
+pub(crate) use hash::canonical_observation_text;
 pub use hash::find_hash_duplicates;

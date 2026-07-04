@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-use crate::memory::dedup::{find_hash_duplicates, mark_duplicate_accessed};
+use crate::memory::dedup::{
+    canonical_observation_text, find_hash_duplicates, mark_duplicate_accessed,
+};
 
 const VECTOR_WINDOW_SECS: i64 = 15 * 60;
 const VECTOR_CANDIDATE_LIMIT: i64 = 200;
@@ -65,25 +67,43 @@ fn find_vector_duplicates(
     let max_distance = 1.0 - threshold;
     let cutoff = chrono::Utc::now().timestamp() - window_secs;
     let mut stmt = conn.prepare(
-        "SELECT id, narrative
+        "SELECT id, text, narrative, title, facts
          FROM observations
          WHERE project = ?1
            AND status = 'active'
            AND created_at_epoch > ?2
-           AND narrative IS NOT NULL
-           AND length(narrative) > 0
+           AND (
+             (text IS NOT NULL AND length(text) > 0)
+             OR (narrative IS NOT NULL AND length(narrative) > 0)
+             OR (title IS NOT NULL AND length(title) > 0)
+             OR (facts IS NOT NULL AND length(facts) > 0)
+           )
          ORDER BY created_at_epoch DESC, id DESC
          LIMIT ?3",
     )?;
     let rows = stmt.query_map(params![project, cutoff, VECTOR_CANDIDATE_LIMIT], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
     })?;
     let candidates = crate::db::query::collect_rows(rows)?;
     let mut duplicates = Vec::new();
-    for (id, candidate_narrative) in candidates {
+    for (id, text, narrative, title, facts) in candidates {
+        let Some(candidate_text) = canonical_observation_text(
+            text.as_deref(),
+            narrative.as_deref(),
+            title.as_deref(),
+            facts.as_deref(),
+        ) else {
+            continue;
+        };
         let candidate_embedding = crate::retrieval::embedding::embed_memory(
             "Observation",
-            &candidate_narrative,
+            &candidate_text,
             "observation",
             None,
         )

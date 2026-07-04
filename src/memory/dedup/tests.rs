@@ -72,6 +72,7 @@ fn setup_dedup_schema(conn: &Connection) -> Result<()> {
             type TEXT NOT NULL,
             title TEXT,
             subtitle TEXT,
+            text TEXT,
             narrative TEXT,
             facts TEXT,
             concepts TEXT,
