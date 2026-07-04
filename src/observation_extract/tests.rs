@@ -239,6 +239,34 @@ fn observation_persistence_skips_active_vector_duplicate() -> Result<()> {
 }
 
 #[test]
+fn observation_persistence_skips_same_batch_vector_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("feature-hash");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-same-batch-vector-duplicate",
+        "SQLCipher encrypts private secrets at rest.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let first = parsed_observation("SQLCipher encrypts private secrets at rest.");
+    let second = parsed_observation("Protect private secrets at rest with encryption.");
+
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[first, second])?,
+        1
+    );
+
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM observations WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+#[test]
 fn observation_persistence_skips_title_only_vector_duplicate() -> Result<()> {
     let _provider = ScopedEmbeddingProvider::new("feature-hash");
     let mut conn = setup_conn();

@@ -47,6 +47,29 @@ pub fn check_duplicate(
     Ok(None)
 }
 
+pub(crate) fn check_duplicate_texts(narrative: &str, candidate_texts: &[String]) -> Result<bool> {
+    if candidate_texts.is_empty() {
+        return Ok(false);
+    }
+    let content_hash = crate::db::content_identity_hash(narrative.as_bytes());
+    if candidate_texts.iter().any(|candidate| {
+        let candidate_hash = crate::db::content_identity_hash(candidate.as_bytes());
+        let legacy_candidate_hash = crate::db::legacy_content_identity_hash(candidate.as_bytes());
+        candidate_hash == content_hash || legacy_candidate_hash == content_hash
+    }) {
+        return Ok(true);
+    }
+
+    let duplicate_indexes = find_vector_duplicate_indexes(
+        narrative,
+        candidate_texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| (index, text.as_str())),
+    )?;
+    Ok(!duplicate_indexes.is_empty())
+}
+
 fn find_vector_duplicates(
     conn: &Connection,
     project: &str,
@@ -79,18 +102,46 @@ fn find_vector_duplicates(
         ))
     })?;
     let candidates = crate::db::query::collect_rows(rows)?;
+    let candidates = candidates
+        .into_iter()
+        .filter_map(|(id, text, candidate_narrative, title, facts)| {
+            canonical_observation_text(
+                text.as_deref(),
+                candidate_narrative.as_deref(),
+                title.as_deref(),
+                facts.as_deref(),
+            )
+            .map(|candidate_text| (id, candidate_text))
+        })
+        .collect::<Vec<_>>();
+    let duplicate_indexes = find_vector_duplicate_indexes(
+        narrative,
+        candidates
+            .iter()
+            .enumerate()
+            .map(|(index, (_id, text))| (index, text.as_str())),
+    )?;
+    Ok(duplicate_indexes
+        .into_iter()
+        .map(|index| candidates[index].0)
+        .collect())
+}
+
+fn find_vector_duplicate_indexes<'a>(
+    narrative: &str,
+    candidates: impl IntoIterator<Item = (usize, &'a str)>,
+) -> Result<Vec<usize>> {
+    let candidates = candidates
+        .into_iter()
+        .filter(|(_index, text)| !text.trim().is_empty())
+        .filter(|(_index, text)| !observation_text_conflicts(narrative, text))
+        .collect::<Vec<_>>();
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
-    let mut query_embedding = match crate::retrieval::embedding::embed_memory_with_fallback_cache(
-        "Observation",
-        narrative,
-        "observation",
-        None,
-        &mut fallback_cache,
-    ) {
+    let mut query_embedding = match embed_observation_dedup_text(narrative, &mut fallback_cache) {
         Ok(embedding) => embedding,
         Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
             return Ok(Vec::new());
@@ -100,26 +151,9 @@ fn find_vector_duplicates(
     let mut threshold = observation_similarity_threshold(query_embedding.model());
     let mut max_distance = 1.0 - threshold;
     let mut duplicates = Vec::new();
-    for (id, text, candidate_narrative, title, facts) in candidates {
-        let Some(candidate_text) = canonical_observation_text(
-            text.as_deref(),
-            candidate_narrative.as_deref(),
-            title.as_deref(),
-            facts.as_deref(),
-        ) else {
-            continue;
-        };
-        if observation_text_conflicts(narrative, &candidate_text) {
-            continue;
-        }
+    for (index, candidate_text) in candidates {
         let candidate_embedding =
-            match crate::retrieval::embedding::embed_memory_with_fallback_cache(
-                "Observation",
-                &candidate_text,
-                "observation",
-                None,
-                &mut fallback_cache,
-            ) {
+            match embed_observation_dedup_text(candidate_text, &mut fallback_cache) {
                 Ok(embedding) => embedding,
                 Err(error)
                     if crate::retrieval::embedding::is_embedding_provider_off_error(&error) =>
@@ -127,20 +161,15 @@ fn find_vector_duplicates(
                     return Ok(Vec::new());
                 }
                 Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("embed observation duplicate candidate id={id}"));
+                    return Err(error).with_context(|| {
+                        format!("embed observation duplicate candidate index={index}")
+                    });
                 }
             };
         if candidate_embedding.model() != query_embedding.model()
             || candidate_embedding.dimensions() != query_embedding.dimensions()
         {
-            query_embedding = match crate::retrieval::embedding::embed_memory_with_fallback_cache(
-                "Observation",
-                narrative,
-                "observation",
-                None,
-                &mut fallback_cache,
-            ) {
+            query_embedding = match embed_observation_dedup_text(narrative, &mut fallback_cache) {
                 Ok(embedding) => embedding,
                 Err(error)
                     if crate::retrieval::embedding::is_embedding_provider_off_error(&error) =>
@@ -164,12 +193,19 @@ fn find_vector_duplicates(
             query_embedding.values(),
             candidate_embedding.values(),
         )
-        .with_context(|| format!("compare observation duplicate candidate id={id}"))?;
+        .with_context(|| format!("compare observation duplicate candidate index={index}"))?;
         if distance <= max_distance {
-            duplicates.push(id);
+            duplicates.push(index);
         }
     }
     Ok(duplicates)
+}
+
+fn embed_observation_dedup_text(
+    text: &str,
+    fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
+) -> Result<crate::retrieval::embedding::TextEmbedding> {
+    crate::retrieval::embedding::embed_query_with_fallback_cache(text, fallback_cache)
 }
 
 fn observation_similarity_threshold(model: &str) -> f32 {
@@ -181,8 +217,10 @@ fn observation_similarity_threshold(model: &str) -> f32 {
 }
 
 fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
-    let incoming = observation_tokens(incoming);
-    let existing = observation_tokens(existing);
+    let incoming_tokens = observation_token_list(incoming);
+    let existing_tokens = observation_token_list(existing);
+    let incoming = observation_token_set(&incoming_tokens);
+    let existing = observation_token_set(&existing_tokens);
     const OPPOSITES: &[(&[&str], &[&str])] = &[
         (
             &[
@@ -213,10 +251,24 @@ fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
     OPPOSITES.iter().any(|(left, right)| {
         (has_any(&incoming, left) && has_any(&existing, right))
             || (has_any(&incoming, right) && has_any(&existing, left))
+            || negated_same_status_conflict(
+                &incoming_tokens,
+                &incoming,
+                &existing_tokens,
+                &existing,
+                left,
+            )
+            || negated_same_status_conflict(
+                &incoming_tokens,
+                &incoming,
+                &existing_tokens,
+                &existing,
+                right,
+            )
     })
 }
 
-fn observation_tokens(text: &str) -> BTreeSet<String> {
+fn observation_token_list(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_alphanumeric())
         .map(str::trim)
         .filter(|token| !token.is_empty())
@@ -224,6 +276,51 @@ fn observation_tokens(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
+fn observation_token_set(tokens: &[String]) -> BTreeSet<String> {
+    tokens.iter().cloned().collect()
+}
+
 fn has_any(tokens: &BTreeSet<String>, values: &[&str]) -> bool {
     values.iter().any(|value| tokens.contains(*value))
+}
+
+fn negated_same_status_conflict(
+    incoming_tokens: &[String],
+    incoming: &BTreeSet<String>,
+    existing_tokens: &[String],
+    existing: &BTreeSet<String>,
+    values: &[&str],
+) -> bool {
+    (has_any(incoming, values) && has_negated_any(existing_tokens, values))
+        || (has_negated_any(incoming_tokens, values) && has_any(existing, values))
+}
+
+fn has_negated_any(tokens: &[String], values: &[&str]) -> bool {
+    tokens.iter().enumerate().any(|(index, token)| {
+        values.contains(&token.as_str()) && {
+            let start = index.saturating_sub(3);
+            tokens[start..index]
+                .iter()
+                .any(|candidate| is_negation_token(candidate))
+        }
+    })
+}
+
+fn is_negation_token(token: &str) -> bool {
+    matches!(
+        token,
+        "not"
+            | "never"
+            | "no"
+            | "without"
+            | "cannot"
+            | "cant"
+            | "don"
+            | "doesn"
+            | "didn"
+            | "isn"
+            | "wasn"
+            | "weren"
+            | "won"
+    )
 }

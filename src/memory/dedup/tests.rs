@@ -325,6 +325,43 @@ fn check_duplicate_vector_stage_keeps_opposite_status_observations_separate() ->
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_negated_status_correction_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "The migration test suite failed after the schema update.",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "The migration test suite did not fail after the schema update.",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_short_numeric_observations_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Port 3000")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Port 8080", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
     with_embedding_provider("off", || -> Result<()> {
         let conn = Connection::open_in_memory()?;

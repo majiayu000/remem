@@ -337,13 +337,20 @@ fn persist_observations(
     let evidence_json = serde_json::to_string(&range.event_ids)?;
     let reference_time_epoch = range.reference_time_epoch();
     let mut prepared = Vec::with_capacity(observations.len());
+    let mut accepted_batch_texts = Vec::new();
     for observation in observations {
         let text = observation_text(observation);
         if text.trim().is_empty() {
             anyhow::bail!("observation_extract produced an empty observation");
         }
-        let skip_duplicate =
+        let store_duplicate =
             crate::memory::dedup::check_duplicate(conn, &task.project, &text, None)?.is_some();
+        let batch_duplicate = !store_duplicate
+            && crate::memory::dedup::check_duplicate_texts(&text, &accepted_batch_texts)?;
+        let skip_duplicate = store_duplicate || batch_duplicate;
+        if !skip_duplicate {
+            accepted_batch_texts.push(text.clone());
+        }
         prepared.push((observation, text, skip_duplicate));
     }
 

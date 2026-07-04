@@ -148,6 +148,9 @@ pub(crate) fn find_preference_consolidation(
     let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
     let mut incoming_embedding =
         active_preference_embedding_with_fallback_cache(content, &mut fallback_cache)?;
+    if incoming_embedding.is_none() {
+        return Ok(best);
+    }
     for (memory_id, existing_content, existing) in candidates {
         let Some(classified) = embedding_refinement(
             memory_id,
@@ -354,6 +357,9 @@ fn embedding_refinement(
     incoming_embedding: &mut Option<TextEmbedding>,
     fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
 ) -> Result<Option<PreferenceConsolidationMatch>> {
+    if incoming_embedding.is_none() {
+        return Ok(None);
+    }
     let Some(existing_embedding) =
         active_preference_embedding_with_fallback_cache(existing_content, fallback_cache)
             .with_context(|| format!("embed active preference candidate id={memory_id}"))?

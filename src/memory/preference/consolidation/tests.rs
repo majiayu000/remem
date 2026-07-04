@@ -173,6 +173,30 @@ fn consolidation_continues_embedding_after_weak_refinement() -> anyhow::Result<(
 }
 
 #[test]
+fn embedding_refinement_skips_candidate_when_incoming_embedding_unavailable() -> anyhow::Result<()>
+{
+    let existing = PreferenceProfile::new("Prefer concise Chinese progress updates.");
+    let incoming = PreferenceProfile::new("Prefer brief Chinese status notes.");
+    let mut incoming_embedding = None;
+    let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
+
+    let result = with_forbidden_active_preference_embedding(|| {
+        embedding_refinement(
+            1,
+            &existing,
+            &incoming,
+            "Prefer concise Chinese progress updates.",
+            "Prefer brief Chinese status notes.",
+            &mut incoming_embedding,
+            &mut fallback_cache,
+        )
+    })?;
+
+    assert!(result.is_none());
+    Ok(())
+}
+
+#[test]
 fn classifies_status_update_paraphrase_as_refinement() {
     let existing = PreferenceProfile::new("Prefer concise Chinese progress updates.");
     let incoming = PreferenceProfile::new("Prefer brief Chinese status notes.");
