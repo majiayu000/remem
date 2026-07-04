@@ -1,0 +1,65 @@
+{
+  "upstream_repo": "https://github.com/majiayu000/specrail",
+  "upstream_sha": "423ce3f1ce2fcc4bf102094d44353efb4120b95a",
+  "excluded": [
+    "checks/check_workflow.py"
+  ],
+  "files": [
+    {
+      "path": "checks/duplicate_work_gate.py",
+      "sha256": "c109124d511983b9579d11e0bf2378569435e73036a22f058ed377fb5232317c"
+    },
+    {
+      "path": "checks/github_duplicate_evidence.py",
+      "sha256": "48c7e746cd8cf50ead5b7f084d5e4f31a153468e87105e4f50c69c7e5b53aaa7"
+    },
+    {
+      "path": "checks/github_issue_evidence.py",
+      "sha256": "fb9c84933203b971672b27b0d31834371d94682843d408b2503b7f517d760678"
+    },
+    {
+      "path": "checks/github_pr_evidence.py",
+      "sha256": "73d8ce683bdbf7a26fd66041f5edb749a4936c17070f8d25c2019b199313eb74"
+    },
+    {
+      "path": "checks/pr_gate.py",
+      "sha256": "91612efbfd24869955b828e96760e30c2b6ffaa51bdad67aae0ca7b1c6412be3"
+    },
+    {
+      "path": "checks/review_json_gate.py",
+      "sha256": "1d2adf224f81079e75149c4650fd79e3858ff4072bfac632747ad303a4e0f0ae"
+    },
+    {
+      "path": "checks/route_gate.py",
+      "sha256": "d5e96a2a76f8d4ddf950b2fe5429dcf742d8cefcdae5fd813489721483fa345b"
+    },
+    {
+      "path": "checks/runtime_gate_rules.py",
+      "sha256": "126709740105c7c43c476f7fa18790363eff69e548cf5dabab650f70dfb64711"
+    },
+    {
+      "path": "checks/runtime_ledger_gate.py",
+      "sha256": "e2bc317062d895e6b9c1ee16d1d334ec74b45c82b1d3b67b7d113ada8ba57cee"
+    },
+    {
+      "path": "checks/specrail_lib.py",
+      "sha256": "f288d4f383a5315ea78776940d5d91c0e9a05eb89d0746ee9a1885afe5d26136"
+    },
+    {
+      "path": "schemas/duplicate_work_evidence.schema.json",
+      "sha256": "bd0db8ecc204d15afe88e85707575ddd418c6937d4dc7fa91eb4060e2f1df627"
+    },
+    {
+      "path": "schemas/pr_review_gate.schema.json",
+      "sha256": "9d1330ae2a619da097e5dae36eb7f3da3ba1f07b802367384f04a21b3027ce27"
+    },
+    {
+      "path": "schemas/review_result.schema.json",
+      "sha256": "1164adc4e50ff9fc735a6192d9581fae013563c7ad89e33be5dcebd196aa7f8b"
+    },
+    {
+      "path": "schemas/runtime_checkpoint.schema.json",
+      "sha256": "03d01f0b92d4f76202c1a851b34eadbd20572c0487105b4a110ac0de23c26d3f"
+    }
+  ]
+}

@@ -21,6 +21,7 @@ from specrail_lib import (
     validate_labels,
     validate_state_graph,
 )
+from duplicate_work_gate import evaluate_duplicate_work_gate_path
 
 
 ROUTE_ALIASES = {
@@ -46,6 +47,12 @@ ARTIFACT_FILES = {
     "task_plan",
 }
 READINESS_GATED_ROUTES = {"write_spec", "implement"}
+DECISION_RANK = {
+    "allowed": 0,
+    "warn": 1,
+    "needs_human": 2,
+    "blocked": 3,
+}
 
 
 def normalize_route(raw: str) -> str:
@@ -78,6 +85,12 @@ def artifact_exists(repo: Path, artifact_path: str | None) -> bool:
     if not artifact_path:
         return False
     return (repo / artifact_path).is_file()
+
+
+def stricter_decision(current: str, candidate: str) -> str:
+    if DECISION_RANK[candidate] > DECISION_RANK[current]:
+        return candidate
+    return current
 
 
 def required_artifact_path(config: Any, artifact: str, issue: int | None) -> str | None:
@@ -122,6 +135,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     allowed_actions: list[str] = []
     required_artifacts: list[str] = []
     human_gates: list[str] = []
+    duplicate_work_result: dict[str, Any] | None = None
 
     if config_errors:
         return {
@@ -242,6 +256,19 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         elif path:
             required_artifacts.append(path)
 
+    if route == "implement":
+        duplicate_work_result = evaluate_duplicate_work_gate_path(
+            repo,
+            args.issue,
+            Path(args.duplicate_evidence) if args.duplicate_evidence else None,
+        )
+        for item in duplicate_work_result.get("satisfied", []):
+            satisfied.append(f"duplicate_work: {item}")
+        for item in duplicate_work_result.get("missing", []):
+            missing.append(f"duplicate_work:{item}")
+        for reason in duplicate_work_result.get("reasons", []):
+            reasons.append(f"duplicate_work: {reason}")
+
     for action, action_body in policies.items():
         allowed_states = [str(state) for state in action_body.get("allowed_from", [])]
         if current_state and current_state in allowed_states:
@@ -265,6 +292,9 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         decision = "allowed"
         reasons.append(f"route {route} passed local SpecRail gates")
 
+    if duplicate_work_result is not None:
+        decision = stricter_decision(decision, str(duplicate_work_result["decision"]))
+
     for artifact in creates:
         path = render_artifact_path(config, artifact, args.issue)
         if path:
@@ -284,6 +314,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         "human_gates": human_gates,
         "allowed_actions": sorted(set(allowed_actions)),
         "blocked_actions": sorted(set(blocked_actions)),
+        "duplicate_work_gate": duplicate_work_result,
         "verification_commands": [
             "python3 checks/check_workflow.py --repo .",
             *(
@@ -363,6 +394,7 @@ def main() -> int:
         help="Artifact evidence in name=path form",
     )
     parser.add_argument("--evidence", help="Optional JSON evidence file")
+    parser.add_argument("--duplicate-evidence", help="Optional duplicate work evidence JSON file")
     parser.add_argument(
         "--mode",
         default="dry_run",
