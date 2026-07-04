@@ -1,0 +1,1150 @@
+{
+  "version": "2026-07-04",
+  "generated_at_epoch": 1783167808,
+  "dataset_path": "eval/golden.json",
+  "k": 5,
+  "required_providers": [
+    "feature-hash",
+    "local",
+    "api"
+  ],
+  "provider_comparison_slice": "provider_comparison",
+  "query_embedding_latency_budget_p95_ms": 1000.0,
+  "existing_regression_budget": 0.0,
+  "providers": [
+    {
+      "provider": "feature-hash",
+      "configured_provider": "feature-hash",
+      "active_provider": "feature-hash",
+      "fallback_provider": null,
+      "model_id": "remem-local-feature-hash-v1",
+      "dimensions": 768,
+      "available": true,
+      "degraded": false,
+      "disabled": false,
+      "unavailable_reason": null,
+      "provider_config": {
+        "provider": "feature-hash",
+        "fallback": null,
+        "model": "remem-local-feature-hash-v1",
+        "base_url": "https://api.openai.com/v1",
+        "dimensions": 768,
+        "api_key_env": "OPENAI_API_KEY",
+        "model_dir": null,
+        "timeout_secs": 30,
+        "api_calls_allowed": false
+      },
+      "query_embedding_latency_p95_ms": 0.0,
+      "query_embedding_latency_samples": 70,
+      "overall": {
+        "total_queries": 70,
+        "scored_queries": 60,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.057142857142857,
+        "retrieval_latency_p50_ms": 3.962,
+        "retrieval_latency_p95_ms": 5.168917,
+        "metrics": {
+          "count": 60,
+          "hit_at_k": 0.5166666666666667,
+          "mrr_at_10": 0.5166666666666667,
+          "precision_at_k": 0.4777777777777778,
+          "recall_at_k": 0.5166666666666667,
+          "ndcg_at_10": 0.5166666666666667,
+          "evidence_recall_at_k": 0.5166666666666667
+        }
+      },
+      "existing_slices": {
+        "total_queries": 66,
+        "scored_queries": 56,
+        "abstention_queries": 10,
+        "abstention_passed": 10,
+        "query_tokens_per_query": 12.075757575757576,
+        "retrieval_latency_p50_ms": 4.037667,
+        "retrieval_latency_p95_ms": 5.168917,
+        "metrics": {
+          "count": 56,
+          "hit_at_k": 0.5535714285714286,
+          "mrr_at_10": 0.5535714285714286,
+          "precision_at_k": 0.511904761904762,
+          "recall_at_k": 0.5535714285714286,
+          "ndcg_at_10": 0.5535714285714286,
+          "evidence_recall_at_k": 0.5535714285714286
+        }
+      },
+      "existing_slice_details": {
+        "abstention": {
+          "total_queries": 10,
+          "scored_queries": 0,
+          "abstention_queries": 10,
+          "abstention_passed": 10,
+          "query_tokens_per_query": 12.0,
+          "retrieval_latency_p50_ms": 3.241416,
+          "retrieval_latency_p95_ms": 12.819,
+          "metrics": null
+        },
+        "associative": {
+          "total_queries": 15,
+          "scored_queries": 15,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 8.933333333333334,
+          "retrieval_latency_p50_ms": 3.6445420000000004,
+          "retrieval_latency_p95_ms": 3.783875,
+          "metrics": {
+            "count": 15,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "failure_lesson": {
+          "total_queries": 1,
+          "scored_queries": 1,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.0,
+          "retrieval_latency_p50_ms": 6.509333,
+          "retrieval_latency_p95_ms": 6.509333,
+          "metrics": {
+            "count": 1,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "knowledge_update": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.8,
+          "retrieval_latency_p50_ms": 4.334917,
+          "retrieval_latency_p95_ms": 4.91425,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.8,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "multi_hop": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 19.6,
+          "retrieval_latency_p50_ms": 5.117958,
+          "retrieval_latency_p95_ms": 5.238791,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 0.9666666666666666,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        },
+        "paraphrase": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 7.4,
+          "retrieval_latency_p50_ms": 3.250792,
+          "retrieval_latency_p95_ms": 4.84825,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 0.0,
+            "mrr_at_10": 0.0,
+            "precision_at_k": 0.0,
+            "recall_at_k": 0.0,
+            "ndcg_at_10": 0.0,
+            "evidence_recall_at_k": 0.0
+          }
+        },
+        "temporal": {
+          "total_queries": 10,
+          "scored_queries": 10,
+          "abstention_queries": 0,
+          "abstention_passed": 0,
+          "query_tokens_per_query": 12.6,
+          "retrieval_latency_p50_ms": 4.193416999999999,
+          "retrieval_latency_p95_ms": 4.26125,
+          "metrics": {
+            "count": 10,
+            "hit_at_k": 1.0,
+            "mrr_at_10": 1.0,
+            "precision_at_k": 1.0,
+            "recall_at_k": 1.0,
+            "ndcg_at_10": 1.0,
+            "evidence_recall_at_k": 1.0
+          }
+        }
+      },
+      "provider_comparison_slice": {
+        "total_queries": 4,
+        "scored_queries": 4,
+        "abstention_queries": 0,
+        "abstention_passed": 0,
+        "query_tokens_per_query": 11.75,
+        "retrieval_latency_p50_ms": 3.558542,
+        "retrieval_latency_p95_ms": 4.286875,
+        "metrics": {
+          "count": 4,
+          "hit_at_k": 0.0,
+          "mrr_at_10": 0.0,
+          "precision_at_k": 0.0,
+          "recall_at_k": 0.0,
+          "ndcg_at_10": 0.0,
+          "evidence_recall_at_k": 0.0
+        }
+      },
+      "query_summaries": [
+        {
+          "id": "paraphrase-01",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.84825,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-02",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.293125,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-03",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 2.742709,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-04",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.109459,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-05",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 2.6223330000000002,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-06",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.1917500000000003,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-07",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.2882089999999997,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-08",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.250792,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-09",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.155,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "paraphrase-10",
+          "slice": "paraphrase",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.384334,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-01",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            11,
+            21
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.91425,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-02",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            12
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.225708,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-03",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            13
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.227416000000001,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-04",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            14
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.508292,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-05",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            15
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.513750000000001,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-06",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            16,
+            41
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.334917,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-07",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            17
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.360209,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-08",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            18,
+            28
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.1585,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-09",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            19,
+            29
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.146792,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "knowledge-update-10",
+          "slice": "knowledge_update",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            20
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.303999999999999,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-01",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            21
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.26125,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-02",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            22
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.125249999999999,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-03",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            23
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.196875,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-04",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            24
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.235583,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-05",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            25
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.199042,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-06",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            26
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.090208,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-07",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            27
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.150625,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-08",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            28
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.193416999999999,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-09",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            29
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.962,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "temporal-10",
+          "slice": "temporal",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            30
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.037667,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-01",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 4.197417,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-02",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.089625,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-03",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.288333,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-04",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.033166,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-05",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.140042,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-06",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 2.7283749999999998,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-07",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.241416,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-08",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 12.819,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-09",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.148292,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "abstention-10",
+          "slice": "abstention",
+          "status": "PASS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 0,
+          "retrieval_latency_ms": 3.9425839999999996,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "failure-lesson-01",
+          "slice": "failure_lesson",
+          "status": "HIT",
+          "result_count": 1,
+          "retrieved_ids": [
+            52
+          ],
+          "matched_refs": 1,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 6.509333,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-01",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 3,
+          "retrieved_ids": [
+            31,
+            32,
+            21
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.168917,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-02",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            33,
+            34
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.069,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-03",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            35,
+            36
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.238791,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-04",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            37,
+            38
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.117958,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-05",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            39,
+            40
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.1132089999999994,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-06",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            41,
+            42
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.042667,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-07",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            43,
+            44
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.168209,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-08",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            45,
+            46
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.148958,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-09",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            47,
+            48
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 4.9505,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "multi-hop-10",
+          "slice": "multi_hop",
+          "status": "HIT",
+          "result_count": 2,
+          "retrieved_ids": [
+            49,
+            50
+          ],
+          "matched_refs": 2,
+          "expected_refs": 2,
+          "retrieval_latency_ms": 5.115791,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-file-01",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.783875,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-file-02",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.569042,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-file-03",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.6935420000000003,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-file-04",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.6445420000000004,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-crate-01",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.5231250000000003,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-crate-02",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.480958,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-crate-03",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.659792,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-crate-04",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.6215420000000003,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-error-01",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.761166,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-error-02",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.774584,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-error-03",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.6730840000000002,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-error-04",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.7724159999999998,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-issue-01",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.539333,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-issue-02",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.584917,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "associative-issue-03",
+          "slice": "associative",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.62775,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "provider-comparison-en-01",
+          "slice": "provider_comparison",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 4.286875,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "provider-comparison-en-02",
+          "slice": "provider_comparison",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 3.558542,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "provider-comparison-cjk-01",
+          "slice": "provider_comparison",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 1.701417,
+          "query_embedding_latency_ms": 0.0
+        },
+        {
+          "id": "provider-comparison-cjk-02",
+          "slice": "provider_comparison",
+          "status": "MISS",
+          "result_count": 0,
+          "retrieved_ids": [],
+          "matched_refs": 0,
+          "expected_refs": 1,
+          "retrieval_latency_ms": 1.6238750000000002,
+          "query_embedding_latency_ms": 0.0
+        }
+      ]
+    },
+    {
+      "provider": "local",
+      "configured_provider": "local",
+      "active_provider": "local",
+      "fallback_provider": null,
+      "model_id": "fastembed-intfloat-multilingual-e5-small-v1",
+      "dimensions": null,
+      "available": false,
+      "degraded": true,
+      "disabled": false,
+      "unavailable_reason": "local embedding model multilingual-e5-small is not ready in eval/provider-comparison/reference-data/models/fastembed-intfloat-multilingual-e5-small-v1: read eval/provider-comparison/reference-data/models/fastembed-intfloat-multilingual-e5-small-v1/remem-model-manifest.json",
+      "provider_config": {
+        "provider": "local",
+        "fallback": null,
+        "model": "text-embedding-3-small",
+        "base_url": "https://api.openai.com/v1",
+        "dimensions": null,
+        "api_key_env": "OPENAI_API_KEY",
+        "model_dir": null,
+        "timeout_secs": 30,
+        "api_calls_allowed": false
+      },
+      "query_embedding_latency_p95_ms": null,
+      "query_embedding_latency_samples": 0,
+      "overall": null,
+      "existing_slices": null,
+      "existing_slice_details": {},
+      "provider_comparison_slice": null,
+      "query_summaries": []
+    },
+    {
+      "provider": "api",
+      "configured_provider": "api",
+      "active_provider": "api",
+      "fallback_provider": null,
+      "model_id": "text-embedding-3-small",
+      "dimensions": null,
+      "available": false,
+      "degraded": false,
+      "disabled": false,
+      "unavailable_reason": "api provider comparison skipped because --allow-api was not set",
+      "provider_config": {
+        "provider": "api",
+        "fallback": null,
+        "model": "text-embedding-3-small",
+        "base_url": "https://api.openai.com/v1",
+        "dimensions": null,
+        "api_key_env": "OPENAI_API_KEY",
+        "model_dir": null,
+        "timeout_secs": 30,
+        "api_calls_allowed": false
+      },
+      "query_embedding_latency_p95_ms": null,
+      "query_embedding_latency_samples": 0,
+      "overall": null,
+      "existing_slices": null,
+      "existing_slice_details": {},
+      "provider_comparison_slice": null,
+      "query_summaries": []
+    }
+  ],
+  "default_decision": {
+    "change_default": false,
+    "decision": "keep_feature_hash",
+    "decision_reason": "Keep the default provider unchanged until GH-716 blockers are cleared: local embedding model multilingual-e5-small is not ready in eval/provider-comparison/reference-data/models/fastembed-intfloat-multilingual-e5-small-v1: read eval/provider-comparison/reference-data/models/fastembed-intfloat-multilingual-e5-small-v1/remem-model-manifest.json; api provider comparison skipped because --allow-api was not set; provider_comparison slice has no scored local queries; local provider did not improve provider_comparison evidence recall over feature-hash; local provider regressed existing golden slices beyond budget; local query embedding p95 exceeded 1000ms budget or was not measured",
+    "criteria": {
+      "local_available": false,
+      "api_reference_available": false,
+      "provider_comparison_slice_present": false,
+      "provider_comparison_slice_improves": false,
+      "existing_slices_within_budget": false,
+      "query_embedding_latency_within_budget": false
+    },
+    "blockers": [
+      "local embedding model multilingual-e5-small is not ready in eval/provider-comparison/reference-data/models/fastembed-intfloat-multilingual-e5-small-v1: read eval/provider-comparison/reference-data/models/fastembed-intfloat-multilingual-e5-small-v1/remem-model-manifest.json",
+      "api provider comparison skipped because --allow-api was not set",
+      "provider_comparison slice has no scored local queries",
+      "local provider did not improve provider_comparison evidence recall over feature-hash",
+      "local provider regressed existing golden slices beyond budget",
+      "local query embedding p95 exceeded 1000ms budget or was not measured"
+    ]
+  },
+  "notes": [
+    "Provider rows are forced without fallback so unavailable providers cannot pass by silently using another embedding space.",
+    "Remote API calls are opt-in with --allow-api; the default reference run records API as unavailable instead of spending network/API budget.",
+    "This report is evidence for GH-716 and does not change the default provider by itself."
+  ]
+}

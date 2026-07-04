@@ -134,6 +134,21 @@ pub(in crate::cli) struct EvalGatesArgs {
 }
 
 #[derive(Args)]
+pub(in crate::cli) struct EvalProviderComparisonArgs {
+    #[arg(long, default_value = crate::eval::provider_comparison::DEFAULT_DATASET_PATH)]
+    pub(in crate::cli) dataset: String,
+    #[arg(long, short = 'k', default_value = "5")]
+    pub(in crate::cli) k: usize,
+    #[arg(long, default_value = crate::eval::provider_comparison::DEFAULT_REPORT_PATH)]
+    pub(in crate::cli) json_out: String,
+    #[arg(long)]
+    pub(in crate::cli) json: bool,
+    /// Permit remote API embedding calls for the api comparison row.
+    #[arg(long)]
+    pub(in crate::cli) allow_api: bool,
+}
+
+#[derive(Args)]
 pub(in crate::cli) struct EvalGraphDecisionArgs {
     #[arg(long, default_value = crate::eval::graph_decision::DEFAULT_DATASET_PATH)]
     pub(in crate::cli) dataset: String,

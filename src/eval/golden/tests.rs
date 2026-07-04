@@ -544,6 +544,7 @@ fn checked_in_golden_dataset_has_required_slices() -> Result<()> {
         "failure_lesson",
         "multi_hop",
         "associative",
+        "provider_comparison",
     ] {
         assert!(slices.contains(required), "missing slice {required}");
     }
@@ -572,8 +573,8 @@ fn checked_in_golden_dataset_runs_against_fixture_corpus_without_live_db() -> Re
     let live_conn = Connection::open_in_memory()?;
     let report = run_dataset_path(&live_conn, "eval/golden.json", 5)?;
 
-    assert_eq!(report.total_queries, 66);
-    assert_eq!(report.scored_queries, 56);
+    assert_eq!(report.total_queries, 70);
+    assert_eq!(report.scored_queries, 60);
     assert!(report.queries.iter().any(|query| {
         query.id == "knowledge-update-01" && query.result_count > 0 && query.metrics.is_some()
     }));

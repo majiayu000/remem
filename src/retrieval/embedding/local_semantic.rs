@@ -295,6 +295,10 @@ fn configured_preset(config: &EmbeddingConfig) -> Result<LocalEmbeddingPreset> {
     LocalEmbeddingPreset::parse(raw)
 }
 
+pub(super) fn configured_model_id(config: &EmbeddingConfig) -> Result<String> {
+    Ok(configured_preset(config)?.model_id().to_string())
+}
+
 fn configured_local_preset_or_default(config: &EmbeddingConfig) -> Result<LocalEmbeddingPreset> {
     if config.provider == super::EmbeddingProvider::Local {
         configured_preset(config)

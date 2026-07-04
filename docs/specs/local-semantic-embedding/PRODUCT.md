@@ -86,6 +86,12 @@ retrieval gates shows the local model wins or ties FTS-blended quality
 without unacceptable latency. The comparison artifacts live in `eval/` and
 are referenced from the epic before any default flip ships.
 
+GH-716 evidence lives at `eval/provider-comparison/report.json`. The current
+decision is no default flip: feature-hash is the runnable baseline, while the
+local semantic row is unavailable without a verified model manifest in the
+reference data dir and the API row is unavailable unless an intentional
+`--allow-api` run is performed.
+
 ## User Stories
 
 ### Out-Of-Box Semantic Recall

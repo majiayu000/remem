@@ -142,6 +142,27 @@ The hidden `--simulate-golden-regression` and
 fails on constructed retrieval and capacity regressions before changing
 defaults.
 
+## Provider Comparison Eval
+
+`remem eval-provider-comparison` runs the GH-716 default-flip evidence report
+for the embedding providers:
+
+```bash
+REMEM_DATA_DIR=eval/provider-comparison/reference-data \
+  remem eval-provider-comparison --json-out eval/provider-comparison/report.json
+```
+
+The report forces `feature-hash`, `local`, and `api` rows without fallback so
+one provider cannot pass by silently using another provider's vector space. API
+embedding calls are disabled by default; pass `--allow-api` only for an
+intentional remote-provider run. Missing local model files or skipped API calls
+produce unavailable rows, not degraded passes.
+
+The checked-in GH-716 report keeps the default provider unchanged. It records
+feature-hash as the runnable baseline, local semantic as blocked by a missing
+verified model manifest in the reference data dir, and API as blocked because
+the committed reference run does not call remote embeddings.
+
 ## Capacity Eval
 
 `remem eval-capacity` runs the first deterministic capacity curve for issue #675.

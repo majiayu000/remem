@@ -150,12 +150,25 @@ non-off provider is selected.
 - Extend the golden set with paraphrase/synonym fixtures (EN + CJK) where
   feature-hash is known to fail.
 - Run the retrieval gates for feature-hash / local semantic / API embeddings;
-  commit reports under `eval/gates/` with model ids and thresholds.
+  commit reports under `eval/provider-comparison/` with model ids and
+  thresholds.
 - Default flip criteria (all required): paraphrase slice improves, no
   regression beyond gate thresholds on existing slices, p95 query embed
   latency within the search budget on a reference machine.
 - Record the flip decision and evidence links in `docs/specs/README.md` index
   entry and the epic.
+
+GH-716 records the reference command:
+
+```bash
+REMEM_DATA_DIR=eval/provider-comparison/reference-data \
+  remem eval-provider-comparison --json-out eval/provider-comparison/report.json
+```
+
+The committed report keeps the default unchanged. `feature-hash` is available
+and establishes the baseline, `local` is unavailable until the reference model
+manifest is installed and verified, and `api` is unavailable in the committed
+run because remote embedding calls require an explicit `--allow-api`.
 
 ## Phase 4: Downstream Adoption
 

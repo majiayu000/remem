@@ -290,6 +290,10 @@ pub(crate) fn embedding_provider_status_without_probe() -> Result<EmbeddingProvi
     Ok(status::resolve_provider_status(&config))
 }
 
+pub(crate) fn configured_local_embedding_model_id(config: &EmbeddingConfig) -> Result<String> {
+    local_semantic::configured_model_id(config)
+}
+
 pub fn download_local_embedding_model(model: Option<&str>) -> Result<LocalEmbeddingDownloadReport> {
     local_semantic::download_model(model)
 }

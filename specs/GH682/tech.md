@@ -28,7 +28,7 @@ does not replace the `docs/specs/` contract.
 | Vector persistence | migrations, `src/retrieval/vector.rs`, memory write/delete paths | `memory_embeddings` uses `(memory_id, model, dimensions)` so multiple active/fallback profiles can coexist. | GH-715 keeps upsert/delete behavior model-aware. |
 | Local semantic runtime | new embedding runtime/download modules, CLI dispatch | `local` uses fastembed-backed ONNX presets with verified manifests; missing models report unavailable instead of aliasing feature-hash. | GH-715 adds download/status, manifest checksum plus hf-hub LFS source-sha verification, model-dir resolution, hook-safe readiness, and query/write integration. |
 | Backfill | new embedding backfill command/action | Provider switching has active-model coverage reporting and explicit backfill/prune workflow. | GH-715 adds idempotent backfill and explicit prune gating. |
-| Eval evidence | `eval/`, `src/eval/`, CLI eval commands | Golden fixtures include paraphrase notes, but no committed provider comparison gate for local semantic default decisions. | GH-716 adds provider comparison reports and default-flip criteria. |
+| Eval evidence | `eval/`, `src/eval/`, CLI eval commands | GH-716 adds `eval-provider-comparison`, EN/CJK provider-comparison fixtures, and `eval/provider-comparison/report.json`; the current report keeps the default unchanged because local/API rows are unavailable in the reference run. | GH-716 records provider comparison reports and default-flip criteria. |
 | Downstream consumers | `src/memory/dedup/funnel.rs`, `src/memory/semantic_dedup.rs`, `src/memory/store/write.rs`, `src/memory/operation.rs`, preference consolidation | Semantic dedup/preference paths use feature-hash cosine fallback or have an open vector-stage TODO. | GH-717 adopts active semantic model semantics and recalibrates thresholds. |
 
 ## Proposed Design
@@ -40,7 +40,8 @@ Implement the accepted contract in four PR-sized phases:
 2. GH-715 adds the local semantic runtime, model inventory commands,
    multi-model vector storage, same-model-id scoring, and backfill.
 3. GH-716 extends eval fixtures and commits provider comparison evidence before
-   any default provider change.
+   any default provider change. The committed decision is no flip until local
+   and API comparison rows are available.
 4. GH-717 moves downstream dedup/preference consolidation to the active
    semantic space after the eval gate proves model quality and thresholds.
 
