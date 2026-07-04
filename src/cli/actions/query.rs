@@ -11,7 +11,9 @@ mod timeline;
 mod why;
 mod workstreams;
 
-pub(in crate::cli) use backfill::{run_backfill_embeddings, run_backfill_entities};
+pub(in crate::cli) use backfill::{
+    run_backfill_embeddings, run_backfill_entities, run_embedding_backfill,
+};
 pub(in crate::cli) use commit::run_commit;
 pub(in crate::cli) use current::run_current_state;
 pub(in crate::cli) use raw::run_raw;

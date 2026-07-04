@@ -8,6 +8,8 @@ use std::sync::{
 
 use super::*;
 
+mod pruning;
+
 struct ScopedEmbeddingProvider {
     _guard: std::sync::MutexGuard<'static, ()>,
     saved: Vec<(&'static str, Option<String>)>,

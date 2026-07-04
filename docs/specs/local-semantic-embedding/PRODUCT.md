@@ -1,7 +1,7 @@
 # Local Semantic Embedding Product Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-04
 
 Tracking:
 - Epic issue: #682
@@ -122,14 +122,16 @@ Acceptance:
 - Search only compares vectors sharing the active model id.
 - `remem embedding backfill` re-embeds memories lacking vectors for the
   active model and reports progress and final coverage.
-- Old-model vectors are pruned only after backfill completes.
+- Old-model vectors are pruned only after active-model coverage reaches 100%
+  and the user passes an explicit prune flag.
 
 ## Rollout
 
 1. Provider contract: config section, resolution order, status/doctor
    visibility. No new model yet.
-2. Local ONNX model: download/activation flow, embed pipeline, same-model-id
-   guard, backfill command.
+2. Local ONNX model: fastembed-backed download/status flow, verified model
+   manifests, embed pipeline, same-model-id guard, backfill command, and
+   explicit prune gating.
 3. Eval gate: committed comparison artifacts; default flip decision recorded
    in the epic and this spec's index entry.
 4. Downstream adoption: dedup funnel and preference consolidation switch to
@@ -145,11 +147,8 @@ cargo test
 
 ## Open Questions
 
-- Which model family ships as the default local preset (multilingual-e5-small
-  class vs bge-m3 class), and does the choice change the dimension column
-  strategy?
-- Should first-use auto-download be default-on, or should `remem install`
-  offer the download interactively to keep hooks latency-safe?
-- Does the Auto provider keep preferring API-when-key-present once the local
-  model exists, or does local become the universal default with API as
-  explicit opt-in?
+- Should first-use auto-download ever become default-on, or should users keep
+  activating local semantics explicitly through `remem embedding download` to
+  keep hooks latency-safe?
+- Does GH-716 flip `Auto` from API-when-key-present / feature-hash-without-key
+  to local semantics after eval evidence, or does local remain explicit opt-in?

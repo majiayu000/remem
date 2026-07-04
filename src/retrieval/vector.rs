@@ -13,7 +13,8 @@ pub use super::embedding::{
     LOCAL_EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
 };
 pub use coverage::{
-    active_embedding_coverage, active_embedding_coverage_for_status, ActiveEmbeddingCoverage,
+    active_embedding_coverage, active_embedding_coverage_for_status,
+    prune_inactive_memory_embeddings, ActiveEmbeddingCoverage, InactiveEmbeddingPruneReport,
 };
 use reindex::select_memory_embedding_reindex_candidates;
 
@@ -134,6 +135,13 @@ pub fn upsert_memory_embedding(
     let embedding = match super::embedding::embed_memory(title, content, memory_type, topic_key) {
         Ok(embedding) => embedding,
         Err(error) if super::embedding::is_embedding_provider_off_error(&error) => return Ok(()),
+        Err(error) if super::embedding::is_local_embedding_model_unavailable_error(&error) => {
+            crate::log::error(
+                "embedding",
+                &format!("memory embedding deferred for memory id={memory_id}: {error}"),
+            );
+            return Ok(());
+        }
         Err(error) => return Err(error),
     };
     let content_hash =

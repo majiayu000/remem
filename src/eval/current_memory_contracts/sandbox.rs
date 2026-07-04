@@ -16,7 +16,9 @@ pub(super) fn run_in_eval_sandbox<T>(run: impl FnOnce() -> Result<T>) -> Result<
         )
     })?;
     let _config_restore = EnvRestore::remove("REMEM_CONFIG");
-    let _embedding_restore = EnvRestore::set("REMEM_EMBEDDINGS_PROVIDER", "local");
+    // This eval checks memory-contract behavior, not local semantic quality.
+    // Keep it zero-download so GH-716 owns the local-vs-feature-hash comparison.
+    let _embedding_restore = EnvRestore::set("REMEM_EMBEDDINGS_PROVIDER", "feature-hash");
 
     let result =
         crate::db::core::with_data_dir(&data_dir, || crate::log::with_log_dir(&data_dir, run));
