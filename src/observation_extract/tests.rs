@@ -31,6 +31,10 @@ struct ScopedEmbeddingProvider {
 
 impl ScopedEmbeddingProvider {
     fn new(provider: &str) -> Self {
+        Self::new_with_model_dir(provider, None)
+    }
+
+    fn new_with_model_dir(provider: &str, model_dir: Option<&std::path::Path>) -> Self {
         let guard = crate::runtime_config::TEST_ENV_LOCK
             .lock()
             .expect("env lock should acquire");
@@ -42,6 +46,9 @@ impl ScopedEmbeddingProvider {
             unsafe { std::env::remove_var(key) };
         }
         unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+        if let Some(model_dir) = model_dir {
+            unsafe { std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", model_dir) };
+        }
         Self {
             _guard: guard,
             saved,
@@ -263,6 +270,54 @@ fn observation_persistence_skips_same_batch_vector_duplicate() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(count, 1);
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_exact_replay_before_vector_dedup() -> Result<()> {
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-exact-replay-before-vector",
+        "Migration extraction captured schema drift.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let replay_text = "Migration extraction captured schema drift.";
+
+    {
+        let _provider = ScopedEmbeddingProvider::new("feature-hash");
+        assert_eq!(
+            persist_observations(&mut conn, &task, &range, &[parsed_observation(replay_text)])?,
+            1
+        );
+        let old_epoch = chrono::Utc::now().timestamp() - 3_600;
+        conn.execute(
+            "UPDATE observations
+             SET created_at_epoch = ?1
+             WHERE session_row_id = ?2 AND text = ?3",
+            params![old_epoch, task.session_row_id, replay_text],
+        )?;
+        let recent_range = evidence_range_for_event(range.to_event_id + 1);
+        assert_eq!(
+            persist_observations(
+                &mut conn,
+                &task,
+                &recent_range,
+                &[parsed_observation("Recent unrelated deployment note.")]
+            )?,
+            1
+        );
+    }
+
+    let missing_model_dir =
+        std::env::temp_dir().join(format!("remem-missing-local-model-{}", std::process::id()));
+    let _provider = ScopedEmbeddingProvider::new_with_model_dir("local", Some(&missing_model_dir));
+
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[parsed_observation(replay_text)])?,
+        0
+    );
     Ok(())
 }
 

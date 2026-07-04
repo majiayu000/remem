@@ -343,6 +343,9 @@ fn persist_observations(
         if text.trim().is_empty() {
             anyhow::bail!("observation_extract produced an empty observation");
         }
+        if observation_exists(conn, session_row_id, &evidence_json, &text)? {
+            continue;
+        }
         let store_duplicate =
             crate::memory::dedup::check_duplicate(conn, &task.project, &text, None)?.is_some();
         let batch_duplicate = !store_duplicate
