@@ -561,6 +561,8 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "memory_candidate_source_kind",
         "idx_memory_candidates_source_review",
     ),
+    SchemaInvariant::table(55, "session_ingest_cursors", "ingest_cursors"),
+    SchemaInvariant::column(55, "session_ingest_cursors", "raw_messages", "source_root"),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {

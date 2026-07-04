@@ -13,6 +13,11 @@ pub const SOURCE_TRANSCRIPT: &str = "transcript";
 pub const SOURCE_HOOK: &str = "hook";
 pub const SOURCE_MANUAL: &str = "manual";
 
+/// Default source-root label for rows ingested on this machine (hook path
+/// and default `ingest-sessions` roots). Matches the `raw_messages.source_root`
+/// column default from v055.
+pub const SOURCE_ROOT_LOCAL: &str = "local";
+
 #[derive(Debug, Clone)]
 pub struct RawMessage {
     pub id: i64,
@@ -63,6 +68,10 @@ pub struct RawIngestReport {
     pub parse_errors: usize,
     pub insert_errors: usize,
     pub read_error: Option<String>,
+    /// The last line failed JSON parse while the drain was told to tolerate an
+    /// actively-appended tail (issue #722). Not counted as a parse error; the
+    /// caller must not advance its ingest cursor so the tail is re-read later.
+    pub partial_tail: bool,
 }
 
 impl RawIngestReport {
@@ -105,6 +114,31 @@ pub fn insert_raw_message(
     branch: Option<&str>,
     cwd: Option<&str>,
 ) -> Result<Option<RawInsertOutcome>> {
+    insert_raw_message_from_root(
+        conn,
+        session_id,
+        project,
+        role,
+        content,
+        source,
+        branch,
+        cwd,
+        SOURCE_ROOT_LOCAL,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_raw_message_from_root(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    role: &str,
+    content: &str,
+    source: &str,
+    branch: Option<&str>,
+    cwd: Option<&str>,
+    source_root: &str,
+) -> Result<Option<RawInsertOutcome>> {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -120,10 +154,22 @@ pub fn insert_raw_message(
 
     let inserted = conn.execute(
         "INSERT INTO raw_messages \
-         (session_id, project, role, content, content_hash, source, branch, cwd, created_at_epoch) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         (session_id, project, role, content, content_hash, source, branch, cwd, \
+          created_at_epoch, source_root) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
          ON CONFLICT(project, session_id, role, content_hash) DO NOTHING",
-        params![session_id, project, role, trimmed, hash, source, branch, cwd, now],
+        params![
+            session_id,
+            project,
+            role,
+            trimmed,
+            hash,
+            source,
+            branch,
+            cwd,
+            now,
+            source_root
+        ],
     )?;
 
     if inserted > 0 {
@@ -172,6 +218,27 @@ fn find_matching_legacy_raw_message(
     }
 }
 
+/// Options for a transcript drain beyond the hook-path defaults.
+#[derive(Debug, Clone)]
+pub struct TranscriptDrainOptions<'a> {
+    /// Label of the scan root the transcript came from (`local` for the hook
+    /// path and default `ingest-sessions` roots).
+    pub source_root: &'a str,
+    /// Treat a JSON parse failure on the final line as an actively-appended
+    /// partial tail instead of a parse error (issue #722). The caller decides
+    /// this from the file mtime; see `RawIngestReport::partial_tail`.
+    pub tolerate_partial_tail: bool,
+}
+
+impl Default for TranscriptDrainOptions<'_> {
+    fn default() -> Self {
+        Self {
+            source_root: SOURCE_ROOT_LOCAL,
+            tolerate_partial_tail: false,
+        }
+    }
+}
+
 /// Drain a Claude Code transcript JSONL file into raw_messages.
 pub fn drain_transcript(
     conn: &Connection,
@@ -180,6 +247,28 @@ pub fn drain_transcript(
     project: &str,
     branch: Option<&str>,
     cwd: Option<&str>,
+) -> Result<RawIngestReport> {
+    drain_transcript_with_options(
+        conn,
+        transcript_path,
+        session_id,
+        project,
+        branch,
+        cwd,
+        &TranscriptDrainOptions::default(),
+    )
+}
+
+/// Drain a transcript with an explicit source root and partial-tail policy.
+#[allow(clippy::too_many_arguments)]
+pub fn drain_transcript_with_options(
+    conn: &Connection,
+    transcript_path: &str,
+    session_id: &str,
+    project: &str,
+    branch: Option<&str>,
+    cwd: Option<&str>,
+    options: &TranscriptDrainOptions<'_>,
 ) -> Result<RawIngestReport> {
     let content = match std::fs::read_to_string(transcript_path) {
         Ok(content) => content,
@@ -211,10 +300,15 @@ pub fn drain_transcript(
     };
 
     let mut report = RawIngestReport::default();
+    let line_count = content.lines().count();
     with_raw_archive_drain_savepoint(conn, || {
-        for line in content.lines() {
+        for (index, line) in content.lines().enumerate() {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-                report.parse_errors += 1;
+                if options.tolerate_partial_tail && index + 1 == line_count {
+                    report.partial_tail = true;
+                } else {
+                    report.parse_errors += 1;
+                }
                 continue;
             };
             let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
@@ -227,7 +321,7 @@ pub fn drain_transcript(
                 continue;
             }
 
-            match insert_raw_message(
+            match insert_raw_message_from_root(
                 conn,
                 session_id,
                 project,
@@ -236,6 +330,7 @@ pub fn drain_transcript(
                 SOURCE_TRANSCRIPT,
                 branch,
                 cwd,
+                options.source_root,
             ) {
                 Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
                 Ok(Some(_)) => report.duplicates += 1,

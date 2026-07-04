@@ -3,6 +3,7 @@ mod config_command;
 mod encrypt_state;
 mod eval;
 mod import;
+mod ingest_sessions;
 mod maintenance;
 mod markdown_archive;
 mod memory_policy;
@@ -26,6 +27,7 @@ pub(super) use eval::{
     run_eval_graph_decision, run_eval_local, run_eval_weight_grid,
 };
 pub(super) use import::run_import;
+pub(super) use ingest_sessions::run_ingest_sessions_cli;
 pub(super) use maintenance::{
     run_cleanup, run_dream, run_encrypt, run_governance, GovernanceCliRequest,
 };

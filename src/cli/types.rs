@@ -525,6 +525,19 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ImportAction,
     },
+    /// Batch-ingest Claude Code / Codex session transcripts into the raw archive.
+    IngestSessions {
+        /// Extra scan root as label=path (repeatable). Defaults always include
+        /// ~/.claude/projects and ~/.codex/sessions.
+        #[arg(long = "root")]
+        roots: Vec<String>,
+        /// Skip files last modified before this bound (Unix epoch or ISO8601 date/datetime).
+        #[arg(long)]
+        since: Option<String>,
+        /// Emit a single JSON summary object for scripts.
+        #[arg(long)]
+        json: bool,
+    },
     /// Export curated memories to a human-editable mirror.
     Export(ExportArgs),
 }
