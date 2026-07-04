@@ -284,17 +284,29 @@ fn observation_token_set(tokens: &[String]) -> BTreeSet<String> {
 }
 
 fn numeric_tokens_differ(incoming: &[String], existing: &[String]) -> bool {
-    let incoming = numeric_token_set(incoming);
-    let existing = numeric_token_set(existing);
+    let incoming = numeric_sequence(incoming);
+    let existing = numeric_sequence(existing);
     !incoming.is_empty() && !existing.is_empty() && incoming != existing
 }
 
-fn numeric_token_set(tokens: &[String]) -> BTreeSet<String> {
-    tokens
-        .iter()
-        .filter(|token| token.chars().all(|ch| ch.is_ascii_digit()))
-        .cloned()
-        .collect()
+fn numeric_sequence(tokens: &[String]) -> Vec<String> {
+    tokens.iter().flat_map(|token| digit_runs(token)).collect()
+}
+
+fn digit_runs(token: &str) -> Vec<String> {
+    let mut runs = Vec::new();
+    let mut current = String::new();
+    for ch in token.chars() {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+        } else if !current.is_empty() {
+            runs.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        runs.push(current);
+    }
+    runs
 }
 
 fn has_any(tokens: &BTreeSet<String>, values: &[&str]) -> bool {

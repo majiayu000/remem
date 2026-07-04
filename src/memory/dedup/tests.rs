@@ -449,6 +449,52 @@ fn check_duplicate_vector_stage_keeps_structured_numeric_fact_changes_separate()
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_unit_suffixed_numeric_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 30s",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 60s",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_reordered_numeric_values_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Set timeout to 30 seconds and retries to 3",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Set timeout to 3 seconds and retries to 30",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
     with_embedding_provider("off", || -> Result<()> {
         let conn = Connection::open_in_memory()?;
