@@ -17,7 +17,7 @@
   "additionalProperties": true,
   "properties": {
     "checkpoint_version": {
-      "const": 1
+      "enum": [1, 2]
     },
     "tranche_id": {
       "type": "string",
@@ -39,6 +39,96 @@
     },
     "queue_mode": {
       "enum": ["bounded_tranche", "full_queue_drain", null]
+    },
+    "tranche_mix": {
+      "type": ["object", "null"],
+      "required": ["spec_pr_count", "impl_pr_count", "consecutive_spec_only"],
+      "additionalProperties": true,
+      "properties": {
+        "spec_pr_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "impl_pr_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consecutive_spec_only": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "spec_only_declaration": {
+          "type": ["object", "null"],
+          "required": ["scope", "conversation_marker"],
+          "additionalProperties": true,
+          "properties": {
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversation_marker": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "spec_only_declaration": {
+      "type": ["object", "null"],
+      "required": ["scope", "conversation_marker"],
+      "additionalProperties": true,
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversation_marker": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "budget": {
+      "type": ["object", "null"],
+      "required": ["basis"],
+      "additionalProperties": true,
+      "properties": {
+        "basis": {
+          "enum": ["compaction", "item_cap", "both"],
+          "description": "What the session budget is measured in. compaction_budget defaults to 1: stop before the second compaction."
+        },
+        "compaction_budget": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "item_cap": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "compaction_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "stop_reason": {
+          "enum": ["budget_exhausted", "queue_empty", "user_interrupt", "blocked", null]
+        },
+        "budget_override": {
+          "type": ["object", "null"],
+          "required": ["scope", "conversation_marker"],
+          "additionalProperties": true,
+          "properties": {
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversation_marker": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
     },
     "spec_coverage": {
       "type": ["object", "null"],
@@ -368,8 +458,58 @@
               "native_thread_id": {
                 "type": ["string", "null"]
               },
+              "review_source": {
+                "enum": ["independent_lane", "self_review", null],
+                "description": "Where the passing review came from. self_review never satisfies the independent-review requirement without explicit self_review_authorization."
+              },
               "evidence": {
                 "type": ["string", "null"]
+              }
+            }
+          },
+          "lane_failures": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "object",
+              "required": ["lane_id", "failure_kind"],
+              "additionalProperties": true,
+              "properties": {
+                "lane_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failure_kind": {
+                  "enum": ["usage_limit", "crash", "zero_output", "closed", "other"]
+                },
+                "observed_marker": {
+                  "type": ["string", "null"]
+                },
+                "detail": {
+                  "type": ["string", "null"]
+                }
+              }
+            }
+          },
+          "blocked_reason": {
+            "type": ["string", "null"],
+            "description": "Required when a lane failure downgrades the item to blocked/needs_human, e.g. reviewer_lane_failure."
+          },
+          "pr_kind": {
+            "enum": ["spec", "impl", "mixed_impl", null],
+            "description": "Classification of the PR this item produced. Production code present means impl/mixed_impl."
+          },
+          "self_review_authorization": {
+            "type": ["object", "null"],
+            "required": ["scope", "conversation_marker"],
+            "additionalProperties": true,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conversation_marker": {
+                "type": "string",
+                "minLength": 1
               }
             }
           },

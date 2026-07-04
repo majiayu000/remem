@@ -25,6 +25,7 @@ SYNCED_FILES=(
   "checks/specrail_lib.py"
   "schemas/duplicate_work_evidence.schema.json"
   "schemas/pr_review_gate.schema.json"
+  "schemas/review_result.schema.json"
   "schemas/runtime_checkpoint.schema.json"
 )
 

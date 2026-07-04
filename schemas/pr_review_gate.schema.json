@@ -126,6 +126,31 @@
         }
       }
     },
+    "merge_record": {
+      "type": ["object", "null"],
+      "required": ["remote_confirmed"],
+      "additionalProperties": true,
+      "properties": {
+        "merge_path": {
+          "enum": ["gh_pr_merge", "api_fallback", "merged_by_other"],
+          "description": "How the merge landed: gh pr merge from a neutral cwd, the gh api PUT fallback for locally checked-out branches, or merged by someone else."
+        },
+        "remote_confirmed": {
+          "type": "boolean",
+          "description": "True only after a remote query (gh pr view --json merged,mergeCommit) confirmed the outcome."
+        },
+        "merge_commit_sha": {
+          "type": ["string", "null"]
+        },
+        "branch_deletion_outcome": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "review_source": {
+      "enum": ["independent_lane", "self_review"],
+      "description": "Source of the merge review. Only independent_lane satisfies the independent-review requirement."
+    },
     "human_authorization": {
       "type": "object",
       "required": ["actor", "source"],

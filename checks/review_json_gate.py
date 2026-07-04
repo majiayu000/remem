@@ -16,6 +16,9 @@ VERDICTS = {"APPROVE", "REJECT"}
 SIDES = {"RIGHT", "LEFT"}
 SEVERITIES = {"critical", "important", "suggestion", "nit"}
 SPEC_ALIGNMENT_STATUSES = {"matched", "drift", "not_applicable"}
+REVIEW_MODES = {"full", "resumed", "diff_only"}
+PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
+FULL_REVIEW_ROUND_CAP = 2
 FORBIDDEN_FINAL_AUTHORITY = {
     "approved for merge": re.compile(r"\bapproved\s+for\s+merge\b", re.IGNORECASE),
     "I approve this PR": re.compile(r"\bi\s+approve\s+this\s+pr\b", re.IGNORECASE),
@@ -157,7 +160,19 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
     satisfied: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
-    allowed_keys = {"verdict", "body", "comments", "spec_alignment"}
+    allowed_keys = {
+        "verdict",
+        "body",
+        "comments",
+        "spec_alignment",
+        "pr",
+        "head_sha",
+        "review_round",
+        "review_mode",
+        "base_head_sha",
+        "human_full_review_request",
+        "prior_findings",
+    }
 
     for key in sorted(set(review) - allowed_keys):
         reasons.append(f"unknown top-level field: {key}")
@@ -197,7 +212,75 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
     if "spec_alignment" in review:
         _validate_spec_alignment(review["spec_alignment"], satisfied, reasons)
 
+    _validate_review_round(review, satisfied, reasons)
+
     return satisfied, missing, reasons
+
+
+def _validate_review_round(
+    review: dict[str, Any], satisfied: list[str], reasons: list[str]
+) -> None:
+    has_round = "review_round" in review
+    has_mode = "review_mode" in review
+    if not has_round and not has_mode:
+        return
+    if has_round != has_mode:
+        reasons.append("review_round and review_mode must be provided together")
+        return
+
+    review_round = review.get("review_round")
+    if not _positive_int(review_round):
+        reasons.append("review_round must be a positive integer")
+        return
+
+    review_mode = review.get("review_mode")
+    if review_mode not in REVIEW_MODES:
+        allowed = ", ".join(sorted(REVIEW_MODES))
+        reasons.append(f"review_mode must be one of: {allowed}")
+        return
+
+    if review_mode == "full" and review_round > FULL_REVIEW_ROUND_CAP:
+        request = review.get("human_full_review_request")
+        if _non_empty_string(request):
+            satisfied.append(
+                f"round {review_round} full review authorized by human request"
+            )
+        else:
+            reasons.append(
+                f"review_round {review_round} with review_mode full exceeds the "
+                f"cap of {FULL_REVIEW_ROUND_CAP}; use resumed/diff_only or record "
+                "human_full_review_request"
+            )
+
+    if review_mode in {"resumed", "diff_only"}:
+        if review_round < 2:
+            reasons.append(f"review_mode {review_mode} requires review_round >= 2")
+        _validate_prior_findings(review, reasons)
+
+    if review_mode == "diff_only" and not _non_empty_string(review.get("base_head_sha")):
+        reasons.append("review_mode diff_only requires base_head_sha of the prior round")
+
+    if review_mode in REVIEW_MODES and not reasons:
+        satisfied.append(f"review round {review_round} mode {review_mode}")
+
+
+def _validate_prior_findings(review: dict[str, Any], reasons: list[str]) -> None:
+    prior_findings = review.get("prior_findings")
+    if not isinstance(prior_findings, list):
+        reasons.append(
+            "resumed/diff_only rounds require prior_findings[] with per-finding status"
+        )
+        return
+    for index, finding in enumerate(prior_findings, start=1):
+        if not isinstance(finding, dict):
+            reasons.append(f"prior_findings #{index} must be an object")
+            continue
+        if not _non_empty_string(finding.get("summary")):
+            reasons.append(f"prior_findings #{index} requires summary")
+        status = finding.get("status")
+        if status not in PRIOR_FINDING_STATUSES:
+            allowed = ", ".join(sorted(PRIOR_FINDING_STATUSES))
+            reasons.append(f"prior_findings #{index} status must be one of: {allowed}")
 
 
 def _validate_spec_alignment(

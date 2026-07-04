@@ -1,6 +1,6 @@
 {
   "upstream_repo": "https://github.com/majiayu000/specrail",
-  "upstream_sha": "f47f01859c64eada4a4cebb96506dc04d3f909fb",
+  "upstream_sha": "32b6326cec137c3ef2e9d200f41691f1b150698c",
   "excluded": [
     "checks/check_workflow.py"
   ],
@@ -19,15 +19,15 @@
     },
     {
       "path": "checks/github_pr_evidence.py",
-      "sha256": "b4e9254a0b0231f974492eb721bb7e65177d193a6bfc70aca95f091c31f973c3"
+      "sha256": "f8824f7f046a6fe3646920e6aa1393a29283a79c6bd0ba94c46d567f7a1a4279"
     },
     {
       "path": "checks/pr_gate.py",
-      "sha256": "eed9a93235b0a8789270247f422d8fc3b18d6e00fd4ee892b49f4a84ddf34c5a"
+      "sha256": "c788829434538ca18cb233fdc4fdc55364fcd9fe200ef198df8355f3fab6af24"
     },
     {
       "path": "checks/review_json_gate.py",
-      "sha256": "47c258d0b49ff80749e57c6fec1e3f95a11b19b1ea2641d892c6e3168ae1d401"
+      "sha256": "1d2adf224f81079e75149c4650fd79e3858ff4072bfac632747ad303a4e0f0ae"
     },
     {
       "path": "checks/route_gate.py",
@@ -35,7 +35,7 @@
     },
     {
       "path": "checks/runtime_ledger_gate.py",
-      "sha256": "d146ef50032d4468d60c0d57c4d5ad3fde9b596b91af4a84456664016b49a30a"
+      "sha256": "203c4bbcf42b2c0dee90c8f675c67500644dcf131df5de4a964d40b3bef00354"
     },
     {
       "path": "checks/specrail_lib.py",
@@ -47,11 +47,15 @@
     },
     {
       "path": "schemas/pr_review_gate.schema.json",
-      "sha256": "93d6c7e11604b43cae798bfdf9454ee1128d51ad28186643e7d7c8daaa7d0324"
+      "sha256": "d63bf163aeb65b5128c3ed0b14f16046fb43b1e3c074626817b4f70c822997e4"
+    },
+    {
+      "path": "schemas/review_result.schema.json",
+      "sha256": "1164adc4e50ff9fc735a6192d9581fae013563c7ad89e33be5dcebd196aa7f8b"
     },
     {
       "path": "schemas/runtime_checkpoint.schema.json",
-      "sha256": "4e790407cf5efbeb808cb4e79195782afac14ecd71d1270b34a83c041e7b0d34"
+      "sha256": "26c4248d5cf259aa8f5ec38f3163ac220d07c0634461f678c08b8b2c5c762c34"
     }
   ]
 }

@@ -349,6 +349,7 @@ def build_evidence(
     authorization: dict[str, str] | None = None,
     merge_dispatched_at: str | None = None,
     merge_head_sha: str | None = None,
+    review_source: str | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     evidence: dict[str, Any] = {
@@ -369,6 +370,12 @@ def build_evidence(
     }
     if authorization is not None:
         evidence["human_authorization"] = authorization
+    if review_source is not None:
+        if review_source not in {"independent_lane", "self_review"}:
+            raise EvidenceError(
+                "--review-source must be independent_lane or self_review"
+            )
+        evidence["review_source"] = review_source
     provided_merge = [value for value in [merge_dispatched_at, merge_head_sha] if value is not None]
     if provided_merge:
         if not merge_dispatched_at or not merge_dispatched_at.strip() or not merge_head_sha or not merge_head_sha.strip():
@@ -386,6 +393,7 @@ def collect_evidence(
     authorization: dict[str, str] | None,
     merge_dispatched_at: str | None = None,
     merge_head_sha: str | None = None,
+    review_source: str | None = None,
 ) -> dict[str, Any]:
     owner, name = parse_github_repo(github_repo)
     pr_payload_before = collect_pr_view(github_repo, pr_number)
@@ -403,6 +411,7 @@ def collect_evidence(
         authorization,
         merge_dispatched_at,
         merge_head_sha,
+        review_source,
     )
 
 
@@ -417,6 +426,11 @@ def main() -> int:
     parser.add_argument("--authorization-summary", help="Short authorization summary")
     parser.add_argument("--merge-dispatched-at", help="Optional merge dispatch timestamp for audit records")
     parser.add_argument("--merge-head-sha", help="Optional merge target head SHA for audit records")
+    parser.add_argument(
+        "--review-source",
+        choices=["independent_lane", "self_review"],
+        help="Declared source of the merge review; omitting it leaves the gate blocked on review_source",
+    )
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     args = parser.parse_args()
 
@@ -432,6 +446,7 @@ def main() -> int:
             authorization,
             args.merge_dispatched_at,
             args.merge_head_sha,
+            args.review_source,
         )
     except EvidenceError as exc:
         print(f"error: {exc}", file=sys.stderr)
