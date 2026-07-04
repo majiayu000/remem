@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::Connection;
 
 use super::search_with_branch_explain;
@@ -58,7 +58,7 @@ fn insert_search_memory(conn: &Connection) -> Result<()> {
 }
 
 #[test]
-fn search_continues_without_vector_when_api_failure_falls_back_to_off() -> Result<()> {
+fn search_returns_provider_error_when_api_failure_falls_back_to_off() -> Result<()> {
     with_clean_search_embedding_env(|| -> Result<()> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let addr = listener.local_addr()?;
@@ -84,7 +84,7 @@ fn search_continues_without_vector_when_api_failure_falls_back_to_off() -> Resul
         let conn = setup_search_conn()?;
         insert_search_memory(&conn)?;
 
-        let (memories, explain) = search_with_branch_explain(
+        let error = search_with_branch_explain(
             &conn,
             Some("Semantic fallback"),
             Some("/repo"),
@@ -93,23 +93,43 @@ fn search_continues_without_vector_when_api_failure_falls_back_to_off() -> Resul
             0,
             false,
             None,
-        )?;
+        )
+        .expect_err("fallback=off after an API failure must not skip vector search errors");
         handle
             .join()
             .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
-        let explain = explain.context("query explain should be present")?;
-        let vector = explain
-            .channels
-            .iter()
-            .find(|channel| channel.name == "vector")
-            .context("vector channel should be reported")?;
+        let error = format!("{error:#}");
+        assert!(error.contains("provider unavailable"));
+        assert!(error.contains("fallback off disabled provider fallback"));
+        Ok(())
+    })
+}
 
-        assert_eq!(memories.first().map(|memory| memory.id), Some(1));
-        assert!(!vector.enabled);
-        assert_eq!(
-            vector.disabled_reason.as_deref(),
-            Some("embedding provider is off")
-        );
+#[test]
+fn search_returns_provider_error_when_fallback_off_provider_is_unavailable_before_call(
+) -> Result<()> {
+    with_clean_search_embedding_env(|| -> Result<()> {
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+        }
+        let conn = setup_search_conn()?;
+        insert_search_memory(&conn)?;
+
+        let error = search_with_branch_explain(
+            &conn,
+            Some("Semantic fallback"),
+            Some("/repo"),
+            None,
+            5,
+            0,
+            false,
+            None,
+        )
+        .expect_err("fallback=off provider status failures must not disable vector search");
+        let error = format!("{error:#}");
+        assert!(error.contains("requires REMEM_EMBEDDINGS_API_KEY"));
+        assert!(error.contains("fallback off disabled provider fallback"));
         Ok(())
     })
 }

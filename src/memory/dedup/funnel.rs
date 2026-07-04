@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
@@ -205,7 +205,31 @@ fn embed_observation_dedup_text(
     text: &str,
     fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
 ) -> Result<crate::retrieval::embedding::TextEmbedding> {
-    crate::retrieval::embedding::embed_query_with_fallback_cache(text, fallback_cache)
+    let text = normalize_observation_dedup_embedding_text(text);
+    crate::retrieval::embedding::embed_query_with_fallback_cache(&text, fallback_cache)
+}
+
+fn normalize_observation_dedup_embedding_text(text: &str) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(text.len());
+    for (index, ch) in chars.iter().enumerate() {
+        let previous = index.checked_sub(1).and_then(|prev| chars.get(prev));
+        let next = chars.get(index + 1);
+        if *ch == ',' {
+            if previous.is_some_and(|previous| previous.is_ascii_digit())
+                && next.is_some_and(|next| next.is_ascii_digit())
+            {
+                continue;
+            }
+        } else if *ch == '/'
+            && previous.is_some_and(|previous| previous.is_ascii_alphabetic())
+            && next.is_some_and(|next| next.is_ascii_digit())
+        {
+            continue;
+        }
+        normalized.push(*ch);
+    }
+    normalized
 }
 
 fn observation_similarity_threshold(model: &str) -> f32 {
@@ -219,6 +243,9 @@ fn observation_similarity_threshold(model: &str) -> f32 {
 fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
     let incoming_tokens = observation_token_list(incoming);
     let existing_tokens = observation_token_list(existing);
+    if numeric_tokens_differ(&incoming_tokens, &existing_tokens) {
+        return true;
+    }
     let incoming = observation_token_set(&incoming_tokens);
     let existing = observation_token_set(&existing_tokens);
     const OPPOSITES: &[(&[&str], &[&str])] = &[
@@ -269,15 +296,444 @@ fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
 }
 
 fn observation_token_list(text: &str) -> Vec<String> {
-    text.split(|ch: char| !ch.is_alphanumeric())
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .map(str::to_lowercase)
-        .collect()
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for (index, ch) in chars.iter().enumerate() {
+        let previous = index.checked_sub(1).and_then(|prev| chars.get(prev));
+        let next = chars.get(index + 1);
+        if ch.is_alphanumeric()
+            || *ch == '%'
+            || is_numeric_token_separator(*ch, previous.copied(), next.copied())
+        {
+            current.extend(ch.to_lowercase());
+        } else if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn is_numeric_token_separator(ch: char, previous: Option<char>, next: Option<char>) -> bool {
+    match ch {
+        '+' | '-' => {
+            next.is_some_and(|next| next.is_ascii_digit())
+                && !previous.is_some_and(|previous| previous.is_ascii_digit())
+        }
+        ',' | '.' => {
+            next.is_some_and(|next| next.is_ascii_digit())
+                && (previous.is_none()
+                    || previous.is_some_and(|previous| {
+                        previous.is_ascii_digit() || !previous.is_alphanumeric()
+                    }))
+        }
+        '/' => {
+            previous.is_some_and(|previous| previous.is_alphanumeric())
+                && next.is_some_and(|next| next.is_alphanumeric())
+        }
+        _ => false,
+    }
 }
 
 fn observation_token_set(tokens: &[String]) -> BTreeSet<String> {
     tokens.iter().cloned().collect()
+}
+
+fn numeric_tokens_differ(incoming: &[String], existing: &[String]) -> bool {
+    let incoming = numeric_signature_counts(incoming);
+    let existing = numeric_signature_counts(existing);
+    (!incoming.is_empty() || !existing.is_empty()) && incoming != existing
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NumericSignature {
+    label: String,
+    role: String,
+    value: String,
+    unit: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NumericTokenPart {
+    label: Option<String>,
+    value: String,
+    unit: String,
+}
+
+fn numeric_signature_counts(tokens: &[String]) -> BTreeMap<NumericSignature, usize> {
+    let mut counts = BTreeMap::new();
+    for (index, token) in tokens.iter().enumerate() {
+        for mut part in numeric_token_parts(token) {
+            if part.unit.is_empty() {
+                part.unit = tokens
+                    .get(index + 1)
+                    .filter(|next| is_numeric_unit_token(next))
+                    .cloned()
+                    .unwrap_or_default();
+            }
+            part.unit = normalize_numeric_unit(&part.unit);
+            let label = part
+                .label
+                .unwrap_or_else(|| nearby_numeric_label(tokens, index));
+            let signature = NumericSignature {
+                value: normalize_numeric_value(&part.value, &part.unit, &label),
+                label,
+                role: nearby_numeric_role(tokens, index),
+                unit: part.unit,
+            };
+            *counts.entry(signature).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
+    let chars = token.chars().collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if !is_numeric_value_start(&chars, index) {
+            index += 1;
+            continue;
+        }
+        let value_start = index;
+        if matches!(chars[index], '+' | '-') {
+            index += 1;
+        }
+        if chars.get(index) == Some(&'.') {
+            index += 1;
+        }
+        while index < chars.len() {
+            if chars[index].is_ascii_digit()
+                || (matches!(chars[index], ',' | '.')
+                    && index > value_start
+                    && chars
+                        .get(index - 1)
+                        .is_some_and(|previous| previous.is_ascii_digit())
+                    && chars
+                        .get(index + 1)
+                        .is_some_and(|next| next.is_ascii_digit()))
+            {
+                index += 1;
+            } else {
+                break;
+            }
+        }
+        let value_end = index;
+        let prefix = alphabetic_prefix_before(&chars, value_start);
+        let mut suffix_end = value_end;
+        while suffix_end < chars.len()
+            && (chars[suffix_end].is_ascii_alphabetic() || chars[suffix_end] == '%')
+        {
+            suffix_end += 1;
+        }
+        let suffix = chars[value_end..suffix_end].iter().collect::<String>();
+        let mut unit = String::new();
+        let label = if is_numeric_unit_prefix(&prefix) {
+            unit.push_str(&prefix);
+            None
+        } else if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix)
+        };
+        if is_numeric_unit_token(&suffix) {
+            unit.push_str(&suffix);
+        }
+        parts.push(NumericTokenPart {
+            label,
+            value: chars[value_start..value_end].iter().collect::<String>(),
+            unit,
+        });
+    }
+    parts
+}
+
+fn is_numeric_value_start(chars: &[char], index: usize) -> bool {
+    chars[index].is_ascii_digit()
+        || (matches!(chars[index], '+' | '-')
+            && chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_digit()))
+        || (chars[index] == '.'
+            && chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_digit()))
+}
+
+fn alphabetic_prefix_before(chars: &[char], index: usize) -> String {
+    let mut prefix = Vec::new();
+    let mut cursor = index;
+    while cursor > 0 {
+        let ch = chars[cursor - 1];
+        if ch.is_ascii_alphabetic() {
+            prefix.push(ch);
+        } else if matches!(ch, '/' | '-' | '_')
+            && cursor > 1
+            && chars[cursor - 2].is_ascii_alphabetic()
+        {
+        } else {
+            break;
+        }
+        cursor -= 1;
+    }
+    prefix.into_iter().rev().collect()
+}
+
+fn normalize_numeric_value(raw: &str, unit: &str, label: &str) -> String {
+    let raw = normalize_grouped_numeric_commas(raw);
+    let (sign, unsigned) = raw
+        .strip_prefix('-')
+        .map(|value| ("-", value))
+        .or_else(|| raw.strip_prefix('+').map(|value| ("", value)))
+        .unwrap_or(("", raw.as_str()));
+    let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    let integer = integer.trim_start_matches('0');
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let fraction = if is_version_numeric_context(unit, label) {
+        fraction
+    } else {
+        fraction.trim_end_matches('0')
+    };
+    let value = if fraction.is_empty() {
+        integer.to_string()
+    } else {
+        format!("{integer}.{fraction}")
+    };
+    if value == "0" {
+        value
+    } else {
+        format!("{sign}{value}")
+    }
+}
+
+fn is_version_numeric_context(unit: &str, label: &str) -> bool {
+    unit == "v"
+        || label == "release"
+        || label == "version"
+        || label.ends_with(":release")
+        || label.ends_with(":version")
+}
+
+fn normalize_grouped_numeric_commas(raw: &str) -> String {
+    if raw.contains(',') && has_valid_thousands_grouping(raw) {
+        raw.replace(',', "")
+    } else {
+        raw.to_string()
+    }
+}
+
+fn has_valid_thousands_grouping(raw: &str) -> bool {
+    let unsigned = raw
+        .strip_prefix('-')
+        .or_else(|| raw.strip_prefix('+'))
+        .unwrap_or(raw);
+    let integer = unsigned
+        .split_once('.')
+        .map_or(unsigned, |(integer, _)| integer);
+    let mut groups = integer.split(',');
+    let Some(first) = groups.next() else {
+        return false;
+    };
+    (1..=3).contains(&first.len())
+        && first.chars().all(|ch| ch.is_ascii_digit())
+        && groups.clone().count() > 0
+        && groups.all(|group| group.len() == 3 && group.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn nearby_numeric_label(tokens: &[String], index: usize) -> String {
+    tokens[..index]
+        .iter()
+        .enumerate()
+        .rev()
+        .take(4)
+        .find(|(_, token)| is_numeric_label_token(token))
+        .map(|(label_index, token)| numeric_label_with_qualifier(tokens, label_index, token))
+        .or_else(|| {
+            tokens
+                .iter()
+                .enumerate()
+                .skip(index + 1)
+                .take(4)
+                .find(|(_, token)| is_numeric_label_token(token))
+                .map(|(label_index, token)| {
+                    numeric_label_with_qualifier(tokens, label_index, token)
+                })
+        })
+        .unwrap_or_default()
+}
+
+fn numeric_label_with_qualifier(tokens: &[String], label_index: usize, label: &str) -> String {
+    let label = if numeric_label_repeats(tokens, label) {
+        nearby_numeric_entity(tokens, label_index, label)
+            .map(|entity| format!("{entity}:{label}"))
+            .unwrap_or_else(|| label.to_string())
+    } else {
+        label.to_string()
+    };
+    tokens[..label_index]
+        .iter()
+        .rev()
+        .take(2)
+        .find(|token| is_numeric_qualifier_token(token))
+        .map(|qualifier| format!("{qualifier}:{label}"))
+        .unwrap_or(label)
+}
+
+fn numeric_label_repeats(tokens: &[String], label: &str) -> bool {
+    tokens
+        .iter()
+        .filter(|token| token.as_str() == label)
+        .count()
+        > 1
+}
+
+fn nearby_numeric_entity(tokens: &[String], label_index: usize, label: &str) -> Option<String> {
+    tokens[..label_index]
+        .iter()
+        .rev()
+        .take(3)
+        .find(|token| token.as_str() != label && is_numeric_label_token(token))
+        .cloned()
+}
+
+fn is_numeric_qualifier_token(token: &str) -> bool {
+    matches!(
+        token,
+        "ceiling" | "floor" | "max" | "maximum" | "min" | "minimum"
+    )
+}
+
+fn nearby_numeric_role(tokens: &[String], index: usize) -> String {
+    if !has_numeric_transition_role_pair(tokens) {
+        return String::new();
+    }
+    tokens[..index]
+        .iter()
+        .rev()
+        .take(3)
+        .find(|token| is_numeric_role_token(token))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn has_numeric_transition_role_pair(tokens: &[String]) -> bool {
+    (tokens.iter().any(|token| token == "from")
+        && tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "into" | "onto" | "to" | "toward" | "towards"
+            )
+        }))
+        || (tokens.iter().any(|token| token == "before")
+            && tokens.iter().any(|token| token == "after"))
+}
+
+fn is_numeric_role_token(token: &str) -> bool {
+    matches!(
+        token,
+        "after" | "before" | "from" | "into" | "onto" | "to" | "toward" | "towards"
+    )
+}
+
+fn is_numeric_label_token(token: &str) -> bool {
+    token.chars().any(|ch| ch.is_ascii_alphabetic())
+        && token.chars().all(|ch| !ch.is_ascii_digit())
+        && !is_numeric_context_stopword(token)
+        && !is_numeric_unit_token(token)
+}
+
+fn is_numeric_context_stopword(token: &str) -> bool {
+    matches!(
+        token,
+        "a" | "an"
+            | "and"
+            | "are"
+            | "at"
+            | "be"
+            | "been"
+            | "being"
+            | "by"
+            | "for"
+            | "from"
+            | "in"
+            | "is"
+            | "of"
+            | "on"
+            | "or"
+            | "set"
+            | "the"
+            | "to"
+            | "use"
+            | "uses"
+            | "using"
+            | "value"
+            | "was"
+            | "were"
+            | "with"
+    )
+}
+
+fn is_numeric_unit_token(token: &str) -> bool {
+    matches!(
+        token,
+        "b" | "byte"
+            | "bytes"
+            | "gb"
+            | "gib"
+            | "h"
+            | "hour"
+            | "hours"
+            | "hr"
+            | "hrs"
+            | "kb"
+            | "kib"
+            | "mb"
+            | "mib"
+            | "m"
+            | "min"
+            | "mins"
+            | "minute"
+            | "minutes"
+            | "millisecond"
+            | "milliseconds"
+            | "msec"
+            | "msecs"
+            | "ms"
+            | "pct"
+            | "percent"
+            | "percentage"
+            | "%"
+            | "s"
+            | "sec"
+            | "second"
+            | "seconds"
+            | "secs"
+            | "d"
+            | "day"
+            | "days"
+    )
+}
+
+fn is_numeric_unit_prefix(prefix: &str) -> bool {
+    matches!(prefix, "v")
+}
+
+fn normalize_numeric_unit(unit: &str) -> String {
+    match unit {
+        "" => String::new(),
+        "byte" | "bytes" => "b".to_string(),
+        "day" | "days" => "d".to_string(),
+        "hour" | "hours" | "hr" | "hrs" => "h".to_string(),
+        "minute" | "minutes" | "min" | "mins" => "m".to_string(),
+        "millisecond" | "milliseconds" | "msec" | "msecs" => "ms".to_string(),
+        "pct" | "percent" | "percentage" | "%" => "%".to_string(),
+        "sec" | "secs" | "second" | "seconds" => "s".to_string(),
+        _ => unit.to_string(),
+    }
 }
 
 fn has_any(tokens: &BTreeSet<String>, values: &[&str]) -> bool {

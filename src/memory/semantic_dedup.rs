@@ -52,8 +52,12 @@ pub(crate) fn find_curated_duplicate(
     {
         return Ok(None);
     }
-    if crate::retrieval::embedding::embedding_provider_status_without_probe()?.disabled {
-        return Ok(None);
+    let status = crate::retrieval::embedding::embedding_provider_status_without_probe()?;
+    if let Some(error) = crate::retrieval::embedding::disabled_provider_status_error(&status) {
+        if crate::retrieval::embedding::is_embedding_provider_off_error(&error) {
+            return Ok(None);
+        }
+        return Err(error);
     }
 
     let scope = if scope.trim().is_empty() {

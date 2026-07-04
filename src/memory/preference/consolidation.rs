@@ -301,10 +301,21 @@ fn active_preference_embedding_with_fallback_cache(
     match crate::retrieval::embedding::embed_query_with_fallback_cache(text, fallback_cache) {
         Ok(embedding) => Ok(Some(embedding)),
         Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
-            Ok(None)
+            if configured_embedding_provider_is_off()? {
+                Ok(None)
+            } else {
+                Err(error).context("active preference embedding provider failed")
+            }
         }
-        Err(error) => Err(error),
+        Err(error) => Err(error).context("active preference embedding provider failed"),
     }
+}
+
+fn configured_embedding_provider_is_off() -> Result<bool> {
+    Ok(
+        crate::retrieval::embedding::embedding_provider_status_without_probe()?.configured_provider
+            == "off",
+    )
 }
 
 #[cfg(test)]

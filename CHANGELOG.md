@@ -30,6 +30,9 @@
   time-window / session-listing queries (GH720 Phase 1, #722 #723).
 
 ### Fixed
+- Staged source version `0.5.161` for the GH-717 post-merge semantic dedup
+  follow-up: preserve numeric observation value changes, keep observation facts
+  with narratives, and propagate preference API failures when fallback is off.
 - Mapped memory-candidate extraction outputs that copy observation types
   (`feature`, `refactor`, `change`) back into the canonical candidate memory
   vocabulary instead of failing the whole extraction batch.

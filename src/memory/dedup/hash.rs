@@ -61,17 +61,14 @@ pub(crate) fn canonical_observation_text(
     title: Option<&str>,
     facts: Option<&str>,
 ) -> Option<String> {
-    if let Some(narrative) = clean_text(narrative) {
-        return Some(narrative);
-    }
-    let title = clean_text(title);
+    let primary = clean_text(narrative).or_else(|| clean_text(title));
     if let Some(facts) = facts_text(facts) {
-        return Some(match title {
-            Some(title) => format!("{title}\n{facts}"),
+        return Some(match primary {
+            Some(primary) => format!("{primary}\n{facts}"),
             None => facts,
         });
     }
-    clean_text(text).or(title)
+    clean_text(text).or(primary)
 }
 
 fn clean_text(value: Option<&str>) -> Option<String> {

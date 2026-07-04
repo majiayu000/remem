@@ -124,6 +124,35 @@ fn insert_observation(conn: &Connection, project: &str, narrative: &str) -> Resu
     Ok(conn.last_insert_rowid())
 }
 
+fn insert_structured_observation(
+    conn: &Connection,
+    project: &str,
+    narrative: &str,
+    facts: &[&str],
+) -> Result<i64> {
+    let now = chrono::Utc::now();
+    let facts_json = serde_json::to_string(facts)?;
+    conn.execute(
+        "INSERT INTO observations \
+         (memory_session_id, project, type, title, text, narrative, facts, created_at, created_at_epoch, discovery_tokens, status) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            "mem-test",
+            project,
+            "bugfix",
+            None::<String>,
+            format!("{narrative}\n{}", facts.join("\n")),
+            narrative,
+            facts_json,
+            now.to_rfc3339(),
+            now.timestamp(),
+            100,
+            "active"
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 #[test]
 fn test_hash_dedup_finds_exact_match() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -166,6 +195,17 @@ fn canonical_observation_text_combines_title_and_facts() {
     assert_eq!(
         text.as_deref(),
         Some("Configuration update\nSet timeout to 30 seconds\nKept retries at 3")
+    );
+    let text = canonical_observation_text(
+        Some("Configuration was updated"),
+        Some("Configuration was updated"),
+        None,
+        Some(r#"["Set timeout to 30 seconds"]"#),
+    );
+
+    assert_eq!(
+        text.as_deref(),
+        Some("Configuration was updated\nSet timeout to 30 seconds")
     );
 }
 
@@ -347,6 +387,23 @@ fn check_duplicate_vector_stage_keeps_negated_status_correction_separate() -> Re
     })
 }
 
+fn assert_feature_hash_duplicate(
+    existing: &str,
+    incoming: &str,
+    expected_duplicate: bool,
+) -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", existing)?;
+        let duplicate_id = check_duplicate(&conn, "test-project", incoming, None)?;
+
+        assert_eq!(duplicate_id.is_some(), expected_duplicate);
+        Ok(())
+    })
+}
+
 #[test]
 fn check_duplicate_vector_stage_keeps_short_numeric_observations_separate() -> Result<()> {
     with_embedding_provider("feature-hash", || -> Result<()> {
@@ -359,6 +416,300 @@ fn check_duplicate_vector_stage_keeps_short_numeric_observations_separate() -> R
         assert_eq!(duplicate_id, None);
         Ok(())
     })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_numeric_fact_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 30 seconds",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 60 seconds",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_structured_numeric_fact_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_structured_observation(
+            &conn,
+            "test-project",
+            "Configuration update",
+            &["Set timeout to 30 seconds"],
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 60 seconds",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_unit_suffixed_numeric_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 30s",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 60s",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_reordered_numeric_values_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Set timeout to 30 seconds and retries to 3",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Set timeout to 3 seconds and retries to 30",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_percent_unit_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set threshold to 30%")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set threshold to 30", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_reversed_transition_values_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Changed timeout from 30 to 60")?;
+        let duplicate_id =
+            check_duplicate(&conn, "test-project", "Changed timeout from 60 to 30", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_equivalent_reordered_numeric_facts() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set retries to 3 and timeout to 30s")?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Set timeout to 30s and retries to 3",
+            None,
+        )?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_equivalent_assignment_numeric_facts() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet threshold to 30",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nThreshold 30",
+            None,
+        )?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_signed_numeric_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set offset to -5")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set offset to 5", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_one_sided_numeric_facts_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 30 seconds",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_duration_unit_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set timeout to 1 minute")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set timeout to 1 hour", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_grouped_numeric_formatting() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set limit to 1,000 rows")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set limit to 1000 rows", None)?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_identifier_number_separators() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Use HTTP2 transport")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Use HTTP/2 transport", None)?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_date_punctuation_variants() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Ran migration on 2026-07-04",
+        "Ran migration on 2026/07/04",
+        true,
+    )
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_comma_lists_separate_from_scalars() -> Result<()> {
+    assert_feature_hash_duplicate("Set allowlist 1,2", "Set allowlist 12", false)
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_version_trailing_zero_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate("Upgrade API to v1.20", "Upgrade API to v1.2", false)
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_version_label_trailing_zero_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Upgrade API to version 1.20",
+        "Upgrade API to version 1.2",
+        false,
+    )
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_leading_decimal_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate("Set threshold to .5", "Set threshold to 5", false)
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_repeated_numeric_label_entities_separate() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Frontend uses port 80 and backend uses port 443",
+        "Frontend uses port 443 and backend uses port 80",
+        false,
+    )
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_numeric_qualifier_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Configuration update: set minimum timeout to 30 seconds",
+        "Configuration update: set maximum timeout to 30 seconds",
+        false,
+    )
 }
 
 #[test]
@@ -385,7 +736,7 @@ fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
 }
 
 #[test]
-fn check_duplicate_vector_stage_skips_when_candidate_fallback_turns_off() -> Result<()> {
+fn check_duplicate_vector_stage_propagates_when_candidate_fallback_turns_off() -> Result<()> {
     use std::io::{Read, Write};
 
     with_embedding_provider("api", || -> Result<()> {
@@ -429,17 +780,20 @@ fn check_duplicate_vector_stage_skips_when_candidate_fallback_turns_off() -> Res
             "test-project",
             "SQLCipher encrypts private secrets at rest.",
         )?;
-        let duplicate_id = check_duplicate(
+        let error = check_duplicate(
             &conn,
             "test-project",
             "Protect private secrets at rest with encryption.",
             None,
-        )?;
+        )
+        .expect_err("fallback=off after an API failure must not skip observation dedup errors");
 
         handle
             .join()
             .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
-        assert_eq!(duplicate_id, None);
+        let error = format!("{error:#}");
+        assert!(error.contains("provider unavailable"));
+        assert!(error.contains("fallback off disabled provider fallback"));
         Ok(())
     })
 }
