@@ -566,6 +566,48 @@ fn check_duplicate_vector_stage_dedups_equivalent_assignment_numeric_facts() -> 
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_signed_numeric_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set offset to -5")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set offset to 5", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_grouped_numeric_formatting() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set limit to 1,000 rows")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set limit to 1000 rows", None)?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_dedups_identifier_number_separators() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Use HTTP2 transport")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Use HTTP/2 transport", None)?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
     with_embedding_provider("off", || -> Result<()> {
         let conn = Connection::open_in_memory()?;

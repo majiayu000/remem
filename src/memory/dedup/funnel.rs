@@ -205,7 +205,31 @@ fn embed_observation_dedup_text(
     text: &str,
     fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
 ) -> Result<crate::retrieval::embedding::TextEmbedding> {
-    crate::retrieval::embedding::embed_query_with_fallback_cache(text, fallback_cache)
+    let text = normalize_observation_dedup_embedding_text(text);
+    crate::retrieval::embedding::embed_query_with_fallback_cache(&text, fallback_cache)
+}
+
+fn normalize_observation_dedup_embedding_text(text: &str) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(text.len());
+    for (index, ch) in chars.iter().enumerate() {
+        let previous = index.checked_sub(1).and_then(|prev| chars.get(prev));
+        let next = chars.get(index + 1);
+        if *ch == ',' {
+            if previous.is_some_and(|previous| previous.is_ascii_digit())
+                && next.is_some_and(|next| next.is_ascii_digit())
+            {
+                continue;
+            }
+        } else if *ch == '/'
+            && previous.is_some_and(|previous| previous.is_ascii_alphabetic())
+            && next.is_some_and(|next| next.is_ascii_digit())
+        {
+            continue;
+        }
+        normalized.push(*ch);
+    }
+    normalized
 }
 
 fn observation_similarity_threshold(model: &str) -> f32 {
@@ -272,11 +296,40 @@ fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
 }
 
 fn observation_token_list(text: &str) -> Vec<String> {
-    text.split(|ch: char| !ch.is_alphanumeric() && ch != '%')
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .map(str::to_lowercase)
-        .collect()
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for (index, ch) in chars.iter().enumerate() {
+        let previous = index.checked_sub(1).and_then(|prev| chars.get(prev));
+        let next = chars.get(index + 1);
+        if ch.is_alphanumeric()
+            || *ch == '%'
+            || is_numeric_token_separator(*ch, previous.copied(), next.copied())
+        {
+            current.extend(ch.to_lowercase());
+        } else if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+fn is_numeric_token_separator(ch: char, previous: Option<char>, next: Option<char>) -> bool {
+    match ch {
+        '+' | '-' => next.is_some_and(|next| next.is_ascii_digit()),
+        ',' | '.' => {
+            previous.is_some_and(|previous| previous.is_ascii_digit())
+                && next.is_some_and(|next| next.is_ascii_digit())
+        }
+        '/' => {
+            previous.is_some_and(|previous| previous.is_alphanumeric())
+                && next.is_some_and(|next| next.is_alphanumeric())
+        }
+        _ => false,
+    }
 }
 
 fn observation_token_set(tokens: &[String]) -> BTreeSet<String> {
@@ -299,6 +352,7 @@ struct NumericSignature {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NumericTokenPart {
+    label: Option<String>,
     value: String,
     unit: String,
 }
@@ -316,7 +370,9 @@ fn numeric_signature_counts(tokens: &[String]) -> BTreeMap<NumericSignature, usi
             }
             part.unit = normalize_numeric_unit(&part.unit);
             let signature = NumericSignature {
-                label: nearby_numeric_label(tokens, index),
+                label: part
+                    .label
+                    .unwrap_or_else(|| nearby_numeric_label(tokens, index)),
                 role: nearby_numeric_role(tokens, index),
                 value: part.value,
                 unit: part.unit,
@@ -332,33 +388,110 @@ fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
     let mut parts = Vec::new();
     let mut index = 0;
     while index < chars.len() {
-        if !chars[index].is_ascii_digit() {
+        if !is_numeric_value_start(&chars, index) {
             index += 1;
             continue;
         }
-        let digit_start = index;
-        while index < chars.len() && chars[index].is_ascii_digit() {
+        let value_start = index;
+        if matches!(chars[index], '+' | '-') {
             index += 1;
         }
-        let digit_end = index;
-        let mut prefix_start = digit_start;
-        while prefix_start > 0 && chars[prefix_start - 1].is_ascii_alphabetic() {
-            prefix_start -= 1;
+        while index < chars.len() {
+            if chars[index].is_ascii_digit()
+                || (matches!(chars[index], ',' | '.')
+                    && index > value_start
+                    && chars
+                        .get(index - 1)
+                        .is_some_and(|previous| previous.is_ascii_digit())
+                    && chars
+                        .get(index + 1)
+                        .is_some_and(|next| next.is_ascii_digit()))
+            {
+                index += 1;
+            } else {
+                break;
+            }
         }
-        let mut suffix_end = digit_end;
+        let value_end = index;
+        let prefix = alphabetic_prefix_before(&chars, value_start);
+        let mut suffix_end = value_end;
         while suffix_end < chars.len()
             && (chars[suffix_end].is_ascii_alphabetic() || chars[suffix_end] == '%')
         {
             suffix_end += 1;
         }
-        let prefix = chars[prefix_start..digit_start].iter().collect::<String>();
-        let suffix = chars[digit_end..suffix_end].iter().collect::<String>();
+        let suffix = chars[value_end..suffix_end].iter().collect::<String>();
+        let mut unit = String::new();
+        let label = if is_numeric_unit_prefix(&prefix) {
+            unit.push_str(&prefix);
+            None
+        } else if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix)
+        };
+        if is_numeric_unit_token(&suffix) {
+            unit.push_str(&suffix);
+        }
         parts.push(NumericTokenPart {
-            value: chars[digit_start..digit_end].iter().collect(),
-            unit: format!("{prefix}{suffix}"),
+            label,
+            value: normalize_numeric_value(
+                &chars[value_start..value_end].iter().collect::<String>(),
+            ),
+            unit,
         });
     }
     parts
+}
+
+fn is_numeric_value_start(chars: &[char], index: usize) -> bool {
+    chars[index].is_ascii_digit()
+        || (matches!(chars[index], '+' | '-')
+            && chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_digit()))
+}
+
+fn alphabetic_prefix_before(chars: &[char], index: usize) -> String {
+    let mut prefix = Vec::new();
+    let mut cursor = index;
+    while cursor > 0 {
+        let ch = chars[cursor - 1];
+        if ch.is_ascii_alphabetic() {
+            prefix.push(ch);
+        } else if matches!(ch, '/' | '-' | '_')
+            && cursor > 1
+            && chars[cursor - 2].is_ascii_alphabetic()
+        {
+        } else {
+            break;
+        }
+        cursor -= 1;
+    }
+    prefix.into_iter().rev().collect()
+}
+
+fn normalize_numeric_value(raw: &str) -> String {
+    let raw = raw.replace(',', "");
+    let (sign, unsigned) = raw
+        .strip_prefix('-')
+        .map(|value| ("-", value))
+        .or_else(|| raw.strip_prefix('+').map(|value| ("", value)))
+        .unwrap_or(("", raw.as_str()));
+    let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    let integer = integer.trim_start_matches('0');
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let fraction = fraction.trim_end_matches('0');
+    let value = if fraction.is_empty() {
+        integer.to_string()
+    } else {
+        format!("{integer}.{fraction}")
+    };
+    if value == "0" {
+        value
+    } else {
+        format!("{sign}{value}")
+    }
 }
 
 fn nearby_numeric_label(tokens: &[String], index: usize) -> String {
@@ -472,6 +605,10 @@ fn is_numeric_unit_token(token: &str) -> bool {
             | "seconds"
             | "secs"
     )
+}
+
+fn is_numeric_unit_prefix(prefix: &str) -> bool {
+    matches!(prefix, "v")
 }
 
 fn normalize_numeric_unit(unit: &str) -> String {
