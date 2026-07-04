@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- Staged source version `0.5.153` for the failure lifecycle maintenance
+  feature: classify transient vs permanent failures, auto-requeue bounded
+  transient extraction/replay/job failures, archive aged permanent/exhausted
+  failures into history with an explicit `cleanup --archived-failures` purge
+  path, and expose actionable-vs-archived failure stats in `status`/`doctor`.
+
 ### Fixed
 - Mapped memory-candidate extraction outputs that copy observation types
   (`feature`, `refactor`, `change`) back into the canonical candidate memory
