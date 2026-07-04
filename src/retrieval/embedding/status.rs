@@ -4,11 +4,16 @@ use super::{
 };
 
 #[derive(Debug)]
-struct EmbeddingProviderOffError;
+struct EmbeddingProviderOffError {
+    cause: Option<String>,
+}
 
 impl std::fmt::Display for EmbeddingProviderOffError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("embedding provider is off")
+        match self.cause.as_deref() {
+            Some(cause) => write!(f, "embedding provider is off: {cause}"),
+            None => f.write_str("embedding provider is off"),
+        }
     }
 }
 
@@ -19,7 +24,11 @@ pub(crate) fn is_embedding_provider_off_error(error: &anyhow::Error) -> bool {
 }
 
 pub(super) fn embedding_provider_off_error() -> anyhow::Error {
-    EmbeddingProviderOffError.into()
+    EmbeddingProviderOffError { cause: None }.into()
+}
+
+pub(super) fn embedding_provider_off_error_with_cause(cause: String) -> anyhow::Error {
+    EmbeddingProviderOffError { cause: Some(cause) }.into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

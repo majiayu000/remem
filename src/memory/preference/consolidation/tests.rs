@@ -249,6 +249,9 @@ fn active_preference_embedding_propagates_api_failure_when_fallback_is_off() {
             assert!(error
                 .to_string()
                 .contains("active preference embedding provider failed"));
+            let cause_chain = format!("{error:#}");
+            assert!(cause_chain.contains("embedding provider api failed"));
+            assert!(cause_chain.contains("fallback off disabled provider fallback"));
         },
     );
 }

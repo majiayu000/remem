@@ -272,7 +272,7 @@ fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
 }
 
 fn observation_token_list(text: &str) -> Vec<String> {
-    text.split(|ch: char| !ch.is_alphanumeric())
+    text.split(|ch: char| !ch.is_alphanumeric() && ch != '%')
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .map(str::to_lowercase)
@@ -292,6 +292,7 @@ fn numeric_tokens_differ(incoming: &[String], existing: &[String]) -> bool {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct NumericSignature {
     label: String,
+    role: String,
     value: String,
     unit: String,
 }
@@ -316,6 +317,7 @@ fn numeric_signature_counts(tokens: &[String]) -> BTreeMap<NumericSignature, usi
             part.unit = normalize_numeric_unit(&part.unit);
             let signature = NumericSignature {
                 label: nearby_numeric_label(tokens, index),
+                role: nearby_numeric_role(tokens, index),
                 value: part.value,
                 unit: part.unit,
             };
@@ -344,7 +346,9 @@ fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
             prefix_start -= 1;
         }
         let mut suffix_end = digit_end;
-        while suffix_end < chars.len() && chars[suffix_end].is_ascii_alphabetic() {
+        while suffix_end < chars.len()
+            && (chars[suffix_end].is_ascii_alphabetic() || chars[suffix_end] == '%')
+        {
             suffix_end += 1;
         }
         let prefix = chars[prefix_start..digit_start].iter().collect::<String>();
@@ -373,6 +377,23 @@ fn nearby_numeric_label(tokens: &[String], index: usize) -> String {
                 .cloned()
         })
         .unwrap_or_default()
+}
+
+fn nearby_numeric_role(tokens: &[String], index: usize) -> String {
+    tokens[..index]
+        .iter()
+        .rev()
+        .take(3)
+        .find(|token| is_numeric_role_token(token))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn is_numeric_role_token(token: &str) -> bool {
+    matches!(
+        token,
+        "after" | "before" | "from" | "into" | "onto" | "to" | "toward" | "towards"
+    )
 }
 
 fn is_numeric_label_token(token: &str) -> bool {
@@ -429,6 +450,7 @@ fn is_numeric_unit_token(token: &str) -> bool {
             | "pct"
             | "percent"
             | "percentage"
+            | "%"
             | "s"
             | "sec"
             | "second"
@@ -442,7 +464,7 @@ fn normalize_numeric_unit(unit: &str) -> String {
         "" => String::new(),
         "byte" | "bytes" => "b".to_string(),
         "millisecond" | "milliseconds" | "msec" | "msecs" => "ms".to_string(),
-        "pct" | "percent" | "percentage" => "%".to_string(),
+        "pct" | "percent" | "percentage" | "%" => "%".to_string(),
         "sec" | "secs" | "second" | "seconds" => "s".to_string(),
         _ => unit.to_string(),
     }

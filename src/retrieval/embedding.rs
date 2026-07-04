@@ -404,7 +404,9 @@ fn embed_with_call_failure_fallback(
             });
             TextEmbedding::new(FEATURE_HASH_EMBEDDING_MODEL, embed_text_local(text))
         }
-        EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
+        EmbeddingProvider::Off => Err(status::embedding_provider_off_error_with_cause(format!(
+            "embedding provider api failed: {error}; fallback off disabled provider fallback"
+        ))),
         EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => Err(error),
     }
 }

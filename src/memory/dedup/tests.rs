@@ -495,6 +495,35 @@ fn check_duplicate_vector_stage_keeps_reordered_numeric_values_separate() -> Res
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_percent_unit_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set threshold to 30%")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set threshold to 30", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_reversed_transition_values_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Changed timeout from 30 to 60")?;
+        let duplicate_id =
+            check_duplicate(&conn, "test-project", "Changed timeout from 60 to 30", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_dedups_equivalent_reordered_numeric_facts() -> Result<()> {
     with_embedding_provider("feature-hash", || -> Result<()> {
         let conn = Connection::open_in_memory()?;
