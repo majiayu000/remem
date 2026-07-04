@@ -23,19 +23,23 @@ GH-717
 Observation dedup keeps the existing hash stage as the first fast path.
 `persist_observations` checks the funnel after exact replay idempotency and
 before inserting an extracted observation. When no hash duplicate is found, the
-funnel embeds the incoming observation text through the active provider, scans
-recent active observations for the same project, derives canonical candidate
-text from `observations.text`, `narrative`, `title`, or `facts[0]`, embeds each
-candidate through the same active provider, computes cosine distance, and marks
-matches accessed. Provider `off` returns no vector duplicates. Other provider
-failures propagate because silently falling back would make duplicate decisions
-untrustworthy.
+funnel first scans recent active observations for the same project and returns
+without embedding when there are no candidates. It then derives canonical
+candidate text from `observations.text`, `narrative`, `title`, or `facts[0]`,
+embeds the incoming observation and each candidate through the active provider
+with one shared fallback cache, recomputes the query embedding if fallback
+changes the selected model/dimensions, compares only same-space vectors, and
+marks matches accessed. Provider `off` returns no vector duplicates. Provider
+failures without an accepted fallback propagate because silently comparing the
+wrong space would make duplicate decisions untrustworthy.
 
 Preference consolidation changes the embedding fallback from raw
-`retrieval::vector::embed_query_text` to active `TextEmbedding`. The incoming
-embedding is computed once per consolidation call and candidate embeddings use
-the same provider path. The fallback remains after concept classification, so
-`SamePreference` and `Contradiction` still win before cosine refinement. The
+`retrieval::vector::embed_query_text` to active `TextEmbedding` on the write
+path. It returns before embedding when there are no active candidates, runs
+concept classification across candidates first, and computes the incoming
+embedding only when cosine fallback is needed. Candidate embeddings use the same
+active provider path. `SamePreference` and `Contradiction` still win before
+cosine refinement, and provider errors propagate on the write fallback path. The
 model threshold table is:
 
 - `remem-local-feature-hash-v1`: `0.55`, preserving the #643 calibration.

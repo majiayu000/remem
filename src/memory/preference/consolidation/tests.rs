@@ -36,6 +36,15 @@ impl ScopedEmbeddingProvider {
         for key in ENV_KEYS {
             unsafe { std::env::remove_var(key) };
         }
+        let config_path = std::env::temp_dir().join(format!(
+            "remem-preference-consolidation-test-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        unsafe { std::env::set_var("REMEM_CONFIG", config_path) };
         unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
         Self {
             _guard: guard,
