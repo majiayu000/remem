@@ -2,7 +2,8 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::{
-    AiUsageBreakdown, AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, WeeklyAiUsage,
+    AiUsageBreakdown, AiUsageSourceTotals, AiUsageTotals, DailyAiUsage, FailureLifecycleStats,
+    WeeklyAiUsage,
 };
 
 use super::shared::collect_rows;
@@ -54,6 +55,7 @@ pub struct SystemStats {
     pub processing_jobs: i64,
     pub failed_jobs: i64,
     pub stuck_jobs: i64,
+    pub failure_lifecycle: FailureLifecycleStats,
     pub worker_daemon_healthy: bool,
     pub worker_heartbeat_owner: Option<String>,
     pub worker_heartbeat_age_secs: Option<i64>,
@@ -114,6 +116,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
     .flatten()
     .max();
     let replay_ranges = query_extraction_replay_range_stats(conn)?;
+    let failure_lifecycle = crate::db::query_failure_lifecycle_stats(conn, now)?;
     let worker_heartbeat = crate::db::worker::latest_daemon_worker_heartbeat(conn)?;
     let healthy_worker_heartbeat = crate::db::worker::healthy_daemon_worker_heartbeat(
         conn,
@@ -172,11 +175,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             params![now],
             |row| row.get(0),
         )?,
-        failed_extraction_tasks: conn.query_row(
-            "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'failed'",
-            [],
-            |row| row.get(0),
-        )?,
+        failed_extraction_tasks: failure_lifecycle.extraction_task.actionable_total,
         retryable_extraction_replay_ranges: replay_ranges.retryable,
         active_extraction_replay_ranges: replay_ranges.active,
         quarantined_extraction_replay_ranges: replay_ranges.quarantined,
@@ -239,11 +238,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             params![now],
             |row| row.get(0),
         )?,
-        failed_pending_observations: conn.query_row(
-            "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
-            [],
-            |row| row.get(0),
-        )?,
+        failed_pending_observations: failure_lifecycle.pending_observation.actionable_total,
         oldest_ready_pending_epoch: conn.query_row(
             "SELECT MIN(created_at_epoch) FROM pending_observations
              WHERE status = 'pending'
@@ -260,9 +255,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
             [],
             |row| row.get(0),
         )?,
-        failed_jobs: conn.query_row("SELECT COUNT(*) FROM jobs WHERE state = 'failed'", [], |row| {
-            row.get(0)
-        })?,
+        failed_jobs: failure_lifecycle.job.actionable_total,
         stuck_jobs: conn.query_row(
             "SELECT COUNT(*) FROM jobs WHERE state = 'processing' \
              AND lease_expires_epoch < strftime('%s', 'now')",
@@ -272,6 +265,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         worker_daemon_healthy,
         worker_heartbeat_owner: worker_heartbeat.map(|heartbeat| heartbeat.owner),
         worker_heartbeat_age_secs,
+        failure_lifecycle,
     })
 }
 
@@ -346,38 +340,58 @@ fn query_extraction_replay_range_stats(conn: &Connection) -> Result<ExtractionRe
     if !table_exists(conn, "extraction_replay_ranges")? {
         return Ok(ExtractionReplayRangeStats::default());
     }
+    let archived_filter = if column_exists(conn, "extraction_replay_ranges", "archived_at_epoch")? {
+        "AND r.archived_at_epoch IS NULL"
+    } else {
+        ""
+    };
+    let archived_filter_bare =
+        if column_exists(conn, "extraction_replay_ranges", "archived_at_epoch")? {
+            "AND archived_at_epoch IS NULL"
+        } else {
+            ""
+        };
 
     Ok(ExtractionReplayRangeStats {
         retryable: conn.query_row(
-            "SELECT COUNT(*)
+            &format!(
+                "SELECT COUNT(*)
              FROM extraction_replay_ranges r
              WHERE r.status IN ('pending', 'failed')
+               {archived_filter}
                AND NOT EXISTS (
                  SELECT 1
                  FROM extraction_tasks t
                  WHERE t.replay_range_id = r.id
                    AND t.status IN ('pending', 'processing')
-               )",
+               )"
+            ),
             [],
             |row| row.get(0),
         )?,
         active: conn.query_row(
-            "SELECT COUNT(*)
+            &format!(
+                "SELECT COUNT(*)
              FROM extraction_replay_ranges r
              WHERE r.status = 'requeued'
+                {archived_filter}
                 OR (r.status IN ('pending', 'failed') AND EXISTS (
                  SELECT 1
                  FROM extraction_tasks t
                  WHERE t.replay_range_id = r.id
                    AND t.status IN ('pending', 'processing')
-               ))",
+               ) {archived_filter})"
+            ),
             [],
             |row| row.get(0),
         )?,
         quarantined: conn.query_row(
-            "SELECT COUNT(*)
+            &format!(
+                "SELECT COUNT(*)
              FROM extraction_replay_ranges
-             WHERE status = 'quarantined'",
+             WHERE status = 'quarantined'
+               {archived_filter_bare}"
+            ),
             [],
             |row| row.get(0),
         )?,
@@ -458,6 +472,25 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
         )
         .optional()?
         .is_some())
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    if !table_exists(conn, table)? {
+        return Ok(false);
+    }
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", quote_identifier(table)))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 fn query_pending_graph_candidates(conn: &Connection) -> Result<i64> {

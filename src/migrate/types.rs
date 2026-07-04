@@ -285,6 +285,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_messages_source_root_key",
         sql: include_str!("../migrations/v056_raw_messages_source_root_key.sql"),
     },
+    Migration {
+        version: 57,
+        name: "failure_lifecycle",
+        sql: include_str!("../migrations/v057_failure_lifecycle.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

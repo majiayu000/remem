@@ -376,6 +376,22 @@ fn coalesce_extraction_task(
                  WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
                  ELSE extraction_tasks.next_retry_epoch
              END,
+             last_error = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.last_error
+             END,
+             failure_class = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.failure_class
+             END,
+             failed_at_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.failed_at_epoch
+             END,
+             archived_at_epoch = CASE
+                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
+                 ELSE extraction_tasks.archived_at_epoch
+             END,
              updated_at_epoch = excluded.updated_at_epoch",
         params![
             kind.as_str(),

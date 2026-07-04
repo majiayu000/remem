@@ -1,8 +1,12 @@
 use anyhow::{bail, Context, Result};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 
 use super::state::{applied_versions, has_migration_table};
 use super::transition::add_column_if_missing;
+
+mod exists;
+
+use exists::{schema_object_exists, table_exists};
 
 const V022: i64 = 22;
 
@@ -563,6 +567,80 @@ pub(super) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     ),
     SchemaInvariant::table(55, "session_ingest_cursors", "ingest_cursors"),
     SchemaInvariant::column(55, "session_ingest_cursors", "raw_messages", "source_root"),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "pending_observations",
+        "failure_class",
+    ),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "pending_observations",
+        "failed_at_epoch",
+    ),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "pending_observations",
+        "archived_at_epoch",
+    ),
+    SchemaInvariant::column(57, "failure_lifecycle", "extraction_tasks", "failure_class"),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "extraction_tasks",
+        "failed_at_epoch",
+    ),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "extraction_tasks",
+        "archived_at_epoch",
+    ),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "extraction_replay_ranges",
+        "failure_class",
+    ),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "extraction_replay_ranges",
+        "failed_at_epoch",
+    ),
+    SchemaInvariant::column(
+        57,
+        "failure_lifecycle",
+        "extraction_replay_ranges",
+        "archived_at_epoch",
+    ),
+    SchemaInvariant::column(57, "failure_lifecycle", "jobs", "failure_class"),
+    SchemaInvariant::column(57, "failure_lifecycle", "jobs", "failed_at_epoch"),
+    SchemaInvariant::column(57, "failure_lifecycle", "jobs", "archived_at_epoch"),
+    SchemaInvariant::table(57, "failure_lifecycle", "failure_lifecycle_daily"),
+    SchemaInvariant::index(
+        57,
+        "failure_lifecycle",
+        "idx_failure_lifecycle_daily_surface",
+    ),
+    SchemaInvariant::index(
+        57,
+        "failure_lifecycle",
+        "idx_pending_observations_failure_lifecycle",
+    ),
+    SchemaInvariant::index(
+        57,
+        "failure_lifecycle",
+        "idx_extraction_tasks_failure_lifecycle",
+    ),
+    SchemaInvariant::index(
+        57,
+        "failure_lifecycle",
+        "idx_extraction_replay_ranges_failure_lifecycle",
+    ),
+    SchemaInvariant::index(57, "failure_lifecycle", "idx_jobs_failure_lifecycle"),
 ];
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {
@@ -697,63 +775,4 @@ fn missing_v022_objects(conn: &Connection) -> Result<Vec<String>> {
         }
     }
     Ok(missing)
-}
-
-fn schema_object_exists(conn: &Connection, object: SchemaObject) -> Result<bool> {
-    match object {
-        SchemaObject::Table(table) => table_exists(conn, table),
-        SchemaObject::Column { table, column } => column_exists(conn, table, column),
-        SchemaObject::Index(index) => index_exists(conn, index),
-        SchemaObject::Trigger(trigger) => trigger_exists(conn, trigger),
-    }
-}
-
-fn table_exists(conn: &Connection, table: &str) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
-            [table],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
-}
-
-fn trigger_exists(conn: &Connection, trigger: &str) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?1",
-            [trigger],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
-}
-
-fn index_exists(conn: &Connection, index: &str) -> Result<bool> {
-    Ok(conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?1",
-            [index],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
-}
-
-fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let sql = format!("PRAGMA table_info({})", quote_identifier(table));
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(1)?;
-        if name == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn quote_identifier(identifier: &str) -> String {
-    format!("\"{}\"", identifier.replace('"', "\"\""))
 }

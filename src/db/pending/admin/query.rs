@@ -50,7 +50,9 @@ pub fn count_failed_retry_candidates(
         conn.query_row(
             "SELECT COUNT(*) FROM (
                  SELECT id FROM pending_observations
-                 WHERE status = 'failed' AND project = ?1
+                 WHERE status = 'failed'
+                   AND archived_at_epoch IS NULL
+                   AND project = ?1
                  ORDER BY updated_at_epoch DESC
                  LIMIT ?2
              )",
@@ -62,6 +64,7 @@ pub fn count_failed_retry_candidates(
             "SELECT COUNT(*) FROM (
                  SELECT id FROM pending_observations
                  WHERE status = 'failed'
+                   AND archived_at_epoch IS NULL
                  ORDER BY updated_at_epoch DESC
                  LIMIT ?1
              )",

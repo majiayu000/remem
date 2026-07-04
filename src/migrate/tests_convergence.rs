@@ -79,6 +79,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "memory_suppressions",
     "memory_feedback",
     "ingest_cursors",
+    "failure_lifecycle_daily",
 ];
 
 #[test]
