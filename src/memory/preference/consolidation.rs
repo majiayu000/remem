@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
+use crate::retrieval::embedding::TextEmbedding;
+
 const ACTIVE_SCAN_LIMIT: i64 = 200;
 const MIN_SHARED_CONCEPTS: usize = 3;
 const MIN_EXCLUSIVE_SHARED_CONCEPTS: usize = 2;
@@ -11,20 +13,36 @@ const MIN_JACCARD: f64 = 0.45;
 const MIN_EXCLUSIVE_CONTAINMENT: f64 = 0.60;
 const MIN_EXCLUSIVE_JACCARD: f64 = 0.40;
 
-/// Cosine threshold for the embedding fallback when concept-based classification
-/// returns None. Calibrated on real `her` "minimal vertical slice" variants
-/// (2026-05-29): concept consolidation missed 89% of them (jaccard<0.45 because
-/// each variant adds distinct detail words), while feature-hash embedding
-/// separates them (min pairwise cosine 0.621 vs unrelated max 0.435). 0.55 sits
-/// inside that gap. Override with REMEM_PREF_EMBEDDING_THRESHOLD.
-const DEFAULT_EMBEDDING_REFINE_THRESHOLD: f32 = 0.55;
+/// Feature-hash threshold for the embedding fallback when concept-based
+/// classification returns None. Calibrated on real `her` "minimal vertical
+/// slice" variants (2026-05-29): concept consolidation missed 89% of them
+/// (jaccard<0.45 because each variant adds distinct detail words), while
+/// feature-hash embedding separates them (min pairwise cosine 0.621 vs
+/// unrelated max 0.435). 0.55 sits inside that gap.
+const FEATURE_HASH_EMBEDDING_REFINE_THRESHOLD: f32 = 0.55;
+const MULTILINGUAL_E5_EMBEDDING_REFINE_THRESHOLD: f32 = 0.78;
+const BGE_M3_EMBEDDING_REFINE_THRESHOLD: f32 = 0.80;
+const OPENAI_EMBEDDING_REFINE_THRESHOLD: f32 = 0.82;
+const UNKNOWN_MODEL_EMBEDDING_REFINE_THRESHOLD: f32 = 0.90;
 
-fn embedding_refine_threshold() -> f32 {
+fn embedding_refine_threshold(model: &str) -> f32 {
     std::env::var("REMEM_PREF_EMBEDDING_THRESHOLD")
         .ok()
         .and_then(|s| s.parse::<f32>().ok())
         .filter(|v| (0.0..=1.0).contains(v))
-        .unwrap_or(DEFAULT_EMBEDDING_REFINE_THRESHOLD)
+        .unwrap_or_else(|| model_embedding_refine_threshold(model))
+}
+
+fn model_embedding_refine_threshold(model: &str) -> f32 {
+    match model {
+        crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL => {
+            FEATURE_HASH_EMBEDDING_REFINE_THRESHOLD
+        }
+        "fastembed-intfloat-multilingual-e5-small-v1" => MULTILINGUAL_E5_EMBEDDING_REFINE_THRESHOLD,
+        "fastembed-bge-m3-v1" => BGE_M3_EMBEDDING_REFINE_THRESHOLD,
+        model if model.starts_with("text-embedding-3-") => OPENAI_EMBEDDING_REFINE_THRESHOLD,
+        _ => UNKNOWN_MODEL_EMBEDDING_REFINE_THRESHOLD,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,24 +116,52 @@ pub(crate) fn find_preference_consolidation(
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
     let candidates = crate::db::query::collect_rows(rows)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
 
     let mut best = None;
-    let incoming_embedding = crate::retrieval::vector::embed_query_text(content);
-    for (memory_id, existing_content) in candidates {
-        let existing = PreferenceProfile::new(&existing_content);
-        // concept-based classification first (catches contradiction + high overlap);
-        // fall back to embedding cosine only when concepts miss (e.g. same intent,
-        // divergent detail wording like the "minimal vertical slice" variants).
-        let classified = classify_preference(memory_id, &existing, &incoming).or_else(|| {
-            embedding_refinement(
-                memory_id,
-                &existing,
-                &incoming,
-                &existing_content,
-                &incoming_embedding,
-            )
-        });
-        let Some(classified) = classified else {
+    let candidates = candidates
+        .into_iter()
+        .map(|(memory_id, existing_content)| {
+            let existing = PreferenceProfile::new(&existing_content);
+            (memory_id, existing_content, existing)
+        })
+        .collect::<Vec<_>>();
+    for (memory_id, _existing_content, existing) in &candidates {
+        let Some(classified) = classify_preference(*memory_id, existing, &incoming) else {
+            continue;
+        };
+        match &best {
+            Some(current) if better_match(current, &classified) => {}
+            _ => best = Some(classified),
+        }
+    }
+    if matches!(
+        best.as_ref().map(|matched| matched.kind),
+        Some(PreferenceConsolidationKind::SamePreference)
+            | Some(PreferenceConsolidationKind::Contradiction)
+    ) {
+        return Ok(best);
+    }
+
+    let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
+    let mut incoming_embedding =
+        active_preference_embedding_with_fallback_cache(content, &mut fallback_cache)?;
+    if incoming_embedding.is_none() {
+        return Ok(best);
+    }
+    for (memory_id, existing_content, existing) in candidates {
+        let Some(classified) = embedding_refinement(
+            memory_id,
+            &existing,
+            &incoming,
+            &existing_content,
+            content,
+            &mut incoming_embedding,
+            &mut fallback_cache,
+        )?
+        else {
             continue;
         };
         match &best {
@@ -149,16 +195,24 @@ pub(crate) fn classify_preference_texts(
     if incoming.concepts.len() < MIN_SHARED_CONCEPTS {
         return None;
     }
-    let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_content);
-    classify_preference(memory_id, &existing, &incoming).or_else(|| {
-        embedding_refinement(
-            memory_id,
-            &existing,
-            &incoming,
-            existing_content,
-            &incoming_embedding,
-        )
-    })
+    if let Some(classified) = classify_preference(memory_id, &existing, &incoming) {
+        return Some(classified);
+    }
+    let existing_embedding = match feature_hash_preference_embedding(existing_content) {
+        Ok(embedding) => embedding,
+        Err(_) => return None,
+    };
+    let incoming_embedding = match feature_hash_preference_embedding(incoming_content) {
+        Ok(embedding) => embedding,
+        Err(_) => return None,
+    };
+    embedding_refinement_from_embeddings(
+        memory_id,
+        &existing,
+        &incoming,
+        &existing_embedding,
+        &incoming_embedding,
+    )
 }
 
 fn classify_preference(
@@ -236,15 +290,131 @@ fn classify_preference(
     })
 }
 
+fn active_preference_embedding_with_fallback_cache(
+    text: &str,
+    fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
+) -> Result<Option<TextEmbedding>> {
+    #[cfg(test)]
+    if active_preference_embedding_is_forbidden() {
+        anyhow::bail!("active preference embedding called in forbidden test scope");
+    }
+    match crate::retrieval::embedding::embed_query_with_fallback_cache(text, fallback_cache) {
+        Ok(embedding) => Ok(Some(embedding)),
+        Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static FORBID_ACTIVE_PREFERENCE_EMBEDDING: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn active_preference_embedding_is_forbidden() -> bool {
+    FORBID_ACTIVE_PREFERENCE_EMBEDDING.with(|flag| flag.get())
+}
+
+#[cfg(test)]
+fn with_forbidden_active_preference_embedding<T>(f: impl FnOnce() -> T) -> T {
+    struct ResetForbiddenFlag(bool);
+
+    impl Drop for ResetForbiddenFlag {
+        fn drop(&mut self) {
+            FORBID_ACTIVE_PREFERENCE_EMBEDDING.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = FORBID_ACTIVE_PREFERENCE_EMBEDDING.with(|flag| {
+        let previous = flag.get();
+        flag.set(true);
+        previous
+    });
+    let _reset = ResetForbiddenFlag(previous);
+    f()
+}
+
+fn feature_hash_preference_embedding(text: &str) -> Result<TextEmbedding> {
+    TextEmbedding::new(
+        crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL,
+        crate::retrieval::vector::embed_query_text(text),
+    )
+}
+
 /// Embedding-cosine fallback for refinement when concept-based classification
-/// misses (concepts diverge but intent matches). Content-only feature-hash cosine
-/// at/above threshold => Refinement. Only reached when classify_preference
-/// returns None, so concept Contradiction/SamePreference always win first.
+/// misses (concepts diverge but intent matches). Only reached when
+/// classify_preference returns None, so concept Contradiction/SamePreference
+/// always win first.
 fn embedding_refinement(
     memory_id: i64,
     existing: &PreferenceProfile,
     incoming: &PreferenceProfile,
     existing_content: &str,
+    incoming_content: &str,
+    incoming_embedding: &mut Option<TextEmbedding>,
+    fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
+) -> Result<Option<PreferenceConsolidationMatch>> {
+    if incoming_embedding.is_none() {
+        return Ok(None);
+    }
+    let Some(existing_embedding) =
+        active_preference_embedding_with_fallback_cache(existing_content, fallback_cache)
+            .with_context(|| format!("embed active preference candidate id={memory_id}"))?
+    else {
+        return Ok(None);
+    };
+    if let Some(current_incoming) = incoming_embedding.as_ref() {
+        if existing_embedding.model() != current_incoming.model()
+            || existing_embedding.dimensions() != current_incoming.dimensions()
+        {
+            *incoming_embedding =
+                active_preference_embedding_with_fallback_cache(incoming_content, fallback_cache)
+                    .context("re-embed incoming preference after provider fallback")?;
+        }
+    }
+    let Some(incoming_embedding) = incoming_embedding.as_ref() else {
+        return Ok(None);
+    };
+    Ok(embedding_refinement_from_embeddings(
+        memory_id,
+        existing,
+        incoming,
+        &existing_embedding,
+        incoming_embedding,
+    ))
+}
+
+fn embedding_refinement_from_embeddings(
+    memory_id: i64,
+    existing: &PreferenceProfile,
+    incoming: &PreferenceProfile,
+    existing_embedding: &TextEmbedding,
+    incoming_embedding: &TextEmbedding,
+) -> Option<PreferenceConsolidationMatch> {
+    if existing_embedding.model() != incoming_embedding.model()
+        || existing_embedding.dimensions() != incoming_embedding.dimensions()
+    {
+        return None;
+    }
+    embedding_refinement_from_vectors(
+        memory_id,
+        existing,
+        incoming,
+        existing_embedding.model(),
+        existing_embedding.values(),
+        incoming_embedding.values(),
+    )
+}
+
+fn embedding_refinement_from_vectors(
+    memory_id: i64,
+    existing: &PreferenceProfile,
+    incoming: &PreferenceProfile,
+    model: &str,
+    existing_embedding: &[f32],
     incoming_embedding: &[f32],
 ) -> Option<PreferenceConsolidationMatch> {
     // Embedding cosine can't see negation/polarity, so never merge across a
@@ -263,17 +433,19 @@ fn embedding_refinement(
     if exclusive_mismatch(existing, incoming) || polarity_conflict {
         return None;
     }
-    let existing_embedding = crate::retrieval::vector::embed_query_text(existing_content);
     let distance =
-        crate::retrieval::vector::cosine_distance(incoming_embedding, &existing_embedding).ok()?;
+        crate::retrieval::vector::cosine_distance(incoming_embedding, existing_embedding).ok()?;
     let cosine = 1.0 - distance as f64;
-    if cosine >= embedding_refine_threshold() as f64 {
+    let threshold = embedding_refine_threshold(model);
+    if cosine >= threshold as f64 {
         Some(PreferenceConsolidationMatch {
             memory_id,
             kind: PreferenceConsolidationKind::Refinement,
             score: cosine,
             shared_concepts: Vec::new(),
-            reason: format!("embedding cosine={cosine:.3} refinement (concept cutoff missed)"),
+            reason: format!(
+                "embedding cosine={cosine:.3} model={model} threshold={threshold:.3} refinement (concept cutoff missed)"
+            ),
         })
     } else {
         None
@@ -550,218 +722,4 @@ pub(crate) fn load_active_preference_content(conn: &Connection, id: i64) -> Resu
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn classifies_status_update_paraphrase_as_refinement() {
-        let existing = PreferenceProfile::new("Prefer concise Chinese progress updates.");
-        let incoming = PreferenceProfile::new("Prefer brief Chinese status notes.");
-
-        let result = match classify_preference(1, &existing, &incoming) {
-            Some(result) => result,
-            None => panic!("should match"),
-        };
-
-        assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
-        assert_eq!(
-            result.shared_concepts,
-            vec![
-                "chinese".to_string(),
-                "concise".to_string(),
-                "status".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn classifies_negated_same_domain_as_contradiction() {
-        let existing = PreferenceProfile::new("Prefer concise Chinese progress updates.");
-        let incoming = PreferenceProfile::new("Do not provide brief Chinese status notes.");
-
-        let result = match classify_preference(1, &existing, &incoming) {
-            Some(result) => result,
-            None => panic!("should match"),
-        };
-
-        assert_eq!(result.kind, PreferenceConsolidationKind::Contradiction);
-    }
-
-    #[test]
-    fn classifies_exclusive_language_swap_as_contradiction_before_generic_cutoff() {
-        let existing = PreferenceProfile::new("Prefer concise Chinese progress updates.");
-        let incoming = PreferenceProfile::new("Prefer concise English progress updates.");
-
-        let result = match classify_preference(1, &existing, &incoming) {
-            Some(result) => result,
-            None => panic!("should match"),
-        };
-
-        assert_eq!(result.kind, PreferenceConsolidationKind::Contradiction);
-    }
-
-    #[test]
-    fn local_negation_clause_does_not_reverse_positive_preference() {
-        let existing =
-            PreferenceProfile::new("Do not be verbose; prefer concise Chinese status notes.");
-        let incoming = PreferenceProfile::new("Prefer concise Chinese status notes.");
-
-        let result = match classify_preference(1, &existing, &incoming) {
-            Some(result) => result,
-            None => panic!("should match"),
-        };
-
-        assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
-    }
-
-    #[test]
-    fn better_match_prefers_same_preference_over_contradiction() {
-        let same = PreferenceConsolidationMatch {
-            memory_id: 1,
-            kind: PreferenceConsolidationKind::SamePreference,
-            score: 0.9,
-            shared_concepts: Vec::new(),
-            reason: String::new(),
-        };
-        let contradiction = PreferenceConsolidationMatch {
-            memory_id: 2,
-            kind: PreferenceConsolidationKind::Contradiction,
-            score: 1.0,
-            shared_concepts: Vec::new(),
-            reason: String::new(),
-        };
-
-        assert!(better_match(&same, &contradiction));
-        assert!(!better_match(&contradiction, &same));
-    }
-
-    #[test]
-    fn leaves_generic_but_distinct_preferences_unmatched() {
-        let existing = PreferenceProfile::new("Prefer concise Chinese progress updates.");
-        let incoming = PreferenceProfile::new("Prefer concise verification logs after tests.");
-
-        assert!(classify_preference(1, &existing, &incoming).is_none());
-    }
-
-    #[test]
-    fn embedding_fallback_refines_same_intent_when_concepts_miss() {
-        let existing_text = r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery.
-- Favor extending existing pathways rather than creating parallel UI/event infrastructure."#;
-        let incoming_text = r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep live Atlas runs opt-in, and validate via concrete artifacts while keeping credentials server-side."#;
-        let existing = PreferenceProfile::new(existing_text);
-        let incoming = PreferenceProfile::new(incoming_text);
-        let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_text);
-
-        assert!(classify_preference(1, &existing, &incoming).is_none());
-        let result =
-            match embedding_refinement(1, &existing, &incoming, existing_text, &incoming_embedding)
-            {
-                Some(result) => result,
-                None => panic!("embedding fallback should match same-intent variants"),
-            };
-
-        assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
-        assert!(
-            result.score >= DEFAULT_EMBEDDING_REFINE_THRESHOLD as f64,
-            "fallback score {} should meet default threshold",
-            result.score
-        );
-    }
-
-    #[test]
-    fn embedding_fallback_leaves_unrelated_preferences_unmatched() {
-        let existing_text = "Prefer concise Chinese progress updates.";
-        let incoming_text =
-            "Prefer parameterized SQL queries and reject string-built database statements.";
-        let existing = PreferenceProfile::new(existing_text);
-        let incoming = PreferenceProfile::new(incoming_text);
-        let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_text);
-
-        assert!(classify_preference(1, &existing, &incoming).is_none());
-        assert!(
-            embedding_refinement(1, &existing, &incoming, existing_text, &incoming_embedding,)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn embedding_fallback_rejects_bidirectional_polarity_conflict() {
-        let existing_text =
-            "Never force push branches; require explicit approval before rewriting history.";
-        let incoming_text =
-            "Always force push branches; do not require approval before rewriting history.";
-        let existing = PreferenceProfile::new(existing_text);
-        let incoming = PreferenceProfile::new(incoming_text);
-        let incoming_embedding = crate::retrieval::vector::embed_query_text(incoming_text);
-
-        assert!(
-            embedding_refinement(1, &existing, &incoming, existing_text, &incoming_embedding,)
-                .is_none()
-        );
-    }
-
-    /// Calibration: does main's concept-based consolidation already catch the
-    /// 10 real "minimal vertical slice" preference variants from the `her`
-    /// project (2026-05-29)? Run with --nocapture.
-    #[test]
-    fn calibrate_her_variants_consolidation_coverage() {
-        let variants = [
-            r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery (Phase 1 then Phase 2).
-    - Favor extending existing pathways (existing `/api/events` + sidebar) rather than creating parallel UI/event infrastructure."#,
-            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; avoid rewriting `/chat` and avoid adding parallel UI/event infrastructure.
-- Favor using plugin extension points to avoid bloating core files; validate changes with scoped lint/tests (`npx eslint <file>`, targeted `pytest`)."#,
-            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; avoid rewriting `/chat` and avoid adding parallel UI/event infrastructure.
-    - Favor using plugin extension points to avoid bloating core files; validate changes with scoped lint/tests (`npx eslint <file>`, targeted `pytest`).
-    - Prefer cost-safe development: mock external providers by default; keep real provider smoke tests explicit opt-in."#,
-            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; avoid rewriting `/chat` or adding parallel UI/event infra. Prefer plugin extension points over core bloat; validate with scoped tests/lints; cost-safe development via mocking external providers by default."#,
-            r#"- Prefer minimal vertical slice (最小纵向闭环) and phased delivery; cost-safe development via mocking external providers by default; keep the installed skill surface minimal and deterministic (now single-entry) with tarball backups before deletions."#,
-            r#"Prefer minimal vertical slice (最小纵向闭环) and phased delivery; cost-safe development via mocking external providers by default; keep the installed skill surface minimal and deterministic (single entry) and avoid unapproved quota spend (live provider calls only with explicit opt-in)."#,
-            r#"Prefer minimal vertical slice (最小纵向闭环) and cost-safe development: mock providers by default, run live Atlas only with explicit opt-in (env `ATLAS_API_KEY`), and keep entrypoints deterministic (single-entry intent routing)."#,
-            r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic single-entry routing, keep live Atlas runs opt-in (`ATLAS_API_KEY`), and validate via concrete end-to-end artifacts (HTTP 200 `video/mp4`, Playwright screenshot, test suite pass) rather than dashboard UI integration."#,
-            r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep `ATLAS_API_KEY` server-side only, and validate via concrete artifacts (tests pass, screenshot, server health) while keeping live Atlas runs opt-in / user-triggered to control cost."#,
-            r#"Prefer, cost-safe vertical slices: no auto-start generation, no fake jobs; keep credentials server-side; validate with concrete commands + targeted pytest + real browser verification."#,
-        ];
-        let profiles: Vec<PreferenceProfile> =
-            variants.iter().map(|t| PreferenceProfile::new(t)).collect();
-        let mut same = 0;
-        let mut refinement = 0;
-        let mut contradiction = 0;
-        let mut none = 0;
-        let mut total = 0;
-        for i in 0..profiles.len() {
-            for j in (i + 1)..profiles.len() {
-                total += 1;
-                let incoming_embedding = crate::retrieval::vector::embed_query_text(variants[j]);
-                let result = classify_preference(0, &profiles[i], &profiles[j]).or_else(|| {
-                    embedding_refinement(
-                        0,
-                        &profiles[i],
-                        &profiles[j],
-                        variants[i],
-                        &incoming_embedding,
-                    )
-                });
-                match result {
-                    Some(m) => match m.kind {
-                        PreferenceConsolidationKind::SamePreference => same += 1,
-                        PreferenceConsolidationKind::Refinement => refinement += 1,
-                        PreferenceConsolidationKind::Contradiction => contradiction += 1,
-                    },
-                    None => none += 1,
-                }
-            }
-        }
-        println!(
-            "her variants ({} pairs): same={}, refinement={}, contradiction={}, none={}",
-            total, same, refinement, contradiction, none
-        );
-        // With embedding fallback, most her variant pairs should now consolidate
-        // (concept-only was 40/45 none). none stays non-zero only for the most
-        // divergent pair (e.g. 78999, no shared "最小纵向闭环" wording).
-        let consolidated = same + refinement + contradiction;
-        assert!(
-            consolidated >= 40,
-            "embedding fallback should consolidate most her variants, got {consolidated}/{total} (none={none})"
-        );
-    }
-}
+mod tests;

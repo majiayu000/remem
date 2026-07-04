@@ -141,7 +141,12 @@ Acceptance:
 3. Eval gate: committed comparison artifacts; default flip decision recorded
    in the epic and this spec's index entry.
 4. Downstream adoption: dedup funnel and preference consolidation switch to
-   the active semantic space where the eval shows wins.
+   the active semantic space where the eval shows wins. GH-717 lands this phase
+   by keeping curated dedup on same-model vectors, adding an observation vector
+   stage wired into extraction persistence, and moving preference embedding
+   fallback to active-provider embeddings with model-specific thresholds. It
+   does not change the default provider because GH-716 recorded a no-flip
+   decision.
 
 Each phase ships independently with focused tests plus:
 

@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.160` for GH-717 downstream active semantic
+  adoption: observation vector dedup, active-model preference embedding
+  fallback thresholds, and focused dedup/preference regressions.
 - Staged source version `0.5.159` for the GH-716 provider-comparison follow-up:
   optional local/API embedding profile probe failures are recorded as
   unavailable rows instead of aborting the whole report.

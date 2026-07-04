@@ -189,6 +189,13 @@ pub fn embed_query(query: &str) -> Result<TextEmbedding> {
     embed_text(query, LocalEmbeddingInputKind::Query)
 }
 
+pub(crate) fn embed_query_with_fallback_cache(
+    query: &str,
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<TextEmbedding> {
+    embed_text_with_fallback_cache(query, LocalEmbeddingInputKind::Query, cache)
+}
+
 pub(crate) fn embed_query_if_enabled(query: &str) -> Result<Option<TextEmbedding>> {
     match embed_query(query) {
         Ok(embedding) => Ok(Some(embedding)),

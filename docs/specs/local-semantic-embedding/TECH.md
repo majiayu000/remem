@@ -29,9 +29,9 @@ Tracking:
   local semantic, and API vectors concurrently.
 - Vector channel weight is 3.0 with `MAX_VECTOR_DISTANCE = 0.51`
   (`src/retrieval/search/memory/weights.rs`); fusion is weighted RRF.
-- The dedup funnel has one open TODO for vector-based dedup
-  (`src/memory/dedup/funnel.rs`); preference consolidation uses
-  embedding-cosine fallback in the feature-hash space (#643).
+- GH-717 wires the observation dedup funnel into extraction persistence,
+  adds active-provider vector dedup after the hash stage, and moves preference
+  embedding fallback onto active-model embeddings with calibrated thresholds.
 - Eval surfaces: `eval/golden.json`, `eval/gates/`, `remem eval` /
   `eval-local` harness.
 
@@ -172,15 +172,22 @@ run because remote embedding calls require an explicit `--allow-api`.
 
 ## Phase 4: Downstream Adoption
 
-- Observation dedup funnel: implement the vector stage against the active
-  semantic space; thresholds calibrated per model id (the 0.55 feature-hash
-  threshold from #643 does not transfer automatically).
+- Observation dedup funnel: implemented the vector stage against the active
+  semantic space and wired it into extraction persistence; thresholds are
+  calibrated per model id, duplicate scoring happens before the extraction
+  batch write transaction, and title+facts plus opposite-status regressions are
+  covered (the 0.55 feature-hash preference threshold from #643 does not
+  transfer automatically).
 - Curated-memory semantic dedup: update the existing
   `src/memory/semantic_dedup.rs` call sites used by `save_memory`,
   `src/memory/store/write.rs`, and `src/memory/operation.rs` so manual and
   candidate-promoted memories use the same active-model semantics.
 - Preference consolidation: same recalibration rule; keep the bidirectional
-  polarity guard.
+  polarity guard. GH-717 keeps the feature-hash preference threshold at its
+  #643 calibration, uses stricter thresholds for local/API/unknown model ids,
+  shares fallback state across write-path incoming/candidate embeddings, and
+  keeps non-write text-only grouping on the deterministic feature-hash path so
+  rendering and audit helpers do not perform live provider calls.
 
 ## Migration & Compatibility
 

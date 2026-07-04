@@ -98,7 +98,7 @@ other-model vectors only with explicit user intent after full coverage.
       model, backfill idempotency, and prune-gating tests.
 - [ ] GH-716: provider comparison eval fixtures and reports under `eval/`,
       plus eval command tests.
-- [ ] GH-717: dedup, semantic dedup, and preference consolidation regression
+- [x] GH-717: dedup, semantic dedup, and preference consolidation regression
       tests.
 - [ ] Each phase: `cargo fmt --check`, `cargo check --message-format=short`,
       focused tests, and `cargo test` before merge readiness.

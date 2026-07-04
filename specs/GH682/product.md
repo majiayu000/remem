@@ -78,7 +78,7 @@ dedup/preference consolidation inherit the same non-semantic ceiling.
       provider decision before any default flip. Evidence:
       `eval/provider-comparison/report.json`; decision: keep the default
       unchanged until local/API comparison rows are available.
-- [ ] GH-717 updates downstream semantic dedup and preference consolidation
+- [x] GH-717 updates downstream semantic dedup and preference consolidation
       after the eval gate.
 - [ ] GH-682 is closed only after all phase issues and the eval evidence are
       verified.

@@ -5,6 +5,68 @@ use crate::db::{record_captured_event, CaptureEventInput, ExtractionTaskKind};
 
 use super::*;
 
+const EMBEDDING_ENV_KEYS: &[&str] = &[
+    "REMEM_CONFIG",
+    "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDING_PROVIDER",
+    "REMEM_EMBEDDINGS_MODEL",
+    "REMEM_EMBEDDING_MODEL",
+    "REMEM_EMBEDDINGS_DIMENSIONS",
+    "REMEM_EMBEDDING_DIMENSIONS",
+    "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_BASE_URL",
+    "REMEM_EMBEDDING_BASE_URL",
+    "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDING_API_KEY",
+    "REMEM_EMBEDDINGS_API_KEY_ENV",
+    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+    "REMEM_EMBEDDINGS_MODEL_DIR",
+    "OPENAI_API_KEY",
+];
+
+struct ScopedEmbeddingProvider {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl ScopedEmbeddingProvider {
+    fn new(provider: &str) -> Self {
+        Self::new_with_model_dir(provider, None)
+    }
+
+    fn new_with_model_dir(provider: &str, model_dir: Option<&std::path::Path>) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = EMBEDDING_ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in EMBEDDING_ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+        if let Some(model_dir) = model_dir {
+            unsafe { std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", model_dir) };
+        }
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+}
+
+impl Drop for ScopedEmbeddingProvider {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");
@@ -71,6 +133,246 @@ fn no_observations_response(reason: &str) -> String {
         }
     })
     .to_string()
+}
+
+fn parsed_observation(narrative: &str) -> ParsedObservation {
+    ParsedObservation {
+        obs_type: "discovery".to_string(),
+        title: Some("Semantic dedup".to_string()),
+        subtitle: None,
+        narrative: Some(narrative.to_string()),
+        facts: Vec::new(),
+        concepts: Vec::new(),
+        files_read: Vec::new(),
+        files_modified: Vec::new(),
+        confidence: Some(0.84),
+    }
+}
+
+fn title_only_observation(title: &str) -> ParsedObservation {
+    ParsedObservation {
+        obs_type: "discovery".to_string(),
+        title: Some(title.to_string()),
+        subtitle: None,
+        narrative: None,
+        facts: Vec::new(),
+        concepts: Vec::new(),
+        files_read: Vec::new(),
+        files_modified: Vec::new(),
+        confidence: Some(0.84),
+    }
+}
+
+fn fact_only_observation(fact: &str) -> ParsedObservation {
+    ParsedObservation {
+        obs_type: "discovery".to_string(),
+        title: None,
+        subtitle: None,
+        narrative: None,
+        facts: vec![fact.to_string()],
+        concepts: Vec::new(),
+        files_read: Vec::new(),
+        files_modified: Vec::new(),
+        confidence: Some(0.84),
+    }
+}
+
+#[test]
+fn observation_text_combines_title_and_facts() {
+    let mut observation = title_only_observation("Configuration update");
+    observation.facts = vec![
+        "Set timeout to 30 seconds".to_string(),
+        "Kept retries at 3".to_string(),
+    ];
+
+    assert_eq!(
+        observation_text(&observation),
+        "Configuration update\nSet timeout to 30 seconds\nKept retries at 3"
+    );
+}
+
+fn evidence_range_for_event(event_id: i64) -> EvidenceRange {
+    EvidenceRange {
+        from_event_id: event_id,
+        to_event_id: event_id,
+        event_ids: vec![event_id],
+        events: vec![EvidenceEvent {
+            id: event_id,
+            event_type: "tool_result".to_string(),
+            role: None,
+            tool_name: Some("Bash".to_string()),
+            content: "durable evidence".to_string(),
+            token_estimate: 10,
+            created_at_epoch: 1_600_000_000,
+            reference_time_epoch: 1_600_000_000,
+        }],
+        summary_context: None,
+    }
+}
+
+#[test]
+fn observation_persistence_skips_active_vector_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("feature-hash");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-vector-duplicate",
+        "SQLCipher encrypts private secrets at rest.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let first = parsed_observation("SQLCipher encrypts private secrets at rest.");
+    let second = parsed_observation("Protect private secrets at rest with encryption.");
+
+    assert_eq!(persist_observations(&mut conn, &task, &range, &[first])?, 1);
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[second])?,
+        0
+    );
+
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM observations WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    let last_accessed: Option<i64> = conn.query_row(
+        "SELECT last_accessed_epoch FROM observations WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    assert!(last_accessed.is_some());
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_same_batch_vector_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("feature-hash");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-same-batch-vector-duplicate",
+        "SQLCipher encrypts private secrets at rest.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let first = parsed_observation("SQLCipher encrypts private secrets at rest.");
+    let second = parsed_observation("Protect private secrets at rest with encryption.");
+
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[first, second])?,
+        1
+    );
+
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM observations WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_exact_replay_before_vector_dedup() -> Result<()> {
+    let mut conn = setup_conn();
+    let replay_text = "Migration extraction captured schema drift.";
+    let task_id = capture(
+        &conn,
+        "sess-observation-exact-replay-before-vector",
+        replay_text,
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+
+    {
+        let _provider = ScopedEmbeddingProvider::new("feature-hash");
+        let replay = [parsed_observation(replay_text)];
+        assert_eq!(persist_observations(&mut conn, &task, &range, &replay)?, 1);
+        let old_epoch = chrono::Utc::now().timestamp() - 3_600;
+        conn.execute(
+            "UPDATE observations SET created_at_epoch = ?1 WHERE session_row_id = ?2 AND text = ?3",
+            params![old_epoch, task.session_row_id, replay_text],
+        )?;
+        let recent_range = evidence_range_for_event(range.to_event_id + 1);
+        let recent = [parsed_observation("Recent unrelated deployment note.")];
+        assert_eq!(
+            persist_observations(&mut conn, &task, &recent_range, &recent)?,
+            1
+        );
+    }
+
+    let missing_model_dir =
+        std::env::temp_dir().join(format!("remem-missing-local-model-{}", std::process::id()));
+    let _provider = ScopedEmbeddingProvider::new_with_model_dir("local", Some(&missing_model_dir));
+
+    let replay = [parsed_observation(replay_text)];
+    assert_eq!(persist_observations(&mut conn, &task, &range, &replay)?, 0);
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_title_only_vector_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("feature-hash");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-title-vector-duplicate",
+        "SQLCipher encrypts private secrets at rest.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let first = title_only_observation("SQLCipher encrypts private secrets at rest.");
+    let second = title_only_observation("Protect private secrets at rest with encryption.");
+
+    assert_eq!(persist_observations(&mut conn, &task, &range, &[first])?, 1);
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[second])?,
+        0
+    );
+
+    let (count, last_accessed): (i64, Option<i64>) = conn.query_row(
+        "SELECT COUNT(*), MAX(last_accessed_epoch) FROM observations WHERE status = 'active'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(count, 1);
+    assert!(last_accessed.is_some());
+    Ok(())
+}
+
+#[test]
+fn observation_persistence_skips_fact_only_hash_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("off");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-fact-hash-duplicate",
+        "Use SQLCipher for private secrets.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let first_range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let second_range = evidence_range_for_event(first_range.to_event_id + 1);
+    let first = fact_only_observation("Use SQLCipher for private secrets.");
+    let second = fact_only_observation("Use SQLCipher for private secrets.");
+
+    assert_eq!(
+        persist_observations(&mut conn, &task, &first_range, &[first])?,
+        1
+    );
+    assert_eq!(
+        persist_observations(&mut conn, &task, &second_range, &[second])?,
+        0
+    );
+
+    let (count, last_accessed): (i64, Option<i64>) = conn.query_row(
+        "SELECT COUNT(*), MAX(last_accessed_epoch) FROM observations WHERE status = 'active'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(count, 1);
+    assert!(last_accessed.is_some());
+    Ok(())
 }
 
 #[tokio::test]
