@@ -50,9 +50,9 @@ fn legacy_exact_content_hash(content: &str) -> String {
 /// when the content is empty.
 /// Outcome of a raw-message insert attempt.
 ///
-/// `inserted == false` means a row with the same `(project, session_id, role,
-/// content_hash)` already existed and `id` points at the pre-existing row
-/// rather than a newly created one.
+/// `inserted == false` means a row with the same `(source_root, project,
+/// session_id, role, content_hash)` already existed and `id` points at the
+/// pre-existing row rather than a newly created one.
 #[derive(Debug, Clone, Copy)]
 pub struct RawInsertOutcome {
     pub id: i64,
@@ -139,25 +139,54 @@ pub fn insert_raw_message_from_root(
     cwd: Option<&str>,
     source_root: &str,
 ) -> Result<Option<RawInsertOutcome>> {
+    insert_raw_message_from_root_at(
+        conn,
+        session_id,
+        project,
+        role,
+        content,
+        source,
+        branch,
+        cwd,
+        source_root,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_raw_message_from_root_at(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    role: &str,
+    content: &str,
+    source: &str,
+    branch: Option<&str>,
+    cwd: Option<&str>,
+    source_root: &str,
+    created_at_epoch: Option<i64>,
+) -> Result<Option<RawInsertOutcome>> {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
     let hash = exact_content_hash(trimmed);
-    if let Some(id) = find_matching_legacy_raw_message(conn, session_id, project, role, trimmed)? {
+    if let Some(id) =
+        find_matching_legacy_raw_message(conn, session_id, project, role, trimmed, source_root)?
+    {
         return Ok(Some(RawInsertOutcome {
             id,
             inserted: false,
         }));
     }
-    let now = chrono::Utc::now().timestamp();
+    let inserted_at = created_at_epoch.unwrap_or_else(|| chrono::Utc::now().timestamp());
 
     let inserted = conn.execute(
         "INSERT INTO raw_messages \
          (session_id, project, role, content, content_hash, source, branch, cwd, \
           created_at_epoch, source_root) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-         ON CONFLICT(project, session_id, role, content_hash) DO NOTHING",
+         ON CONFLICT(source_root, project, session_id, role, content_hash) DO NOTHING",
         params![
             session_id,
             project,
@@ -167,7 +196,7 @@ pub fn insert_raw_message_from_root(
             source,
             branch,
             cwd,
-            now,
+            inserted_at,
             source_root
         ],
     )?;
@@ -180,8 +209,9 @@ pub fn insert_raw_message_from_root(
     } else {
         let existing: i64 = conn.query_row(
             "SELECT id FROM raw_messages \
-             WHERE project = ?1 AND session_id = ?2 AND role = ?3 AND content_hash = ?4",
-            params![project, session_id, role, hash],
+             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 \
+               AND role = ?4 AND content_hash = ?5",
+            params![source_root, project, session_id, role, hash],
             |row| row.get(0),
         )?;
         Ok(Some(RawInsertOutcome {
@@ -197,13 +227,15 @@ fn find_matching_legacy_raw_message(
     project: &str,
     role: &str,
     content: &str,
+    source_root: &str,
 ) -> Result<Option<i64>> {
     let legacy_hash = legacy_exact_content_hash(content);
     let Some((id, stored_content)) = conn
         .query_row(
             "SELECT id, content FROM raw_messages
-             WHERE project = ?1 AND session_id = ?2 AND role = ?3 AND content_hash = ?4",
-            params![project, session_id, role, legacy_hash],
+             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 \
+               AND role = ?4 AND content_hash = ?5",
+            params![source_root, project, session_id, role, legacy_hash],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()?
@@ -321,7 +353,7 @@ pub fn drain_transcript_with_options(
                 continue;
             }
 
-            match insert_raw_message_from_root(
+            match insert_raw_message_from_root_at(
                 conn,
                 session_id,
                 project,
@@ -331,6 +363,7 @@ pub fn drain_transcript_with_options(
                 branch,
                 cwd,
                 options.source_root,
+                message.created_at_epoch,
             ) {
                 Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
                 Ok(Some(_)) => report.duplicates += 1,

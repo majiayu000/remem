@@ -26,6 +26,7 @@ impl TempRoot {
         ScanRoot {
             label: label.to_string(),
             path: self.path.clone(),
+            required: true,
         }
     }
 
@@ -278,8 +279,8 @@ fn source_root_label_is_stored_and_distinguishes_roots() {
     // collides across roots; source_root must still tell them apart.
     let line =
         r#"{"type":"user","message":{"content":[{"type":"text","text":"same project name"}]}}"#;
-    root_a.write("proj-x/session-a.jsonl", &format!("{line}\n"));
-    root_b.write("proj-x/session-b.jsonl", &format!("{line}\n"));
+    root_a.write("proj-x/session-same.jsonl", &format!("{line}\n"));
+    root_b.write("proj-x/session-same.jsonl", &format!("{line}\n"));
 
     let summary = run(
         &conn,
@@ -303,6 +304,113 @@ fn source_root_label_is_stored_and_distinguishes_roots() {
             ("starlight".to_string(), "proj-x".to_string()),
         ]
     );
+}
+
+#[test]
+fn codex_session_meta_id_overrides_rollout_filename() {
+    let conn = setup_conn();
+    let root = TempRoot::new("codex-session-id");
+    root.write(
+        "2026/06/12/rollout-abc.jsonl",
+        include_str!("../../../tests/fixtures/codex-rollout-minimal.jsonl"),
+    );
+
+    let summary = run(&conn, &[root.scan_root("local")]);
+    assert_eq!(summary.failed_files, 0);
+    assert_eq!(summary.ingested_messages, 2);
+
+    let session_id: String = conn
+        .query_row("SELECT DISTINCT session_id FROM raw_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(session_id, "019eba00-sanitized");
+}
+
+#[test]
+fn transcript_timestamps_drive_raw_message_window_time() {
+    let conn = setup_conn();
+    let root = TempRoot::new("transcript-time");
+    root.write(
+        "proj-a/session-1.jsonl",
+        r#"{"timestamp":"2026-06-12T00:00:01.000Z","type":"user","message":{"content":[{"type":"text","text":"historical question"}]}}"#,
+    );
+
+    let summary = run(&conn, &[root.scan_root("local")]);
+    assert_eq!(summary.failed_files, 0);
+    assert_eq!(summary.ingested_messages, 1);
+
+    let created_at_epoch: i64 = conn
+        .query_row("SELECT created_at_epoch FROM raw_messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(created_at_epoch, 1_781_222_401);
+}
+
+#[test]
+fn missing_explicit_root_is_reported_as_failure() {
+    let conn = setup_conn();
+    let missing = std::env::temp_dir().join(format!(
+        "remem-ingest-missing-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+
+    let summary = run_ingest_sessions(
+        &conn,
+        &[ScanRoot {
+            label: "remote".to_string(),
+            path: missing,
+            required: true,
+        }],
+        &IngestOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.exit_code(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let conn = setup_conn();
+    let root = TempRoot::new("discovery-isolation");
+    let cwd = root.path.to_string_lossy().to_string();
+    root.write(
+        "proj-a/good.jsonl",
+        &format!("{}\n", claude_line(&cwd, "user", "healthy message")),
+    );
+    let blocked = root.path.join("proj-a").join("blocked");
+    std::fs::create_dir_all(&blocked).unwrap();
+    let original_permissions = std::fs::metadata(&blocked).unwrap().permissions();
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let summary = run(&conn, &[root.scan_root("local")]);
+
+    std::fs::set_permissions(&blocked, original_permissions).unwrap();
+
+    assert_eq!(summary.ingested_messages, 1);
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(raw_message_count(&conn), 1);
+}
+
+#[test]
+fn raw_sessions_have_created_at_leading_index() {
+    let conn = setup_conn();
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_raw_messages_created_source_project_session'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(exists, 1);
 }
 
 #[test]

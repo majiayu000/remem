@@ -11,7 +11,7 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -32,6 +32,10 @@ const CONTEXT_PROBE_LINES: usize = 20;
 pub struct ScanRoot {
     pub label: String,
     pub path: PathBuf,
+    /// Default local roots are optional because many users only have one host
+    /// installed. User-supplied `--root label=path` entries are required and
+    /// must not fail silently.
+    pub required: bool,
 }
 
 impl ScanRoot {
@@ -48,6 +52,7 @@ impl ScanRoot {
         Ok(Self {
             label: label.to_string(),
             path: PathBuf::from(shellexpand_home(path)),
+            required: true,
         })
     }
 }
@@ -72,10 +77,12 @@ pub fn default_scan_roots() -> Vec<ScanRoot> {
         ScanRoot {
             label: SOURCE_ROOT_LOCAL.to_string(),
             path: home.join(".claude").join("projects"),
+            required: false,
         },
         ScanRoot {
             label: SOURCE_ROOT_LOCAL.to_string(),
             path: home.join(".codex").join("sessions"),
+            required: false,
         },
     ]
 }
@@ -119,10 +126,26 @@ pub fn run_ingest_sessions(
 
     for root in roots {
         if !root.path.is_dir() {
+            if root.required {
+                summary.failed_files += 1;
+                crate::log::error(
+                    "ingest-sessions",
+                    &format!(
+                        "required scan root {}={} is missing or not a directory",
+                        root.label,
+                        root.path.display()
+                    ),
+                );
+            }
             continue;
         }
         let mut files = Vec::new();
-        collect_jsonl_files(&root.path, &mut files)?;
+        let mut discovery_failures = Vec::new();
+        collect_jsonl_files(&root.path, &mut files, &mut discovery_failures);
+        for failure in discovery_failures {
+            summary.failed_files += 1;
+            crate::log::error("ingest-sessions", &failure);
+        }
         files.sort();
         for file in files {
             summary.scanned += 1;
@@ -145,25 +168,43 @@ pub fn run_ingest_sessions(
 }
 
 /// Recursively collect `*.jsonl` files, excluding `subagents/` directories.
-fn collect_jsonl_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    let entries =
-        std::fs::read_dir(dir).with_context(|| format!("read scan dir {}", dir.display()))?;
+fn collect_jsonl_files(dir: &Path, out: &mut Vec<PathBuf>, failures: &mut Vec<String>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            failures.push(format!("read scan dir {} failed: {}", dir.display(), error));
+            return;
+        }
+    };
     for entry in entries {
-        let entry = entry.with_context(|| format!("read scan dir entry in {}", dir.display()))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                failures.push(format!(
+                    "read scan dir entry in {} failed: {}",
+                    dir.display(),
+                    error
+                ));
+                continue;
+            }
+        };
         let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("stat {}", path.display()))?;
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                failures.push(format!("stat {} failed: {}", path.display(), error));
+                continue;
+            }
+        };
         if file_type.is_dir() {
             if entry.file_name() == "subagents" {
                 continue;
             }
-            collect_jsonl_files(&path, out)?;
+            collect_jsonl_files(&path, out, failures);
         } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
             out.push(path);
         }
     }
-    Ok(())
 }
 
 fn ingest_one_file(
@@ -208,11 +249,15 @@ fn ingest_one_file(
         }
     }
 
-    let session_id = file
+    let fallback_session_id = file
         .file_stem()
         .map(|stem| stem.to_string_lossy().to_string())
         .unwrap_or_default();
     let context = probe_transcript_context(file);
+    let session_id = context
+        .session_id
+        .as_deref()
+        .unwrap_or(&fallback_session_id);
     let project = context
         .cwd
         .as_deref()
@@ -226,7 +271,7 @@ fn ingest_one_file(
     match raw_archive::drain_transcript_with_options(
         conn,
         &file.to_string_lossy(),
-        &session_id,
+        session_id,
         &project,
         context.branch.as_deref(),
         context.cwd.as_deref(),
@@ -317,14 +362,15 @@ fn advance_cursor(
 
 #[derive(Debug, Clone, Default)]
 struct TranscriptContext {
+    session_id: Option<String>,
     cwd: Option<String>,
     branch: Option<String>,
 }
 
 /// Derive project identity inputs from the transcript itself so batch rows
 /// dedupe against Stop-hook rows for the same session. Claude Code lines
-/// carry top-level `cwd`/`gitBranch`; Codex rollouts carry
-/// `payload.cwd`/`payload.git.branch` on the `session_meta` line.
+/// carry top-level `cwd`/`gitBranch`; Codex rollouts carry canonical
+/// `payload.id` plus `payload.cwd`/`payload.git.branch` on `session_meta`.
 fn probe_transcript_context(file: &Path) -> TranscriptContext {
     let mut context = TranscriptContext::default();
     let Ok(handle) = std::fs::File::open(file) else {
@@ -339,6 +385,22 @@ fn probe_transcript_context(file: &Path) -> TranscriptContext {
             continue;
         };
         let payload = value.get("payload");
+        if context.session_id.is_none() {
+            context.session_id = value
+                .get("sessionId")
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| value.get("session_id").and_then(serde_json::Value::as_str))
+                .or_else(|| {
+                    (value.get("type").and_then(serde_json::Value::as_str) == Some("session_meta"))
+                        .then_some(())
+                        .and_then(|_| {
+                            payload
+                                .and_then(|p| p.get("id"))
+                                .and_then(serde_json::Value::as_str)
+                        })
+                })
+                .map(str::to_string);
+        }
         if context.cwd.is_none() {
             context.cwd = value
                 .get("cwd")
@@ -358,7 +420,7 @@ fn probe_transcript_context(file: &Path) -> TranscriptContext {
                 })
                 .map(str::to_string);
         }
-        if context.cwd.is_some() && context.branch.is_some() {
+        if context.session_id.is_some() && context.cwd.is_some() && context.branch.is_some() {
             break;
         }
     }
