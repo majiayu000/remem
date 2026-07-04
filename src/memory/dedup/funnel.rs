@@ -219,6 +219,9 @@ fn observation_similarity_threshold(model: &str) -> f32 {
 fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
     let incoming_tokens = observation_token_list(incoming);
     let existing_tokens = observation_token_list(existing);
+    if numeric_tokens_differ(&incoming_tokens, &existing_tokens) {
+        return true;
+    }
     let incoming = observation_token_set(&incoming_tokens);
     let existing = observation_token_set(&existing_tokens);
     const OPPOSITES: &[(&[&str], &[&str])] = &[
@@ -278,6 +281,20 @@ fn observation_token_list(text: &str) -> Vec<String> {
 
 fn observation_token_set(tokens: &[String]) -> BTreeSet<String> {
     tokens.iter().cloned().collect()
+}
+
+fn numeric_tokens_differ(incoming: &[String], existing: &[String]) -> bool {
+    let incoming = numeric_token_set(incoming);
+    let existing = numeric_token_set(existing);
+    !incoming.is_empty() && !existing.is_empty() && incoming != existing
+}
+
+fn numeric_token_set(tokens: &[String]) -> BTreeSet<String> {
+    tokens
+        .iter()
+        .filter(|token| token.chars().all(|ch| ch.is_ascii_digit()))
+        .cloned()
+        .collect()
 }
 
 fn has_any(tokens: &BTreeSet<String>, values: &[&str]) -> bool {

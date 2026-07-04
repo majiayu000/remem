@@ -8,6 +8,39 @@ fn feature_hash_text_embedding(text: &str) -> TextEmbedding {
     .expect("feature-hash test embedding should be valid")
 }
 
+fn with_embedding_env<T>(vars: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
+    const KEYS: &[&str] = &[
+        "REMEM_CONFIG",
+        "REMEM_EMBEDDINGS_PROVIDER",
+        "REMEM_EMBEDDINGS_FALLBACK",
+        "REMEM_EMBEDDINGS_BASE_URL",
+        "REMEM_EMBEDDINGS_API_KEY",
+        "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+        "OPENAI_API_KEY",
+    ];
+    let _guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("env lock should acquire");
+    let saved = KEYS
+        .iter()
+        .map(|key| (*key, std::env::var(key).ok()))
+        .collect::<Vec<_>>();
+    for key in KEYS {
+        unsafe { std::env::remove_var(key) };
+    }
+    for (key, value) in vars {
+        unsafe { std::env::set_var(key, value) };
+    }
+    let result = f();
+    for (key, value) in saved {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+    result
+}
+
 fn feature_hash_embedding_refinement(
     memory_id: i64,
     existing: &PreferenceProfile,
@@ -194,6 +227,30 @@ fn embedding_refinement_skips_candidate_when_incoming_embedding_unavailable() ->
 
     assert!(result.is_none());
     Ok(())
+}
+
+#[test]
+fn active_preference_embedding_propagates_api_failure_when_fallback_is_off() {
+    with_embedding_env(
+        &[
+            ("REMEM_EMBEDDINGS_PROVIDER", "api"),
+            ("REMEM_EMBEDDINGS_FALLBACK", "off"),
+            ("REMEM_EMBEDDINGS_BASE_URL", "http://127.0.0.1:9/v1"),
+            ("REMEM_EMBEDDINGS_API_KEY", "test-key"),
+            ("REMEM_EMBEDDINGS_TIMEOUT_SECS", "1"),
+        ],
+        || {
+            let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
+            let error = active_preference_embedding_with_fallback_cache(
+                "Prefer concise Chinese progress updates.",
+                &mut fallback_cache,
+            )
+            .expect_err("fallback=off after an API failure must not become None");
+            assert!(error
+                .to_string()
+                .contains("active preference embedding provider failed"));
+        },
+    );
 }
 
 #[test]

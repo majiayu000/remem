@@ -189,6 +189,8 @@ fn observation_text_combines_title_and_facts() {
         observation_text(&observation),
         "Configuration update\nSet timeout to 30 seconds\nKept retries at 3"
     );
+    observation.narrative = Some("Configuration was updated".to_string());
+    assert!(observation_text(&observation).contains("Set timeout to 30 seconds"));
 }
 
 fn evidence_range_for_event(event_id: i64) -> EvidenceRange {

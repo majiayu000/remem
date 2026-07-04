@@ -462,30 +462,27 @@ fn observation_exists(
 }
 
 pub(crate) fn observation_text(observation: &ParsedObservation) -> String {
-    if let Some(narrative) = observation
-        .narrative
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return narrative.to_string();
-    }
     let facts = observation
         .facts
         .iter()
         .map(|fact| fact.trim())
         .filter(|fact| !fact.is_empty())
         .collect::<Vec<_>>();
-    match (
-        observation
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-        facts.is_empty(),
-    ) {
-        (Some(title), false) => format!("{title}\n{}", facts.join("\n")),
-        (Some(title), true) => title.to_string(),
+    let primary = observation
+        .narrative
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            observation
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        });
+    match (primary, facts.is_empty()) {
+        (Some(primary), false) => format!("{primary}\n{}", facts.join("\n")),
+        (Some(primary), true) => primary.to_string(),
         (None, false) => facts.join("\n"),
         (None, true) => String::new(),
     }

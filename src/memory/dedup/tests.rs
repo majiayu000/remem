@@ -362,6 +362,29 @@ fn check_duplicate_vector_stage_keeps_short_numeric_observations_separate() -> R
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_numeric_fact_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 30 seconds",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 60 seconds",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
     with_embedding_provider("off", || -> Result<()> {
         let conn = Connection::open_in_memory()?;
