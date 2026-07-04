@@ -1,7 +1,9 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use super::{check_duplicate, find_hash_duplicates, mark_duplicate_accessed};
+use super::{
+    canonical_observation_text, check_duplicate, find_hash_duplicates, mark_duplicate_accessed,
+};
 
 const ENV_KEYS: &[&str] = &[
     "REMEM_CONFIG",
@@ -153,6 +155,59 @@ fn test_hash_dedup_accepts_legacy_fnv_hash() -> Result<()> {
 }
 
 #[test]
+fn canonical_observation_text_combines_title_and_facts() {
+    let text = canonical_observation_text(
+        Some("Configuration update"),
+        None,
+        Some("Configuration update"),
+        Some(r#"["Set timeout to 30 seconds","Kept retries at 3"]"#),
+    );
+
+    assert_eq!(
+        text.as_deref(),
+        Some("Configuration update\nSet timeout to 30 seconds\nKept retries at 3")
+    );
+}
+
+#[test]
+fn hash_dedup_distinguishes_same_title_different_facts() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_dedup_schema(&conn)?;
+    let now = chrono::Utc::now();
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, title, text, facts, created_at, created_at_epoch, discovery_tokens, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            "mem-test",
+            "test-project",
+            "decision",
+            "Configuration update",
+            "Configuration update",
+            r#"["Set timeout to 30 seconds"]"#,
+            now.to_rfc3339(),
+            now.timestamp(),
+            100,
+            "active"
+        ],
+    )?;
+
+    let same_hash = crate::db::content_identity_hash(
+        "Configuration update\nSet timeout to 30 seconds".as_bytes(),
+    );
+    let different_hash = crate::db::content_identity_hash(
+        "Configuration update\nSet timeout to 60 seconds".as_bytes(),
+    );
+
+    assert_eq!(
+        find_hash_duplicates(&conn, "test-project", &same_hash, 900)?,
+        vec![1]
+    );
+    assert!(find_hash_duplicates(&conn, "test-project", &different_hash, 900)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn mark_duplicate_accessed_updates_timestamp() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_dedup_schema(&conn)?;
@@ -238,6 +293,29 @@ fn check_duplicate_vector_stage_keeps_unrelated_observations_separate() -> Resul
             &conn,
             "test-project",
             "The release workflow rotates archived changelog entries.",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_opposite_status_observations_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "The migration test suite failed after the schema update.",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "The migration test suite passed after the schema update.",
             None,
         )?;
 

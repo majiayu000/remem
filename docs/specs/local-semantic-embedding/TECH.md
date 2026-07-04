@@ -174,8 +174,10 @@ run because remote embedding calls require an explicit `--allow-api`.
 
 - Observation dedup funnel: implemented the vector stage against the active
   semantic space and wired it into extraction persistence; thresholds are
-  calibrated per model id (the 0.55 feature-hash preference threshold from
-  #643 does not transfer automatically).
+  calibrated per model id, duplicate scoring happens before the extraction
+  batch write transaction, and title+facts plus opposite-status regressions are
+  covered (the 0.55 feature-hash preference threshold from #643 does not
+  transfer automatically).
 - Curated-memory semantic dedup: update the existing
   `src/memory/semantic_dedup.rs` call sites used by `save_memory`,
   `src/memory/store/write.rs`, and `src/memory/operation.rs` so manual and
@@ -183,8 +185,9 @@ run because remote embedding calls require an explicit `--allow-api`.
 - Preference consolidation: same recalibration rule; keep the bidirectional
   polarity guard. GH-717 keeps the feature-hash preference threshold at its
   #643 calibration, uses stricter thresholds for local/API/unknown model ids,
-  and keeps non-write text-only grouping on the deterministic feature-hash
-  path so rendering and audit helpers do not perform live provider calls.
+  shares fallback state across write-path incoming/candidate embeddings, and
+  keeps non-write text-only grouping on the deterministic feature-hash path so
+  rendering and audit helpers do not perform live provider calls.
 
 ## Migration & Compatibility
 

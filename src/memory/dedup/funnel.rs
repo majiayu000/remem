@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
@@ -107,6 +109,9 @@ fn find_vector_duplicates(
         ) else {
             continue;
         };
+        if observation_text_conflicts(narrative, &candidate_text) {
+            continue;
+        }
         let candidate_embedding = crate::retrieval::embedding::embed_memory_with_fallback_cache(
             "Observation",
             &candidate_text,
@@ -152,4 +157,52 @@ fn observation_similarity_threshold(model: &str) -> f32 {
     } else {
         REAL_EMBEDDING_OBSERVATION_THRESHOLD
     }
+}
+
+fn observation_text_conflicts(incoming: &str, existing: &str) -> bool {
+    let incoming = observation_tokens(incoming);
+    let existing = observation_tokens(existing);
+    const OPPOSITES: &[(&[&str], &[&str])] = &[
+        (
+            &[
+                "pass",
+                "passed",
+                "passes",
+                "passing",
+                "success",
+                "succeeded",
+                "successful",
+            ],
+            &["fail", "failed", "fails", "failing", "failure", "broken"],
+        ),
+        (
+            &["enable", "enabled", "enables", "on", "active"],
+            &["disable", "disabled", "disables", "off", "inactive"],
+        ),
+        (
+            &["allow", "allowed", "allows", "accept", "accepted"],
+            &["block", "blocked", "blocks", "reject", "rejected"],
+        ),
+        (
+            &["increase", "increased", "higher"],
+            &["decrease", "decreased", "lower"],
+        ),
+        (&["true", "yes", "present"], &["false", "no", "absent"]),
+    ];
+    OPPOSITES.iter().any(|(left, right)| {
+        (has_any(&incoming, left) && has_any(&existing, right))
+            || (has_any(&incoming, right) && has_any(&existing, left))
+    })
+}
+
+fn observation_tokens(text: &str) -> BTreeSet<String> {
+    text.split(|ch: char| !ch.is_alphanumeric())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn has_any(tokens: &BTreeSet<String>, values: &[&str]) -> bool {
+    values.iter().any(|value| tokens.contains(*value))
 }

@@ -170,6 +170,20 @@ fn fact_only_observation(fact: &str) -> ParsedObservation {
     }
 }
 
+#[test]
+fn observation_text_combines_title_and_facts() {
+    let mut observation = title_only_observation("Configuration update");
+    observation.facts = vec![
+        "Set timeout to 30 seconds".to_string(),
+        "Kept retries at 3".to_string(),
+    ];
+
+    assert_eq!(
+        observation_text(&observation),
+        "Configuration update\nSet timeout to 30 seconds\nKept retries at 3"
+    );
+}
+
 fn evidence_range_for_event(event_id: i64) -> EvidenceRange {
     EvidenceRange {
         from_event_id: event_id,

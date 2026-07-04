@@ -137,18 +137,26 @@ pub(crate) fn find_preference_consolidation(
             _ => best = Some(classified),
         }
     }
-    if best.is_some() {
+    if matches!(
+        best.as_ref().map(|matched| matched.kind),
+        Some(PreferenceConsolidationKind::SamePreference)
+            | Some(PreferenceConsolidationKind::Contradiction)
+    ) {
         return Ok(best);
     }
 
-    let incoming_embedding = active_preference_embedding(content)?;
+    let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
+    let mut incoming_embedding =
+        active_preference_embedding_with_fallback_cache(content, &mut fallback_cache)?;
     for (memory_id, existing_content, existing) in candidates {
         let Some(classified) = embedding_refinement(
             memory_id,
             &existing,
             &incoming,
             &existing_content,
-            incoming_embedding.as_ref(),
+            content,
+            &mut incoming_embedding,
+            &mut fallback_cache,
         )?
         else {
             continue;
@@ -279,12 +287,21 @@ fn classify_preference(
     })
 }
 
-fn active_preference_embedding(text: &str) -> Result<Option<TextEmbedding>> {
+fn active_preference_embedding_with_fallback_cache(
+    text: &str,
+    fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
+) -> Result<Option<TextEmbedding>> {
     #[cfg(test)]
     if active_preference_embedding_is_forbidden() {
         anyhow::bail!("active preference embedding called in forbidden test scope");
     }
-    crate::retrieval::embedding::embed_query_if_enabled(text)
+    match crate::retrieval::embedding::embed_query_with_fallback_cache(text, fallback_cache) {
+        Ok(embedding) => Ok(Some(embedding)),
+        Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
@@ -333,14 +350,26 @@ fn embedding_refinement(
     existing: &PreferenceProfile,
     incoming: &PreferenceProfile,
     existing_content: &str,
-    incoming_embedding: Option<&TextEmbedding>,
+    incoming_content: &str,
+    incoming_embedding: &mut Option<TextEmbedding>,
+    fallback_cache: &mut crate::retrieval::embedding::EmbeddingFallbackCache,
 ) -> Result<Option<PreferenceConsolidationMatch>> {
-    let Some(incoming_embedding) = incoming_embedding else {
+    let Some(existing_embedding) =
+        active_preference_embedding_with_fallback_cache(existing_content, fallback_cache)
+            .with_context(|| format!("embed active preference candidate id={memory_id}"))?
+    else {
         return Ok(None);
     };
-    let Some(existing_embedding) = active_preference_embedding(existing_content)
-        .with_context(|| format!("embed active preference candidate id={memory_id}"))?
-    else {
+    if let Some(current_incoming) = incoming_embedding.as_ref() {
+        if existing_embedding.model() != current_incoming.model()
+            || existing_embedding.dimensions() != current_incoming.dimensions()
+        {
+            *incoming_embedding =
+                active_preference_embedding_with_fallback_cache(incoming_content, fallback_cache)
+                    .context("re-embed incoming preference after provider fallback")?;
+        }
+    }
+    let Some(incoming_embedding) = incoming_embedding.as_ref() else {
         return Ok(None);
     };
     Ok(embedding_refinement_from_embeddings(

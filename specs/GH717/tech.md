@@ -25,22 +25,28 @@ Observation dedup keeps the existing hash stage as the first fast path.
 before inserting an extracted observation. When no hash duplicate is found, the
 funnel first scans recent active observations for the same project and returns
 without embedding when there are no candidates. It then derives canonical
-candidate text from `observations.text`, `narrative`, `title`, or `facts[0]`,
-embeds the incoming observation and each candidate through the active provider
-with one shared fallback cache, recomputes the query embedding if fallback
-changes the selected model/dimensions, compares only same-space vectors, and
-marks matches accessed. Provider `off` returns no vector duplicates. Provider
-failures without an accepted fallback propagate because silently comparing the
-wrong space would make duplicate decisions untrustworthy.
+candidate text from `narrative`, `title + facts`, `facts`, or legacy
+`observations.text`, embeds the incoming observation and each candidate through
+the active provider with one shared fallback cache, recomputes the query
+embedding if fallback changes the selected model/dimensions, compares only
+same-space vectors, and marks matches accessed. Extracted observations perform
+duplicate scoring before opening the batch write transaction; the transaction
+still wraps the idempotency check and inserts. Provider `off` returns no vector
+duplicates. Provider failures without an accepted fallback propagate because
+silently comparing the wrong space would make duplicate decisions untrustworthy.
+The vector stage keeps obvious opposite status updates such as passed/failed
+separate.
 
 Preference consolidation changes the embedding fallback from raw
 `retrieval::vector::embed_query_text` to active `TextEmbedding` on the write
 path. It returns before embedding when there are no active candidates, runs
 concept classification across candidates first, and computes the incoming
-embedding only when cosine fallback is needed. Candidate embeddings use the same
-active provider path. `SamePreference` and `Contradiction` still win before
-cosine refinement, and provider errors propagate on the write fallback path. The
-model threshold table is:
+embedding only when cosine fallback is needed. Candidate embeddings share the
+same fallback cache as the incoming embedding so scoring stays in one model
+space. `SamePreference` and `Contradiction` still win before cosine refinement;
+weak concept `Refinement` matches continue into embedding scoring so a stronger
+same-intent candidate can win. Provider errors propagate on the write fallback
+path. The model threshold table is:
 
 - `remem-local-feature-hash-v1`: `0.55`, preserving the #643 calibration.
 - `fastembed-intfloat-multilingual-e5-small-v1`: `0.78`.
@@ -60,11 +66,11 @@ it rather than adding a second path.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 observation vector stage | `dedup/funnel.rs`, `observation_extract.rs` | Dedup test with paraphrased narratives plus extraction persistence wiring tests for narrative, title-only, and fact-only observations |
+| P1 observation vector stage | `dedup/funnel.rs`, `observation_extract.rs` | Dedup test with paraphrased narratives plus extraction persistence wiring tests for narrative, title-only, fact-only, title+facts, and opposite-status observations |
 | P2 active provider only | dedup and preference embedding helpers | Provider-off and model-threshold tests |
 | P3 same-model curated dedup | `semantic_dedup.rs` | semantic_dedup focused test |
 | P4 preference model thresholds | `preference/consolidation.rs` | threshold unit test |
-| P5 polarity guards | preference consolidation | existing and new contradiction regressions |
+| P5 polarity guards | preference and observation consolidation | existing and new contradiction/opposite-status regressions |
 | P6 no silent provider degradation | helper error handling/logging | focused tests plus code review |
 
 ## Data Flow

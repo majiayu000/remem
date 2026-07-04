@@ -61,25 +61,40 @@ pub(crate) fn canonical_observation_text(
     title: Option<&str>,
     facts: Option<&str>,
 ) -> Option<String> {
-    [text, narrative, title]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| first_fact_text(facts))
+    if let Some(narrative) = clean_text(narrative) {
+        return Some(narrative);
+    }
+    let title = clean_text(title);
+    if let Some(facts) = facts_text(facts) {
+        return Some(match title {
+            Some(title) => format!("{title}\n{facts}"),
+            None => facts,
+        });
+    }
+    clean_text(text).or(title)
 }
 
-fn first_fact_text(facts: Option<&str>) -> Option<String> {
+fn clean_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn facts_text(facts: Option<&str>) -> Option<String> {
     let facts = facts?.trim();
     if facts.is_empty() {
         return None;
     }
     match serde_json::from_str::<Vec<String>>(facts) {
-        Ok(values) => values
-            .into_iter()
-            .map(|value| value.trim().to_string())
-            .find(|value| !value.is_empty()),
+        Ok(values) => {
+            let values = values
+                .into_iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then(|| values.join("\n"))
+        }
         Err(_) => Some(facts.to_string()),
     }
 }

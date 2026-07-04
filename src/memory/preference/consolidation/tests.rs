@@ -48,7 +48,7 @@ fn consolidation_returns_none_without_embedding_when_no_candidates() -> anyhow::
 }
 
 #[test]
-fn consolidation_uses_concepts_before_unavailable_active_embedding() -> anyhow::Result<()> {
+fn consolidation_uses_same_preference_before_unavailable_active_embedding() -> anyhow::Result<()> {
     let conn = rusqlite::Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
     crate::memory::insert_memory_full(
@@ -71,13 +71,13 @@ fn consolidation_uses_concepts_before_unavailable_active_embedding() -> anyhow::
             "/repo",
             "project",
             None,
-            "Prefer brief Chinese status notes.",
+            "Prefer concise Chinese progress updates.",
             chrono::Utc::now().timestamp(),
         )
     })?
     .expect("concept match should not require active embedding");
 
-    assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
+    assert_eq!(result.kind, PreferenceConsolidationKind::SamePreference);
     Ok(())
 }
 
@@ -128,6 +128,43 @@ fn consolidation_propagates_embedding_error_when_fallback_needed() -> anyhow::Re
         )
     })
     .expect_err("embedding fallback path should propagate active provider errors");
+
+    assert!(error
+        .to_string()
+        .contains("active preference embedding called"));
+    Ok(())
+}
+
+#[test]
+fn consolidation_continues_embedding_after_weak_refinement() -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    crate::memory::insert_memory_full(
+        &conn,
+        None,
+        "/repo",
+        None,
+        "Preference: concise Chinese updates",
+        "Prefer concise Chinese progress updates.",
+        "preference",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+
+    let error = with_forbidden_active_preference_embedding(|| {
+        find_preference_consolidation(
+            &conn,
+            "repo",
+            "/repo",
+            "project",
+            None,
+            "Prefer brief Chinese status notes.",
+            chrono::Utc::now().timestamp(),
+        )
+    })
+    .expect_err("weak concept refinement should continue into embedding fallback");
 
     assert!(error
         .to_string()

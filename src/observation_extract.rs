@@ -336,17 +336,24 @@ fn persist_observations(
     let memory_session_id = format!("capture-observation-{session_row_id}");
     let evidence_json = serde_json::to_string(&range.event_ids)?;
     let reference_time_epoch = range.reference_time_epoch();
-    let tx = conn.transaction()?;
-    let mut inserted = 0usize;
+    let mut prepared = Vec::with_capacity(observations.len());
     for observation in observations {
         let text = observation_text(observation);
         if text.trim().is_empty() {
             anyhow::bail!("observation_extract produced an empty observation");
         }
+        let skip_duplicate =
+            crate::memory::dedup::check_duplicate(conn, &task.project, &text, None)?.is_some();
+        prepared.push((observation, text, skip_duplicate));
+    }
+
+    let tx = conn.transaction()?;
+    let mut inserted = 0usize;
+    for (observation, text, skip_duplicate) in prepared {
         if observation_exists(&tx, session_row_id, &evidence_json, &text)? {
             continue;
         }
-        if crate::memory::dedup::check_duplicate(&tx, &task.project, &text, None)?.is_some() {
+        if skip_duplicate {
             continue;
         }
 
@@ -445,12 +452,33 @@ fn observation_exists(
 }
 
 pub(crate) fn observation_text(observation: &ParsedObservation) -> String {
-    observation
+    if let Some(narrative) = observation
         .narrative
-        .clone()
-        .or_else(|| observation.title.clone())
-        .or_else(|| observation.facts.first().cloned())
-        .unwrap_or_default()
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return narrative.to_string();
+    }
+    let facts = observation
+        .facts
+        .iter()
+        .map(|fact| fact.trim())
+        .filter(|fact| !fact.is_empty())
+        .collect::<Vec<_>>();
+    match (
+        observation
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        facts.is_empty(),
+    ) {
+        (Some(title), false) => format!("{title}\n{}", facts.join("\n")),
+        (Some(title), true) => title.to_string(),
+        (None, false) => facts.join("\n"),
+        (None, true) => String::new(),
+    }
 }
 
 fn eval_task(
