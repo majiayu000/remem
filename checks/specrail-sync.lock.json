@@ -1,6 +1,6 @@
 {
   "upstream_repo": "https://github.com/majiayu000/specrail",
-  "upstream_sha": "32b6326cec137c3ef2e9d200f41691f1b150698c",
+  "upstream_sha": "9e5eb1d7cba93f3a8ef55cbba2811364b5c3ef2c",
   "excluded": [
     "checks/check_workflow.py"
   ],
@@ -34,8 +34,12 @@
       "sha256": "d5e96a2a76f8d4ddf950b2fe5429dcf742d8cefcdae5fd813489721483fa345b"
     },
     {
+      "path": "checks/runtime_gate_rules.py",
+      "sha256": "84073e7e692a4b0d45021ad1e2d11b6b4311eb535d0926eb300eef020bbe26fc"
+    },
+    {
       "path": "checks/runtime_ledger_gate.py",
-      "sha256": "203c4bbcf42b2c0dee90c8f675c67500644dcf131df5de4a964d40b3bef00354"
+      "sha256": "2e6167ac9dd64971a97e2e8c9c81701e32ca78635eb284958666cf3507b25ae8"
     },
     {
       "path": "checks/specrail_lib.py",

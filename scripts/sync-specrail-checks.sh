@@ -21,6 +21,7 @@ SYNCED_FILES=(
   "checks/pr_gate.py"
   "checks/review_json_gate.py"
   "checks/route_gate.py"
+  "checks/runtime_gate_rules.py"
   "checks/runtime_ledger_gate.py"
   "checks/specrail_lib.py"
   "schemas/duplicate_work_evidence.schema.json"
