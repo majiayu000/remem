@@ -142,6 +142,7 @@ jobs:
             fi
           done
 
+          mkdir -p Formula
           cat > Formula/remem.rb <<RUBY
           # typed: false
           # frozen_string_literal: true
@@ -202,15 +203,15 @@ jobs:
           RUBY
 
           ruby -c Formula/remem.rb
+          git add Formula/remem.rb
 
-          if git diff --quiet -- Formula/remem.rb; then
+          if git diff --cached --quiet -- Formula/remem.rb; then
             echo "Formula/remem.rb already up to date for v${version}"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/remem.rb
           git commit -m "remem: update formula to v${version}"
           git push
 

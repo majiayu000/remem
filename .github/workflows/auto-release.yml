@@ -24,10 +24,11 @@ jobs:
       - name: Check release secrets
         env:
           CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           missing=0
-          for name in CRATES_IO_TOKEN NPM_TOKEN; do
+          for name in CRATES_IO_TOKEN HOMEBREW_TAP_TOKEN NPM_TOKEN; do
             if [ -z "${!name}" ]; then
               echo "::error::Missing required release secret: ${name}"
               missing=1
