@@ -134,6 +134,12 @@ pub fn prune_inactive_memory_embeddings(
             coverage.percent
         );
     }
+    let stale_or_missing = pending_reindex_count_for_target(conn, target)?;
+    if stale_or_missing > 0 {
+        bail!(
+            "refusing to prune inactive embedding profiles while active profile has {stale_or_missing} missing or stale rows; run embedding backfill without --limit before pruning"
+        );
+    }
     let pruned = conn.execute(
         "DELETE FROM memory_embeddings
          WHERE rowid IN (
@@ -174,6 +180,25 @@ fn embedding_coverage_for_target(
         percent: percent(embedded, total),
         mixed_profile_count: embedding_profile_count(conn)?,
     })
+}
+
+fn pending_reindex_count_for_target(
+    conn: &Connection,
+    target: &EmbeddingBackfillTarget,
+) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*)
+         FROM memories m
+         LEFT JOIN memory_embeddings e
+           ON e.memory_id = m.id
+          AND e.model = ?1
+          AND e.dimensions = ?2
+         WHERE (e.memory_id IS NULL
+                OR e.updated_at_epoch < m.updated_at_epoch)
+           AND m.status IN ('active', 'stale', 'archived')",
+        params![target.model.as_str(), target.dimensions as i64],
+        |row| row.get(0),
+    )?)
 }
 
 fn percent(numerator: i64, denominator: i64) -> f64 {

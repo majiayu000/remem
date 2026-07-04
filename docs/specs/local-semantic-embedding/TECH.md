@@ -113,7 +113,9 @@ non-off provider is selected.
   `BAAI/bge-m3`, 1024 dimensions.
 - `remem embedding download [--model <preset>] [--json]` materializes the
   model and writes `remem-model-manifest.json` with schema version, runtime,
-  dimensions, upstream model, file sizes, and sha256 checksums.
+  dimensions, upstream model/source URL, file sizes, sha256 checksums, and
+  hf-hub LFS source sha256 verification when the cache exposes a 64-hex source
+  etag.
 - `remem embedding status [--json]` reports installed models, verification
   state, model directory, and active-provider readiness.
 

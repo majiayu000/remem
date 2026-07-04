@@ -254,6 +254,32 @@ model_dir = "/tmp/remem-models"
 }
 
 #[test]
+fn local_inventory_ignores_api_model_when_provider_is_not_local() -> Result<()> {
+    with_clean_env(|| {
+        let model_dir = std::env::temp_dir().join(format!(
+            "remem-api-model-inventory-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+            std::env::set_var(ENV_MODEL, "text-embedding-3-large");
+            std::env::set_var(ENV_MODEL_DIR, &model_dir);
+        }
+
+        let inventory = local_embedding_inventory()?;
+
+        assert_eq!(inventory.configured_preset, "multilingual-e5-small");
+        assert_eq!(inventory.models.len(), 2);
+        assert!(inventory
+            .models
+            .iter()
+            .any(|model| model.preset == "multilingual-e5-small"));
+        Ok(())
+    })
+}
+
+#[test]
 fn parses_openai_embedding_response() -> Result<()> {
     let embedding = parse_openai_embedding_response(
         r#"{"data":[{"embedding":[0.1,0.2,0.3]}],"model":"text-embedding-3-small"}"#,

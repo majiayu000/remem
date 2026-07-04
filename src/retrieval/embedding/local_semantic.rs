@@ -1,3 +1,7 @@
+#[cfg(feature = "local-onnx")]
+use std::cell::RefCell;
+#[cfg(feature = "local-onnx")]
+use std::collections::{hash_map::Entry, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -12,6 +16,7 @@ pub(super) const DEFAULT_LOCAL_SEMANTIC_MODEL: &str = "fastembed-intfloat-multil
 const MANIFEST_FILE: &str = "remem-model-manifest.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const FASTEMBED_RUNTIME: &str = "fastembed-rs/onnxruntime";
+const HUGGING_FACE_BASE_URL: &str = "https://huggingface.co";
 
 #[derive(Debug)]
 struct LocalEmbeddingModelUnavailableError(String);
@@ -41,10 +46,23 @@ pub(super) enum LocalEmbeddingInputKind {
     Generic,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum LocalEmbeddingPreset {
     MultilingualE5Small,
     BgeM3,
+}
+
+#[cfg(feature = "local-onnx")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LocalModelCacheKey {
+    preset: LocalEmbeddingPreset,
+    install_dir: PathBuf,
+}
+
+#[cfg(feature = "local-onnx")]
+thread_local! {
+    static LOCAL_MODEL_CACHE: RefCell<HashMap<LocalModelCacheKey, fastembed::TextEmbedding>> =
+        RefCell::new(HashMap::new());
 }
 
 impl LocalEmbeddingPreset {
@@ -88,6 +106,10 @@ impl LocalEmbeddingPreset {
             Self::MultilingualE5Small => "intfloat/multilingual-e5-small",
             Self::BgeM3 => "BAAI/bge-m3",
         }
+    }
+
+    fn source_url(self) -> String {
+        format!("{HUGGING_FACE_BASE_URL}/{}", self.upstream_model())
     }
 
     fn dimensions(self) -> usize {
@@ -163,6 +185,7 @@ struct LocalModelManifest {
     upstream_model: String,
     dimensions: usize,
     runtime: String,
+    source_url: Option<String>,
     downloaded_at_epoch: i64,
     files: Vec<LocalModelFile>,
 }
@@ -171,6 +194,8 @@ struct LocalModelManifest {
 struct LocalModelFile {
     path: String,
     sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_sha256: Option<String>,
     bytes: u64,
 }
 
@@ -191,7 +216,7 @@ pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownlo
     let config = super::resolve_embedding_config()?;
     let preset = match model {
         Some(raw) => LocalEmbeddingPreset::parse(raw)?,
-        None => configured_preset(&config)?,
+        None => configured_local_preset_or_default(&config)?,
     };
     let install_dir = install_dir_for_preset(&config, preset);
     std::fs::create_dir_all(&install_dir)
@@ -211,6 +236,7 @@ pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownlo
         upstream_model: preset.upstream_model().to_string(),
         dimensions: preset.dimensions(),
         runtime: FASTEMBED_RUNTIME.to_string(),
+        source_url: Some(preset.source_url()),
         downloaded_at_epoch: chrono::Utc::now().timestamp(),
         files,
     };
@@ -229,7 +255,7 @@ pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownlo
 pub(super) fn inventory() -> Result<LocalEmbeddingInventoryReport> {
     let config = super::resolve_embedding_config()?;
     let root = model_root(&config);
-    let configured = configured_preset(&config)?;
+    let configured = configured_local_preset_or_default(&config)?;
     let models = LocalEmbeddingPreset::all()
         .iter()
         .copied()
@@ -267,6 +293,14 @@ fn configured_preset(config: &EmbeddingConfig) -> Result<LocalEmbeddingPreset> {
         return Ok(LocalEmbeddingPreset::default());
     }
     LocalEmbeddingPreset::parse(raw)
+}
+
+fn configured_local_preset_or_default(config: &EmbeddingConfig) -> Result<LocalEmbeddingPreset> {
+    if config.provider == super::EmbeddingProvider::Local {
+        configured_preset(config)
+    } else {
+        Ok(LocalEmbeddingPreset::default())
+    }
 }
 
 fn verified_profile_for_preset(
@@ -360,22 +394,36 @@ fn embed_with_fastembed(
     text: &str,
     kind: LocalEmbeddingInputKind,
 ) -> Result<Vec<f32>> {
-    let options = fastembed::TextInitOptions::new(preset.fastembed_model())
-        .with_cache_dir(install_dir.to_path_buf())
-        .with_show_download_progress(false);
-    let mut model = fastembed::TextEmbedding::try_new(options)
-        .with_context(|| format!("initialize local embedding model {}", preset.label()))?;
     let input = preset.prefix_input(text, kind);
-    let mut embeddings = model
-        .embed([input.as_str()], Some(1))
-        .with_context(|| format!("embed text with local model {}", preset.label()))?;
-    let first = embeddings
-        .pop()
-        .context("local embedding model did not return an embedding")?;
-    if !embeddings.is_empty() {
-        bail!("local embedding model returned multiple embeddings for single input");
-    }
-    Ok(first)
+    let key = LocalModelCacheKey {
+        preset,
+        install_dir: install_dir.to_path_buf(),
+    };
+    LOCAL_MODEL_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let model = match cache.entry(key) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let options = fastembed::TextInitOptions::new(preset.fastembed_model())
+                    .with_cache_dir(install_dir.to_path_buf())
+                    .with_show_download_progress(false);
+                let model = fastembed::TextEmbedding::try_new(options).with_context(|| {
+                    format!("initialize local embedding model {}", preset.label())
+                })?;
+                entry.insert(model)
+            }
+        };
+        let mut embeddings = model
+            .embed([input.as_str()], Some(1))
+            .with_context(|| format!("embed text with local model {}", preset.label()))?;
+        let first = embeddings
+            .pop()
+            .context("local embedding model did not return an embedding")?;
+        if !embeddings.is_empty() {
+            bail!("local embedding model returned multiple embeddings for single input");
+        }
+        Ok(first)
+    })
 }
 
 #[cfg(not(feature = "local-onnx"))]
@@ -446,6 +494,17 @@ fn verify_manifest_header(
     if manifest.runtime != FASTEMBED_RUNTIME {
         bail!("unsupported local embedding runtime {}", manifest.runtime);
     }
+    if let Some(source_url) = manifest.source_url.as_deref() {
+        let expected = preset.source_url();
+        if source_url != expected {
+            bail!(
+                "manifest source_url {} does not match preset {} source {}",
+                source_url,
+                preset.label(),
+                expected
+            );
+        }
+    }
     if manifest.files.is_empty() {
         bail!("local embedding manifest has no verified files");
     }
@@ -475,6 +534,16 @@ fn verify_manifest_file(install_dir: &Path, file: &LocalModelFile) -> Result<()>
             file.sha256,
             actual
         );
+    }
+    if let Some(source_sha256) = file.source_sha256.as_deref() {
+        if actual != source_sha256 {
+            bail!(
+                "source checksum mismatch for {}: expected {}, got {}",
+                path.display(),
+                source_sha256,
+                actual
+            );
+        }
     }
     Ok(())
 }
@@ -543,14 +612,37 @@ fn collect_model_files_inner(
                 })
                 .collect::<Result<Vec<_>>>()?
                 .join("/");
+            let sha256 = sha256_file(&path)?;
+            let source_sha256 = source_sha256_from_hf_blob_path(&relative, &sha256)?;
             files.push(LocalModelFile {
                 path: relative,
-                sha256: sha256_file(&path)?,
+                sha256,
+                source_sha256,
                 bytes: metadata.len(),
             });
         }
     }
     Ok(())
+}
+
+fn source_sha256_from_hf_blob_path(relative: &str, actual_sha256: &str) -> Result<Option<String>> {
+    let parts = relative.split('/').collect::<Vec<_>>();
+    let Some(file_name) = parts.last().copied() else {
+        return Ok(None);
+    };
+    if parts.len() < 2 || parts[parts.len() - 2] != "blobs" || !is_sha256_hex(file_name) {
+        return Ok(None);
+    }
+    if file_name != actual_sha256 {
+        bail!(
+            "source checksum mismatch for Hugging Face cache blob {relative}: expected {file_name}, got {actual_sha256}"
+        );
+    }
+    Ok(Some(file_name.to_string()))
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -570,4 +662,31 @@ fn sha256_file(path: &Path) -> Result<String> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hf_cache_blob_source_sha_is_verified() -> Result<()> {
+        let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let verified = source_sha256_from_hf_blob_path(&format!("models--demo/blobs/{sha}"), sha)?;
+
+        assert_eq!(verified.as_deref(), Some(sha));
+        Ok(())
+    }
+
+    #[test]
+    fn hf_cache_blob_source_sha_mismatch_fails() {
+        let source = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let actual = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+        let error =
+            source_sha256_from_hf_blob_path(&format!("models--demo/blobs/{source}"), actual)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("source checksum mismatch"));
+    }
 }

@@ -15,6 +15,7 @@ const JOB_TIMEOUT_SECS: u64 = 420;
 const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
 const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
+const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
@@ -85,6 +86,35 @@ fn job_profile(payload_json: &str) -> Option<String> {
                 .filter(|profile| !profile.is_empty())
                 .map(str::to_string)
         })
+}
+
+fn run_idle_embedding_backfill(conn: &rusqlite::Connection) -> Result<bool> {
+    match crate::retrieval::vector::reindex_memory_embeddings_with_report(
+        conn,
+        EMBEDDING_BACKFILL_IDLE_BATCH_SIZE,
+    ) {
+        Ok(report) if report.processed > 0 => {
+            crate::log::info(
+                "worker",
+                &format!(
+                    "backfilled {} memory embedding(s) for model={} dimensions={}",
+                    report.processed, report.model, report.dimensions
+                ),
+            );
+            Ok(true)
+        }
+        Ok(_) => Ok(false),
+        Err(error)
+            if crate::retrieval::embedding::is_local_embedding_model_unavailable_error(&error) =>
+        {
+            crate::log::error(
+                "worker",
+                &format!("memory embedding backfill deferred: {error}"),
+            );
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
@@ -186,6 +216,10 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             continue;
         }
 
+        if run_idle_embedding_backfill(&conn)? {
+            continue;
+        }
+
         if once {
             break;
         }
@@ -204,6 +238,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use rusqlite::params;
+    use std::sync::MutexGuard;
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
@@ -211,6 +246,34 @@ mod tests {
     use test_support::install_stub_codex;
 
     mod test_support;
+
+    struct ScopedEmbeddingProvider {
+        _guard: MutexGuard<'static, ()>,
+        saved_provider: Option<String>,
+    }
+
+    impl ScopedEmbeddingProvider {
+        fn new(provider: &str) -> Self {
+            let guard = crate::runtime_config::TEST_ENV_LOCK
+                .lock()
+                .expect("env lock should acquire");
+            let saved_provider = std::env::var("REMEM_EMBEDDINGS_PROVIDER").ok();
+            unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+            Self {
+                _guard: guard,
+                saved_provider,
+            }
+        }
+    }
+
+    impl Drop for ScopedEmbeddingProvider {
+        fn drop(&mut self) {
+            match &self.saved_provider {
+                Some(value) => unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", value) },
+                None => unsafe { std::env::remove_var("REMEM_EMBEDDINGS_PROVIDER") },
+            }
+        }
+    }
 
     #[tokio::test]
     async fn worker_skips_legacy_observation_job_without_retry() -> anyhow::Result<()> {
@@ -355,6 +418,38 @@ mod tests {
             heartbeat.started_at_epoch <= heartbeat.updated_at_epoch,
             "heartbeat should be valid immediately after singleton acquisition"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn worker_once_backfills_pending_memory_embeddings() -> anyhow::Result<()> {
+        let _provider = ScopedEmbeddingProvider::new("feature-hash");
+        let _data_dir = ScopedTestDataDir::new("worker-once-embedding-backfill");
+        let conn = db::open_db()?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (1, '/tmp/remem', 'Credential store', 'SQLCipher encrypts secrets at rest.', 'architecture', 1, 1, 'active')",
+            [],
+        )?;
+        drop(conn);
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM memory_embeddings
+             WHERE memory_id = 1
+               AND model = ?1
+               AND dimensions = ?2",
+            params![
+                crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL,
+                crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_DIMENSIONS as i64
+            ],
+            |row| row.get(0),
+        )?;
+        anyhow::ensure!(count == 1, "worker should backfill one embedding row");
         Ok(())
     }
 

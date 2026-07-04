@@ -87,6 +87,7 @@ pub(in crate::cli) fn run_embedding_backfill(
     let mut backfilled = 0usize;
     let mut remaining_limit = limit;
     let mut printed_profile = false;
+    let mut last_backfilled_target = None;
     while remaining_limit > 0 {
         let batch_limit = remaining_limit.min(batch_size);
         let report =
@@ -104,6 +105,12 @@ pub(in crate::cli) fn run_embedding_backfill(
             break;
         }
 
+        if !report.model.is_empty() && report.dimensions > 0 {
+            last_backfilled_target = Some(crate::retrieval::embedding::EmbeddingBackfillTarget {
+                model: report.model.clone(),
+                dimensions: report.dimensions,
+            });
+        }
         backfilled += report.processed;
         remaining_limit -= report.processed as i64;
         let remaining = count_missing_embeddings(&conn)?;
@@ -133,15 +140,18 @@ pub(in crate::cli) fn run_embedding_backfill(
     }
 
     let remaining = count_missing_embeddings(&conn)?;
-    let target = match crate::retrieval::embedding::configured_backfill_target() {
-        Ok(target) => target,
-        Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
-            crate::retrieval::embedding::EmbeddingBackfillTarget {
-                model: "off".to_string(),
-                dimensions: 0,
+    let target = match last_backfilled_target {
+        Some(target) => target,
+        None => match crate::retrieval::embedding::configured_backfill_target() {
+            Ok(target) => target,
+            Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
+                crate::retrieval::embedding::EmbeddingBackfillTarget {
+                    model: "off".to_string(),
+                    dimensions: 0,
+                }
             }
-        }
-        Err(error) => return Err(error),
+            Err(error) => return Err(error),
+        },
     };
     let coverage = crate::retrieval::vector::active_embedding_coverage(&conn)?;
     let prune_report = if prune {
