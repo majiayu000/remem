@@ -276,36 +276,28 @@ fn observation_persistence_skips_same_batch_vector_duplicate() -> Result<()> {
 #[test]
 fn observation_persistence_skips_exact_replay_before_vector_dedup() -> Result<()> {
     let mut conn = setup_conn();
+    let replay_text = "Migration extraction captured schema drift.";
     let task_id = capture(
         &conn,
         "sess-observation-exact-replay-before-vector",
-        "Migration extraction captured schema drift.",
+        replay_text,
     )?;
     let task = claim_extract_task(&mut conn)?;
     let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
-    let replay_text = "Migration extraction captured schema drift.";
 
     {
         let _provider = ScopedEmbeddingProvider::new("feature-hash");
-        assert_eq!(
-            persist_observations(&mut conn, &task, &range, &[parsed_observation(replay_text)])?,
-            1
-        );
+        let replay = [parsed_observation(replay_text)];
+        assert_eq!(persist_observations(&mut conn, &task, &range, &replay)?, 1);
         let old_epoch = chrono::Utc::now().timestamp() - 3_600;
         conn.execute(
-            "UPDATE observations
-             SET created_at_epoch = ?1
-             WHERE session_row_id = ?2 AND text = ?3",
+            "UPDATE observations SET created_at_epoch = ?1 WHERE session_row_id = ?2 AND text = ?3",
             params![old_epoch, task.session_row_id, replay_text],
         )?;
         let recent_range = evidence_range_for_event(range.to_event_id + 1);
+        let recent = [parsed_observation("Recent unrelated deployment note.")];
         assert_eq!(
-            persist_observations(
-                &mut conn,
-                &task,
-                &recent_range,
-                &[parsed_observation("Recent unrelated deployment note.")]
-            )?,
+            persist_observations(&mut conn, &task, &recent_range, &recent)?,
             1
         );
     }
@@ -314,10 +306,8 @@ fn observation_persistence_skips_exact_replay_before_vector_dedup() -> Result<()
         std::env::temp_dir().join(format!("remem-missing-local-model-{}", std::process::id()));
     let _provider = ScopedEmbeddingProvider::new_with_model_dir("local", Some(&missing_model_dir));
 
-    assert_eq!(
-        persist_observations(&mut conn, &task, &range, &[parsed_observation(replay_text)])?,
-        0
-    );
+    let replay = [parsed_observation(replay_text)];
+    assert_eq!(persist_observations(&mut conn, &task, &range, &replay)?, 0);
     Ok(())
 }
 
