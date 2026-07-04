@@ -1,10 +1,10 @@
-use rusqlite::params;
-
 use crate::db::{
     count_retryable_extraction_replay_ranges, list_extraction_replay_ranges,
     quarantine_extraction_replay_ranges, record_captured_event, retry_extraction_replay_ranges,
     CaptureEventInput,
 };
+use anyhow::Result;
+use rusqlite::{params, Connection};
 
 use super::*;
 
