@@ -51,8 +51,12 @@ pub(super) fn purgeable_extraction_task_ids(
            AND t.archived_at_epoch < ?1
            AND NOT EXISTS (
              SELECT 1 FROM extraction_replay_ranges r
-             WHERE r.source_task_id = t.id
-                OR r.replay_task_id = t.id
+             WHERE (r.source_task_id = t.id OR r.replay_task_id = t.id)
+                AND NOT (
+                    r.status IN ('pending', 'failed', 'quarantined')
+                    AND r.archived_at_epoch IS NOT NULL
+                    AND r.archived_at_epoch < ?1
+                )
            )
          ORDER BY t.archived_at_epoch ASC, t.id ASC",
     )?;

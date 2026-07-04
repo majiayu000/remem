@@ -24,6 +24,14 @@ fn classifier_defaults_unknown_to_transient() {
     );
 }
 
+#[test]
+fn classifier_treats_sqlite_schema_locks_as_transient() {
+    assert_eq!(
+        classify_failure("database schema is locked"),
+        FailureClass::Transient
+    );
+}
+
 fn setup_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
@@ -99,6 +107,59 @@ fn seed_extraction_task(conn: &Connection) -> Result<(i64, i64)> {
     Ok((task_id, outcome.event_row_id))
 }
 
+fn seed_replay_range_failure(
+    conn: &Connection,
+    status: &str,
+    failed_at: i64,
+    class: &str,
+    attempts: i64,
+) -> Result<(i64, i64)> {
+    let (task_id, event_row_id) = seed_extraction_task(conn)?;
+    let (task_kind, host_id, workspace_id, project_id, session_row_id): (
+        String,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT task_kind, host_id, workspace_id, project_id, session_row_id
+         FROM extraction_tasks
+         WHERE id = ?1",
+        [task_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    conn.execute(
+        "INSERT INTO extraction_replay_ranges
+         (source_task_id, task_kind, host_id, workspace_id, project_id, session_row_id,
+          from_event_id, to_event_id, status, attempts, last_error, failure_class,
+          failed_at_epoch, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9,
+                 'replay failed', ?10, ?11, ?11, ?11)",
+        params![
+            task_id,
+            task_kind,
+            host_id,
+            workspace_id,
+            project_id,
+            session_row_id,
+            event_row_id,
+            status,
+            attempts,
+            class,
+            failed_at
+        ],
+    )?;
+    Ok((task_id, conn.last_insert_rowid()))
+}
+
 #[test]
 fn archive_moves_old_failures_out_of_actionable_stats() -> Result<()> {
     let conn = setup_conn()?;
@@ -116,6 +177,23 @@ fn archive_moves_old_failures_out_of_actionable_stats() -> Result<()> {
     assert_eq!(after.pending_observation.actionable_total, 0);
     assert_eq!(after.pending_observation.archived, 1);
     assert_eq!(after.pending_observation.historical_archived, 1);
+    Ok(())
+}
+
+#[test]
+fn archive_counts_quarantined_replay_ranges_in_history() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = 2_000_000;
+    let old = now - 20 * SECONDS_PER_DAY;
+    seed_replay_range_failure(&conn, "quarantined", old, "permanent", 3)?;
+
+    let archived = archive_eligible_failures(&conn, now, FAILURE_RETENTION_DAYS)?;
+
+    assert_eq!(archived.extraction_replay_ranges, 1);
+    let stats = query_failure_lifecycle_stats(&conn, now)?;
+    assert_eq!(stats.extraction_replay_range.actionable_total, 0);
+    assert_eq!(stats.extraction_replay_range.archived, 1);
+    assert_eq!(stats.extraction_replay_range.historical_archived, 1);
     Ok(())
 }
 
@@ -265,5 +343,40 @@ fn purge_archived_failures_deletes_only_explicit_old_archives() -> Result<()> {
     assert_eq!(remaining, 0);
     let history = query_failure_lifecycle_stats(&conn, now)?;
     assert_eq!(history.pending_observation.historical_purged, 1);
+    Ok(())
+}
+
+#[test]
+fn purge_dry_run_counts_tasks_released_by_same_replay_range_purge() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = 5_000_000;
+    let old = now - 120 * SECONDS_PER_DAY;
+    let (task_id, range_id) = seed_replay_range_failure(&conn, "failed", old, "permanent", 3)?;
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'failed',
+             attempts = 3,
+             failure_class = 'permanent',
+             failed_at_epoch = ?1,
+             archived_at_epoch = ?1,
+             updated_at_epoch = ?1
+         WHERE id = ?2",
+        params![old, task_id],
+    )?;
+    conn.execute(
+        "UPDATE extraction_replay_ranges
+         SET archived_at_epoch = ?1,
+             updated_at_epoch = ?1
+         WHERE id = ?2",
+        params![old, range_id],
+    )?;
+
+    let plan = count_archived_failures_to_purge_at(&conn, now, 90)?;
+
+    assert_eq!(plan.extraction_replay_ranges, 1);
+    assert_eq!(plan.extraction_tasks, 1);
+    let purged = purge_archived_failures_at(&conn, now, 90)?;
+    assert_eq!(purged.extraction_replay_ranges, 1);
+    assert_eq!(purged.extraction_tasks, 1);
     Ok(())
 }

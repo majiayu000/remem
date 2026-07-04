@@ -108,6 +108,34 @@ fn retry_failed_resets_rows_for_selected_project() {
 }
 
 #[test]
+fn retry_failed_skips_archived_rows() {
+    let conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let archived_id = insert_failed_row(&conn, "s-1", "alpha", now - 5, "archived boom");
+    let active_id = insert_failed_row(&conn, "s-2", "alpha", now - 10, "active boom");
+    conn.execute(
+        "UPDATE pending_observations
+         SET archived_at_epoch = ?1
+         WHERE id = ?2",
+        params![now - 1, archived_id],
+    )
+    .expect("archived row should update");
+
+    let changed = retry_failed(&conn, None, 1).expect("retry should succeed");
+
+    assert_eq!(changed, 1);
+    let rows: Vec<(i64, String)> = conn
+        .prepare("SELECT id, status FROM pending_observations ORDER BY id ASC")
+        .expect("select should prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("rows should query")
+        .collect::<Result<_, _>>()
+        .expect("rows should collect");
+    assert!(rows.contains(&(archived_id, "failed".to_string())));
+    assert!(rows.contains(&(active_id, "pending".to_string())));
+}
+
+#[test]
 fn retry_failed_dry_run_count_respects_project_and_limit_without_mutation() {
     let conn = setup_conn();
     let now = chrono::Utc::now().timestamp();
@@ -127,6 +155,26 @@ fn retry_failed_dry_run_count_respects_project_and_limit_without_mutation() {
         )
         .expect("alpha row should exist");
     assert_eq!(status, "failed");
+}
+
+#[test]
+fn retry_failed_dry_run_count_skips_archived_rows_before_limit() {
+    let conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let archived_id = insert_failed_row(&conn, "s-1", "alpha", now - 5, "archived newest");
+    insert_failed_row(&conn, "s-2", "alpha", now - 10, "active older");
+    conn.execute(
+        "UPDATE pending_observations
+         SET archived_at_epoch = ?1
+         WHERE id = ?2",
+        params![now - 1, archived_id],
+    )
+    .expect("archived row should update");
+
+    let count =
+        count_failed_retry_candidates(&conn, Some("alpha"), 1).expect("dry-run count should query");
+
+    assert_eq!(count, 1);
 }
 
 #[test]

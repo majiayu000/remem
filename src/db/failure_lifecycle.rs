@@ -83,6 +83,14 @@ pub struct ArchivedFailurePurgePlan {
 
 pub fn classify_failure(error: &str) -> FailureClass {
     let lower = error.to_ascii_lowercase();
+    if lower.contains("database schema is locked")
+        || lower.contains("database is locked")
+        || lower.contains("sqlite_busy")
+        || lower.contains("sqlite busy")
+    {
+        return FailureClass::Transient;
+    }
+
     if [
         "schema",
         "vocab",
@@ -136,7 +144,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "extraction_replay_range",
                 table: "extraction_replay_ranges",
-                failed_predicate: "status IN ('pending', 'failed')",
+                failed_predicate: "status IN ('pending', 'failed', 'quarantined')",
                 attempt_column: "attempts",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -210,8 +218,9 @@ pub fn archive_eligible_failures(
         return Ok(ArchivedFailurePurgePlan::default());
     }
     let cutoff = cutoff_epoch(now_epoch, retention_days);
+    let tx = conn.unchecked_transaction()?;
     let pending = archive_surface(
-        conn,
+        &tx,
         ArchiveSurface {
             surface: "pending_observation",
             table: "pending_observations",
@@ -222,7 +231,7 @@ pub fn archive_eligible_failures(
         now_epoch,
     )?;
     let extraction_tasks = archive_surface(
-        conn,
+        &tx,
         ArchiveSurface {
             surface: "extraction_task",
             table: "extraction_tasks",
@@ -233,7 +242,7 @@ pub fn archive_eligible_failures(
         now_epoch,
     )?;
     let replay_ranges = archive_surface(
-        conn,
+        &tx,
         ArchiveSurface {
             surface: "extraction_replay_range",
             table: "extraction_replay_ranges",
@@ -244,7 +253,7 @@ pub fn archive_eligible_failures(
         now_epoch,
     )?;
     let jobs = archive_surface(
-        conn,
+        &tx,
         ArchiveSurface {
             surface: "job",
             table: "jobs",
@@ -254,6 +263,7 @@ pub fn archive_eligible_failures(
         cutoff,
         now_epoch,
     )?;
+    tx.commit()?;
     Ok(ArchivedFailurePurgePlan {
         pending_observations: pending,
         extraction_replay_ranges: replay_ranges,

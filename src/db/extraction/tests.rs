@@ -314,6 +314,29 @@ fn mark_extraction_task_failed_or_retry_keeps_retryable_task_visible() {
 }
 
 #[test]
+fn mark_extraction_task_failed_or_retry_fails_permanent_error_without_retry() {
+    let mut conn = setup_conn();
+    let task_id = insert_task(
+        &conn,
+        "sess-permanent-retry",
+        ExtractionTaskKind::SessionRollup,
+    )
+    .expect("task should insert");
+    claim_next_extraction_task(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+
+    mark_extraction_task_failed_or_retry(&conn, task_id, "worker-a", "not implemented", 30)
+        .expect("permanent failure should succeed");
+
+    let (status, attempts, next_retry, last_error) = task_status(&conn, task_id);
+    assert_eq!(status, "failed");
+    assert_eq!(attempts, 1);
+    assert!(next_retry.is_none());
+    assert_eq!(last_error.as_deref(), Some("not implemented"));
+}
+
+#[test]
 fn mark_extraction_task_failed_or_retry_exhausts_after_max_attempts() {
     let mut conn = setup_conn();
     let task_id = insert_task(&conn, "sess-failed", ExtractionTaskKind::SessionRollup)
@@ -676,6 +699,51 @@ fn retry_extraction_replay_range_creates_bounded_replay_task() {
     assert_eq!(replay.replay_range_id, Some(range.id));
     assert_eq!(replay.cursor_event_id, Some(range.from_event_id - 1));
     assert_eq!(replay.high_watermark_event_id, Some(range.to_event_id));
+}
+
+#[test]
+fn retry_extraction_replay_ranges_skips_archived_ranges() {
+    let conn = setup_conn();
+    let task_id = insert_task(
+        &conn,
+        "sess-archived-replay",
+        ExtractionTaskKind::ObservationExtract,
+    )
+    .expect("task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET attempts = ?1 WHERE id = ?2",
+        params![EXTRACTION_TASK_MAX_ATTEMPTS - 1, task_id],
+    )
+    .expect("attempt count should update");
+    let mut claim_conn = conn;
+    let claimed = claim_next_extraction_task(&mut claim_conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("task should be claimed");
+    defer_claimed_extraction_task(&claim_conn, &claimed, "worker-a", "bad model output", 30)
+        .expect("defer should exhaust");
+    let range = list_extraction_replay_ranges(&claim_conn, None, 10)
+        .expect("ranges should list")
+        .pop()
+        .expect("range should exist");
+    claim_conn
+        .execute(
+            "UPDATE extraction_replay_ranges
+             SET status = 'failed',
+                 archived_at_epoch = ?1
+             WHERE id = ?2",
+            params![chrono::Utc::now().timestamp() - 1, range.id],
+        )
+        .expect("range should archive");
+
+    assert_eq!(
+        count_retryable_extraction_replay_ranges(&claim_conn, None, 10)
+            .expect("count should succeed"),
+        0
+    );
+    assert_eq!(
+        retry_extraction_replay_ranges(&claim_conn, None, 10).expect("retry should skip archived"),
+        0
+    );
 }
 
 #[test]

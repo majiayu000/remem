@@ -352,8 +352,8 @@ fn query_system_stats_and_related_views_share_one_definition() {
                     ..FailureSurfaceStats::default()
                 },
                 extraction_replay_range: FailureSurfaceStats {
-                    actionable_total: 2,
-                    transient: 2,
+                    actionable_total: 3,
+                    transient: 3,
                     oldest_actionable_epoch: Some(0),
                     ..FailureSurfaceStats::default()
                 },

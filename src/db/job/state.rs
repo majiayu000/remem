@@ -97,11 +97,13 @@ pub fn mark_job_failed_or_retry(
     )?;
 
     let next_attempt = attempt_count + 1;
-    if next_attempt >= max_attempts {
+    let failure_class = crate::db::classify_failure(err);
+    if failure_class == crate::db::FailureClass::Permanent || next_attempt >= max_attempts {
         conn.execute(
             "UPDATE jobs
              SET state = 'failed',
                  attempt_count = ?1,
+                 next_retry_epoch = 0,
                  last_error = ?2,
                  failure_class = ?3,
                  failed_at_epoch = COALESCE(failed_at_epoch, ?4),
@@ -113,7 +115,7 @@ pub fn mark_job_failed_or_retry(
             params![
                 next_attempt,
                 crate::db::truncate_str(err, 2000),
-                crate::db::classify_failure(err).as_str(),
+                failure_class.as_str(),
                 now,
                 job_id,
                 lease_owner

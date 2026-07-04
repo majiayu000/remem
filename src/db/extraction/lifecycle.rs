@@ -230,7 +230,9 @@ pub fn mark_claimed_extraction_task_failed_or_retry(
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let next_attempt = task.attempts + 1;
-    if next_attempt >= EXTRACTION_TASK_MAX_ATTEMPTS {
+    if crate::db::classify_failure(err) == crate::db::FailureClass::Permanent
+        || next_attempt >= EXTRACTION_TASK_MAX_ATTEMPTS
+    {
         return exhaust_extraction_task(conn, task, lease_owner, next_attempt, err, now);
     }
 
