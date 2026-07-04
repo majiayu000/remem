@@ -124,6 +124,35 @@ fn insert_observation(conn: &Connection, project: &str, narrative: &str) -> Resu
     Ok(conn.last_insert_rowid())
 }
 
+fn insert_structured_observation(
+    conn: &Connection,
+    project: &str,
+    narrative: &str,
+    facts: &[&str],
+) -> Result<i64> {
+    let now = chrono::Utc::now();
+    let facts_json = serde_json::to_string(facts)?;
+    conn.execute(
+        "INSERT INTO observations \
+         (memory_session_id, project, type, title, text, narrative, facts, created_at, created_at_epoch, discovery_tokens, status) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            "mem-test",
+            project,
+            "bugfix",
+            None::<String>,
+            format!("{narrative}\n{}", facts.join("\n")),
+            narrative,
+            facts_json,
+            now.to_rfc3339(),
+            now.timestamp(),
+            100,
+            "active"
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 #[test]
 fn test_hash_dedup_finds_exact_match() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -166,6 +195,17 @@ fn canonical_observation_text_combines_title_and_facts() {
     assert_eq!(
         text.as_deref(),
         Some("Configuration update\nSet timeout to 30 seconds\nKept retries at 3")
+    );
+    let text = canonical_observation_text(
+        Some("Configuration was updated"),
+        Some("Configuration was updated"),
+        None,
+        Some(r#"["Set timeout to 30 seconds"]"#),
+    );
+
+    assert_eq!(
+        text.as_deref(),
+        Some("Configuration was updated\nSet timeout to 30 seconds")
     );
 }
 
@@ -371,6 +411,30 @@ fn check_duplicate_vector_stage_keeps_numeric_fact_changes_separate() -> Result<
             &conn,
             "test-project",
             "Configuration update\nSet timeout to 30 seconds",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 60 seconds",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_structured_numeric_fact_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_structured_observation(
+            &conn,
+            "test-project",
+            "Configuration update",
+            &["Set timeout to 30 seconds"],
         )?;
         let duplicate_id = check_duplicate(
             &conn,
