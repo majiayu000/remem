@@ -307,6 +307,37 @@ fn source_root_label_is_stored_and_distinguishes_roots() {
 }
 
 #[test]
+fn cursor_key_includes_source_root_label() {
+    let conn = setup_conn();
+    let root = TempRoot::new("cursor-source-root");
+    let line =
+        r#"{"type":"user","message":{"content":[{"type":"text","text":"same synced file"}]}}"#;
+    root.write("proj-x/session-same.jsonl", &format!("{line}\n"));
+
+    let first = run(&conn, &[root.scan_root("local")]);
+    assert_eq!(first.ingested_messages, 1);
+    assert_eq!(cursor_count(&conn), 1);
+
+    let second = run(&conn, &[root.scan_root("starlight")]);
+    assert_eq!(
+        second.skipped, 0,
+        "same path under a different source_root must not use the old cursor"
+    );
+    assert_eq!(second.ingested_messages, 1);
+    assert_eq!(raw_message_count(&conn), 2);
+    assert_eq!(cursor_count(&conn), 2);
+
+    let labels: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT source_root FROM raw_messages ORDER BY source_root")
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+        rows.collect::<Result<_, _>>().unwrap()
+    };
+    assert_eq!(labels, vec!["local".to_string(), "starlight".to_string()]);
+}
+
+#[test]
 fn codex_session_meta_id_overrides_rollout_filename() {
     let conn = setup_conn();
     let root = TempRoot::new("codex-session-id");

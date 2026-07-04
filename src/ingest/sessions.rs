@@ -233,7 +233,7 @@ fn ingest_one_file(
             return;
         }
     }
-    match cursor_unchanged(conn, file, mtime_epoch, size_bytes) {
+    match cursor_unchanged(conn, root, file, mtime_epoch, size_bytes) {
         Ok(true) => {
             summary.skipped += 1;
             return;
@@ -297,7 +297,9 @@ fn ingest_one_file(
                 );
             } else if report.partial_tail {
                 summary.partial_files += 1;
-            } else if let Err(error) = advance_cursor(conn, file, mtime_epoch, size_bytes, now) {
+            } else if let Err(error) =
+                advance_cursor(conn, root, file, mtime_epoch, size_bytes, now)
+            {
                 summary.failed_files += 1;
                 crate::log::error(
                     "ingest-sessions",
@@ -327,14 +329,16 @@ fn file_stat(file: &Path) -> Result<(i64, i64)> {
 
 fn cursor_unchanged(
     conn: &Connection,
+    root: &ScanRoot,
     file: &Path,
     mtime_epoch: i64,
     size_bytes: i64,
 ) -> Result<bool> {
+    let key = cursor_key(root, file);
     let row: Option<(i64, i64)> = conn
         .query_row(
             "SELECT mtime_epoch, size_bytes FROM ingest_cursors WHERE file_path = ?1",
-            params![file.to_string_lossy()],
+            params![key],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
@@ -343,11 +347,13 @@ fn cursor_unchanged(
 
 fn advance_cursor(
     conn: &Connection,
+    root: &ScanRoot,
     file: &Path,
     mtime_epoch: i64,
     size_bytes: i64,
     now: i64,
 ) -> Result<()> {
+    let key = cursor_key(root, file);
     conn.execute(
         "INSERT INTO ingest_cursors (file_path, mtime_epoch, size_bytes, last_ingested_at)
          VALUES (?1, ?2, ?3, ?4)
@@ -355,9 +361,13 @@ fn advance_cursor(
              mtime_epoch = excluded.mtime_epoch,
              size_bytes = excluded.size_bytes,
              last_ingested_at = excluded.last_ingested_at",
-        params![file.to_string_lossy(), mtime_epoch, size_bytes, now],
+        params![key, mtime_epoch, size_bytes, now],
     )?;
     Ok(())
+}
+
+fn cursor_key(root: &ScanRoot, file: &Path) -> String {
+    format!("{}\0{}", root.label, file.to_string_lossy())
 }
 
 #[derive(Debug, Clone, Default)]
