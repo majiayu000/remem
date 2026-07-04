@@ -697,7 +697,11 @@ mod tests {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA foreign_keys=OFF;
+             PRAGMA writable_schema=ON;",
+        )?;
         for migration in crate::migrate::MIGRATIONS
             .iter()
             .filter(|migration| migration.version != missing_version)
@@ -719,7 +723,9 @@ mod tests {
             )?;
         }
         conn.execute_batch(&format!(
-            "PRAGMA user_version = {}; PRAGMA foreign_keys=ON;",
+            "PRAGMA writable_schema=OFF;
+             PRAGMA user_version = {};
+             PRAGMA foreign_keys=ON;",
             crate::migrate::latest_schema_version()
         ))?;
         Ok(())
