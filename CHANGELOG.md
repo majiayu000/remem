@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.159` for the GH-716 provider-comparison follow-up:
+  optional local/API embedding profile probe failures are recorded as
+  unavailable rows instead of aborting the whole report.
 - Staged source version `0.5.158` for the GH-716 embedding provider comparison
   eval: EN/CJK paraphrase fixtures, feature-hash/local/API report rows, explicit
   default-flip criteria, and the recorded no-flip decision.
