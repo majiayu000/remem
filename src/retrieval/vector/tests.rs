@@ -252,7 +252,7 @@ fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
 }
 
 #[test]
-fn api_failure_fallback_off_skips_vector_writes_and_backfill() -> Result<()> {
+fn api_failure_fallback_off_returns_provider_error_for_vector_writes_and_backfill() -> Result<()> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
     let handle = std::thread::spawn(move || -> Result<()> {
@@ -276,22 +276,28 @@ fn api_failure_fallback_off_skips_vector_writes_and_backfill() -> Result<()> {
     insert_test_memory(&conn, 1)?;
     ensure_vec_table(&conn)?;
 
-    upsert_memory_embedding(
+    let upsert_error = upsert_memory_embedding(
         &conn,
         1,
         "Credential store",
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
-    )?;
+    )
+    .expect_err("fallback=off after an API failure must not skip vector write errors");
+    let upsert_error = format!("{upsert_error:#}");
+    assert!(upsert_error.contains("provider unavailable"));
+    assert!(upsert_error.contains("fallback off disabled provider fallback"));
     assert_eq!(embedding_count(&conn)?, 0);
 
-    let report = reindex_memory_embeddings_with_report(&conn, 100)?;
+    let reindex_error = reindex_memory_embeddings_with_report(&conn, 100)
+        .expect_err("fallback=off after an API failure must not skip backfill errors");
     handle
         .join()
         .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
-    assert_eq!(report.processed, 0);
-    assert_eq!(report.model, "off");
+    let reindex_error = format!("{reindex_error:#}");
+    assert!(reindex_error.contains("provider unavailable"));
+    assert!(reindex_error.contains("fallback off disabled provider fallback"));
     assert_eq!(embedding_count(&conn)?, 0);
     Ok(())
 }

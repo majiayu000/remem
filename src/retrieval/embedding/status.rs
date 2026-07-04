@@ -20,7 +20,9 @@ impl std::fmt::Display for EmbeddingProviderOffError {
 impl std::error::Error for EmbeddingProviderOffError {}
 
 pub(crate) fn is_embedding_provider_off_error(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<EmbeddingProviderOffError>().is_some()
+    error
+        .downcast_ref::<EmbeddingProviderOffError>()
+        .is_some_and(|error| error.cause.is_none())
 }
 
 pub(super) fn embedding_provider_off_error() -> anyhow::Error {

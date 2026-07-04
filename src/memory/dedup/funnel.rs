@@ -339,7 +339,7 @@ fn observation_token_set(tokens: &[String]) -> BTreeSet<String> {
 fn numeric_tokens_differ(incoming: &[String], existing: &[String]) -> bool {
     let incoming = numeric_signature_counts(incoming);
     let existing = numeric_signature_counts(existing);
-    !incoming.is_empty() && !existing.is_empty() && incoming != existing
+    (!incoming.is_empty() || !existing.is_empty()) && incoming != existing
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -586,10 +586,20 @@ fn is_numeric_unit_token(token: &str) -> bool {
             | "bytes"
             | "gb"
             | "gib"
+            | "h"
+            | "hour"
+            | "hours"
+            | "hr"
+            | "hrs"
             | "kb"
             | "kib"
             | "mb"
             | "mib"
+            | "m"
+            | "min"
+            | "mins"
+            | "minute"
+            | "minutes"
             | "millisecond"
             | "milliseconds"
             | "msec"
@@ -604,6 +614,9 @@ fn is_numeric_unit_token(token: &str) -> bool {
             | "second"
             | "seconds"
             | "secs"
+            | "d"
+            | "day"
+            | "days"
     )
 }
 
@@ -615,6 +628,9 @@ fn normalize_numeric_unit(unit: &str) -> String {
     match unit {
         "" => String::new(),
         "byte" | "bytes" => "b".to_string(),
+        "day" | "days" => "d".to_string(),
+        "hour" | "hours" | "hr" | "hrs" => "h".to_string(),
+        "minute" | "minutes" | "min" | "mins" => "m".to_string(),
         "millisecond" | "milliseconds" | "msec" | "msecs" => "ms".to_string(),
         "pct" | "percent" | "percentage" | "%" => "%".to_string(),
         "sec" | "secs" | "second" | "seconds" => "s".to_string(),

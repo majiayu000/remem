@@ -307,7 +307,7 @@ fn active_preference_embedding_with_fallback_cache(
                 Err(error).context("active preference embedding provider failed")
             }
         }
-        Err(error) => Err(error),
+        Err(error) => Err(error).context("active preference embedding provider failed"),
     }
 }
 

@@ -580,6 +580,43 @@ fn check_duplicate_vector_stage_keeps_signed_numeric_changes_separate() -> Resul
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_one_sided_numeric_facts_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout to 30 seconds",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Configuration update\nSet timeout",
+            None,
+        )?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_duration_unit_changes_separate() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set timeout to 1 minute")?;
+        let duplicate_id = check_duplicate(&conn, "test-project", "Set timeout to 1 hour", None)?;
+
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_dedups_grouped_numeric_formatting() -> Result<()> {
     with_embedding_provider("feature-hash", || -> Result<()> {
         let conn = Connection::open_in_memory()?;
@@ -631,7 +668,7 @@ fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
 }
 
 #[test]
-fn check_duplicate_vector_stage_skips_when_candidate_fallback_turns_off() -> Result<()> {
+fn check_duplicate_vector_stage_propagates_when_candidate_fallback_turns_off() -> Result<()> {
     use std::io::{Read, Write};
 
     with_embedding_provider("api", || -> Result<()> {
@@ -675,17 +712,20 @@ fn check_duplicate_vector_stage_skips_when_candidate_fallback_turns_off() -> Res
             "test-project",
             "SQLCipher encrypts private secrets at rest.",
         )?;
-        let duplicate_id = check_duplicate(
+        let error = check_duplicate(
             &conn,
             "test-project",
             "Protect private secrets at rest with encryption.",
             None,
-        )?;
+        )
+        .expect_err("fallback=off after an API failure must not skip observation dedup errors");
 
         handle
             .join()
             .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
-        assert_eq!(duplicate_id, None);
+        let error = format!("{error:#}");
+        assert!(error.contains("provider unavailable"));
+        assert!(error.contains("fallback off disabled provider fallback"));
         Ok(())
     })
 }
