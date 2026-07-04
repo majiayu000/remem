@@ -220,6 +220,32 @@ fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+fn assert_vector_write_and_backfill_error(conn: &Connection, expected: &[&str]) -> Result<()> {
+    let upsert_error = upsert_memory_embedding(
+        conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )
+    .expect_err("fallback=off provider failures must not skip vector write errors");
+    let upsert_error = format!("{upsert_error:#}");
+    for expected in expected {
+        assert!(upsert_error.contains(expected));
+    }
+    assert_eq!(embedding_count(conn)?, 0);
+
+    let reindex_error = reindex_memory_embeddings_with_report(conn, 100)
+        .expect_err("fallback=off provider failures must not skip backfill errors");
+    let reindex_error = format!("{reindex_error:#}");
+    for expected in expected {
+        assert!(reindex_error.contains(expected));
+    }
+    assert_eq!(embedding_count(conn)?, 0);
+    Ok(())
+}
+
 #[test]
 fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
     let conn = setup_vector_conn_with_provider("off")?;
@@ -252,53 +278,34 @@ fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
 }
 
 #[test]
-fn api_failure_fallback_off_returns_provider_error_for_vector_writes_and_backfill() -> Result<()> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let addr = listener.local_addr()?;
-    let handle = std::thread::spawn(move || -> Result<()> {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept()?;
-            let mut buffer = [0_u8; 8192];
-            std::io::Read::read(&mut stream, &mut buffer)?;
-            let body = "provider unavailable";
-            let response = format!(
-                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            std::io::Write::write_all(&mut stream, response.as_bytes())?;
-        }
-        Ok(())
-    });
-    let _provider = ScopedEmbeddingProvider::api_fallback_off(&format!("http://{addr}/v1"));
+fn fallback_off_returns_provider_error_for_vector_writes_and_backfill() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
     insert_test_memory(&conn, 1)?;
     ensure_vec_table(&conn)?;
 
-    let upsert_error = upsert_memory_embedding(
-        &conn,
-        1,
-        "Credential store",
-        "SQLCipher encrypts secrets at rest.",
-        "architecture",
-        None,
-    )
-    .expect_err("fallback=off after an API failure must not skip vector write errors");
-    let upsert_error = format!("{upsert_error:#}");
-    assert!(upsert_error.contains("provider unavailable"));
-    assert!(upsert_error.contains("fallback off disabled provider fallback"));
-    assert_eq!(embedding_count(&conn)?, 0);
+    {
+        let server = FailingEmbeddingServer::start()?;
+        let _provider = ScopedEmbeddingProvider::api_fallback_off(&server.base_url);
+        assert_vector_write_and_backfill_error(
+            &conn,
+            &[
+                "provider unavailable",
+                "fallback off disabled provider fallback",
+            ],
+        )?;
+        assert_eq!(server.call_count(), 2);
+    }
 
-    let reindex_error = reindex_memory_embeddings_with_report(&conn, 100)
-        .expect_err("fallback=off after an API failure must not skip backfill errors");
-    handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
-    let reindex_error = format!("{reindex_error:#}");
-    assert!(reindex_error.contains("provider unavailable"));
-    assert!(reindex_error.contains("fallback off disabled provider fallback"));
-    assert_eq!(embedding_count(&conn)?, 0);
+    let _provider = ScopedEmbeddingProvider::new("api");
+    unsafe { std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off") };
+    assert_vector_write_and_backfill_error(
+        &conn,
+        &[
+            "requires REMEM_EMBEDDINGS_API_KEY",
+            "fallback off disabled provider fallback",
+        ],
+    )?;
     Ok(())
 }
 

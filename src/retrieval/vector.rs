@@ -108,7 +108,7 @@ pub fn ensure_vec_table(conn: &Connection) -> Result<()> {
 }
 
 pub fn upsert_embedding(conn: &Connection, memory_id: i64, embedding: &[f32]) -> Result<()> {
-    if super::embedding::embedding_provider_status_without_probe()?.disabled {
+    if super::embedding::provider_disabled_or_error()? {
         return Ok(());
     }
     upsert_embedding_with_metadata(
@@ -129,7 +129,7 @@ pub fn upsert_memory_embedding(
     memory_type: &str,
     topic_key: Option<&str>,
 ) -> Result<()> {
-    if super::embedding::embedding_provider_status_without_probe()?.disabled {
+    if super::embedding::provider_disabled_or_error()? {
         return Ok(());
     }
     let embedding = match super::embedding::embed_memory(title, content, memory_type, topic_key) {
@@ -214,7 +214,7 @@ pub fn reindex_memory_embeddings_with_report(
 ) -> Result<EmbeddingReindexReport> {
     let total_start = Instant::now();
     let mut timings = vec![];
-    if super::embedding::embedding_provider_status_without_probe()?.disabled {
+    if super::embedding::provider_disabled_or_error()? {
         crate::perf::push_elapsed(&mut timings, "total", total_start);
         return Ok(EmbeddingReindexReport {
             selected: 0,
@@ -469,7 +469,7 @@ fn prepare_memory_embedding(
 }
 
 fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
-    if super::embedding::embedding_provider_status_without_probe()?.disabled {
+    if super::embedding::provider_disabled_or_error()? {
         return Ok(0);
     }
     if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
@@ -549,7 +549,7 @@ pub fn vector_search_embedding_filtered(
     if limit == 0 {
         return Ok(VectorSearchOutcome::ready(vec![]));
     }
-    if super::embedding::embedding_provider_status_without_probe()?.disabled {
+    if super::embedding::provider_disabled_or_error()? {
         return Ok(VectorSearchOutcome::disabled("embedding provider is off"));
     }
     if !table_exists(conn, "memory_embeddings")? {

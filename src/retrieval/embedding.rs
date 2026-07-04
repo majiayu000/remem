@@ -271,8 +271,9 @@ pub(crate) fn configured_backfill_target() -> Result<EmbeddingBackfillTarget> {
 pub(crate) fn configured_backfill_target_with_fallback_cache(
     cache: &mut EmbeddingFallbackCache,
 ) -> Result<EmbeddingBackfillTarget> {
-    if embedding_provider_status_without_probe()?.disabled {
-        return Err(status::embedding_provider_off_error());
+    let status = embedding_provider_status_without_probe()?;
+    if let Some(error) = disabled_provider_status_error(&status) {
+        return Err(error);
     }
     let probe = embed_text_with_fallback_cache(
         "remem embedding profile probe",
@@ -295,6 +296,29 @@ pub fn embedding_provider_status() -> Result<EmbeddingProviderStatus> {
 pub(crate) fn embedding_provider_status_without_probe() -> Result<EmbeddingProviderStatus> {
     let config = resolve_embedding_config()?;
     Ok(status::resolve_provider_status(&config))
+}
+
+pub(crate) fn disabled_provider_status_error(
+    status: &EmbeddingProviderStatus,
+) -> Option<anyhow::Error> {
+    if !status.disabled {
+        return None;
+    }
+    status
+        .degradation_reason
+        .clone()
+        .or_else(|| status.unavailable_reason.clone())
+        .map(status::embedding_provider_off_error_with_cause)
+        .or_else(|| Some(status::embedding_provider_off_error()))
+}
+
+pub(crate) fn provider_disabled_or_error() -> Result<bool> {
+    let status = embedding_provider_status_without_probe()?;
+    match disabled_provider_status_error(&status) {
+        Some(error) if is_embedding_provider_off_error(&error) => Ok(true),
+        Some(error) => Err(error),
+        None => Ok(false),
+    }
 }
 
 pub(crate) fn configured_local_embedding_model_id(config: &EmbeddingConfig) -> Result<String> {

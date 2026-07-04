@@ -104,3 +104,32 @@ fn search_returns_provider_error_when_api_failure_falls_back_to_off() -> Result<
         Ok(())
     })
 }
+
+#[test]
+fn search_returns_provider_error_when_fallback_off_provider_is_unavailable_before_call(
+) -> Result<()> {
+    with_clean_search_embedding_env(|| -> Result<()> {
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+        }
+        let conn = setup_search_conn()?;
+        insert_search_memory(&conn)?;
+
+        let error = search_with_branch_explain(
+            &conn,
+            Some("Semantic fallback"),
+            Some("/repo"),
+            None,
+            5,
+            0,
+            false,
+            None,
+        )
+        .expect_err("fallback=off provider status failures must not disable vector search");
+        let error = format!("{error:#}");
+        assert!(error.contains("requires REMEM_EMBEDDINGS_API_KEY"));
+        assert!(error.contains("fallback off disabled provider fallback"));
+        Ok(())
+    })
+}

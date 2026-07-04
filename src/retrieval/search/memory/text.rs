@@ -442,7 +442,12 @@ fn build_query_search_plan(
     }
 
     let embedding_status = crate::retrieval::embedding::embedding_provider_status_without_probe()?;
-    if embedding_status.disabled {
+    if let Some(error) =
+        crate::retrieval::embedding::disabled_provider_status_error(&embedding_status)
+    {
+        if !crate::retrieval::embedding::is_embedding_provider_off_error(&error) {
+            return Err(error.context("query vector embedding provider unavailable"));
+        }
         channels.push(NamedChannel::disabled(
             "vector",
             weights.vector,
