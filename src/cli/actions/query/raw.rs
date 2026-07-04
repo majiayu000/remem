@@ -3,7 +3,10 @@ use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::cli::types::{RawAction, RawRole};
-use crate::memory::raw_archive::{RawMessage, RawSearchRequest};
+use crate::memory::raw_archive::{
+    build_sessions_json, list_sessions, parse_time_bound, RawMessage, RawSearchRequest,
+    RawSessionQuery, RawSessionSummary,
+};
 use crate::{db, memory::raw_archive::search_raw_messages};
 
 use super::show::format_memory_timestamp;
@@ -17,6 +20,8 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             role,
             limit,
             offset,
+            since,
+            until,
             json,
         } => run_raw_search(
             &query,
@@ -25,11 +30,27 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             role,
             limit,
             offset,
+            since.as_deref().map(parse_time_bound).transpose()?,
+            until.as_deref().map(parse_time_bound).transpose()?,
+            json,
+        ),
+        RawAction::Sessions {
+            since,
+            until,
+            project,
+            sample,
+            json,
+        } => run_raw_sessions(
+            since.as_deref().map(parse_time_bound).transpose()?,
+            until.as_deref().map(parse_time_bound).transpose()?,
+            project.as_deref(),
+            sample,
             json,
         ),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_raw_search(
     query: &str,
     project: Option<&str>,
@@ -37,6 +58,8 @@ pub(super) fn run_raw_search(
     role: Option<RawRole>,
     limit: i64,
     offset: i64,
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
     json: bool,
 ) -> Result<()> {
     let conn = db::open_db()?;
@@ -49,6 +72,8 @@ pub(super) fn run_raw_search(
         role.map(RawRole::as_str),
         normalized_limit + 1,
         normalized_offset,
+        since_epoch,
+        until_epoch,
     );
     let mut rows = search_raw_archive(&conn, &request)?;
     let has_more = rows.len() as i64 > normalized_limit;
@@ -62,6 +87,8 @@ pub(super) fn run_raw_search(
             role.map(RawRole::as_str),
             normalized_limit,
             normalized_offset,
+            since_epoch,
+            until_epoch,
             has_more,
             &rows,
         );
@@ -76,6 +103,7 @@ pub(super) fn run_raw_search(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_raw_search_request(
     query: &str,
     project: Option<&str>,
@@ -83,6 +111,8 @@ pub(super) fn build_raw_search_request(
     role: Option<&str>,
     limit: i64,
     offset: i64,
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
 ) -> RawSearchRequest {
     RawSearchRequest {
         query: query.to_string(),
@@ -91,7 +121,58 @@ pub(super) fn build_raw_search_request(
         role: role.map(str::to_string),
         limit,
         offset,
+        since_epoch,
+        until_epoch,
     }
+}
+
+pub(super) fn run_raw_sessions(
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
+    project: Option<&str>,
+    sample: i64,
+    json: bool,
+) -> Result<()> {
+    let conn = db::open_db()?;
+    let query = RawSessionQuery {
+        since_epoch,
+        until_epoch,
+        project: project.map(str::to_string),
+        sample_user_messages: sample.max(0),
+    };
+    let sessions = list_sessions(&conn, &query)?;
+
+    if json {
+        let output = build_sessions_json(&query, sessions);
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    print!("{}", render_raw_sessions(&sessions));
+    Ok(())
+}
+
+pub(super) fn render_raw_sessions(sessions: &[RawSessionSummary]) -> String {
+    let mut output = String::new();
+    if sessions.is_empty() {
+        output.push_str("No sessions with raw messages in this window.\n");
+        return output;
+    }
+    output.push_str(&format!("{} sessions in window:\n\n", sessions.len()));
+    for session in sessions {
+        output.push_str(&format!(
+            "  [{}] {} | {} | {} .. {} | {} messages\n",
+            session.source_root,
+            session.project,
+            session.session_id,
+            format_memory_timestamp(session.first_epoch),
+            format_memory_timestamp(session.last_epoch),
+            session.message_count
+        ));
+        for sample in &session.user_message_samples {
+            output.push_str(&format!("      user: {}\n", sample.replace('\n', " ")));
+        }
+    }
+    output
 }
 
 pub(super) fn search_raw_archive(
@@ -133,6 +214,7 @@ pub(super) fn render_raw_search_results(
     output
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_raw_search_json(
     query: &str,
     project: Option<&str>,
@@ -140,6 +222,8 @@ pub(super) fn build_raw_search_json(
     role: Option<&str>,
     limit: i64,
     offset: i64,
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
     has_more: bool,
     rows: &[RawMessage],
 ) -> RawSearchJson {
@@ -152,6 +236,8 @@ pub(super) fn build_raw_search_json(
         role: role.map(str::to_string),
         limit: normalized_limit,
         offset: normalized_offset,
+        since_epoch,
+        until_epoch,
         source_type: "raw_archive".to_string(),
         note: "raw archive rows are captured chat turns, not curated memories".to_string(),
         count: rows.len(),
@@ -169,6 +255,10 @@ pub(super) struct RawSearchJson {
     pub role: Option<String>,
     pub limit: i64,
     pub offset: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since_epoch: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until_epoch: Option<i64>,
     pub source_type: String,
     pub note: String,
     pub count: usize,

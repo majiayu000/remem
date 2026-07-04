@@ -145,6 +145,8 @@ fn maybe_fallback_raw(
         role: None,
         limit: RAW_FALLBACK_LIMIT,
         offset: 0,
+        since_epoch: None,
+        until_epoch: None,
     };
     match crate::memory::raw_archive::search_raw_messages(conn, &raw_req) {
         Ok(hits) => (hits, None),

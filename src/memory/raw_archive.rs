@@ -427,6 +427,12 @@ pub struct RawSearchRequest {
     pub role: Option<String>,
     pub limit: i64,
     pub offset: i64,
+    /// Inclusive lower bound on `created_at_epoch`. None keeps the
+    /// pre-window behavior (issue #723).
+    pub since_epoch: Option<i64>,
+    /// Inclusive upper bound on `created_at_epoch`. None keeps the
+    /// pre-window behavior (issue #723).
+    pub until_epoch: Option<i64>,
 }
 
 pub fn search_raw_messages(conn: &Connection, req: &RawSearchRequest) -> Result<Vec<RawMessage>> {
@@ -461,6 +467,16 @@ pub fn search_raw_messages(conn: &Connection, req: &RawSearchRequest) -> Result<
         sql.push_str(&(binds.len() + 1).to_string());
         binds.push(Box::new(role.to_string()));
     }
+    if let Some(since) = req.since_epoch {
+        sql.push_str(" AND r.created_at_epoch >= ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(since));
+    }
+    if let Some(until) = req.until_epoch {
+        sql.push_str(" AND r.created_at_epoch <= ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(until));
+    }
 
     sql.push_str(&format!(
         " ORDER BY r.created_at_epoch DESC LIMIT {} OFFSET {}",
@@ -490,6 +506,191 @@ pub fn search_raw_messages(conn: &Connection, req: &RawSearchRequest) -> Result<
         out.push(row?);
     }
     Ok(out)
+}
+
+/// Query parameters for the window session listing (issue #723).
+#[derive(Debug, Clone, Default)]
+pub struct RawSessionQuery {
+    /// Inclusive lower bound on `created_at_epoch`.
+    pub since_epoch: Option<i64>,
+    /// Inclusive upper bound on `created_at_epoch`.
+    pub until_epoch: Option<i64>,
+    /// Restrict to one project path.
+    pub project: Option<String>,
+    /// Sample up to this many role=user message texts per session, ascending
+    /// by epoch. 0 disables sampling.
+    pub sample_user_messages: i64,
+}
+
+/// Truncation bound for sampled user message texts.
+const SESSION_SAMPLE_PREVIEW_CHARS: usize = 200;
+
+/// One session seen inside the query window. Serialized shape is the shared
+/// CLI/MCP JSON contract (product invariant 10).
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct RawSessionSummary {
+    pub source_root: String,
+    pub project: String,
+    pub session_id: String,
+    /// Min/max `created_at_epoch` among the session's messages in the window.
+    pub first_epoch: i64,
+    pub last_epoch: i64,
+    pub message_count: i64,
+    /// First N role=user message texts (truncated), ascending by epoch.
+    pub user_message_samples: Vec<String>,
+}
+
+/// List sessions with messages inside the window, grouped by
+/// `(source_root, project, session_id)` and ordered by first message epoch.
+pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<RawSessionSummary>> {
+    let mut sql = String::from(
+        "SELECT source_root, project, session_id, \
+                MIN(created_at_epoch), MAX(created_at_epoch), COUNT(*) \
+         FROM raw_messages WHERE 1=1",
+    );
+    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    push_session_filters(&mut sql, &mut binds, query);
+    sql.push_str(" GROUP BY source_root, project, session_id ORDER BY MIN(created_at_epoch) ASC");
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(crate::db::to_sql_refs(&binds)),
+        |row| {
+            Ok(RawSessionSummary {
+                source_root: row.get(0)?,
+                project: row.get(1)?,
+                session_id: row.get(2)?,
+                first_epoch: row.get(3)?,
+                last_epoch: row.get(4)?,
+                message_count: row.get(5)?,
+                user_message_samples: Vec::new(),
+            })
+        },
+    )?;
+
+    let mut sessions = Vec::new();
+    for row in rows {
+        sessions.push(row?);
+    }
+    if query.sample_user_messages > 0 {
+        for session in &mut sessions {
+            session.user_message_samples = sample_user_messages(conn, query, session)?;
+        }
+    }
+    Ok(sessions)
+}
+
+fn push_session_filters(
+    sql: &mut String,
+    binds: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    query: &RawSessionQuery,
+) {
+    if let Some(project) = query.project.as_deref() {
+        sql.push_str(" AND project = ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(project.to_string()));
+    }
+    if let Some(since) = query.since_epoch {
+        sql.push_str(" AND created_at_epoch >= ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(since));
+    }
+    if let Some(until) = query.until_epoch {
+        sql.push_str(" AND created_at_epoch <= ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(until));
+    }
+}
+
+fn sample_user_messages(
+    conn: &Connection,
+    query: &RawSessionQuery,
+    session: &RawSessionSummary,
+) -> Result<Vec<String>> {
+    let mut sql = String::from(
+        "SELECT content FROM raw_messages \
+         WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 AND role = ?4",
+    );
+    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+        Box::new(session.source_root.clone()),
+        Box::new(session.project.clone()),
+        Box::new(session.session_id.clone()),
+        Box::new(ROLE_USER.to_string()),
+    ];
+    if let Some(since) = query.since_epoch {
+        sql.push_str(" AND created_at_epoch >= ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(since));
+    }
+    if let Some(until) = query.until_epoch {
+        sql.push_str(" AND created_at_epoch <= ?");
+        sql.push_str(&(binds.len() + 1).to_string());
+        binds.push(Box::new(until));
+    }
+    sql.push_str(&format!(
+        " ORDER BY created_at_epoch ASC, id ASC LIMIT {}",
+        query.sample_user_messages.max(0)
+    ));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        rusqlite::params_from_iter(crate::db::to_sql_refs(&binds)),
+        |row| row.get::<_, String>(0),
+    )?;
+    let mut samples = Vec::new();
+    for row in rows {
+        let content = row?;
+        samples.push(content.chars().take(SESSION_SAMPLE_PREVIEW_CHARS).collect());
+    }
+    Ok(samples)
+}
+
+/// Shared CLI/MCP JSON envelope for the window session listing so both
+/// surfaces emit identical fields (product invariant 10).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RawSessionsJson {
+    pub since_epoch: Option<i64>,
+    pub until_epoch: Option<i64>,
+    pub project: Option<String>,
+    pub sample: i64,
+    pub count: usize,
+    pub sessions: Vec<RawSessionSummary>,
+}
+
+pub fn build_sessions_json(
+    query: &RawSessionQuery,
+    sessions: Vec<RawSessionSummary>,
+) -> RawSessionsJson {
+    RawSessionsJson {
+        since_epoch: query.since_epoch,
+        until_epoch: query.until_epoch,
+        project: query.project.clone(),
+        sample: query.sample_user_messages,
+        count: sessions.len(),
+        sessions,
+    }
+}
+
+/// Parse a time bound given as Unix epoch seconds, an ISO8601 datetime, or a
+/// plain `YYYY-MM-DD` date (interpreted as UTC midnight). Shared by the CLI
+/// and MCP raw query surfaces (issue #723) and `ingest-sessions --since`.
+pub fn parse_time_bound(value: &str) -> Result<i64> {
+    let trimmed = value.trim();
+    if let Ok(epoch) = trimmed.parse::<i64>() {
+        return Ok(epoch);
+    }
+    if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Ok(datetime.timestamp());
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        let midnight = date
+            .and_hms_opt(0, 0, 0)
+            .expect("midnight is a valid time of day");
+        return Ok(midnight.and_utc().timestamp());
+    }
+    anyhow::bail!(
+        "invalid time bound {trimmed:?}: expected Unix epoch, ISO8601 datetime, or YYYY-MM-DD"
+    );
 }
 
 fn fts_query(query: &str) -> String {
