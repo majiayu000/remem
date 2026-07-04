@@ -74,8 +74,10 @@ dedup/preference consolidation inherit the same non-semantic ceiling.
       slice.
 - [ ] GH-715 lands local semantic model download/runtime support, multi-model
       vector storage, same-model cosine filtering, and backfill.
-- [ ] GH-716 commits provider comparison eval evidence and records the default
-      provider decision before any default flip.
+- [x] GH-716 commits provider comparison eval evidence and records the default
+      provider decision before any default flip. Evidence:
+      `eval/provider-comparison/report.json`; decision: keep the default
+      unchanged until local/API comparison rows are available.
 - [ ] GH-717 updates downstream semantic dedup and preference consolidation
       after the eval gate.
 - [ ] GH-682 is closed only after all phase issues and the eval evidence are

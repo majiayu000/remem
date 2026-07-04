@@ -1,240 +1,258 @@
 {
-  "version": "2026-07-03",
-  "default_max_drop": 0.0,
+  "version": "2026-07-04",
+  "default_max_drop": 0,
   "metrics": {
     "capacity.degradation.channel.entity.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.entity.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.entity.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.fact.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.fact.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.fact.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.fts.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.fts.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.fts.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.like_fallback.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.like_fallback.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.like_fallback.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.temporal.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.temporal.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.temporal.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.vector.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.vector.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.channel.vector.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.fused.evidence_recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.fused.ndcg_at_10_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "capacity.degradation.fused.recall_at_k_loss": {
-      "max_drop": 0.0,
-      "max_increase": 0.0
+      "max_drop": 0,
+      "max_increase": 0
     },
     "current_memory_contracts.all_checks": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.current_state.ambiguous": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.current_state.current": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.current_state.no_current": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.current_state.unresolved_conflict": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.injection.audit_abstained": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.injection.audit_dropped": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.injection.audit_injected": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.injection.output_gate_recorded": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.staleness.error": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.staleness.history_tracked": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.staleness.tracked": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.staleness.untracked": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.staleness.verify_before_trust": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.temporal.as_of_fact_retrieval": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.temporal.expired_fact_exclusion": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.temporal.invalidated_fact_exclusion": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.usage.citation_event_matched": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.usage.citation_event_no_citation": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "current_memory_contracts.usage.usage_event_linked_to_injection_item": {
-      "max_drop": 0.0
-    },
-    "injection.abstention_false_positive_bound": {
-      "max_drop": 0.0
-    },
-    "injection.block_churn_one_added_prefix_preserved": {
-      "max_drop": 0.0
-    },
-    "injection.block_churn_unchanged": {
-      "max_drop": 0.0
-    },
-    "injection.user_prompt_submit_abstention_false_positive_bound": {
-      "max_drop": 0.0
-    },
-    "injection.user_prompt_submit_memory_recall": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.abstention.abstention_pass_rate": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.knowledge_update.evidence_recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.knowledge_update.hit_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.knowledge_update.mrr_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.knowledge_update.ndcg_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.knowledge_update.precision_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.knowledge_update.recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.multi_hop.evidence_recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.multi_hop.hit_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.multi_hop.mrr_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.multi_hop.ndcg_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.multi_hop.precision_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.multi_hop.recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.paraphrase.evidence_recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.paraphrase.hit_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.paraphrase.mrr_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.paraphrase.ndcg_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.paraphrase.precision_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.paraphrase.recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
+    },
+    "golden.slice.provider_comparison.evidence_recall_at_k": {
+      "max_drop": 0
+    },
+    "golden.slice.provider_comparison.hit_at_k": {
+      "max_drop": 0
+    },
+    "golden.slice.provider_comparison.mrr_at_10": {
+      "max_drop": 0
+    },
+    "golden.slice.provider_comparison.ndcg_at_10": {
+      "max_drop": 0
+    },
+    "golden.slice.provider_comparison.precision_at_k": {
+      "max_drop": 0
+    },
+    "golden.slice.provider_comparison.recall_at_k": {
+      "max_drop": 0
     },
     "golden.slice.temporal.evidence_recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.temporal.hit_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.temporal.mrr_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.temporal.ndcg_at_10": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.temporal.precision_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
     },
     "golden.slice.temporal.recall_at_k": {
-      "max_drop": 0.0
+      "max_drop": 0
+    },
+    "injection.abstention_false_positive_bound": {
+      "max_drop": 0
+    },
+    "injection.block_churn_one_added_prefix_preserved": {
+      "max_drop": 0
+    },
+    "injection.block_churn_unchanged": {
+      "max_drop": 0
+    },
+    "injection.user_prompt_submit_abstention_false_positive_bound": {
+      "max_drop": 0
+    },
+    "injection.user_prompt_submit_memory_recall": {
+      "max_drop": 0
     }
   }
 }

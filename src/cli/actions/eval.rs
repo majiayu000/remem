@@ -5,7 +5,9 @@ use anyhow::{bail, Context, Result};
 
 use crate::db;
 
-use crate::cli::eval_types::{BenchAction, BenchCodingArgs, EvalCapacityArgs, EvalCodingBenchArgs};
+use crate::cli::eval_types::{
+    BenchAction, BenchCodingArgs, EvalCapacityArgs, EvalCodingBenchArgs, EvalProviderComparisonArgs,
+};
 
 pub(in crate::cli) fn run_bench(action: BenchAction) -> Result<()> {
     match action {
@@ -220,6 +222,36 @@ pub(in crate::cli) fn run_eval_gates(
     }
     if !report.summary.passed {
         bail!("eval-gates checks failed");
+    }
+    Ok(())
+}
+
+pub(in crate::cli) fn run_eval_provider_comparison(args: EvalProviderComparisonArgs) -> Result<()> {
+    let report = crate::eval::provider_comparison::run_provider_comparison_eval(
+        crate::eval::provider_comparison::ProviderComparisonOptions {
+            dataset_path: args.dataset,
+            k: args.k,
+            json_out: args.json_out.clone(),
+            allow_api: args.allow_api,
+        },
+    )?;
+    let report_json = serde_json::to_string_pretty(&report)?;
+    if let Some(parent) = Path::new(&args.json_out).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "create provider comparison report directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    fs::write(&args.json_out, &report_json)
+        .with_context(|| format!("write provider comparison eval JSON {}", args.json_out))?;
+    if args.json {
+        println!("{report_json}");
+    } else {
+        print!("{report}");
     }
     Ok(())
 }

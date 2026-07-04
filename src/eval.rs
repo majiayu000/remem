@@ -6,6 +6,7 @@ pub mod current_memory_contracts;
 pub mod e2e;
 pub mod extraction;
 pub mod memory_bench;
+pub mod provider_comparison;
 pub mod gates {
     use std::collections::{BTreeMap, BTreeSet};
     use std::fmt::{self, Display};

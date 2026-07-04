@@ -477,6 +477,8 @@ pub(super) enum Commands {
     },
     #[command(name = "eval-extraction")]
     EvalExtraction(super::eval_types::EvalExtractionArgs),
+    #[command(name = "eval-provider-comparison")]
+    EvalProviderComparison(super::eval_types::EvalProviderComparisonArgs),
     #[command(name = "eval-graph-decision")]
     EvalGraphDecision(super::eval_types::EvalGraphDecisionArgs),
     #[command(name = "eval-associative-baseline")]

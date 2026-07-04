@@ -1107,6 +1107,66 @@
         }
       ],
       "notes": "Associative fixture for #676: query reaches the target only through the documented entity hop."
+    },
+    {
+      "id": "provider-comparison-en-01",
+      "query": "who okayed reel buffer recovery during lamp backlog?",
+      "category": "retrieval",
+      "slice": "provider_comparison",
+      "project": "synthetic/providerlab-en",
+      "evidence_refs": [
+        {
+          "topic_key": "providerlab-lantern-cache-recovery",
+          "memory_type": "decision",
+          "text_contains": "Ari Vale approved rotating the spool cache when the lantern queue stalls."
+        }
+      ],
+      "notes": "English synonym/paraphrase fixture for GH-716 provider comparison; intentionally avoids target wording overlap where practical."
+    },
+    {
+      "id": "provider-comparison-en-02",
+      "query": "which stone catalog handles fast redundant cleanup?",
+      "category": "retrieval",
+      "slice": "provider_comparison",
+      "project": "synthetic/providerlab-en",
+      "evidence_refs": [
+        {
+          "topic_key": "providerlab-pebble-index-choice",
+          "memory_type": "decision",
+          "text_contains": "Nolan Seto chose the pebble index for rapid duplicate pruning."
+        }
+      ],
+      "notes": "English synonym/paraphrase fixture for GH-716 provider comparison."
+    },
+    {
+      "id": "provider-comparison-cjk-01",
+      "query": "哪个同事负责账户访问频率限制？",
+      "category": "retrieval",
+      "slice": "provider_comparison",
+      "project": "synthetic/providerlab-cjk",
+      "evidence_refs": [
+        {
+          "topic_key": "providerlab-cjk-throttle-owner",
+          "memory_type": "decision",
+          "text_contains": "星岚项目把登录节流窗口交给林浅维护"
+        }
+      ],
+      "notes": "CJK synonym/paraphrase fixture for GH-716 provider comparison."
+    },
+    {
+      "id": "provider-comparison-cjk-02",
+      "query": "灾备还原预案是谁同意的？",
+      "category": "retrieval",
+      "slice": "provider_comparison",
+      "project": "synthetic/providerlab-cjk",
+      "evidence_refs": [
+        {
+          "topic_key": "providerlab-cjk-recovery-approver",
+          "memory_type": "decision",
+          "text_contains": "夜间备份恢复方案由周宁批准"
+        }
+      ],
+      "notes": "CJK synonym/paraphrase fixture for GH-716 provider comparison."
     }
   ],
   "corpus": [
@@ -1721,6 +1781,34 @@
       "content": "Issue #9188 assigns reviewer Nia Holt.",
       "memory_type": "decision",
       "branch": "main"
+    },
+    {
+      "project": "synthetic/providerlab-en",
+      "topic_key": "providerlab-lantern-cache-recovery",
+      "title": "Lantern Cache Recovery Owner",
+      "content": "Ari Vale approved rotating the spool cache when the lantern queue stalls.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/providerlab-en",
+      "topic_key": "providerlab-pebble-index-choice",
+      "title": "Pebble Index Choice",
+      "content": "Nolan Seto chose the pebble index for rapid duplicate pruning.",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/providerlab-cjk",
+      "topic_key": "providerlab-cjk-throttle-owner",
+      "title": "星岚登录节流负责人",
+      "content": "星岚项目把登录节流窗口交给林浅维护，限额是每小时七次。",
+      "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/providerlab-cjk",
+      "topic_key": "providerlab-cjk-recovery-approver",
+      "title": "墨河夜间备份恢复批准人",
+      "content": "墨河项目的夜间备份恢复方案由周宁批准，先校验影子副本。",
+      "memory_type": "decision"
     }
   ]
 }

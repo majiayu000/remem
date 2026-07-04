@@ -191,6 +191,33 @@ fn cli_parses_eval_gates_options() {
 }
 
 #[test]
+fn cli_parses_eval_provider_comparison_options() {
+    let cli = Cli::parse_from([
+        "remem",
+        "eval-provider-comparison",
+        "--dataset",
+        "fixtures/golden.json",
+        "--json-out",
+        "/tmp/provider-comparison.json",
+        "--json",
+        "--allow-api",
+        "-k",
+        "7",
+    ]);
+
+    match cli.command {
+        Commands::EvalProviderComparison(args) => {
+            assert_eq!(args.dataset, "fixtures/golden.json");
+            assert_eq!(args.json_out, "/tmp/provider-comparison.json");
+            assert_eq!(args.k, 7);
+            assert!(args.json);
+            assert!(args.allow_api);
+        }
+        _ => panic!("expected eval-provider-comparison command"),
+    }
+}
+
+#[test]
 fn cli_parses_eval_graph_decision_options() {
     let cli = Cli::parse_from([
         "remem",
