@@ -5,17 +5,21 @@ use super::raw_archive::{ROLE_ASSISTANT, ROLE_USER};
 pub(crate) struct ParsedTranscriptMessage {
     pub role: &'static str,
     pub text: String,
+    pub created_at_epoch: Option<i64>,
 }
 
 pub(crate) fn parse_transcript_message(value: &Value) -> Option<ParsedTranscriptMessage> {
+    let created_at_epoch = transcript_timestamp_epoch(value);
     match value.get("type").and_then(Value::as_str)? {
         "user" => Some(ParsedTranscriptMessage {
             role: ROLE_USER,
             text: extract_content_text(&value["message"]["content"]),
+            created_at_epoch,
         }),
         "assistant" => Some(ParsedTranscriptMessage {
             role: ROLE_ASSISTANT,
             text: extract_content_text(&value["message"]["content"]),
+            created_at_epoch,
         }),
         "response_item" => parse_codex_response_item(value),
         _ => None,
@@ -30,6 +34,7 @@ fn parse_codex_response_item(value: &Value) -> Option<ParsedTranscriptMessage> {
     Some(ParsedTranscriptMessage {
         role: transcript_role(payload.get("role").and_then(Value::as_str)?)?,
         text: extract_content_text(&payload["content"]),
+        created_at_epoch: transcript_timestamp_epoch(value),
     })
 }
 
@@ -61,6 +66,32 @@ fn extract_content_text(content: &Value) -> String {
     String::new()
 }
 
+fn transcript_timestamp_epoch(value: &Value) -> Option<i64> {
+    value
+        .get("timestamp")
+        .or_else(|| value.get("created_at"))
+        .or_else(|| value.get("createdAt"))
+        .or_else(|| {
+            value
+                .get("payload")
+                .and_then(|payload| payload.get("timestamp"))
+        })
+        .and_then(parse_timestamp_value)
+}
+
+fn parse_timestamp_value(value: &Value) -> Option<i64> {
+    if let Some(epoch) = value.as_i64() {
+        return Some(epoch);
+    }
+    let text = value.as_str()?.trim();
+    if let Ok(epoch) = text.parse::<i64>() {
+        return Some(epoch);
+    }
+    chrono::DateTime::parse_from_rfc3339(text)
+        .map(|datetime| datetime.timestamp())
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +107,7 @@ mod tests {
 
         assert_eq!(parsed.role, ROLE_ASSISTANT);
         assert_eq!(parsed.text, "kept");
+        assert_eq!(parsed.created_at_epoch, None);
     }
 
     #[test]
@@ -98,5 +130,17 @@ mod tests {
                 "Codex rollout assistant text should enter the raw archive."
             ]
         );
+    }
+
+    #[test]
+    fn parses_transcript_timestamp_epoch() {
+        let value: Value = serde_json::from_str(
+            r#"{"timestamp":"2026-06-12T00:00:03.000Z","type":"assistant","message":{"content":"kept"}}"#,
+        )
+        .unwrap();
+
+        let parsed = parse_transcript_message(&value).expect("message should parse");
+
+        assert_eq!(parsed.created_at_epoch, Some(1_781_222_403));
     }
 }

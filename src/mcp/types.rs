@@ -267,6 +267,32 @@ pub(super) struct SearchRawParams {
     pub limit: Option<i64>,
     #[schemars(description = "Result offset for pagination")]
     pub offset: Option<i64>,
+    #[schemars(
+        description = "Only rows at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD)"
+    )]
+    pub since: Option<String>,
+    #[schemars(
+        description = "Only rows at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD)"
+    )]
+    pub until: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct ListRawSessionsParams {
+    #[schemars(
+        description = "Only sessions with messages at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD)"
+    )]
+    pub since: Option<String>,
+    #[schemars(
+        description = "Only sessions with messages at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD)"
+    )]
+    pub until: Option<String>,
+    #[schemars(description = "Project name filter")]
+    pub project: Option<String>,
+    #[schemars(
+        description = "Sample up to N role=user message texts per session, ascending by time (default 0 = no samples)"
+    )]
+    pub sample: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]

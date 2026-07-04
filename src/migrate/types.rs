@@ -275,6 +275,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_candidate_source_kind",
         sql: include_str!("../migrations/v054_memory_candidate_source_kind.sql"),
     },
+    Migration {
+        version: 55,
+        name: "session_ingest_cursors",
+        sql: include_str!("../migrations/v055_session_ingest_cursors.sql"),
+    },
+    Migration {
+        version: 56,
+        name: "raw_messages_source_root_key",
+        sql: include_str!("../migrations/v056_raw_messages_source_root_key.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+- Staged source version `0.5.153`: batch session ingestion (`remem
+  ingest-sessions` with per-file cursors and multi-root discovery) and raw
+  time-window / session-listing queries (GH720 Phase 1, #722 #723).
+
 ### Fixed
 - Mapped memory-candidate extraction outputs that copy observation types
   (`feature`, `refactor`, `change`) back into the canonical candidate memory

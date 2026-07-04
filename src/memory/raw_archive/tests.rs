@@ -214,6 +214,8 @@ fn fts_finds_inserted_content() {
             role: None,
             limit: 10,
             offset: 0,
+            since_epoch: None,
+            until_epoch: None,
         },
     )
     .unwrap();
@@ -267,6 +269,8 @@ fn search_branch_filter_keeps_matching_and_branchless_raw_messages() {
             role: None,
             limit: 10,
             offset: 0,
+            since_epoch: None,
+            until_epoch: None,
         },
     )
     .unwrap();
@@ -425,6 +429,8 @@ fn drain_transcript_parses_codex_rollout_response_items() -> Result<()> {
             role: None,
             limit: 10,
             offset: 0,
+            since_epoch: None,
+            until_epoch: None,
         },
     )?;
     assert_eq!(rows.len(), 2, "{rows:?}");
@@ -434,4 +440,168 @@ fn drain_transcript_parses_codex_rollout_response_items() -> Result<()> {
         && row.cwd.as_deref() == Some("/tmp/remem-codex-fixture")));
     std::fs::remove_file(path)?;
     Ok(())
+}
+
+fn insert_at_epoch(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    role: &str,
+    content: &str,
+    epoch: i64,
+) {
+    let outcome = insert_raw_message(
+        conn,
+        session_id,
+        project,
+        role,
+        content,
+        SOURCE_HOOK,
+        None,
+        None,
+    )
+    .unwrap()
+    .expect("insert must produce a row");
+    assert!(outcome.inserted);
+    conn.execute(
+        "UPDATE raw_messages SET created_at_epoch = ?1 WHERE id = ?2",
+        params![epoch, outcome.id],
+    )
+    .unwrap();
+}
+
+#[test]
+fn search_without_window_matches_pre_window_behavior() {
+    let conn = setup_conn();
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "needle early", 100);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "needle late", 900);
+
+    let base = RawSearchRequest {
+        query: "needle".to_string(),
+        project: Some("/proj".to_string()),
+        branch: None,
+        role: None,
+        limit: 10,
+        offset: 0,
+        since_epoch: None,
+        until_epoch: None,
+    };
+    let hits = search_raw_messages(&conn, &base).unwrap();
+    assert_eq!(hits.len(), 2, "None window returns everything");
+}
+
+#[test]
+fn search_window_filters_by_created_at_epoch() {
+    let conn = setup_conn();
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "needle early", 100);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "needle middle", 500);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "needle late", 900);
+
+    let request = RawSearchRequest {
+        query: "needle".to_string(),
+        project: Some("/proj".to_string()),
+        branch: None,
+        role: None,
+        limit: 10,
+        offset: 0,
+        since_epoch: Some(200),
+        until_epoch: Some(800),
+    };
+    let hits = search_raw_messages(&conn, &request).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].content.contains("middle"));
+
+    let since_only = RawSearchRequest {
+        since_epoch: Some(500),
+        until_epoch: None,
+        ..request.clone()
+    };
+    let hits = search_raw_messages(&conn, &since_only).unwrap();
+    assert_eq!(hits.len(), 2, "since bound is inclusive");
+}
+
+#[test]
+fn list_sessions_groups_by_root_project_session_with_window_bounds() {
+    let conn = setup_conn();
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "s1 q1", 100);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_ASSISTANT, "s1 a1", 150);
+    insert_at_epoch(&conn, "s2", "/proj", ROLE_USER, "s2 q1", 300);
+    insert_at_epoch(&conn, "s3", "/other", ROLE_USER, "s3 q1", 200);
+    // Outside the window: excluded from grouping entirely.
+    insert_at_epoch(&conn, "s4", "/proj", ROLE_USER, "too old", 10);
+
+    let sessions = list_sessions(
+        &conn,
+        &RawSessionQuery {
+            since_epoch: Some(50),
+            until_epoch: Some(1000),
+            project: None,
+            sample_user_messages: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(sessions.len(), 3);
+    assert_eq!(sessions[0].session_id, "s1");
+    assert_eq!(sessions[0].first_epoch, 100);
+    assert_eq!(sessions[0].last_epoch, 150);
+    assert_eq!(sessions[0].message_count, 2);
+    assert_eq!(sessions[0].source_root, "local");
+    assert_eq!(sessions[1].session_id, "s3", "ordered by first epoch");
+    assert_eq!(sessions[2].session_id, "s2");
+
+    let filtered = list_sessions(
+        &conn,
+        &RawSessionQuery {
+            since_epoch: Some(50),
+            until_epoch: Some(1000),
+            project: Some("/proj".to_string()),
+            sample_user_messages: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(filtered.len(), 2, "project filter applies");
+}
+
+#[test]
+fn list_sessions_samples_first_user_messages_in_window_order() {
+    let conn = setup_conn();
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "first question", 100);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_ASSISTANT, "an answer", 110);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "second question", 120);
+    insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "third question", 130);
+    let long = "x".repeat(400);
+    insert_at_epoch(&conn, "s2", "/proj", ROLE_USER, &long, 200);
+
+    let sessions = list_sessions(
+        &conn,
+        &RawSessionQuery {
+            since_epoch: None,
+            until_epoch: None,
+            project: Some("/proj".to_string()),
+            sample_user_messages: 2,
+        },
+    )
+    .unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(
+        sessions[0].user_message_samples,
+        vec!["first question".to_string(), "second question".to_string()],
+        "only role=user, ascending, capped at N"
+    );
+    assert_eq!(
+        sessions[1].user_message_samples[0].chars().count(),
+        200,
+        "samples are truncated"
+    );
+}
+
+#[test]
+fn parse_time_bound_accepts_epoch_iso_and_date() {
+    assert_eq!(parse_time_bound("1750000000").unwrap(), 1_750_000_000);
+    assert_eq!(
+        parse_time_bound("2026-01-02T03:04:05Z").unwrap(),
+        1_767_323_045
+    );
+    assert_eq!(parse_time_bound("2026-01-02").unwrap(), 1_767_312_000);
+    assert!(parse_time_bound("not-a-time").is_err());
 }

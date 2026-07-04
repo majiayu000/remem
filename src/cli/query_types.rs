@@ -156,6 +156,30 @@ pub(in crate::cli) enum RawAction {
         /// Result offset for pagination.
         #[arg(long, default_value = "0")]
         offset: i64,
+        /// Only rows at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        #[arg(long)]
+        since: Option<String>,
+        /// Only rows at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        #[arg(long)]
+        until: Option<String>,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List sessions with raw messages inside a time window.
+    Sessions {
+        /// Only sessions with messages at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        #[arg(long)]
+        since: Option<String>,
+        /// Only sessions with messages at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        #[arg(long)]
+        until: Option<String>,
+        /// Restrict to one project path.
+        #[arg(long, short)]
+        project: Option<String>,
+        /// Sample up to N role=user message texts per session (0 disables).
+        #[arg(long, default_value = "0")]
+        sample: i64,
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
