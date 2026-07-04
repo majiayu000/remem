@@ -4,8 +4,8 @@ use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
 
 use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_embeddings, run_backfill_entities,
-    run_bench, run_cleanup, run_commit, run_config, run_current_state, run_dream, run_encrypt,
-    run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
+    run_bench, run_cleanup, run_commit, run_config, run_current_state, run_dream, run_embedding,
+    run_encrypt, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
     run_eval_graph_decision, run_eval_local, run_eval_weight_grid, run_export_markdown,
     run_governance, run_graph_review, run_import, run_ingest_sessions_cli, run_memory_action,
@@ -46,6 +46,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         },
         Commands::Config { action } => run_config(action)?,
         Commands::Model { action } => run_model(action).await?,
+        Commands::Embedding { action } => run_embedding(action)?,
         Commands::SessionInit { host } => {
             if remem_hooks_disabled() {
                 return Ok(());

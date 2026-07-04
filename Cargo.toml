@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.5.156"
+version = "0.5.157"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
 license = "MIT"
@@ -43,9 +43,14 @@ toml_edit = "0.22"
 libc = "0.2"
 sha2 = "0.10"
 ring = "0.17"
+fastembed = { version = "5.17.2", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"], optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[features]
+default = ["local-onnx"]
+local-onnx = ["dep:fastembed"]
 
 [profile.release]
 opt-level = "z"

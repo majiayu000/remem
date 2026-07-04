@@ -3,6 +3,7 @@ mod archive_types;
 mod config_types;
 mod cwd;
 mod dispatch;
+mod embedding_types;
 mod eval_types;
 mod memory_types;
 mod query_types;

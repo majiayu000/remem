@@ -2,7 +2,7 @@ use super::query_types::{
     ProfileSnapshotFormatArg, UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg,
     UserClaimsAction, UserProfileAction, UserReviewAction, UserSummaryAction,
 };
-use super::types::{Cli, Commands, UserAction};
+use super::types::{Cli, Commands, EmbeddingAction, UserAction};
 use clap::Parser;
 
 #[test]
@@ -93,6 +93,70 @@ fn cli_parses_reindex_embeddings_batch_size() {
             assert_eq!(batch_size, 5000);
         }
         _ => panic!("expected reindex-embeddings alias"),
+    }
+}
+
+#[test]
+fn cli_parses_embedding_download() {
+    let cli = Cli::parse_from([
+        "remem",
+        "embedding",
+        "download",
+        "--model",
+        "multilingual-e5-small",
+        "--json",
+    ]);
+    match cli.command {
+        Commands::Embedding {
+            action: EmbeddingAction::Download { model, json },
+        } => {
+            assert_eq!(model.as_deref(), Some("multilingual-e5-small"));
+            assert!(json);
+        }
+        _ => panic!("expected embedding download command"),
+    }
+}
+
+#[test]
+fn cli_parses_embedding_status() {
+    let cli = Cli::parse_from(["remem", "embedding", "status", "--json"]);
+    match cli.command {
+        Commands::Embedding {
+            action: EmbeddingAction::Status { json },
+        } => assert!(json),
+        _ => panic!("expected embedding status command"),
+    }
+}
+
+#[test]
+fn cli_parses_embedding_backfill() {
+    let cli = Cli::parse_from([
+        "remem",
+        "embedding",
+        "backfill",
+        "--batch",
+        "25",
+        "--limit",
+        "100",
+        "--prune",
+        "--json",
+    ]);
+    match cli.command {
+        Commands::Embedding {
+            action:
+                EmbeddingAction::Backfill {
+                    batch,
+                    limit,
+                    prune,
+                    json,
+                },
+        } => {
+            assert_eq!(batch, 25);
+            assert_eq!(limit, Some(100));
+            assert!(prune);
+            assert!(json);
+        }
+        _ => panic!("expected embedding backfill command"),
     }
 }
 

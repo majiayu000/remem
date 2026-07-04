@@ -1,5 +1,6 @@
 mod admin;
 mod config_command;
+mod embedding;
 mod encrypt_state;
 mod eval;
 mod import;
@@ -21,6 +22,7 @@ mod user_summary;
 
 pub(super) use admin::run_admin;
 pub(super) use config_command::run_config;
+pub(super) use embedding::run_embedding;
 pub(super) use eval::{
     run_bench, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,

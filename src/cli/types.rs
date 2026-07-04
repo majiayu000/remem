@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
+pub(in crate::cli) use super::embedding_types::EmbeddingAction;
 pub(in crate::cli) use super::memory_types::{
     MemoryAction, MemoryCleanupType, MemorySuppressionsAction,
 };
@@ -69,6 +70,11 @@ pub(super) enum Commands {
     Model {
         #[command(subcommand)]
         action: ModelAction,
+    },
+    /// Manage local semantic embedding models and backfill.
+    Embedding {
+        #[command(subcommand)]
+        action: EmbeddingAction,
     },
     /// Hook entrypoint for starting a memory capture session.
     SessionInit {

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.157` for the GH-715 local semantic embedding
+  runtime slice: fastembed-backed local model download/status, explicit
+  active-profile backfill/prune, hook-safe missing-model deferral, and
+  verified model manifests.
 - Staged source version `0.5.156` for the GH-715 multi-model memory embedding
   storage key and active-profile backfill slice.
 - Staged source version `0.5.155` for the merged embedding provider contract

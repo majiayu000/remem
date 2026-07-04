@@ -46,12 +46,15 @@ fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
 }
 
 #[test]
-fn auto_provider_uses_local_without_remem_specific_key() -> Result<()> {
+fn auto_provider_uses_feature_hash_without_remem_specific_key() -> Result<()> {
     with_clean_env(|| {
         let embedding = embed_query("protect persisted data")?;
+        let status = embedding_provider_status()?;
 
         assert_eq!(embedding.model(), LOCAL_EMBEDDING_MODEL);
         assert_eq!(embedding.dimensions(), LOCAL_EMBEDDING_DIMENSIONS);
+        assert_eq!(status.configured_provider, "auto");
+        assert_eq!(status.active_provider, "feature-hash");
         Ok(())
     })
 }
@@ -106,16 +109,27 @@ api_key_env = "REMEM_TEST_EMBEDDING_KEY"
 #[test]
 fn local_and_feature_hash_are_distinct_configured_providers() -> Result<()> {
     with_clean_env(|| {
-        unsafe { std::env::set_var(ENV_PROVIDER, "local") };
+        let model_dir = std::env::temp_dir().join(format!(
+            "remem-empty-local-models-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "local");
+            std::env::set_var(ENV_MODEL_DIR, &model_dir);
+        }
         let local = resolve_embedding_config()?;
         let local_status = embedding_provider_status()?;
         assert_eq!(local.provider, EmbeddingProvider::Local);
         assert_eq!(local_status.configured_provider, "local");
         assert_eq!(local_status.active_provider, "local");
-        assert_eq!(
-            local_status.active_model_id.as_deref(),
-            Some(LOCAL_EMBEDDING_MODEL)
-        );
+        assert_eq!(local_status.active_model_id, None);
+        assert_eq!(local_status.active_dimensions, None);
+        assert!(local_status
+            .unavailable_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local embedding model multilingual-e5-small is not ready"));
 
         unsafe { std::env::set_var(ENV_PROVIDER, "feature-hash") };
         let feature_hash = resolve_embedding_config()?;

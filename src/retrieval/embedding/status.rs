@@ -1,6 +1,6 @@
 use super::{
     configured_api_key, embed_openai, EmbeddingConfig, EmbeddingProvider, EmbeddingProviderStatus,
-    LOCAL_EMBEDDING_DIMENSIONS, LOCAL_EMBEDDING_MODEL,
+    FEATURE_HASH_EMBEDDING_DIMENSIONS, FEATURE_HASH_EMBEDDING_MODEL,
 };
 
 #[derive(Debug)]
@@ -82,7 +82,11 @@ pub(super) fn resolve_provider_status(config: &EmbeddingConfig) -> EmbeddingProv
         disabled: runtime.disabled,
         unavailable_reason: runtime.unavailable_reason,
         degradation_reason,
-        model_dir: config.model_dir.clone(),
+        model_dir: Some(
+            super::local_semantic::model_root(config)
+                .display()
+                .to_string(),
+        ),
     }
 }
 
@@ -174,20 +178,23 @@ pub(super) fn provider_runtime(
     match provider {
         EmbeddingProvider::Auto => match super::auto_api_key(config) {
             Ok(Some(_)) => provider_runtime(config, EmbeddingProvider::OpenAi),
-            Ok(None) => provider_runtime(config, EmbeddingProvider::Local),
+            Ok(None) => provider_runtime(config, EmbeddingProvider::FeatureHash),
             Err(error) => unavailable_runtime(provider, error.to_string()),
         },
-        EmbeddingProvider::Local => ProviderRuntime {
-            provider: EmbeddingProvider::Local,
-            model_id: Some(LOCAL_EMBEDDING_MODEL.to_string()),
-            dimensions: Some(LOCAL_EMBEDDING_DIMENSIONS),
-            disabled: false,
-            unavailable_reason: None,
+        EmbeddingProvider::Local => match super::local_semantic::installed_model_profile(config) {
+            Ok(profile) => ProviderRuntime {
+                provider: EmbeddingProvider::Local,
+                model_id: Some(profile.model),
+                dimensions: Some(profile.dimensions),
+                disabled: false,
+                unavailable_reason: None,
+            },
+            Err(error) => unavailable_runtime(provider, error.to_string()),
         },
         EmbeddingProvider::FeatureHash => ProviderRuntime {
             provider: EmbeddingProvider::FeatureHash,
-            model_id: Some(LOCAL_EMBEDDING_MODEL.to_string()),
-            dimensions: Some(LOCAL_EMBEDDING_DIMENSIONS),
+            model_id: Some(FEATURE_HASH_EMBEDDING_MODEL.to_string()),
+            dimensions: Some(FEATURE_HASH_EMBEDDING_DIMENSIONS),
             disabled: false,
             unavailable_reason: None,
         },
