@@ -324,8 +324,11 @@ fn is_numeric_token_separator(ch: char, previous: Option<char>, next: Option<cha
                 && !previous.is_some_and(|previous| previous.is_ascii_digit())
         }
         ',' | '.' => {
-            previous.is_some_and(|previous| previous.is_ascii_digit())
-                && next.is_some_and(|next| next.is_ascii_digit())
+            next.is_some_and(|next| next.is_ascii_digit())
+                && (previous.is_none()
+                    || previous.is_some_and(|previous| {
+                        previous.is_ascii_digit() || !previous.is_alphanumeric()
+                    }))
         }
         '/' => {
             previous.is_some_and(|previous| previous.is_alphanumeric())
@@ -372,12 +375,13 @@ fn numeric_signature_counts(tokens: &[String]) -> BTreeMap<NumericSignature, usi
                     .unwrap_or_default();
             }
             part.unit = normalize_numeric_unit(&part.unit);
+            let label = part
+                .label
+                .unwrap_or_else(|| nearby_numeric_label(tokens, index));
             let signature = NumericSignature {
-                label: part
-                    .label
-                    .unwrap_or_else(|| nearby_numeric_label(tokens, index)),
+                value: normalize_numeric_value(&part.value, &part.unit, &label),
+                label,
                 role: nearby_numeric_role(tokens, index),
-                value: part.value,
                 unit: part.unit,
             };
             *counts.entry(signature).or_insert(0) += 1;
@@ -397,6 +401,9 @@ fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
         }
         let value_start = index;
         if matches!(chars[index], '+' | '-') {
+            index += 1;
+        }
+        if chars.get(index) == Some(&'.') {
             index += 1;
         }
         while index < chars.len() {
@@ -438,10 +445,7 @@ fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
         }
         parts.push(NumericTokenPart {
             label,
-            value: normalize_numeric_value(
-                &chars[value_start..value_end].iter().collect::<String>(),
-                &unit,
-            ),
+            value: chars[value_start..value_end].iter().collect::<String>(),
             unit,
         });
     }
@@ -451,6 +455,10 @@ fn numeric_token_parts(token: &str) -> Vec<NumericTokenPart> {
 fn is_numeric_value_start(chars: &[char], index: usize) -> bool {
     chars[index].is_ascii_digit()
         || (matches!(chars[index], '+' | '-')
+            && chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_ascii_digit()))
+        || (chars[index] == '.'
             && chars
                 .get(index + 1)
                 .is_some_and(|next| next.is_ascii_digit()))
@@ -475,7 +483,7 @@ fn alphabetic_prefix_before(chars: &[char], index: usize) -> String {
     prefix.into_iter().rev().collect()
 }
 
-fn normalize_numeric_value(raw: &str, unit: &str) -> String {
+fn normalize_numeric_value(raw: &str, unit: &str, label: &str) -> String {
     let raw = normalize_grouped_numeric_commas(raw);
     let (sign, unsigned) = raw
         .strip_prefix('-')
@@ -485,7 +493,7 @@ fn normalize_numeric_value(raw: &str, unit: &str) -> String {
     let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
     let integer = integer.trim_start_matches('0');
     let integer = if integer.is_empty() { "0" } else { integer };
-    let fraction = if unit == "v" {
+    let fraction = if is_version_numeric_context(unit, label) {
         fraction
     } else {
         fraction.trim_end_matches('0')
@@ -500,6 +508,14 @@ fn normalize_numeric_value(raw: &str, unit: &str) -> String {
     } else {
         format!("{sign}{value}")
     }
+}
+
+fn is_version_numeric_context(unit: &str, label: &str) -> bool {
+    unit == "v"
+        || label == "release"
+        || label == "version"
+        || label.ends_with(":release")
+        || label.ends_with(":version")
 }
 
 fn normalize_grouped_numeric_commas(raw: &str) -> String {
@@ -551,13 +567,37 @@ fn nearby_numeric_label(tokens: &[String], index: usize) -> String {
 }
 
 fn numeric_label_with_qualifier(tokens: &[String], label_index: usize, label: &str) -> String {
+    let label = if numeric_label_repeats(tokens, label) {
+        nearby_numeric_entity(tokens, label_index, label)
+            .map(|entity| format!("{entity}:{label}"))
+            .unwrap_or_else(|| label.to_string())
+    } else {
+        label.to_string()
+    };
     tokens[..label_index]
         .iter()
         .rev()
         .take(2)
         .find(|token| is_numeric_qualifier_token(token))
         .map(|qualifier| format!("{qualifier}:{label}"))
-        .unwrap_or_else(|| label.to_string())
+        .unwrap_or(label)
+}
+
+fn numeric_label_repeats(tokens: &[String], label: &str) -> bool {
+    tokens
+        .iter()
+        .filter(|token| token.as_str() == label)
+        .count()
+        > 1
+}
+
+fn nearby_numeric_entity(tokens: &[String], label_index: usize, label: &str) -> Option<String> {
+    tokens[..label_index]
+        .iter()
+        .rev()
+        .take(3)
+        .find(|token| token.as_str() != label && is_numeric_label_token(token))
+        .cloned()
 }
 
 fn is_numeric_qualifier_token(token: &str) -> bool {
@@ -627,6 +667,9 @@ fn is_numeric_context_stopword(token: &str) -> bool {
             | "set"
             | "the"
             | "to"
+            | "use"
+            | "uses"
+            | "using"
             | "value"
             | "was"
             | "were"

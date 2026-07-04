@@ -681,6 +681,29 @@ fn check_duplicate_vector_stage_keeps_version_trailing_zero_changes_separate() -
 }
 
 #[test]
+fn check_duplicate_vector_stage_keeps_version_label_trailing_zero_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Upgrade API to version 1.20",
+        "Upgrade API to version 1.2",
+        false,
+    )
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_leading_decimal_changes_separate() -> Result<()> {
+    assert_feature_hash_duplicate("Set threshold to .5", "Set threshold to 5", false)
+}
+
+#[test]
+fn check_duplicate_vector_stage_keeps_repeated_numeric_label_entities_separate() -> Result<()> {
+    assert_feature_hash_duplicate(
+        "Frontend uses port 80 and backend uses port 443",
+        "Frontend uses port 443 and backend uses port 80",
+        false,
+    )
+}
+
+#[test]
 fn check_duplicate_vector_stage_keeps_numeric_qualifier_changes_separate() -> Result<()> {
     assert_feature_hash_duplicate(
         "Configuration update: set minimum timeout to 30 seconds",
