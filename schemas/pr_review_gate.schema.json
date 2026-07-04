@@ -14,7 +14,9 @@
     "merge_state",
     "checks",
     "reviews",
-    "review_threads"
+    "review_threads",
+    "review_source",
+    "lane_failures"
   ],
   "additionalProperties": false,
   "properties": {
@@ -56,6 +58,30 @@
     "merge_state": {
       "type": "string",
       "minLength": 1
+    },
+    "lane_failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["lane_id", "failure_kind", "observed_marker"],
+        "additionalProperties": true,
+        "properties": {
+          "lane_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "failure_kind": {
+            "enum": ["usage_limit", "crash", "zero_output", "closed", "other"]
+          },
+          "observed_marker": {
+            "type": "string",
+            "minLength": 1
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
     },
     "checks": {
       "type": "array",
@@ -161,6 +187,28 @@
           "minLength": 1
         },
         "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "self_review_authorization": {
+      "type": "object",
+      "required": ["actor", "source", "scope"],
+      "additionalProperties": true,
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
           "type": "string",
           "minLength": 1
         },

@@ -52,6 +52,8 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
 
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
+REVIEW_SOURCES = {"independent_lane", "self_review"}
+LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 
 
 class EvidenceError(ValueError):
@@ -167,6 +169,16 @@ def _require_bool(payload: dict[str, Any], field: str) -> bool:
     return value
 
 
+def _read_json_file(path: str, field: str) -> Any:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except OSError as exc:
+        raise EvidenceError(f"cannot read {field} file {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise EvidenceError(f"{field} file is not valid JSON: {exc.msg}") from exc
+
+
 def _coerce_optional_positive_int(value: Any) -> int | None:
     if isinstance(value, int) and value > 0:
         return value
@@ -202,6 +214,47 @@ def _resolver_role(thread: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _resolver_role_map(payload: Any) -> dict[str, str]:
+    source = payload
+    if isinstance(payload, dict):
+        if isinstance(payload.get("resolver_roles"), dict):
+            source = payload["resolver_roles"]
+        elif isinstance(payload.get("lane_roster"), list):
+            source = payload["lane_roster"]
+        elif isinstance(payload.get("lanes"), list):
+            source = payload["lanes"]
+
+    roles: dict[str, str] = {}
+    if isinstance(source, dict):
+        for login, role in source.items():
+            if isinstance(login, str) and isinstance(role, str) and login.strip() and role.strip():
+                roles[login.strip()] = role.strip()
+        return roles
+
+    if isinstance(source, list):
+        for index, lane in enumerate(source, start=1):
+            if not isinstance(lane, dict):
+                raise EvidenceError(f"resolver role lane_roster item #{index} must be an object")
+            role = lane.get("resolver_role") or lane.get("role")
+            login = (
+                lane.get("login")
+                or lane.get("github_login")
+                or lane.get("actor")
+                or lane.get("resolved_by")
+            )
+            if isinstance(login, str) and isinstance(role, str) and login.strip() and role.strip():
+                roles[login.strip()] = role.strip()
+        return roles
+
+    raise EvidenceError("resolver role map must be an object or lane roster list")
+
+
+def load_resolver_role_map(path: str | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    return _resolver_role_map(_read_json_file(path, "resolver role map"))
 
 
 def _author_login(value: Any, fallback: str) -> str:
@@ -274,7 +327,10 @@ def normalize_reviews(value: Any) -> list[dict[str, str]]:
     return [latest_by_author[author] for author in author_order]
 
 
-def normalize_review_threads(graphql_payload: dict[str, Any]) -> list[dict[str, Any]]:
+def normalize_review_threads(
+    graphql_payload: dict[str, Any],
+    resolver_roles: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     data = _require_mapping(graphql_payload.get("data"), "data")
     repository = _require_mapping(data.get("repository"), "data.repository")
     pull_request = _require_mapping(
@@ -305,6 +361,8 @@ def normalize_review_threads(graphql_payload: dict[str, Any]) -> list[dict[str, 
         if resolver:
             thread["resolved_by"] = resolver
         role = _resolver_role(item)
+        if not role and resolver and resolver_roles:
+            role = resolver_roles.get(resolver)
         if role:
             thread["resolver_role"] = role
         normalized.append(thread)
@@ -343,6 +401,64 @@ def build_human_authorization(
     return authorization
 
 
+def build_self_review_authorization(
+    actor: str | None,
+    source: str | None,
+    scope: str | None,
+    summary: str | None,
+) -> dict[str, str] | None:
+    provided = [
+        value
+        for value in [actor, source, scope, summary]
+        if value is not None and value.strip()
+    ]
+    if not provided:
+        return None
+    if not actor or not actor.strip() or not source or not source.strip() or not scope or not scope.strip():
+        raise EvidenceError(
+            "--self-review-authorization-actor, --self-review-authorization-source, "
+            "and --self-review-authorization-scope must be provided together"
+        )
+    authorization = {
+        "actor": actor.strip(),
+        "source": source.strip(),
+        "scope": scope.strip(),
+    }
+    if summary and summary.strip():
+        authorization["summary"] = summary.strip()
+    return authorization
+
+
+def _normalize_lane_failure(item: Any, index: int) -> dict[str, str]:
+    if not isinstance(item, dict):
+        raise EvidenceError(f"lane_failures item #{index} must be an object")
+    normalized: dict[str, str] = {}
+    for key in ["lane_id", "failure_kind", "observed_marker"]:
+        value = item.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise EvidenceError(f"lane_failures[{index}].{key} must be a non-empty string")
+        normalized[key] = value.strip()
+    if normalized["failure_kind"] not in LANE_FAILURE_KINDS:
+        raise EvidenceError(
+            f"lane_failures[{index}].failure_kind is unsupported: {normalized['failure_kind']}"
+        )
+    detail = item.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        normalized["detail"] = detail.strip()
+    return normalized
+
+
+def load_lane_failures(path: str | None) -> list[dict[str, str]]:
+    if path is None:
+        return []
+    payload = _read_json_file(path, "lane failures")
+    if isinstance(payload, dict):
+        payload = payload.get("lane_failures")
+    if not isinstance(payload, list):
+        raise EvidenceError("lane failures file must contain a list or lane_failures list")
+    return [_normalize_lane_failure(item, index) for index, item in enumerate(payload, start=1)]
+
+
 def build_evidence(
     pr_payload: dict[str, Any],
     threads_payload: dict[str, Any],
@@ -350,6 +466,9 @@ def build_evidence(
     merge_dispatched_at: str | None = None,
     merge_head_sha: str | None = None,
     review_source: str | None = None,
+    lane_failures: list[dict[str, str]] | None = None,
+    self_review_authorization: dict[str, str] | None = None,
+    resolver_roles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     evidence: dict[str, Any] = {
@@ -366,16 +485,18 @@ def build_evidence(
         "linked_issue": normalize_linked_issue(pr_payload.get("closingIssuesReferences")),
         "checks": normalize_checks(pr_payload.get("statusCheckRollup")),
         "reviews": normalize_reviews(pr_payload.get("reviews")),
-        "review_threads": normalize_review_threads(threads_payload),
+        "review_threads": normalize_review_threads(threads_payload, resolver_roles),
+        "lane_failures": lane_failures or [],
     }
+    if review_source is not None:
+        source = review_source.strip()
+        if source not in REVIEW_SOURCES:
+            raise EvidenceError(f"review_source must be one of {sorted(REVIEW_SOURCES)}")
+        evidence["review_source"] = source
     if authorization is not None:
         evidence["human_authorization"] = authorization
-    if review_source is not None:
-        if review_source not in {"independent_lane", "self_review"}:
-            raise EvidenceError(
-                "--review-source must be independent_lane or self_review"
-            )
-        evidence["review_source"] = review_source
+    if self_review_authorization is not None:
+        evidence["self_review_authorization"] = self_review_authorization
     provided_merge = [value for value in [merge_dispatched_at, merge_head_sha] if value is not None]
     if provided_merge:
         if not merge_dispatched_at or not merge_dispatched_at.strip() or not merge_head_sha or not merge_head_sha.strip():
@@ -394,6 +515,9 @@ def collect_evidence(
     merge_dispatched_at: str | None = None,
     merge_head_sha: str | None = None,
     review_source: str | None = None,
+    lane_failures: list[dict[str, str]] | None = None,
+    self_review_authorization: dict[str, str] | None = None,
+    resolver_roles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     owner, name = parse_github_repo(github_repo)
     pr_payload_before = collect_pr_view(github_repo, pr_number)
@@ -412,6 +536,9 @@ def collect_evidence(
         merge_dispatched_at,
         merge_head_sha,
         review_source,
+        lane_failures,
+        self_review_authorization,
+        resolver_roles,
     )
 
 
@@ -424,13 +551,25 @@ def main() -> int:
     parser.add_argument("--authorization-actor", help="Human authorizing merge")
     parser.add_argument("--authorization-source", help="Where authorization was recorded")
     parser.add_argument("--authorization-summary", help="Short authorization summary")
-    parser.add_argument("--merge-dispatched-at", help="Optional merge dispatch timestamp for audit records")
-    parser.add_argument("--merge-head-sha", help="Optional merge target head SHA for audit records")
     parser.add_argument(
         "--review-source",
-        choices=["independent_lane", "self_review"],
-        help="Declared source of the merge review; omitting it leaves the gate blocked on review_source",
+        choices=sorted(REVIEW_SOURCES),
+        help="Review source for the PR gate evidence",
     )
+    parser.add_argument(
+        "--lane-failures-json",
+        help="JSON file containing lane_failures evidence",
+    )
+    parser.add_argument(
+        "--resolver-role-map",
+        help="JSON map or lane roster used to map resolver login to resolver_role",
+    )
+    parser.add_argument("--self-review-authorization-actor", help="Human authorizing self-review")
+    parser.add_argument("--self-review-authorization-source", help="Where self-review authorization was recorded")
+    parser.add_argument("--self-review-authorization-scope", help="Scope of self-review authorization")
+    parser.add_argument("--self-review-authorization-summary", help="Short self-review authorization summary")
+    parser.add_argument("--merge-dispatched-at", help="Optional merge dispatch timestamp for audit records")
+    parser.add_argument("--merge-head-sha", help="Optional merge target head SHA for audit records")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     args = parser.parse_args()
 
@@ -440,6 +579,14 @@ def main() -> int:
             args.authorization_source,
             args.authorization_summary,
         )
+        self_review_authorization = build_self_review_authorization(
+            args.self_review_authorization_actor,
+            args.self_review_authorization_source,
+            args.self_review_authorization_scope,
+            args.self_review_authorization_summary,
+        )
+        lane_failures = load_lane_failures(args.lane_failures_json)
+        resolver_roles = load_resolver_role_map(args.resolver_role_map)
         evidence = collect_evidence(
             args.github_repo,
             args.pr,
@@ -447,6 +594,9 @@ def main() -> int:
             args.merge_dispatched_at,
             args.merge_head_sha,
             args.review_source,
+            lane_failures,
+            self_review_authorization,
+            resolver_roles,
         )
     except EvidenceError as exc:
         print(f"error: {exc}", file=sys.stderr)

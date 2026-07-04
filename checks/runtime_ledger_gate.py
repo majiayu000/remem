@@ -66,15 +66,7 @@ SPEC_PLANNING_STATES = {
 THREAD_YES_VALUES = {"yes", "true", "required", "available"}
 THREAD_REQUIRED_VALUES = {"required", "yes", "true"}
 THREAD_AVAILABLE_VALUES = {"available", "yes", "true"}
-REVIEW_SOURCES = {"independent_lane", "self_review"}
-LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
-LANE_FAILURE_DOWNGRADE_STATES = {"blocked", "needs_human"}
 CHECKPOINT_VERSIONS = {1, 2}
-PR_KINDS = {"spec", "impl", "mixed_impl"}
-IMPL_PR_KINDS = {"impl", "mixed_impl"}
-SPEC_ONLY_STREAK_CAP = 3
-BUDGET_BASES = {"compaction", "item_cap", "both"}
-BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -510,12 +502,6 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
 
             review = raw_item.get("review") if isinstance(raw_item.get("review"), dict) else {}
             review_status = str(review.get("status") or "").lower()
-            if review_status not in {"passed", "approved", "clean"}:
-                errors.append(f"{label}: merge-ready state requires passed independent review")
-            if not review.get("reviewer_lane"):
-                errors.append(f"{label}: merge-ready state requires reviewer_lane")
-            if not review.get("evidence"):
-                errors.append(f"{label}: merge-ready state requires review evidence")
             blocking_findings = review.get("blocking_findings", [])
             if blocking_findings:
                 errors.append(f"{label}: merge-ready state has blocking review findings")
@@ -530,6 +516,15 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             elif review_source == "self_review":
                 _validate_self_review_authorization(raw_item, label, errors)
 
+            if review_status not in {"passed", "approved", "clean"}:
+                if review_source == "self_review":
+                    errors.append(f"{label}: self_review merge requires passed self-review evidence")
+                else:
+                    errors.append(f"{label}: merge-ready state requires passed independent review")
+            if not review.get("evidence"):
+                errors.append(f"{label}: merge-ready state requires review evidence")
+            if review_source != "self_review" and not review.get("reviewer_lane"):
+                errors.append(f"{label}: merge-ready state requires reviewer_lane")
             if native_required and review_source != "self_review":
                 _validate_native_review_evidence(review, spawned_agents, label, errors)
 
@@ -565,8 +560,18 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             if merge_state not in MERGE_STATE_CLEAN_STATUSES:
                 errors.append(f"{label}: merge-ready state requires fresh clean merge_state")
 
-            if not raw_item.get("merge_authorization"):
+            merge_authorization = raw_item.get("merge_authorization")
+            if not merge_authorization:
                 errors.append(f"{label}: merge-ready state requires explicit merge_authorization")
+            elif not isinstance(merge_authorization, dict):
+                errors.append(f"{label}: merge_authorization must be an object")
+            else:
+                for key in ["actor", "source"]:
+                    value = merge_authorization.get(key)
+                    if not isinstance(value, str) or not value.strip():
+                        errors.append(
+                            f"{label}: merge_authorization.{key} must be a non-empty string"
+                        )
 
         blocker = raw_item.get("blocker")
         if blocker and state in {"complete", "merged"}:

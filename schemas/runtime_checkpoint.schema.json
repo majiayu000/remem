@@ -405,6 +405,9 @@
           "truth_level": {
             "enum": ["A", "B", "C", "D", null]
           },
+          "review_source": {
+            "enum": ["independent_lane", "self_review", null]
+          },
           "ci": {
             "type": ["object", "null"],
             "additionalProperties": true,
@@ -471,7 +474,7 @@
             "type": ["array", "null"],
             "items": {
               "type": "object",
-              "required": ["lane_id", "failure_kind"],
+              "required": ["lane_id", "failure_kind", "observed_marker"],
               "additionalProperties": true,
               "properties": {
                 "lane_id": {
@@ -482,7 +485,8 @@
                   "enum": ["usage_limit", "crash", "zero_output", "closed", "other"]
                 },
                 "observed_marker": {
-                  "type": ["string", "null"]
+                  "type": "string",
+                  "minLength": 1
                 },
                 "detail": {
                   "type": ["string", "null"]

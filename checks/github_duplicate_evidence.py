@@ -94,11 +94,17 @@ def collect_remote_branches(remote: str) -> list[str]:
 
 
 def references_issue_text(text: str, issue: int) -> bool:
-    token = re.compile(
+    patterns = [
+        # bare tokens: #664, GH-664, GH664
         rf"(?<![A-Za-z0-9])(?:GH-?{issue}|#{issue})(?![A-Za-z0-9])",
-        re.IGNORECASE,
+        # cross-repo shorthand: owner/repo#664
+        rf"[\w.-]+/[\w.-]+#{issue}(?![0-9])",
+        # copied links: https://github.com/owner/repo/issues/664
+        rf"https?://\S+/issues/{issue}(?![0-9])",
+    ]
+    return any(
+        re.search(pattern, text, re.IGNORECASE) is not None for pattern in patterns
     )
-    return token.search(text) is not None
 
 
 def _require_positive_int(payload: dict[str, Any], field: str) -> int:
