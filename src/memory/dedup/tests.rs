@@ -346,3 +346,63 @@ fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
         Ok(())
     })
 }
+
+#[test]
+fn check_duplicate_vector_stage_skips_when_candidate_fallback_turns_off() -> Result<()> {
+    use std::io::{Read, Write};
+
+    with_embedding_provider("api", || -> Result<()> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> Result<()> {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept()?;
+                let mut buffer = [0u8; 8192];
+                let _ = stream.read(&mut buffer)?;
+                if attempt == 0 {
+                    let body = r#"{"data":[{"embedding":[0.1,0.2,0.3]}],"model":"remote-test"}"#;
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    stream.write_all(response.as_bytes())?;
+                } else {
+                    let body = "provider unavailable";
+                    let response = format!(
+                        "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    stream.write_all(response.as_bytes())?;
+                }
+            }
+            Ok(())
+        });
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+            std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
+            std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", format!("http://{addr}/v1"));
+        }
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(
+            &conn,
+            "test-project",
+            "SQLCipher encrypts private secrets at rest.",
+        )?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Protect private secrets at rest with encryption.",
+            None,
+        )?;
+
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+        assert_eq!(duplicate_id, None);
+        Ok(())
+    })
+}

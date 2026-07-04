@@ -112,25 +112,46 @@ fn find_vector_duplicates(
         if observation_text_conflicts(narrative, &candidate_text) {
             continue;
         }
-        let candidate_embedding = crate::retrieval::embedding::embed_memory_with_fallback_cache(
-            "Observation",
-            &candidate_text,
-            "observation",
-            None,
-            &mut fallback_cache,
-        )
-        .with_context(|| format!("embed observation duplicate candidate id={id}"))?;
+        let candidate_embedding =
+            match crate::retrieval::embedding::embed_memory_with_fallback_cache(
+                "Observation",
+                &candidate_text,
+                "observation",
+                None,
+                &mut fallback_cache,
+            ) {
+                Ok(embedding) => embedding,
+                Err(error)
+                    if crate::retrieval::embedding::is_embedding_provider_off_error(&error) =>
+                {
+                    return Ok(Vec::new());
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("embed observation duplicate candidate id={id}"));
+                }
+            };
         if candidate_embedding.model() != query_embedding.model()
             || candidate_embedding.dimensions() != query_embedding.dimensions()
         {
-            query_embedding = crate::retrieval::embedding::embed_memory_with_fallback_cache(
+            query_embedding = match crate::retrieval::embedding::embed_memory_with_fallback_cache(
                 "Observation",
                 narrative,
                 "observation",
                 None,
                 &mut fallback_cache,
-            )
-            .context("re-embed observation query after provider fallback")?;
+            ) {
+                Ok(embedding) => embedding,
+                Err(error)
+                    if crate::retrieval::embedding::is_embedding_provider_off_error(&error) =>
+                {
+                    return Ok(Vec::new());
+                }
+                Err(error) => {
+                    return Err(error)
+                        .context("re-embed observation query after provider fallback");
+                }
+            };
             threshold = observation_similarity_threshold(query_embedding.model());
             max_distance = 1.0 - threshold;
         }
