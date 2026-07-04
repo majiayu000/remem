@@ -142,6 +142,10 @@ fn mixed_model_check(mixed_profile_count: i64) -> Check {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     use rusqlite::{params, Connection};
 
@@ -152,11 +156,17 @@ mod tests {
         "REMEM_EMBEDDINGS_PROVIDER",
         "REMEM_EMBEDDING_PROVIDER",
         "REMEM_EMBEDDINGS_MODEL",
+        "REMEM_EMBEDDING_MODEL",
         "REMEM_EMBEDDINGS_DIMENSIONS",
+        "REMEM_EMBEDDING_DIMENSIONS",
         "REMEM_EMBEDDINGS_BASE_URL",
+        "REMEM_EMBEDDING_BASE_URL",
         "REMEM_EMBEDDINGS_FALLBACK",
         "REMEM_EMBEDDINGS_API_KEY",
         "REMEM_EMBEDDING_API_KEY",
+        "REMEM_EMBEDDINGS_API_KEY_ENV",
+        "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+        "REMEM_EMBEDDINGS_MODEL_DIR",
         "OPENAI_API_KEY",
     ];
 
@@ -185,6 +195,60 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         Ok(conn)
+    }
+
+    struct SuccessfulEmbeddingServer {
+        base_url: String,
+        stop: Arc<AtomicBool>,
+        handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+    }
+
+    impl SuccessfulEmbeddingServer {
+        fn start(body: &'static str) -> anyhow::Result<Self> {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+            listener.set_nonblocking(true)?;
+            let addr = listener.local_addr()?;
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop_for_thread = Arc::clone(&stop);
+            let handle = std::thread::spawn(move || -> anyhow::Result<()> {
+                while !stop_for_thread.load(Ordering::SeqCst) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let mut buffer = [0_u8; 8192];
+                            let _ = stream.read(&mut buffer)?;
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                                body.len(),
+                                body
+                            );
+                            stream.write_all(response.as_bytes())?;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Ok(())
+            });
+            Ok(Self {
+                base_url: format!("http://{addr}/v1"),
+                stop,
+                handle: Some(handle),
+            })
+        }
+    }
+
+    impl Drop for SuccessfulEmbeddingServer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(handle) = self.handle.take() {
+                handle
+                    .join()
+                    .expect("embedding server thread should not panic")
+                    .expect("embedding server should stop cleanly");
+            }
+        }
     }
 
     #[test]
@@ -282,28 +346,15 @@ mod tests {
     #[test]
     fn api_coverage_uses_provider_returned_profile() -> anyhow::Result<()> {
         with_clean_embedding_env(|| -> anyhow::Result<()> {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-            let addr = listener.local_addr()?;
-            let handle = std::thread::spawn(move || -> anyhow::Result<()> {
-                let (mut stream, _) = listener.accept()?;
-                let mut buffer = [0_u8; 8192];
-                stream.read(&mut buffer)?;
-                let body =
-                    r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                stream.write_all(response.as_bytes())?;
-                Ok(())
-            });
+            let server = SuccessfulEmbeddingServer::start(
+                r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#,
+            )?;
             unsafe {
                 std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
                 std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
                 std::env::set_var("REMEM_EMBEDDINGS_MODEL", "requested-model");
                 std::env::set_var("REMEM_EMBEDDINGS_DIMENSIONS", "256");
-                std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", format!("http://{addr}/v1"));
+                std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", &server.base_url);
             }
             let conn = setup_conn()?;
             conn.execute(
@@ -320,9 +371,6 @@ mod tests {
             )?;
 
             let checks = check_embedding_provider(Some(&conn));
-            handle
-                .join()
-                .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
             let coverage = checks
                 .iter()
                 .find(|check| check.name == "Embedding coverage")
