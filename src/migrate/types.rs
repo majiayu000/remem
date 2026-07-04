@@ -277,8 +277,18 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 55,
+        name: "session_ingest_cursors",
+        sql: include_str!("../migrations/v055_session_ingest_cursors.sql"),
+    },
+    Migration {
+        version: 56,
+        name: "raw_messages_source_root_key",
+        sql: include_str!("../migrations/v056_raw_messages_source_root_key.sql"),
+    },
+    Migration {
+        version: 57,
         name: "failure_lifecycle",
-        sql: include_str!("../migrations/v055_failure_lifecycle.sql"),
+        sql: include_str!("../migrations/v057_failure_lifecycle.sql"),
     },
 ];
 

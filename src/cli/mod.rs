@@ -15,6 +15,8 @@ mod tests_eval;
 #[cfg(test)]
 mod tests_maintenance;
 #[cfg(test)]
+mod tests_raw;
+#[cfg(test)]
 mod tests_trace;
 mod types;
 

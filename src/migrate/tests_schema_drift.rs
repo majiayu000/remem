@@ -166,7 +166,11 @@ fn create_current_schema_missing_versions(
     conn: &Connection,
     missing_versions: &[i64],
 ) -> Result<()> {
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF;")?;
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA foreign_keys=OFF;
+         PRAGMA writable_schema=ON;",
+    )?;
     for migration in MIGRATIONS.iter().filter(|migration| {
         !missing_versions
             .iter()
@@ -189,7 +193,9 @@ fn create_current_schema_missing_versions(
         )?;
     }
     conn.execute_batch(&format!(
-        "PRAGMA user_version = {}; PRAGMA foreign_keys=ON;",
+        "PRAGMA writable_schema=OFF;
+         PRAGMA user_version = {};
+         PRAGMA foreign_keys=ON;",
         super::types::OLD_BASELINE_VERSION - 1 + super::latest_schema_version()
     ))?;
     Ok(())

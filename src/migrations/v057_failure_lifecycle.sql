@@ -1,4 +1,4 @@
--- v055_failure_lifecycle: classify, age, archive, and audit terminal
+-- v057_failure_lifecycle: classify, age, archive, and audit terminal
 -- queue failures without deleting their source rows automatically.
 
 ALTER TABLE pending_observations ADD COLUMN failure_class TEXT;
