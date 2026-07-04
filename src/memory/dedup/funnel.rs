@@ -1,7 +1,12 @@
-use anyhow::Result;
-use rusqlite::Connection;
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection};
 
 use crate::memory::dedup::{find_hash_duplicates, mark_duplicate_accessed};
+
+const VECTOR_WINDOW_SECS: i64 = 15 * 60;
+const VECTOR_CANDIDATE_LIMIT: i64 = 200;
+const FEATURE_HASH_OBSERVATION_THRESHOLD: f32 = 0.82;
+const REAL_EMBEDDING_OBSERVATION_THRESHOLD: f32 = 0.92;
 
 /// Check if new observation is a duplicate using three-layer funnel.
 /// Returns Some(duplicate_id) if duplicate found, None if unique.
@@ -12,9 +17,8 @@ pub fn check_duplicate(
     _embedding: Option<&[f32]>,
 ) -> Result<Option<i64>> {
     let content_hash = crate::db::content_identity_hash(narrative.as_bytes());
-    let hash_window_secs = 15 * 60;
 
-    let hash_dups = find_hash_duplicates(conn, project, &content_hash, hash_window_secs)?;
+    let hash_dups = find_hash_duplicates(conn, project, &content_hash, VECTOR_WINDOW_SECS)?;
     if !hash_dups.is_empty() {
         crate::log::info(
             "dedup",
@@ -24,9 +28,87 @@ pub fn check_duplicate(
         return Ok(Some(hash_dups[0]));
     }
 
-    // Layer 2: Vector deduplication (cosine similarity > 0.95)
-    // TODO: Implement when vector search is ready
+    let vector_dups = find_vector_duplicates(conn, project, narrative, VECTOR_WINDOW_SECS)?;
+    if !vector_dups.is_empty() {
+        crate::log::info(
+            "dedup",
+            &format!("vector duplicate found: {} matches", vector_dups.len()),
+        );
+        mark_duplicate_accessed(conn, &vector_dups)?;
+        return Ok(Some(vector_dups[0]));
+    }
+
     // Layer 3: LLM judgment
 
     Ok(None)
+}
+
+fn find_vector_duplicates(
+    conn: &Connection,
+    project: &str,
+    narrative: &str,
+    window_secs: i64,
+) -> Result<Vec<i64>> {
+    let query_embedding = match crate::retrieval::embedding::embed_memory(
+        "Observation",
+        narrative,
+        "observation",
+        None,
+    ) {
+        Ok(embedding) => embedding,
+        Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error),
+    };
+    let threshold = observation_similarity_threshold(query_embedding.model());
+    let max_distance = 1.0 - threshold;
+    let cutoff = chrono::Utc::now().timestamp() - window_secs;
+    let mut stmt = conn.prepare(
+        "SELECT id, narrative
+         FROM observations
+         WHERE project = ?1
+           AND status = 'active'
+           AND created_at_epoch > ?2
+           AND narrative IS NOT NULL
+           AND length(narrative) > 0
+         ORDER BY created_at_epoch DESC, id DESC
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![project, cutoff, VECTOR_CANDIDATE_LIMIT], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let candidates = crate::db::query::collect_rows(rows)?;
+    let mut duplicates = Vec::new();
+    for (id, candidate_narrative) in candidates {
+        let candidate_embedding = crate::retrieval::embedding::embed_memory(
+            "Observation",
+            &candidate_narrative,
+            "observation",
+            None,
+        )
+        .with_context(|| format!("embed observation duplicate candidate id={id}"))?;
+        if candidate_embedding.model() != query_embedding.model()
+            || candidate_embedding.dimensions() != query_embedding.dimensions()
+        {
+            continue;
+        }
+        let distance = crate::retrieval::vector::cosine_distance(
+            query_embedding.values(),
+            candidate_embedding.values(),
+        )
+        .with_context(|| format!("compare observation duplicate candidate id={id}"))?;
+        if distance <= max_distance {
+            duplicates.push(id);
+        }
+    }
+    Ok(duplicates)
+}
+
+fn observation_similarity_threshold(model: &str) -> f32 {
+    if model == crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL {
+        FEATURE_HASH_OBSERVATION_THRESHOLD
+    } else {
+        REAL_EMBEDDING_OBSERVATION_THRESHOLD
+    }
 }

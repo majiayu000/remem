@@ -147,9 +147,30 @@ fn is_curated_dedup_type(memory_type: &str) -> bool {
 }
 
 fn similarity_threshold(model: &str) -> f32 {
-    if model == crate::retrieval::embedding::LOCAL_EMBEDDING_MODEL {
+    if model == crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL {
         LOCAL_FEATURE_HASH_SIMILARITY_THRESHOLD
     } else {
         REAL_EMBEDDING_SIMILARITY_THRESHOLD
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_dedup_thresholds_are_model_specific() {
+        assert_eq!(
+            similarity_threshold(crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL),
+            LOCAL_FEATURE_HASH_SIMILARITY_THRESHOLD
+        );
+        assert_eq!(
+            similarity_threshold("fastembed-intfloat-multilingual-e5-small-v1"),
+            REAL_EMBEDDING_SIMILARITY_THRESHOLD
+        );
+        assert_eq!(
+            similarity_threshold("text-embedding-3-small"),
+            REAL_EMBEDDING_SIMILARITY_THRESHOLD
+        );
     }
 }

@@ -336,14 +336,16 @@ fn persist_observations(
     let memory_session_id = format!("capture-observation-{session_row_id}");
     let evidence_json = serde_json::to_string(&range.event_ids)?;
     let reference_time_epoch = range.reference_time_epoch();
-    let tx = conn.transaction()?;
     let mut inserted = 0usize;
     for observation in observations {
         let text = observation_text(observation);
         if text.trim().is_empty() {
             anyhow::bail!("observation_extract produced an empty observation");
         }
-        if observation_exists(&tx, session_row_id, &evidence_json, &text)? {
+        if observation_exists(conn, session_row_id, &evidence_json, &text)? {
+            continue;
+        }
+        if crate::memory::dedup::check_duplicate(conn, &task.project, &text, None)?.is_some() {
             continue;
         }
 
@@ -359,6 +361,7 @@ fn persist_observations(
         let files_modified_json = (!observation.files_modified.is_empty())
             .then(|| serde_json::to_string(&observation.files_modified))
             .transpose()?;
+        let tx = conn.transaction()?;
         let obs_id = db::insert_observation_with_branch(
             &tx,
             &memory_session_id,
@@ -399,9 +402,9 @@ fn persist_observations(
                 obs_id
             ],
         )?;
+        tx.commit()?;
         inserted += 1;
     }
-    tx.commit()?;
     crate::log::info(
         "observation-extract",
         &format!(

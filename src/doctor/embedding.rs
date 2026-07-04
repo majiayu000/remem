@@ -214,6 +214,7 @@ mod tests {
                 while !stop_for_thread.load(Ordering::SeqCst) {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
+                            stream.set_nonblocking(false)?;
                             let mut buffer = [0_u8; 8192];
                             let _ = stream.read(&mut buffer)?;
                             let response = format!(

@@ -5,6 +5,61 @@ use crate::db::{record_captured_event, CaptureEventInput, ExtractionTaskKind};
 
 use super::*;
 
+const EMBEDDING_ENV_KEYS: &[&str] = &[
+    "REMEM_CONFIG",
+    "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDING_PROVIDER",
+    "REMEM_EMBEDDINGS_MODEL",
+    "REMEM_EMBEDDING_MODEL",
+    "REMEM_EMBEDDINGS_DIMENSIONS",
+    "REMEM_EMBEDDING_DIMENSIONS",
+    "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_BASE_URL",
+    "REMEM_EMBEDDING_BASE_URL",
+    "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDING_API_KEY",
+    "REMEM_EMBEDDINGS_API_KEY_ENV",
+    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+    "REMEM_EMBEDDINGS_MODEL_DIR",
+    "OPENAI_API_KEY",
+];
+
+struct ScopedEmbeddingProvider {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl ScopedEmbeddingProvider {
+    fn new(provider: &str) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = EMBEDDING_ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in EMBEDDING_ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+}
+
+impl Drop for ScopedEmbeddingProvider {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");
@@ -71,6 +126,74 @@ fn no_observations_response(reason: &str) -> String {
         }
     })
     .to_string()
+}
+
+fn parsed_observation(narrative: &str) -> ParsedObservation {
+    ParsedObservation {
+        obs_type: "discovery".to_string(),
+        title: Some("Semantic dedup".to_string()),
+        subtitle: None,
+        narrative: Some(narrative.to_string()),
+        facts: Vec::new(),
+        concepts: Vec::new(),
+        files_read: Vec::new(),
+        files_modified: Vec::new(),
+        confidence: Some(0.84),
+    }
+}
+
+fn evidence_range_for_event(event_id: i64) -> EvidenceRange {
+    EvidenceRange {
+        from_event_id: event_id,
+        to_event_id: event_id,
+        event_ids: vec![event_id],
+        events: vec![EvidenceEvent {
+            id: event_id,
+            event_type: "tool_result".to_string(),
+            role: None,
+            tool_name: Some("Bash".to_string()),
+            content: "durable evidence".to_string(),
+            token_estimate: 10,
+            created_at_epoch: 1_600_000_000,
+            reference_time_epoch: 1_600_000_000,
+        }],
+        summary_context: None,
+    }
+}
+
+#[test]
+fn observation_persistence_skips_active_vector_duplicate() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("feature-hash");
+    let mut conn = setup_conn();
+    let task_id = capture(
+        &conn,
+        "sess-observation-vector-duplicate",
+        "SQLCipher encrypts private secrets at rest.",
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    let range = evidence_range_for_event(task.high_watermark_event_id.unwrap_or(task_id));
+    let first = parsed_observation("SQLCipher encrypts private secrets at rest.");
+    let second = parsed_observation("Protect private secrets at rest with encryption.");
+
+    assert_eq!(persist_observations(&mut conn, &task, &range, &[first])?, 1);
+    assert_eq!(
+        persist_observations(&mut conn, &task, &range, &[second])?,
+        0
+    );
+
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM observations WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    let last_accessed: Option<i64> = conn.query_row(
+        "SELECT last_accessed_epoch FROM observations WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    assert!(last_accessed.is_some());
+    Ok(())
 }
 
 #[tokio::test]

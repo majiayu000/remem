@@ -94,6 +94,7 @@ impl FailingEmbeddingServer {
             while !stop_for_thread.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false)?;
                         let call_index = calls_for_thread.fetch_add(1, Ordering::SeqCst);
                         let mut buffer = [0u8; 8192];
                         let _ = stream.read(&mut buffer)?;
