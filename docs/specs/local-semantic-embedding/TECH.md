@@ -183,7 +183,8 @@ run because remote embedding calls require an explicit `--allow-api`.
 - Preference consolidation: same recalibration rule; keep the bidirectional
   polarity guard. GH-717 keeps the feature-hash preference threshold at its
   #643 calibration, uses stricter thresholds for local/API/unknown model ids,
-  and logs provider errors on non-write text-only grouping paths.
+  and keeps non-write text-only grouping on the deterministic feature-hash
+  path so rendering and audit helpers do not perform live provider calls.
 
 ## Migration & Compatibility
 

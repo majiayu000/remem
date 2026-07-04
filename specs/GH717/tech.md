@@ -14,7 +14,7 @@ GH-717
 | --- | --- | --- | --- |
 | Observation dedup | `src/memory/dedup/funnel.rs`, `src/observation_extract.rs` | Hash dedup works; vector layer is a TODO and is not called from extraction persistence. | Add active-provider vector comparison over recent active observations and call it before inserting extracted observations. |
 | Curated semantic dedup | `src/memory/semantic_dedup.rs`, `src/memory/store/write.rs`, `src/memory/operation.rs` | Query embeddings are active-provider embeddings and SQL filters by model/dimensions. | Keep same-model contract and clarify feature-hash threshold check. |
-| Preference consolidation | `src/memory/preference/consolidation.rs` | Concept rules run first; embedding fallback calls legacy feature-hash helper and uses one threshold. | Use active `TextEmbedding`, model-specific thresholds, and error-level logging for non-write text-only call sites. |
+| Preference consolidation | `src/memory/preference/consolidation.rs` | Concept rules run first; embedding fallback calls legacy feature-hash helper and uses one threshold. | Use active `TextEmbedding` and model-specific thresholds for writes while keeping non-write text-only grouping on the local feature-hash path. |
 | Tests | `src/memory/dedup/tests.rs`, preference tests, semantic dedup tests | Feature-hash and concept regressions exist, but active-model behavior is not directly covered. | Add focused tests for vector dedup and threshold/model guard behavior. |
 | Specs | `docs/specs/local-semantic-embedding/`, `specs/GH682/` | Phase 4 is open. | Mark GH-717 behavior as landed in this PR while keeping GH-682 open for audit. |
 
@@ -78,9 +78,10 @@ the active provider and stored under that model id.
   the long-term capture ledger.
 - Reuse the `0.55` threshold for every embedding provider: rejected by GH-717;
   feature-hash calibration does not transfer to local/API embeddings.
-- Make render/audit text-only preference grouping fail hard on provider errors:
-  rejected because those non-write surfaces can log and fall back to concept
-  rules without storing incorrect data.
+- Make render/audit text-only preference grouping call the active provider:
+  rejected because those non-write surfaces should not perform live embedding
+  calls while rendering or auditing. They keep the deterministic feature-hash
+  fallback after concept rules and do not store duplicate decisions.
 
 ## Risks
 

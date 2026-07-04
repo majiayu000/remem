@@ -116,25 +116,41 @@ pub(crate) fn find_preference_consolidation(
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
     let candidates = crate::db::query::collect_rows(rows)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
 
     let mut best = None;
-    let incoming_embedding = active_preference_embedding(content)?;
-    for (memory_id, existing_content) in candidates {
-        let existing = PreferenceProfile::new(&existing_content);
-        // concept-based classification first (catches contradiction + high overlap);
-        // fall back to embedding cosine only when concepts miss (e.g. same intent,
-        // divergent detail wording like the "minimal vertical slice" variants).
-        let classified = match classify_preference(memory_id, &existing, &incoming) {
-            Some(classified) => Some(classified),
-            None => embedding_refinement(
-                memory_id,
-                &existing,
-                &incoming,
-                &existing_content,
-                incoming_embedding.as_ref(),
-            )?,
+    let candidates = candidates
+        .into_iter()
+        .map(|(memory_id, existing_content)| {
+            let existing = PreferenceProfile::new(&existing_content);
+            (memory_id, existing_content, existing)
+        })
+        .collect::<Vec<_>>();
+    for (memory_id, _existing_content, existing) in &candidates {
+        let Some(classified) = classify_preference(*memory_id, existing, &incoming) else {
+            continue;
         };
-        let Some(classified) = classified else {
+        match &best {
+            Some(current) if better_match(current, &classified) => {}
+            _ => best = Some(classified),
+        }
+    }
+    if best.is_some() {
+        return Ok(best);
+    }
+
+    let incoming_embedding = active_preference_embedding(content)?;
+    for (memory_id, existing_content, existing) in candidates {
+        let Some(classified) = embedding_refinement(
+            memory_id,
+            &existing,
+            &incoming,
+            &existing_content,
+            incoming_embedding.as_ref(),
+        )?
+        else {
             continue;
         };
         match &best {
@@ -171,32 +187,21 @@ pub(crate) fn classify_preference_texts(
     if let Some(classified) = classify_preference(memory_id, &existing, &incoming) {
         return Some(classified);
     }
-    let incoming_embedding = match active_preference_embedding(incoming_content) {
+    let existing_embedding = match feature_hash_preference_embedding(existing_content) {
         Ok(embedding) => embedding,
-        Err(error) => {
-            crate::log::error(
-                "preference",
-                &format!("preference text embedding unavailable: {error}"),
-            );
-            None
-        }
+        Err(_) => return None,
     };
-    match embedding_refinement(
+    let incoming_embedding = match feature_hash_preference_embedding(incoming_content) {
+        Ok(embedding) => embedding,
+        Err(_) => return None,
+    };
+    embedding_refinement_from_embeddings(
         memory_id,
         &existing,
         &incoming,
-        existing_content,
-        incoming_embedding.as_ref(),
-    ) {
-        Ok(classified) => classified,
-        Err(error) => {
-            crate::log::error(
-                "preference",
-                &format!("preference text embedding comparison failed: {error}"),
-            );
-            None
-        }
-    }
+        &existing_embedding,
+        &incoming_embedding,
+    )
 }
 
 fn classify_preference(
@@ -276,6 +281,13 @@ fn classify_preference(
 
 fn active_preference_embedding(text: &str) -> Result<Option<TextEmbedding>> {
     crate::retrieval::embedding::embed_query_if_enabled(text)
+}
+
+fn feature_hash_preference_embedding(text: &str) -> Result<TextEmbedding> {
+    TextEmbedding::new(
+        crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL,
+        crate::retrieval::vector::embed_query_text(text),
+    )
 }
 
 /// Embedding-cosine fallback for refinement when concept-based classification

@@ -51,20 +51,6 @@ fn find_vector_duplicates(
     narrative: &str,
     window_secs: i64,
 ) -> Result<Vec<i64>> {
-    let query_embedding = match crate::retrieval::embedding::embed_memory(
-        "Observation",
-        narrative,
-        "observation",
-        None,
-    ) {
-        Ok(embedding) => embedding,
-        Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(error),
-    };
-    let threshold = observation_similarity_threshold(query_embedding.model());
-    let max_distance = 1.0 - threshold;
     let cutoff = chrono::Utc::now().timestamp() - window_secs;
     let mut stmt = conn.prepare(
         "SELECT id, text, narrative, title, facts
@@ -91,23 +77,58 @@ fn find_vector_duplicates(
         ))
     })?;
     let candidates = crate::db::query::collect_rows(rows)?;
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
+    let mut query_embedding = match crate::retrieval::embedding::embed_memory_with_fallback_cache(
+        "Observation",
+        narrative,
+        "observation",
+        None,
+        &mut fallback_cache,
+    ) {
+        Ok(embedding) => embedding,
+        Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error),
+    };
+    let mut threshold = observation_similarity_threshold(query_embedding.model());
+    let mut max_distance = 1.0 - threshold;
     let mut duplicates = Vec::new();
-    for (id, text, narrative, title, facts) in candidates {
+    for (id, text, candidate_narrative, title, facts) in candidates {
         let Some(candidate_text) = canonical_observation_text(
             text.as_deref(),
-            narrative.as_deref(),
+            candidate_narrative.as_deref(),
             title.as_deref(),
             facts.as_deref(),
         ) else {
             continue;
         };
-        let candidate_embedding = crate::retrieval::embedding::embed_memory(
+        let candidate_embedding = crate::retrieval::embedding::embed_memory_with_fallback_cache(
             "Observation",
             &candidate_text,
             "observation",
             None,
+            &mut fallback_cache,
         )
         .with_context(|| format!("embed observation duplicate candidate id={id}"))?;
+        if candidate_embedding.model() != query_embedding.model()
+            || candidate_embedding.dimensions() != query_embedding.dimensions()
+        {
+            query_embedding = crate::retrieval::embedding::embed_memory_with_fallback_cache(
+                "Observation",
+                narrative,
+                "observation",
+                None,
+                &mut fallback_cache,
+            )
+            .context("re-embed observation query after provider fallback")?;
+            threshold = observation_similarity_threshold(query_embedding.model());
+            max_distance = 1.0 - threshold;
+        }
         if candidate_embedding.model() != query_embedding.model()
             || candidate_embedding.dimensions() != query_embedding.dimensions()
         {
