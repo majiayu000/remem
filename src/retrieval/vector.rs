@@ -21,10 +21,8 @@ const EMBEDDING_REINDEX_WRITE_BATCH_SIZE: usize = 512;
 const UPSERT_EMBEDDING_SQL: &str = "INSERT INTO memory_embeddings
          (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(memory_id) DO UPDATE SET
+         ON CONFLICT(memory_id, model, dimensions) DO UPDATE SET
              embedding = excluded.embedding,
-             dimensions = excluded.dimensions,
-             model = excluded.model,
              content_hash = excluded.content_hash,
              updated_at_epoch = excluded.updated_at_epoch";
 
@@ -476,10 +474,11 @@ fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
     };
     let sql = "SELECT COUNT(*)
                FROM memories m
-               LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+               LEFT JOIN memory_embeddings e
+                 ON e.memory_id = m.id
+                AND e.model = ?1
+                AND e.dimensions = ?2
                WHERE (e.memory_id IS NULL
-                      OR e.model <> ?1
-                      OR e.dimensions <> ?2
                       OR e.updated_at_epoch < m.updated_at_epoch)
                  AND m.status IN ('active', 'stale', 'archived')";
     Ok(conn.query_row(
@@ -658,12 +657,13 @@ pub fn find_similar_observations(
 fn create_embedding_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS memory_embeddings (
-             memory_id INTEGER PRIMARY KEY,
+             memory_id INTEGER NOT NULL,
              embedding BLOB NOT NULL,
              dimensions INTEGER NOT NULL,
              model TEXT NOT NULL,
              content_hash TEXT NOT NULL,
              updated_at_epoch INTEGER NOT NULL,
+             PRIMARY KEY(memory_id, model, dimensions),
              FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
          );
          CREATE INDEX IF NOT EXISTS idx_memory_embeddings_model

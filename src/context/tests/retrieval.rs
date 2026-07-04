@@ -13,10 +13,22 @@ use super::super::sections::render_core_memory_with_limits;
 use super::{insert_global_memory, insert_memory, setup_context_schema};
 
 const EMBEDDING_ENV_KEYS: &[&str] = &[
+    "REMEM_CONFIG",
     "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDING_PROVIDER",
     "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_MODEL",
+    "REMEM_EMBEDDING_MODEL",
+    "REMEM_EMBEDDINGS_DIMENSIONS",
+    "REMEM_EMBEDDING_DIMENSIONS",
     "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDING_API_KEY",
+    "REMEM_EMBEDDINGS_API_KEY_ENV",
     "REMEM_EMBEDDINGS_BASE_URL",
+    "REMEM_EMBEDDING_BASE_URL",
+    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+    "REMEM_EMBEDDINGS_MODEL_DIR",
+    "OPENAI_API_KEY",
 ];
 
 struct ScopedApiFallbackEnv {
@@ -68,7 +80,7 @@ struct FailingEmbeddingServer {
 }
 
 impl FailingEmbeddingServer {
-    fn start() -> anyhow::Result<Self> {
+    fn start(tracked_input: &'static str) -> anyhow::Result<Self> {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;
@@ -80,9 +92,13 @@ impl FailingEmbeddingServer {
             while !stop_for_thread.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        calls_for_thread.fetch_add(1, Ordering::SeqCst);
+                        stream.set_nonblocking(false)?;
                         let mut buffer = [0u8; 8192];
-                        let _ = stream.read(&mut buffer)?;
+                        let read = stream.read(&mut buffer)?;
+                        let request = String::from_utf8_lossy(&buffer[..read]);
+                        if request.contains(tracked_input) {
+                            calls_for_thread.fetch_add(1, Ordering::SeqCst);
+                        }
                         let body = "provider unavailable";
                         let response = format!(
                             "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
@@ -539,7 +555,7 @@ fn hybrid_context_vector_recall_is_not_crowded_out_by_global_hits() -> anyhow::R
 
 #[test]
 fn hybrid_context_vector_channel_uses_fallback_without_status_probe() -> anyhow::Result<()> {
-    let server = FailingEmbeddingServer::start()?;
+    let server = FailingEmbeddingServer::start(r#""input":"SQLCipher encrypts secrets""#)?;
     let _env = ScopedApiFallbackEnv::new(&server.base_url);
     let conn = Connection::open_in_memory()?;
     setup_context_schema(&conn);

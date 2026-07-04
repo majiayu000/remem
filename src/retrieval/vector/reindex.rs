@@ -10,10 +10,11 @@ pub(super) fn select_memory_embedding_reindex_candidates(
 ) -> Result<Vec<MemoryEmbeddingReindexCandidate>> {
     let sql = "SELECT m.id, m.topic_key, m.title, m.content, m.memory_type
          FROM memories m
-         LEFT JOIN memory_embeddings e ON e.memory_id = m.id
+         LEFT JOIN memory_embeddings e
+           ON e.memory_id = m.id
+          AND e.model = ?1
+          AND e.dimensions = ?2
          WHERE (e.memory_id IS NULL
-                OR e.model <> ?1
-                OR e.dimensions <> ?2
                 OR e.updated_at_epoch < m.updated_at_epoch)
            AND m.status IN ('active', 'stale', 'archived')
          ORDER BY m.updated_at_epoch DESC, m.id DESC

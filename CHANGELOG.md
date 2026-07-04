@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.156` for the GH-715 multi-model memory embedding
+  storage key and active-profile backfill slice.
 - Staged source version `0.5.155` for the merged embedding provider contract
   and failure lifecycle maintenance line.
 - Staged source version `0.5.154` for the failure lifecycle maintenance
