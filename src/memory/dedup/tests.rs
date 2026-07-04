@@ -495,6 +495,25 @@ fn check_duplicate_vector_stage_keeps_reordered_numeric_values_separate() -> Res
 }
 
 #[test]
+fn check_duplicate_vector_stage_dedups_equivalent_reordered_numeric_facts() -> Result<()> {
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_dedup_schema(&conn)?;
+
+        insert_observation(&conn, "test-project", "Set retries to 3 and timeout to 30s")?;
+        let duplicate_id = check_duplicate(
+            &conn,
+            "test-project",
+            "Set timeout to 30s and retries to 3",
+            None,
+        )?;
+
+        assert!(duplicate_id.is_some());
+        Ok(())
+    })
+}
+
+#[test]
 fn check_duplicate_vector_stage_skips_when_provider_off() -> Result<()> {
     with_embedding_provider("off", || -> Result<()> {
         let conn = Connection::open_in_memory()?;
