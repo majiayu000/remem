@@ -280,7 +280,41 @@ fn classify_preference(
 }
 
 fn active_preference_embedding(text: &str) -> Result<Option<TextEmbedding>> {
+    #[cfg(test)]
+    if active_preference_embedding_is_forbidden() {
+        anyhow::bail!("active preference embedding called in forbidden test scope");
+    }
     crate::retrieval::embedding::embed_query_if_enabled(text)
+}
+
+#[cfg(test)]
+thread_local! {
+    static FORBID_ACTIVE_PREFERENCE_EMBEDDING: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn active_preference_embedding_is_forbidden() -> bool {
+    FORBID_ACTIVE_PREFERENCE_EMBEDDING.with(|flag| flag.get())
+}
+
+#[cfg(test)]
+fn with_forbidden_active_preference_embedding<T>(f: impl FnOnce() -> T) -> T {
+    struct ResetForbiddenFlag(bool);
+
+    impl Drop for ResetForbiddenFlag {
+        fn drop(&mut self) {
+            FORBID_ACTIVE_PREFERENCE_EMBEDDING.with(|flag| flag.set(self.0));
+        }
+    }
+
+    let previous = FORBID_ACTIVE_PREFERENCE_EMBEDDING.with(|flag| {
+        let previous = flag.get();
+        flag.set(true);
+        previous
+    });
+    let _reset = ResetForbiddenFlag(previous);
+    f()
 }
 
 fn feature_hash_preference_embedding(text: &str) -> Result<TextEmbedding> {

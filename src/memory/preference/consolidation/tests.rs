@@ -1,69 +1,5 @@
 use super::*;
 
-const ENV_KEYS: &[&str] = &[
-    "REMEM_CONFIG",
-    "REMEM_EMBEDDINGS_PROVIDER",
-    "REMEM_EMBEDDING_PROVIDER",
-    "REMEM_EMBEDDINGS_MODEL",
-    "REMEM_EMBEDDING_MODEL",
-    "REMEM_EMBEDDINGS_DIMENSIONS",
-    "REMEM_EMBEDDING_DIMENSIONS",
-    "REMEM_EMBEDDINGS_FALLBACK",
-    "REMEM_EMBEDDINGS_BASE_URL",
-    "REMEM_EMBEDDING_BASE_URL",
-    "REMEM_EMBEDDINGS_API_KEY",
-    "REMEM_EMBEDDING_API_KEY",
-    "REMEM_EMBEDDINGS_API_KEY_ENV",
-    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
-    "REMEM_EMBEDDINGS_MODEL_DIR",
-    "OPENAI_API_KEY",
-];
-
-struct ScopedEmbeddingProvider {
-    _guard: std::sync::MutexGuard<'static, ()>,
-    saved: Vec<(&'static str, Option<String>)>,
-}
-
-impl ScopedEmbeddingProvider {
-    fn new(provider: &str) -> Self {
-        let guard = crate::runtime_config::TEST_ENV_LOCK
-            .lock()
-            .expect("env lock should acquire");
-        let saved = ENV_KEYS
-            .iter()
-            .map(|key| (*key, std::env::var(key).ok()))
-            .collect::<Vec<_>>();
-        for key in ENV_KEYS {
-            unsafe { std::env::remove_var(key) };
-        }
-        let config_path = std::env::temp_dir().join(format!(
-            "remem-preference-consolidation-test-{}-{}.toml",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default()
-        ));
-        unsafe { std::env::set_var("REMEM_CONFIG", config_path) };
-        unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
-        Self {
-            _guard: guard,
-            saved,
-        }
-    }
-}
-
-impl Drop for ScopedEmbeddingProvider {
-    fn drop(&mut self) {
-        for (key, value) in self.saved.drain(..) {
-            match value {
-                Some(value) => unsafe { std::env::set_var(key, value) },
-                None => unsafe { std::env::remove_var(key) },
-            }
-        }
-    }
-}
-
 fn feature_hash_text_embedding(text: &str) -> TextEmbedding {
     TextEmbedding::new(
         crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL,
@@ -92,19 +28,20 @@ fn feature_hash_embedding_refinement(
 
 #[test]
 fn consolidation_returns_none_without_embedding_when_no_candidates() -> anyhow::Result<()> {
-    let _provider = ScopedEmbeddingProvider::new("api");
     let conn = rusqlite::Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
 
-    let result = find_preference_consolidation(
-        &conn,
-        "repo",
-        "/repo",
-        "project",
-        None,
-        "Prefer concise Chinese progress updates.",
-        chrono::Utc::now().timestamp(),
-    )?;
+    let result = with_forbidden_active_preference_embedding(|| {
+        find_preference_consolidation(
+            &conn,
+            "repo",
+            "/repo",
+            "project",
+            None,
+            "Prefer concise Chinese progress updates.",
+            chrono::Utc::now().timestamp(),
+        )
+    })?;
 
     assert!(result.is_none());
     Ok(())
@@ -127,17 +64,17 @@ fn consolidation_uses_concepts_before_unavailable_active_embedding() -> anyhow::
         "project",
         None,
     )?;
-    let _provider = ScopedEmbeddingProvider::new("api");
-
-    let result = find_preference_consolidation(
-        &conn,
-        "repo",
-        "/repo",
-        "project",
-        None,
-        "Prefer brief Chinese status notes.",
-        chrono::Utc::now().timestamp(),
-    )?
+    let result = with_forbidden_active_preference_embedding(|| {
+        find_preference_consolidation(
+            &conn,
+            "repo",
+            "/repo",
+            "project",
+            None,
+            "Prefer brief Chinese status notes.",
+            chrono::Utc::now().timestamp(),
+        )
+    })?
     .expect("concept match should not require active embedding");
 
     assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
@@ -146,15 +83,56 @@ fn consolidation_uses_concepts_before_unavailable_active_embedding() -> anyhow::
 
 #[test]
 fn classify_preference_texts_uses_local_fallback_without_active_embedding() {
-    let _provider = ScopedEmbeddingProvider::new("api");
     let existing_text = r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery.
 - Favor extending existing pathways rather than creating parallel UI/event infrastructure."#;
     let incoming_text = r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep live Atlas runs opt-in, and validate via concrete artifacts while keeping credentials server-side."#;
 
-    let result = classify_preference_texts(1, existing_text, incoming_text)
-        .expect("render/audit text fallback should stay local");
+    let result = with_forbidden_active_preference_embedding(|| {
+        classify_preference_texts(1, existing_text, incoming_text)
+    })
+    .expect("render/audit text fallback should stay local");
 
     assert_eq!(result.kind, PreferenceConsolidationKind::Refinement);
+}
+
+#[test]
+fn consolidation_propagates_embedding_error_when_fallback_needed() -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let existing_text = r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery.
+- Favor extending existing pathways rather than creating parallel UI/event infrastructure."#;
+    let incoming_text = r#"Prefer minimal vertical slice (最小纵向闭环) with deterministic routing, keep live Atlas runs opt-in, and validate via concrete artifacts while keeping credentials server-side."#;
+    crate::memory::insert_memory_full(
+        &conn,
+        None,
+        "/repo",
+        None,
+        "Preference: minimal vertical slice",
+        existing_text,
+        "preference",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+
+    let error = with_forbidden_active_preference_embedding(|| {
+        find_preference_consolidation(
+            &conn,
+            "repo",
+            "/repo",
+            "project",
+            None,
+            incoming_text,
+            chrono::Utc::now().timestamp(),
+        )
+    })
+    .expect_err("embedding fallback path should propagate active provider errors");
+
+    assert!(error
+        .to_string()
+        .contains("active preference embedding called"));
+    Ok(())
 }
 
 #[test]
