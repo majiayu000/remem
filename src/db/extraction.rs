@@ -30,4 +30,6 @@ pub struct ExtractionTask {
 }
 
 #[cfg(test)]
+mod retry_regression_tests;
+#[cfg(test)]
 mod tests;
