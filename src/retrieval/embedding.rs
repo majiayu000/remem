@@ -3,7 +3,13 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use toml_edit::{DocumentMut, Item};
+
+mod config;
+mod status;
+
+use config::env_value;
+pub(crate) use config::resolve_embedding_config;
+pub(crate) use status::is_embedding_provider_off_error;
 
 pub const LOCAL_EMBEDDING_DIMENSIONS: usize = 768;
 pub const LOCAL_EMBEDDING_MODEL: &str = "remem-local-feature-hash-v1";
@@ -26,21 +32,37 @@ const ENV_API_KEY: &str = "REMEM_EMBEDDINGS_API_KEY";
 const ENV_API_KEY_LEGACY: &str = "REMEM_EMBEDDING_API_KEY";
 const ENV_API_KEY_ENV: &str = "REMEM_EMBEDDINGS_API_KEY_ENV";
 const ENV_TIMEOUT_SECS: &str = "REMEM_EMBEDDINGS_TIMEOUT_SECS";
+const ENV_FALLBACK: &str = "REMEM_EMBEDDINGS_FALLBACK";
+const ENV_MODEL_DIR: &str = "REMEM_EMBEDDINGS_MODEL_DIR";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbeddingProvider {
     Auto,
     Local,
+    FeatureHash,
     OpenAi,
+    Off,
 }
 
 impl EmbeddingProvider {
     fn parse(raw: &str) -> Result<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "auto" => Ok(Self::Auto),
-            "local" | "offline" | "feature-hash" | "feature_hash" => Ok(Self::Local),
-            "openai" | "openai-compatible" | "openai_compatible" => Ok(Self::OpenAi),
+            "local" => Ok(Self::Local),
+            "feature-hash" | "feature_hash" | "offline" => Ok(Self::FeatureHash),
+            "api" | "openai" | "openai-compatible" | "openai_compatible" => Ok(Self::OpenAi),
+            "off" | "disabled" | "none" => Ok(Self::Off),
             other => bail!("unknown embeddings.provider: {other}"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Local => "local",
+            Self::FeatureHash => "feature-hash",
+            Self::OpenAi => "api",
+            Self::Off => "off",
         }
     }
 }
@@ -48,10 +70,12 @@ impl EmbeddingProvider {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingConfig {
     pub provider: EmbeddingProvider,
+    pub fallback: Option<EmbeddingProvider>,
     pub model: String,
     pub base_url: String,
     pub dimensions: Option<usize>,
     pub api_key_env: String,
+    pub model_dir: Option<String>,
     pub timeout_secs: u64,
 }
 
@@ -59,13 +83,29 @@ impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
             provider: DEFAULT_PROVIDER,
+            fallback: None,
             model: OPENAI_DEFAULT_MODEL.to_string(),
             base_url: OPENAI_DEFAULT_BASE_URL.to_string(),
             dimensions: None,
             api_key_env: DEFAULT_API_KEY_ENV.to_string(),
+            model_dir: None,
             timeout_secs: DEFAULT_TIMEOUT_SECS,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingProviderStatus {
+    pub configured_provider: String,
+    pub fallback_provider: Option<String>,
+    pub active_provider: String,
+    pub active_model_id: Option<String>,
+    pub active_dimensions: Option<usize>,
+    pub degraded: bool,
+    pub disabled: bool,
+    pub unavailable_reason: Option<String>,
+    pub degradation_reason: Option<String>,
+    pub model_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,8 +156,35 @@ pub struct EmbeddingBackfillTarget {
     pub dimensions: usize,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct EmbeddingFallbackCache {
+    call_failure_fallback: Option<EmbeddingProvider>,
+}
+
+impl EmbeddingFallbackCache {
+    pub(crate) fn call_failure_fallback_target(&self) -> Option<EmbeddingBackfillTarget> {
+        match self.call_failure_fallback? {
+            EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+                Some(EmbeddingBackfillTarget {
+                    model: LOCAL_EMBEDDING_MODEL.to_string(),
+                    dimensions: LOCAL_EMBEDDING_DIMENSIONS,
+                })
+            }
+            EmbeddingProvider::Auto | EmbeddingProvider::OpenAi | EmbeddingProvider::Off => None,
+        }
+    }
+}
+
 pub fn embed_query(query: &str) -> Result<TextEmbedding> {
     embed_text(query)
+}
+
+pub(crate) fn embed_query_if_enabled(query: &str) -> Result<Option<TextEmbedding>> {
+    match embed_query(query) {
+        Ok(embedding) => Ok(Some(embedding)),
+        Err(error) if is_embedding_provider_off_error(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub fn embed_memory(
@@ -128,6 +195,17 @@ pub fn embed_memory(
 ) -> Result<TextEmbedding> {
     let text = memory_embedding_text(title, content, memory_type, topic_key);
     embed_text(&text)
+}
+
+pub(crate) fn embed_memory_with_fallback_cache(
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    topic_key: Option<&str>,
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<TextEmbedding> {
+    let text = memory_embedding_text(title, content, memory_type, topic_key);
+    embed_text_with_fallback_cache(&text, cache)
 }
 
 pub fn embed_query_text_local(query: &str) -> Vec<f32> {
@@ -169,20 +247,110 @@ pub fn embedding_content_hash(
 }
 
 pub(crate) fn configured_backfill_target() -> Result<EmbeddingBackfillTarget> {
-    let probe = embed_text("remem embedding profile probe")?;
+    let mut cache = EmbeddingFallbackCache::default();
+    configured_backfill_target_with_fallback_cache(&mut cache)
+}
+
+pub(crate) fn configured_backfill_target_with_fallback_cache(
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<EmbeddingBackfillTarget> {
+    if embedding_provider_status_without_probe()?.disabled {
+        return Err(status::embedding_provider_off_error());
+    }
+    let probe = embed_text_with_fallback_cache("remem embedding profile probe", cache)?;
     Ok(EmbeddingBackfillTarget {
         model: probe.model().to_string(),
         dimensions: probe.dimensions(),
     })
 }
 
-fn embed_text(text: &str) -> Result<TextEmbedding> {
+pub fn embedding_provider_status() -> Result<EmbeddingProviderStatus> {
     let config = resolve_embedding_config()?;
+    let mut status = status::resolve_provider_status(&config);
+    status::probe_active_api_profile(&config, &mut status);
+    Ok(status)
+}
+
+pub(crate) fn embedding_provider_status_without_probe() -> Result<EmbeddingProviderStatus> {
+    let config = resolve_embedding_config()?;
+    Ok(status::resolve_provider_status(&config))
+}
+
+fn embed_text(text: &str) -> Result<TextEmbedding> {
+    let mut cache = EmbeddingFallbackCache::default();
+    embed_text_with_fallback_cache(text, &mut cache)
+}
+
+fn embed_text_with_fallback_cache(
+    text: &str,
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<TextEmbedding> {
+    let config = resolve_embedding_config()?;
+    if let Some(fallback) = cache.call_failure_fallback {
+        return embed_with_cached_call_failure_fallback(text, &config, fallback);
+    }
     match active_provider(&config)? {
-        ActiveEmbeddingProvider::Local => {
+        ActiveEmbeddingProvider::Local | ActiveEmbeddingProvider::FeatureHash => {
             TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
         }
-        ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key),
+        ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key)
+            .or_else(|error| embed_with_call_failure_fallback(text, &config, error, cache)),
+        ActiveEmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
+    }
+}
+
+fn embed_with_cached_call_failure_fallback(
+    text: &str,
+    config: &EmbeddingConfig,
+    fallback: EmbeddingProvider,
+) -> Result<TextEmbedding> {
+    let fallback_runtime = status::provider_runtime(config, fallback);
+    if let Some(reason) = fallback_runtime.unavailable_reason {
+        bail!(
+            "cached embedding fallback {} unavailable: {reason}",
+            fallback.label()
+        );
+    }
+    match fallback_runtime.provider {
+        EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+            TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
+        }
+        EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
+        EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => {
+            bail!("cached embedding fallback must be local, feature-hash, or off")
+        }
+    }
+}
+
+fn embed_with_call_failure_fallback(
+    text: &str,
+    config: &EmbeddingConfig,
+    error: anyhow::Error,
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<TextEmbedding> {
+    let Some(fallback) = config.fallback else {
+        return Err(error);
+    };
+    let fallback_runtime = status::provider_runtime(config, fallback);
+    if let Some(reason) = fallback_runtime.unavailable_reason {
+        bail!(
+            "embedding provider api failed: {error}; fallback {} unavailable: {reason}",
+            fallback.label()
+        );
+    }
+    let message = format!(
+        "configured embedding provider api failed: {}; using fallback {}",
+        error,
+        fallback.label()
+    );
+    crate::log::error("embedding", &message);
+    match fallback_runtime.provider {
+        EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+            cache.call_failure_fallback = Some(fallback_runtime.provider);
+            TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
+        }
+        EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
+        EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => Err(error),
     }
 }
 
@@ -208,27 +376,29 @@ fn memory_embedding_text(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ActiveEmbeddingProvider {
     Local,
+    FeatureHash,
     OpenAi { api_key: String },
+    Off,
 }
 
 fn active_provider(config: &EmbeddingConfig) -> Result<ActiveEmbeddingProvider> {
-    match config.provider {
+    let status = status::resolve_provider_status(config);
+    if let Some(reason) = status.unavailable_reason {
+        bail!("{reason}");
+    }
+    match EmbeddingProvider::parse(&status.active_provider)? {
         EmbeddingProvider::Local => Ok(ActiveEmbeddingProvider::Local),
+        EmbeddingProvider::FeatureHash => Ok(ActiveEmbeddingProvider::FeatureHash),
         EmbeddingProvider::OpenAi => Ok(ActiveEmbeddingProvider::OpenAi {
             api_key: configured_api_key(config)?.with_context(|| {
                 format!(
-                    "embedding provider openai requires {ENV_API_KEY} or {}",
+                    "embedding provider api requires {ENV_API_KEY} or {}",
                     config.api_key_env
                 )
             })?,
         }),
-        EmbeddingProvider::Auto => {
-            if let Some(api_key) = auto_api_key(config)? {
-                Ok(ActiveEmbeddingProvider::OpenAi { api_key })
-            } else {
-                Ok(ActiveEmbeddingProvider::Local)
-            }
-        }
+        EmbeddingProvider::Off => Ok(ActiveEmbeddingProvider::Off),
+        EmbeddingProvider::Auto => bail!("auto must resolve to a concrete embedding provider"),
     }
 }
 
@@ -251,88 +421,6 @@ fn configured_api_key(config: &EmbeddingConfig) -> Result<Option<String>> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty()))
-}
-
-fn resolve_embedding_config() -> Result<EmbeddingConfig> {
-    let mut config = config_from_file()?.unwrap_or_default();
-    apply_env_overrides(&mut config)?;
-    validate_config(&config)?;
-    Ok(config)
-}
-
-fn config_from_file() -> Result<Option<EmbeddingConfig>> {
-    let path = crate::runtime_config::config_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let doc = content
-        .parse::<DocumentMut>()
-        .with_context(|| format!("parse {} as TOML", path.display()))?;
-    let Some(table) = doc.get("embeddings").and_then(Item::as_table) else {
-        return Ok(None);
-    };
-
-    let mut config = EmbeddingConfig::default();
-    if let Some(provider) = optional_str(table, "provider") {
-        config.provider = EmbeddingProvider::parse(&provider)?;
-    }
-    if let Some(model) = optional_str(table, "model") {
-        config.model = model;
-    }
-    if let Some(base_url) = optional_str(table, "base_url") {
-        config.base_url = base_url;
-    }
-    if let Some(dimensions) = optional_usize(table, "dimensions")? {
-        config.dimensions = Some(dimensions);
-    }
-    if let Some(api_key_env) = optional_str(table, "api_key_env") {
-        config.api_key_env = api_key_env;
-    }
-    if let Some(timeout_secs) = optional_u64(table, "timeout_secs")? {
-        config.timeout_secs = timeout_secs;
-    }
-    Ok(Some(config))
-}
-
-fn apply_env_overrides(config: &mut EmbeddingConfig) -> Result<()> {
-    if let Some(provider) = env_value(ENV_PROVIDER).or_else(|| env_value(ENV_PROVIDER_LEGACY)) {
-        config.provider = EmbeddingProvider::parse(&provider)?;
-    }
-    if let Some(model) = env_value(ENV_MODEL).or_else(|| env_value(ENV_MODEL_LEGACY)) {
-        config.model = model;
-    }
-    if let Some(base_url) = env_value(ENV_BASE_URL).or_else(|| env_value(ENV_BASE_URL_LEGACY)) {
-        config.base_url = base_url;
-    }
-    if let Some(dimensions) = env_value(ENV_DIMENSIONS).or_else(|| env_value(ENV_DIMENSIONS_LEGACY))
-    {
-        config.dimensions = Some(parse_positive_usize(&dimensions, ENV_DIMENSIONS)?);
-    }
-    if let Some(api_key_env) = env_value(ENV_API_KEY_ENV) {
-        config.api_key_env = api_key_env;
-    }
-    if let Some(timeout_secs) = env_value(ENV_TIMEOUT_SECS) {
-        config.timeout_secs = parse_positive_u64(&timeout_secs, ENV_TIMEOUT_SECS)?;
-    }
-    Ok(())
-}
-
-fn validate_config(config: &EmbeddingConfig) -> Result<()> {
-    if config.model.trim().is_empty() {
-        bail!("embeddings.model must not be empty");
-    }
-    if config.base_url.trim().is_empty() {
-        bail!("embeddings.base_url must not be empty");
-    }
-    if config.api_key_env.trim().is_empty() {
-        bail!("embeddings.api_key_env must not be empty");
-    }
-    if config.timeout_secs == 0 {
-        bail!("embeddings.timeout_secs must be positive");
-    }
-    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -599,78 +687,6 @@ fn semantic_concepts() -> &'static [(&'static str, &'static [&'static str])] {
             ],
         ),
     ]
-}
-
-fn optional_str(table: &toml_edit::Table, key: &str) -> Option<String> {
-    table
-        .get(key)
-        .and_then(Item::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn optional_usize(table: &toml_edit::Table, key: &str) -> Result<Option<usize>> {
-    table
-        .get(key)
-        .map(|item| match item.as_integer() {
-            Some(value) => usize::try_from(value)
-                .ok()
-                .filter(|value| *value > 0)
-                .with_context(|| format!("embeddings.{key} must be positive")),
-            None => item
-                .as_str()
-                .with_context(|| format!("embeddings.{key} must be an integer"))
-                .and_then(|raw| parse_positive_usize(raw, key)),
-        })
-        .transpose()
-}
-
-fn optional_u64(table: &toml_edit::Table, key: &str) -> Result<Option<u64>> {
-    table
-        .get(key)
-        .map(|item| match item.as_integer() {
-            Some(value) => u64::try_from(value)
-                .ok()
-                .filter(|value| *value > 0)
-                .with_context(|| format!("embeddings.{key} must be positive")),
-            None => item
-                .as_str()
-                .with_context(|| format!("embeddings.{key} must be an integer"))
-                .and_then(|raw| parse_positive_u64(raw, key)),
-        })
-        .transpose()
-}
-
-fn parse_positive_usize(raw: &str, key: &str) -> Result<usize> {
-    raw.trim()
-        .parse::<usize>()
-        .with_context(|| format!("{key} must be a positive integer"))
-        .and_then(|value| {
-            if value == 0 {
-                bail!("{key} must be positive");
-            }
-            Ok(value)
-        })
-}
-
-fn parse_positive_u64(raw: &str, key: &str) -> Result<u64> {
-    raw.trim()
-        .parse::<u64>()
-        .with_context(|| format!("{key} must be a positive integer"))
-        .and_then(|value| {
-            if value == 0 {
-                bail!("{key} must be positive");
-            }
-            Ok(value)
-        })
-}
-
-fn env_value(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]

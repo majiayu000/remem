@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.155` for the merged embedding provider contract
+  and failure lifecycle maintenance line.
 - Staged source version `0.5.154` for the failure lifecycle maintenance
   feature: classify transient vs permanent failures, auto-requeue bounded
   transient extraction/replay/job failures, archive aged permanent/exhausted
@@ -62,6 +64,7 @@
 - Staged source version `0.5.150` for capacity degradation eval gates.
 - Staged source version `0.5.151` for prefix-cache-stable context rendering.
 - Staged source version `0.5.152` for Codex SessionStart context visibility.
+- Staged source version `0.5.153` for the local embedding provider contract.
 - Updated extraction-eval candidate prompt fingerprints for the
   memory-candidate type-vocabulary prompt change.
 

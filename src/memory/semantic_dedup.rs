@@ -52,6 +52,9 @@ pub(crate) fn find_curated_duplicate(
     {
         return Ok(None);
     }
+    if crate::retrieval::embedding::embedding_provider_status_without_probe()?.disabled {
+        return Ok(None);
+    }
 
     let scope = if scope.trim().is_empty() {
         "project"
@@ -61,7 +64,13 @@ pub(crate) fn find_curated_duplicate(
     let (owner_scope, owner_key) = crate::memory::operation::owner_for_scope(project, scope);
     let branch_key = branch.unwrap_or_default();
     let query_embedding =
-        crate::retrieval::embedding::embed_memory(title, content, memory_type, topic_key)?;
+        match crate::retrieval::embedding::embed_memory(title, content, memory_type, topic_key) {
+            Ok(embedding) => embedding,
+            Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
     let threshold = similarity_threshold(query_embedding.model());
     let max_distance = 1.0 - threshold;
     let current_filter = crate::memory::memory_state_key_current_filter_sql("m");

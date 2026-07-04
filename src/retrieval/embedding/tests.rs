@@ -18,6 +18,8 @@ const ENV_KEYS: &[&str] = &[
     ENV_API_KEY_LEGACY,
     ENV_API_KEY_ENV,
     ENV_TIMEOUT_SECS,
+    ENV_FALLBACK,
+    ENV_MODEL_DIR,
     DEFAULT_API_KEY_ENV,
     TEST_API_KEY_ENV,
 ];
@@ -92,9 +94,146 @@ api_key_env = "REMEM_TEST_EMBEDDING_KEY"
         let active = active_provider(&config)?;
 
         assert_eq!(config.provider, EmbeddingProvider::OpenAi);
+        assert_eq!(config.fallback, None);
         assert_eq!(config.model, "text-embedding-3-large");
         assert_eq!(config.dimensions, Some(256));
         assert!(matches!(active, ActiveEmbeddingProvider::OpenAi { .. }));
+        std::fs::remove_file(path).ok();
+        Ok(())
+    })
+}
+
+#[test]
+fn local_and_feature_hash_are_distinct_configured_providers() -> Result<()> {
+    with_clean_env(|| {
+        unsafe { std::env::set_var(ENV_PROVIDER, "local") };
+        let local = resolve_embedding_config()?;
+        let local_status = embedding_provider_status()?;
+        assert_eq!(local.provider, EmbeddingProvider::Local);
+        assert_eq!(local_status.configured_provider, "local");
+        assert_eq!(local_status.active_provider, "local");
+        assert_eq!(
+            local_status.active_model_id.as_deref(),
+            Some(LOCAL_EMBEDDING_MODEL)
+        );
+
+        unsafe { std::env::set_var(ENV_PROVIDER, "feature-hash") };
+        let feature_hash = resolve_embedding_config()?;
+        let feature_hash_status = embedding_provider_status()?;
+        assert_eq!(feature_hash.provider, EmbeddingProvider::FeatureHash);
+        assert_eq!(feature_hash_status.configured_provider, "feature-hash");
+        assert_eq!(feature_hash_status.active_provider, "feature-hash");
+        assert_eq!(
+            feature_hash_status.active_model_id.as_deref(),
+            Some(LOCAL_EMBEDDING_MODEL)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn off_provider_reports_disabled_and_refuses_embedding() {
+    with_clean_env(|| {
+        unsafe { std::env::set_var(ENV_PROVIDER, "off") };
+
+        let status = embedding_provider_status().expect("status should resolve");
+        let err = embed_query("hello").unwrap_err();
+
+        assert_eq!(status.configured_provider, "off");
+        assert_eq!(status.active_provider, "off");
+        assert!(status.disabled);
+        assert!(err.to_string().contains("provider is off"));
+    });
+}
+
+#[test]
+fn api_provider_without_key_uses_configured_fallback_visibly() -> Result<()> {
+    with_clean_env(|| {
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+            std::env::set_var(ENV_FALLBACK, "feature-hash");
+        }
+
+        let config = resolve_embedding_config()?;
+        let active = active_provider(&config)?;
+        let status = embedding_provider_status()?;
+
+        assert_eq!(config.provider, EmbeddingProvider::OpenAi);
+        assert_eq!(config.fallback, Some(EmbeddingProvider::FeatureHash));
+        assert!(matches!(active, ActiveEmbeddingProvider::FeatureHash));
+        assert!(status.degraded);
+        assert!(!status.disabled);
+        assert_eq!(status.active_provider, "feature-hash");
+        assert!(status
+            .degradation_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("using fallback feature-hash"));
+        Ok(())
+    })
+}
+
+#[test]
+fn api_provider_call_failure_uses_configured_feature_hash_fallback() -> Result<()> {
+    with_clean_env(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> Result<()> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0u8; 8192];
+            let _ = stream.read(&mut buffer)?;
+            let body = "provider unavailable";
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(())
+        });
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+            std::env::set_var(ENV_FALLBACK, "feature-hash");
+            std::env::set_var(ENV_API_KEY, "test-key");
+            std::env::set_var(ENV_BASE_URL, format!("http://{addr}/v1"));
+        }
+
+        let embedding = embed_query("remote endpoint fallback")?;
+        handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+
+        assert_eq!(embedding.model(), LOCAL_EMBEDDING_MODEL);
+        assert_eq!(embedding.dimensions(), LOCAL_EMBEDDING_DIMENSIONS);
+        Ok(())
+    })
+}
+
+#[test]
+fn config_file_reads_fallback_and_model_dir() -> Result<()> {
+    with_clean_env(|| {
+        let path = std::env::temp_dir().join(format!(
+            "remem-embedding-config-contract-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(
+            &path,
+            r#"[embeddings]
+provider = "api"
+fallback = "feature-hash"
+model_dir = "/tmp/remem-models"
+"#,
+        )?;
+        unsafe {
+            std::env::set_var("REMEM_CONFIG", &path);
+        }
+
+        let config = resolve_embedding_config()?;
+
+        assert_eq!(config.provider, EmbeddingProvider::OpenAi);
+        assert_eq!(config.fallback, Some(EmbeddingProvider::FeatureHash));
+        assert_eq!(config.model_dir.as_deref(), Some("/tmp/remem-models"));
         std::fs::remove_file(path).ok();
         Ok(())
     })
@@ -146,6 +285,46 @@ fn backfill_target_uses_provider_returned_profile() -> Result<()> {
 
         assert_eq!(target.model, "normalized-model");
         assert_eq!(target.dimensions, 4);
+        assert!(request.contains("\"model\":\"requested-model\""));
+        assert!(request.contains("\"dimensions\":256"));
+        Ok(())
+    })
+}
+
+#[test]
+fn api_provider_status_uses_provider_returned_profile() -> Result<()> {
+    with_clean_env(|| {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let handle = std::thread::spawn(move || -> Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0u8; 8192];
+            let read = stream.read(&mut buffer)?;
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let body = r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes())?;
+            Ok(request)
+        });
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "openai");
+            std::env::set_var(ENV_API_KEY, "test-key");
+            std::env::set_var(ENV_MODEL, "requested-model");
+            std::env::set_var(ENV_DIMENSIONS, "256");
+            std::env::set_var(ENV_BASE_URL, format!("http://{addr}/v1"));
+        }
+
+        let status = embedding_provider_status()?;
+        let request = handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+
+        assert_eq!(status.active_model_id.as_deref(), Some("normalized-model"));
+        assert_eq!(status.active_dimensions, Some(4));
         assert!(request.contains("\"model\":\"requested-model\""));
         assert!(request.contains("\"dimensions\":256"));
         Ok(())

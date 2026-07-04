@@ -17,6 +17,22 @@ fn status_report_fixture() -> StatusReport {
             sessions: 3,
             raw_messages: 4,
         },
+        embedding: EmbeddingStatus {
+            configured_provider: "local".to_string(),
+            fallback_provider: Some("feature-hash".to_string()),
+            active_provider: "local".to_string(),
+            active_model_id: Some("remem-local-feature-hash-v1".to_string()),
+            degraded: false,
+            disabled: false,
+            unavailable_reason: None,
+            degradation_reason: None,
+            coverage: EmbeddingCoverageStatus {
+                embedded: 8,
+                total: 10,
+                percent: 80.0,
+                mixed_profile_count: 1,
+            },
+        },
         raw_archive: RawArchiveStatus {
             messages: 4,
             ingest_failures: 0,
@@ -143,6 +159,18 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["version"], "0.4.5");
     assert_eq!(parsed["database"]["size_bytes"], 1_048_576);
     assert_eq!(parsed["totals"]["memories"], 1);
+    assert_eq!(parsed["embedding"]["configured_provider"], "local");
+    assert_eq!(parsed["embedding"]["fallback_provider"], "feature-hash");
+    assert_eq!(parsed["embedding"]["active_provider"], "local");
+    assert_eq!(
+        parsed["embedding"]["active_model_id"],
+        "remem-local-feature-hash-v1"
+    );
+    assert_eq!(parsed["embedding"]["degraded"], false);
+    assert_eq!(parsed["embedding"]["disabled"], false);
+    assert_eq!(parsed["embedding"]["coverage"]["embedded"], 8);
+    assert_eq!(parsed["embedding"]["coverage"]["total"], 10);
+    assert_eq!(parsed["embedding"]["coverage"]["mixed_profile_count"], 1);
     assert_eq!(parsed["raw_archive"]["messages"], 4);
     assert_eq!(parsed["raw_archive"]["ingest_failures"], 1);
     assert_eq!(parsed["raw_archive"]["parse_errors"], 2);

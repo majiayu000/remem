@@ -35,8 +35,9 @@ pub(super) fn rank_stored_embedding_matches(
     if limit == 0 || query.trim().is_empty() || candidate_ids.is_empty() {
         return Ok(Vec::new());
     }
-
-    let query_embedding = crate::retrieval::embedding::embed_query(query)?;
+    let Some(query_embedding) = crate::retrieval::embedding::embed_query_if_enabled(query)? else {
+        return Ok(Vec::new());
+    };
     let profile = query_embedding.profile();
     let mut ids = candidate_ids.to_vec();
     ids.sort_unstable();

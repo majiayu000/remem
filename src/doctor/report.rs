@@ -13,6 +13,7 @@ use super::database::{
     check_memory_usage_feedback, check_pending_queue, check_promotion_funnel,
     check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
 };
+use super::embedding::check_embedding_provider;
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::logging::check_log_health;
 use super::mcp_processes::check_mcp_processes;
@@ -86,6 +87,9 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, check_install_paths)?;
     push_check(&mut checks, &mut on_check, check_runtime_config)?;
+    push_checks(&mut checks, &mut on_check, || {
+        check_embedding_provider(shared_db.conn())
+    })?;
     push_checks(&mut checks, &mut on_check, check_hooks)?;
     push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;

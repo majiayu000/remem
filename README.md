@@ -322,6 +322,41 @@ Do not read this as a published claim that remem beats a carefully maintained
 is still a separate benchmark requirement; until it is published, the honest
 claim is capability coverage and reproducible local checks.
 
+## Embedding Provider Configuration
+
+Vector retrieval is controlled by the `[embeddings]` section in
+`~/.remem/config.toml`:
+
+```toml
+[embeddings]
+provider = "local"        # api | local | feature-hash | off
+fallback = "feature-hash" # optional; omit for fail-closed
+model = "text-embedding-3-small"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model_dir = ""            # future local model cache; defaults under REMEM_DATA_DIR
+```
+
+Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
+`REMEM_EMBEDDINGS_PROVIDER`, `REMEM_EMBEDDINGS_FALLBACK`,
+`REMEM_EMBEDDINGS_MODEL`, `REMEM_EMBEDDINGS_MODEL_DIR`,
+`REMEM_EMBEDDINGS_BASE_URL`, `REMEM_EMBEDDINGS_API_KEY`,
+`REMEM_EMBEDDINGS_API_KEY_ENV`, `REMEM_EMBEDDINGS_DIMENSIONS`, and
+`REMEM_EMBEDDINGS_TIMEOUT_SECS`.
+
+`local` and `feature-hash` are separate provider states. Until the local
+semantic model runtime lands, both use `remem-local-feature-hash-v1`; selecting
+`feature-hash` explicitly labels the non-semantic fallback. `provider = "off"`
+disables query embeddings, vector fusion, vector writes, and embedding
+backfill. Existing stored vectors remain in SQLite but are ignored while the
+provider is off.
+
+`remem status --json` exposes an `embedding` object with configured provider,
+active provider, active model id, degraded/disabled flags, and active-model
+coverage. `remem doctor` reports unavailable configured providers, visible
+fallback activation, low active-model coverage, and mixed model/dimension
+profiles that need backfill.
+
 ## Search Architecture
 
 remem uses 4-channel Reciprocal Rank Fusion (RRF) inspired by [Hindsight](https://github.com/vectorize-io/hindsight):
@@ -677,7 +712,7 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `failure_lifecycle`, `today`, `top_projects` |
+| `remem status --json` | `version`, `database`, `totals`, `embedding`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `failure_lifecycle`, `today`, `top_projects` |
 | `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied`; archived failure purge counts stay zero unless `--archived-failures[=DAYS]` is supplied |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |

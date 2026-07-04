@@ -1,12 +1,210 @@
 use anyhow::Result;
 use rusqlite::Connection;
+use std::io::{Read, Write};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 
 use super::*;
 
-fn setup_vector_conn() -> Result<Connection> {
+struct ScopedEmbeddingProvider {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl ScopedEmbeddingProvider {
+    fn new(provider: &str) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+
+    fn api_fallback_off(base_url: &str) -> Self {
+        Self::api_with_fallback(base_url, "off")
+    }
+
+    fn api_fallback_feature_hash(base_url: &str) -> Self {
+        Self::api_with_fallback(base_url, "feature-hash")
+    }
+
+    fn api_with_fallback(base_url: &str, fallback: &str) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", fallback);
+            std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
+            std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", base_url);
+        }
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+}
+
+struct FailingEmbeddingServer {
+    base_url: String,
+    calls: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<Result<()>>>,
+}
+
+impl FailingEmbeddingServer {
+    fn start() -> Result<Self> {
+        Self::start_with_successes(0)
+    }
+
+    fn success_once_then_fail() -> Result<Self> {
+        Self::start_with_successes(1)
+    }
+
+    fn start_with_successes(successes_before_failure: usize) -> Result<Self> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let addr = listener.local_addr()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls_for_thread = Arc::clone(&calls);
+        let stop_for_thread = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || -> Result<()> {
+            while !stop_for_thread.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let call_index = calls_for_thread.fetch_add(1, Ordering::SeqCst);
+                        let mut buffer = [0u8; 8192];
+                        let _ = stream.read(&mut buffer)?;
+                        let response = if call_index < successes_before_failure {
+                            let body = r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
+                            format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
+                        } else {
+                            let body = "provider unavailable";
+                            format!(
+                                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
+                        };
+                        stream.write_all(response.as_bytes())?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(())
+        });
+        Ok(Self {
+            base_url: format!("http://{addr}/v1"),
+            calls,
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for FailingEmbeddingServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .expect("embedding server thread should not panic")
+                .expect("embedding server should stop cleanly");
+        }
+    }
+}
+
+impl Drop for ScopedEmbeddingProvider {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+struct VectorTestConn {
+    conn: Connection,
+    _provider: ScopedEmbeddingProvider,
+}
+
+impl std::ops::Deref for VectorTestConn {
+    type Target = Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
+}
+
+fn setup_vector_conn_with_provider(provider_name: &str) -> Result<VectorTestConn> {
+    let provider = ScopedEmbeddingProvider::new(provider_name);
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
-    Ok(conn)
+    Ok(VectorTestConn {
+        conn,
+        _provider: provider,
+    })
+}
+
+fn setup_vector_conn() -> Result<VectorTestConn> {
+    setup_vector_conn_with_provider("feature-hash")
+}
+
+const ENV_KEYS: &[&str] = &[
+    "REMEM_CONFIG",
+    "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDING_PROVIDER",
+    "REMEM_EMBEDDINGS_MODEL",
+    "REMEM_EMBEDDING_MODEL",
+    "REMEM_EMBEDDINGS_DIMENSIONS",
+    "REMEM_EMBEDDING_DIMENSIONS",
+    "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_BASE_URL",
+    "REMEM_EMBEDDING_BASE_URL",
+    "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDING_API_KEY",
+    "REMEM_EMBEDDINGS_API_KEY_ENV",
+    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+    "REMEM_EMBEDDINGS_MODEL_DIR",
+    "OPENAI_API_KEY",
+];
+
+fn with_embedding_provider<T>(provider: &str, f: impl FnOnce() -> T) -> T {
+    let _provider = ScopedEmbeddingProvider::new(provider);
+    f()
 }
 
 fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
@@ -16,6 +214,82 @@ fn insert_test_memory(conn: &Connection, id: i64) -> Result<()> {
          VALUES (?1, '/repo', 'Credential store', 'SQLCipher encrypts secrets at rest.', 'architecture', 1, 1, 'active')",
         params![id],
     )?;
+    Ok(())
+}
+
+#[test]
+fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
+    let conn = setup_vector_conn_with_provider("off")?;
+    insert_test_memory(&conn, 1)?;
+    ensure_vec_table(&conn)?;
+
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+    assert_eq!(embedding_count(&conn)?, 0);
+    assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 0);
+
+    let report = reindex_memory_embeddings_with_report(&conn, 100)?;
+    assert_eq!(report.processed, 0);
+    assert_eq!(report.model, "off");
+
+    let query = vec![0.0; EMBEDDING_DIMENSIONS];
+    let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
+    assert_eq!(
+        outcome.disabled_reason.as_deref(),
+        Some("embedding provider is off")
+    );
+    assert_eq!(embedding_count(&conn)?, 0);
+    Ok(())
+}
+
+#[test]
+fn api_failure_fallback_off_skips_vector_writes_and_backfill() -> Result<()> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let handle = std::thread::spawn(move || -> Result<()> {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept()?;
+            let mut buffer = [0_u8; 8192];
+            std::io::Read::read(&mut stream, &mut buffer)?;
+            let body = "provider unavailable";
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            std::io::Write::write_all(&mut stream, response.as_bytes())?;
+        }
+        Ok(())
+    });
+    let _provider = ScopedEmbeddingProvider::api_fallback_off(&format!("http://{addr}/v1"));
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    insert_test_memory(&conn, 1)?;
+    ensure_vec_table(&conn)?;
+
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+    )?;
+    assert_eq!(embedding_count(&conn)?, 0);
+
+    let report = reindex_memory_embeddings_with_report(&conn, 100)?;
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("embedding test server thread panicked"))??;
+    assert_eq!(report.processed, 0);
+    assert_eq!(report.model, "off");
+    assert_eq!(embedding_count(&conn)?, 0);
     Ok(())
 }
 
@@ -223,6 +497,70 @@ fn reindex_report_includes_profile_timings_and_remaining_work() -> Result<()> {
 }
 
 #[test]
+fn reindex_api_failure_fallback_is_cached_for_batch() -> Result<()> {
+    let server = FailingEmbeddingServer::start()?;
+    let _provider = ScopedEmbeddingProvider::api_fallback_feature_hash(&server.base_url);
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    for id in 1_i64..=2 {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Fallback memory', 'Fallback vector content.', 'decision', 1, ?1, 'active')",
+            params![id],
+        )?;
+    }
+    ensure_vec_table(&conn)?;
+
+    let report = reindex_memory_embeddings_with_report(&conn, 2)?;
+
+    assert_eq!(report.selected, 2);
+    assert_eq!(report.processed, 2);
+    assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
+    assert_eq!(server.call_count(), 1);
+    Ok(())
+}
+
+#[test]
+fn reindex_row_failure_fallback_reselects_fallback_target() -> Result<()> {
+    let server = FailingEmbeddingServer::success_once_then_fail()?;
+    let _provider = ScopedEmbeddingProvider::api_fallback_feature_hash(&server.base_url);
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    for id in 1_i64..=2 {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Fallback memory', 'Fallback vector content.', 'decision', 1, ?1, 'active')",
+            params![id],
+        )?;
+    }
+    ensure_vec_table(&conn)?;
+    let existing = embed_memory_text(
+        "Fallback memory",
+        "Fallback vector content.",
+        "decision",
+        None,
+    );
+    upsert_embedding(&conn, 1, &existing)?;
+
+    let report = reindex_memory_embeddings_with_report(&conn, 2)?;
+
+    assert_eq!(report.selected, 1);
+    assert_eq!(report.processed, 1);
+    assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
+    assert_eq!(report.dimensions, EMBEDDING_DIMENSIONS);
+    assert_eq!(server.call_count(), 2);
+    let fallback_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE model = ?1 AND dimensions = ?2",
+        params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64],
+        |row| row.get(0),
+    )?;
+    assert_eq!(fallback_rows, 2);
+    Ok(())
+}
+
+#[test]
 fn reindex_batch_rolls_back_failed_upserts() -> Result<()> {
     let conn = setup_vector_conn()?;
     for (id, updated_at_epoch) in [(1_i64, 2_i64), (2, 1)] {
@@ -376,15 +714,17 @@ fn empty_vector_table_with_memories_is_reported_as_disabled() -> Result<()> {
 
 #[test]
 fn missing_vector_table_is_reported_as_disabled() -> Result<()> {
-    let conn = Connection::open_in_memory()?;
-    let query = embed_query_text("anything");
-    let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
+    with_embedding_provider("feature-hash", || -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let query = embed_query_text("anything");
+        let outcome = vector_search_filtered(&conn, &query, VectorSearchFilters::default(), 10)?;
 
-    assert!(outcome
-        .disabled_reason
-        .as_deref()
-        .unwrap_or("")
-        .contains("memory_embeddings table is missing"));
-    assert!(outcome.hits.is_empty());
-    Ok(())
+        assert!(outcome
+            .disabled_reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("memory_embeddings table is missing"));
+        assert!(outcome.hits.is_empty());
+        Ok(())
+    })
 }
