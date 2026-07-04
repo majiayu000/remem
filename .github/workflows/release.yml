@@ -176,7 +176,7 @@ jobs:
             end
 
             def install
-              bin.install "remem"
+              bin.install "remem" => "remem"
               if OS.mac? && Hardware::CPU.arm?
                 system "codesign", "--force", "--sign", "-", bin/"remem"
               end
