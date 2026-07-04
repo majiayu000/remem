@@ -128,6 +128,9 @@ pub(super) enum Commands {
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
+        /// Purge archived failed queue rows older than DAYS. Defaults to 90 days when the flag is present.
+        #[arg(long, value_name = "DAYS", num_args = 0..=1, default_missing_value = "90")]
+        archived_failures: Option<i64>,
     },
     /// Sync the project memory index into CLAUDE.md.
     SyncMemory {
@@ -524,6 +527,19 @@ pub(super) enum Commands {
     Import {
         #[command(subcommand)]
         action: ImportAction,
+    },
+    /// Batch-ingest Claude Code / Codex session transcripts into the raw archive.
+    IngestSessions {
+        /// Extra scan root as label=path (repeatable). Defaults always include
+        /// ~/.claude/projects and ~/.codex/sessions.
+        #[arg(long = "root")]
+        roots: Vec<String>,
+        /// Skip files last modified before this bound (Unix epoch or ISO8601 date/datetime).
+        #[arg(long)]
+        since: Option<String>,
+        /// Emit a single JSON summary object for scripts.
+        #[arg(long)]
+        json: bool,
     },
     /// Export curated memories to a human-editable mirror.
     Export(ExportArgs),

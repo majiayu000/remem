@@ -1,7 +1,7 @@
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 
-use super::super::types::{RawSearchHit, SearchRawParams};
+use super::super::types::{ListRawSessionsParams, RawSearchHit, SearchRawParams};
 use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::memory::raw_archive;
@@ -34,6 +34,8 @@ impl MemoryServer {
                 params.offset.unwrap_or(0),
             ),
         );
+        let since_epoch = parse_optional_bound(TOOL, "since", params.since.as_deref())?;
+        let until_epoch = parse_optional_bound(TOOL, "until", params.until.as_deref())?;
         self.with_conn(TOOL, |conn| {
             let req = raw_archive::RawSearchRequest {
                 query: params.query.clone(),
@@ -42,6 +44,8 @@ impl MemoryServer {
                 role: params.role.clone(),
                 limit: params.limit.unwrap_or(20),
                 offset: params.offset.unwrap_or(0),
+                since_epoch,
+                until_epoch,
             };
             let hits = raw_archive::search_raw_messages(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search_raw failed: {}", e));
@@ -76,4 +80,66 @@ impl MemoryServer {
             errors::to_json_pretty(TOOL, &results)
         })
     }
+
+    #[tool(
+        description = "List sessions with raw archive messages inside a time window, grouped by \
+        (source_root, project, session_id) with first/last message epoch, message count, and optional \
+        role=user message samples. Use for recap-style summaries of what happened in a period. \
+        Output fields match `remem raw sessions --json`."
+    )]
+    pub(super) fn list_raw_sessions(
+        &self,
+        Parameters(params): Parameters<ListRawSessionsParams>,
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "list_raw_sessions";
+        let start = std::time::Instant::now();
+        crate::log::info(
+            "mcp",
+            &format!(
+                "list_raw_sessions called since={:?} until={:?} project={:?} sample={}",
+                params.since,
+                params.until,
+                params.project,
+                params.sample.unwrap_or(0),
+            ),
+        );
+        let since_epoch = parse_optional_bound(TOOL, "since", params.since.as_deref())?;
+        let until_epoch = parse_optional_bound(TOOL, "until", params.until.as_deref())?;
+        self.with_conn(TOOL, |conn| {
+            let query = raw_archive::RawSessionQuery {
+                since_epoch,
+                until_epoch,
+                project: params.project.clone(),
+                sample_user_messages: params.sample.unwrap_or(0).max(0),
+            };
+            let sessions = raw_archive::list_sessions(conn, &query).map_err(|e| {
+                crate::log::warn("mcp", &format!("list_raw_sessions failed: {}", e));
+                McpToolError::db_query(TOOL, e)
+            })?;
+
+            crate::log::info(
+                "mcp",
+                &format!(
+                    "list_raw_sessions done count={} {}ms",
+                    sessions.len(),
+                    start.elapsed().as_millis()
+                ),
+            );
+            errors::to_json_pretty(TOOL, &raw_archive::build_sessions_json(&query, sessions))
+        })
+    }
+}
+
+fn parse_optional_bound(
+    tool: &'static str,
+    field: &str,
+    value: Option<&str>,
+) -> Result<Option<i64>, McpToolError> {
+    value
+        .map(raw_archive::parse_time_bound)
+        .transpose()
+        .map_err(|e| {
+            crate::log::warn("mcp", &format!("{tool} invalid {field}: {e}"));
+            McpToolError::invalid_request(tool, e.to_string())
+        })
 }

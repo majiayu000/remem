@@ -8,6 +8,9 @@ pub fn mark_job_done(conn: &Connection, job_id: i64, lease_owner: &str) -> Resul
          SET state = 'done',
              lease_owner = NULL,
              lease_expires_epoch = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?1
          WHERE id = ?2 AND lease_owner = ?3",
         params![now, job_id, lease_owner],
@@ -32,6 +35,9 @@ pub fn mark_job_failed(
              attempt_count = attempt_count + 1,
              next_retry_epoch = ?1,
              last_error = ?2,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?3
          WHERE id = ?4 AND lease_owner = ?5",
         params![next_retry, error_msg, now, job_id, lease_owner],
@@ -46,6 +52,9 @@ pub fn mark_job_exhausted(conn: &Connection, job_id: i64, lease_owner: &str) -> 
          SET state = 'failed',
              lease_owner = NULL,
              lease_expires_epoch = NULL,
+             failure_class = COALESCE(failure_class, 'transient'),
+             failed_at_epoch = COALESCE(failed_at_epoch, ?1),
+             archived_at_epoch = NULL,
              updated_at_epoch = ?1
          WHERE id = ?2 AND lease_owner = ?3",
         params![now, job_id, lease_owner],
@@ -88,19 +97,25 @@ pub fn mark_job_failed_or_retry(
     )?;
 
     let next_attempt = attempt_count + 1;
-    if next_attempt >= max_attempts {
+    let failure_class = crate::db::classify_failure(err);
+    if failure_class == crate::db::FailureClass::Permanent || next_attempt >= max_attempts {
         conn.execute(
             "UPDATE jobs
              SET state = 'failed',
                  attempt_count = ?1,
+                 next_retry_epoch = 0,
                  last_error = ?2,
+                 failure_class = ?3,
+                 failed_at_epoch = COALESCE(failed_at_epoch, ?4),
+                 archived_at_epoch = NULL,
                  lease_owner = NULL,
                  lease_expires_epoch = NULL,
-                 updated_at_epoch = ?3
-             WHERE id = ?4 AND lease_owner = ?5",
+                 updated_at_epoch = ?4
+             WHERE id = ?5 AND lease_owner = ?6",
             params![
                 next_attempt,
                 crate::db::truncate_str(err, 2000),
+                failure_class.as_str(),
                 now,
                 job_id,
                 lease_owner
@@ -115,6 +130,9 @@ pub fn mark_job_failed_or_retry(
              attempt_count = ?1,
              next_retry_epoch = ?2,
              last_error = ?3,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              lease_owner = NULL,
              lease_expires_epoch = NULL,
              updated_at_epoch = ?4

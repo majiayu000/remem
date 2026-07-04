@@ -247,6 +247,11 @@ session_summaries ──→ memories (auto-promoted)
 - **Retention cleanup**: Compression replacement observations are retained; retired
   source observations can be deleted 90 days after compression only when
   `compressed_observation_sources` still has sufficient hash/snapshot provenance
+- **Failure lifecycle**: Failed pending observations, extraction tasks, replay
+  ranges, and jobs carry `failure_class`, `failed_at_epoch`, and
+  `archived_at_epoch`. Transient extraction/replay/job failures receive
+  bounded automatic retries; permanent or exhausted failures stay visible until
+  they age into archived history.
 
 ## Rate Limiting
 
@@ -453,6 +458,7 @@ estimates or repriced rows from older schema versions; new Codex rows should use
 
 ```bash
 remem cleanup --dry-run --json    # Preview retention counts
+remem cleanup --dry-run --json --archived-failures
 remem cleanup                     # Apply cleanup
 ```
 
@@ -464,6 +470,9 @@ Cleans:
   90 days after the compression link was created, only if
   `compressed_observation_sources` preserves source hash and snapshot evidence
 - Stale memories: archive rows older than 180 days
+- Archived failures: deleted only when `--archived-failures[=DAYS]` is supplied;
+  the default explicit horizon is 90 days, and archive/purge totals are rolled
+  into `failure_lifecycle_daily`
 
 Retention matrix:
 
@@ -475,6 +484,8 @@ Retention matrix:
 | workstreams | 14/30 days inactivity | Pause/abandon | Row remains auditable |
 | compressed replacement observations | Indefinite | Retained | Preserve retrieval and source-summary context |
 | compressed source observations | 90 days after compression link | Hard delete only when eligible | Required `compressed_observation_sources` hash + snapshot + live compressed row |
+| failed queue rows | 14 days | Mark archived after permanent/exhausted or legacy pending failure | Row remains queryable and counted as archived history |
+| archived failures | 90 days by explicit flag | Hard delete only with `--archived-failures[=DAYS]` | Aggregate history preserved in `failure_lifecycle_daily` |
 | raw archive, session summaries, candidates, edges | Indefinite by default | No cleanup in this command | Retained for audit/eval unless future policy says otherwise |
 
 ## Database Schema
@@ -489,12 +500,19 @@ captured_events (host_id, workspace_id, project_id, session_row_id, session_id,
 extraction_tasks (task_kind, host_id, workspace_id, project_id, session_row_id,
                   status, idempotency_key, cursor_event_id,
                   high_watermark_event_id, attempts, lease_owner,
-                  lease_expires_epoch)
+                  lease_expires_epoch, failure_class, failed_at_epoch,
+                  archived_at_epoch)
 
 -- Legacy queue kept only for explicit admin migration/replay
 pending_observations (session_id, project, tool_name, tool_input, tool_response, cwd,
                       created_at_epoch, status[pending|processing|failed|migrated],
-                      lease_owner, lease_expires_epoch)
+                      lease_owner, lease_expires_epoch, failure_class,
+                      failed_at_epoch, archived_at_epoch)
+
+-- Failure lifecycle history for archived and purged operational failures
+failure_lifecycle_daily (day_epoch, surface, failure_class, archived_count,
+                         purged_count, oldest_failed_at_epoch,
+                         newest_failed_at_epoch, updated_at_epoch)
 
 -- Structured observations (AI-distilled from tool events)
 observations (memory_session_id, project, type, title, subtitle, narrative, facts, concepts,

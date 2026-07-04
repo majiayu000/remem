@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+- Staged source version `0.5.155` for the merged embedding provider contract
+  and failure lifecycle maintenance line.
+- Staged source version `0.5.154` for the failure lifecycle maintenance
+  feature: classify transient vs permanent failures, auto-requeue bounded
+  transient extraction/replay/job failures, archive aged permanent/exhausted
+  failures into history with an explicit `cleanup --archived-failures` purge
+  path, and expose actionable-vs-archived failure stats in `status`/`doctor`.
+- Staged source version `0.5.153`: batch session ingestion (`remem
+  ingest-sessions` with per-file cursors and multi-root discovery) and raw
+  time-window / session-listing queries (GH720 Phase 1, #722 #723).
+
 ### Fixed
 - Mapped memory-candidate extraction outputs that copy observation types
   (`feature`, `refactor`, `change`) back into the canonical candidate memory

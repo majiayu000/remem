@@ -396,6 +396,8 @@ fn cli_raw_search_request_carries_raw_filters() {
         Some("user"),
         21,
         40,
+        None,
+        None,
     );
 
     assert_eq!(request.query, "literal phrase");
@@ -448,6 +450,8 @@ fn cli_raw_search_uses_raw_archive_filters() -> anyhow::Result<()> {
         Some("user"),
         20,
         0,
+        None,
+        None,
     );
     let rows = search_raw_archive(&conn, &request)?;
 
@@ -488,6 +492,8 @@ fn cli_raw_search_json_report_is_machine_parseable() -> std::result::Result<(), 
         Some("user"),
         20,
         40,
+        None,
+        None,
         true,
         &[sample_raw()],
     );

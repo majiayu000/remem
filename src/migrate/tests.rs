@@ -124,6 +124,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "memory_feedback",
         "workstream_aliases",
         "workstream_alias_sources",
+        "failure_lifecycle_daily",
     ] {
         let exists: bool = conn
             .query_row(
@@ -174,6 +175,11 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_workstream_alias_sources_alias",
         "idx_workstreams_identity_key",
         "idx_workstreams_merged_into",
+        "idx_failure_lifecycle_daily_surface",
+        "idx_pending_observations_failure_lifecycle",
+        "idx_extraction_tasks_failure_lifecycle",
+        "idx_extraction_replay_ranges_failure_lifecycle",
+        "idx_jobs_failure_lifecycle",
     ] {
         let exists: bool = conn
             .query_row(

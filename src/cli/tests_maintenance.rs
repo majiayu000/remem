@@ -9,10 +9,37 @@ use clap::Parser;
 fn cli_parses_top_level_cleanup_preview() {
     let cleanup = Cli::parse_from(["remem", "cleanup", "--dry-run", "--json"]);
     match cleanup.command {
-        Commands::Cleanup { dry_run, json } => {
+        Commands::Cleanup {
+            dry_run,
+            json,
+            archived_failures,
+        } => {
             assert!(dry_run);
             assert!(json);
+            assert_eq!(archived_failures, None);
         }
+        _ => panic!("expected cleanup command"),
+    }
+}
+
+#[test]
+fn cli_parses_cleanup_archived_failures_default_horizon() {
+    let cleanup = Cli::parse_from(["remem", "cleanup", "--archived-failures"]);
+    match cleanup.command {
+        Commands::Cleanup {
+            archived_failures, ..
+        } => assert_eq!(archived_failures, Some(90)),
+        _ => panic!("expected cleanup command"),
+    }
+}
+
+#[test]
+fn cli_parses_cleanup_archived_failures_custom_horizon() {
+    let cleanup = Cli::parse_from(["remem", "cleanup", "--archived-failures=30"]);
+    match cleanup.command {
+        Commands::Cleanup {
+            archived_failures, ..
+        } => assert_eq!(archived_failures, Some(30)),
         _ => panic!("expected cleanup command"),
     }
 }

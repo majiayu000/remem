@@ -47,9 +47,12 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
     };
 
     if stats.failed_pending_observations > 0 || stats.failed_extraction_tasks > 0 {
+        let oldest_age = oldest_actionable_failure_age(&stats.failure_lifecycle)
+            .map(|age| format!("; oldest actionable failure age={}s", age))
+            .unwrap_or_default();
         failures.push(format!(
-            "failed-observation backlog: {} failed pending observations, {} failed extraction tasks; run `remem pending list-failed --limit 20` and `remem worker --once`",
-            stats.failed_pending_observations, stats.failed_extraction_tasks
+            "failed-observation backlog: {} actionable failed pending observations, {} actionable failed extraction tasks{}; run `remem pending list-failed --limit 20` and `remem worker --once`",
+            stats.failed_pending_observations, stats.failed_extraction_tasks, oldest_age
         ));
     }
     if stats.actionable_capture_drops > 0 {
@@ -146,6 +149,20 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
     }
 
     Check::new("Capture liveness", Status::Ok, detail)
+}
+
+fn oldest_actionable_failure_age(stats: &db::FailureLifecycleStats) -> Option<i64> {
+    let now = chrono::Utc::now().timestamp();
+    [
+        stats.pending_observation.oldest_actionable_epoch,
+        stats.extraction_task.oldest_actionable_epoch,
+        stats.extraction_replay_range.oldest_actionable_epoch,
+        stats.job.oldest_actionable_epoch,
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .map(|epoch| now.saturating_sub(epoch))
 }
 
 #[derive(Clone, PartialEq, Eq)]

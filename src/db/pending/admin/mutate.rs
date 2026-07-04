@@ -11,10 +11,15 @@ pub fn retry_failed(conn: &Connection, project: Option<&str>, limit: i64) -> Res
              lease_owner = NULL,
              lease_expires_epoch = NULL,
              last_error = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
              updated_at_epoch = ?1
          WHERE id IN (
              SELECT id FROM pending_observations
-             WHERE status = 'failed' AND project = ?2
+             WHERE status = 'failed'
+               AND archived_at_epoch IS NULL
+               AND project = ?2
              ORDER BY updated_at_epoch DESC
              LIMIT ?3
          )"
@@ -29,6 +34,7 @@ pub fn retry_failed(conn: &Connection, project: Option<&str>, limit: i64) -> Res
          WHERE id IN (
              SELECT id FROM pending_observations
              WHERE status = 'failed'
+               AND archived_at_epoch IS NULL
              ORDER BY updated_at_epoch DESC
              LIMIT ?2
          )"

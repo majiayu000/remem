@@ -21,6 +21,7 @@ pub mod git_util;
 mod graph_candidate;
 mod hook_stdin;
 pub mod identity;
+pub mod ingest;
 pub mod install;
 pub mod log;
 pub mod mcp;

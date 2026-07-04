@@ -176,6 +176,51 @@ fn mark_job_failed_or_retry_requeues_before_max_attempts() {
 }
 
 #[test]
+fn mark_job_failed_or_retry_fails_permanent_error_without_retry() {
+    let mut conn = setup_conn();
+    let job_id = enqueue_job(
+        &conn,
+        "codex-cli",
+        JobType::Summary,
+        "alpha",
+        Some("s1"),
+        "{}",
+        100,
+    )
+    .expect("job enqueue should succeed");
+    let claimed = claim_next_job(&mut conn, "worker-a", 60)
+        .expect("claim should succeed")
+        .expect("job should be claimed");
+
+    mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "not implemented", 30)
+        .expect("permanent failure should succeed");
+
+    let row = conn
+        .query_row(
+            "SELECT state, attempt_count, lease_owner, next_retry_epoch, last_error, failure_class
+             FROM jobs WHERE id = ?1",
+            params![job_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .expect("job row should load");
+    assert_eq!(row.0, "failed");
+    assert_eq!(row.1, 1);
+    assert_eq!(row.2, None);
+    assert_eq!(row.3, 0);
+    assert_eq!(row.4.as_deref(), Some("not implemented"));
+    assert_eq!(row.5.as_deref(), Some("permanent"));
+}
+
+#[test]
 fn mark_job_failed_or_retry_marks_failed_when_exhausted() {
     let mut conn = setup_conn();
     let job_id = enqueue_job(

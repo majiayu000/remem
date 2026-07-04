@@ -229,7 +229,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let check = check_pending_queue(Some(&conn));
     assert_eq!(check.icon(), "WARN");
     let expected_counts = format!(
-        "{} ready, {} delayed, {} processing ({} expired), {} failed pending; {} extraction tasks pending, {} processing ({} expired), {} failed; {} jobs pending, {} processing, {} failed, {} stuck",
+        "{} ready, {} delayed, {} processing ({} expired), {} actionable failed pending; {} extraction tasks pending, {} processing ({} expired), {} actionable failed; {} jobs pending, {} processing, {} actionable failed, {} stuck",
         stats.ready_pending_observations,
         stats.delayed_pending_observations,
         stats.processing_pending_observations,

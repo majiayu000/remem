@@ -9,6 +9,7 @@ use crate::db::query::{
     query_daily_activity_stats, query_daily_ai_usage, query_memory_facts_stats, query_system_stats,
     query_top_projects, query_weekly_ai_usage,
 };
+use crate::db::{FailureLifecycleStats, FailureSurfaceStats};
 
 mod candidate_promotion;
 
@@ -337,6 +338,32 @@ fn query_system_stats_and_related_views_share_one_definition() {
             processing_jobs: 1,
             failed_jobs: 1,
             stuck_jobs: 1,
+            failure_lifecycle: FailureLifecycleStats {
+                pending_observation: FailureSurfaceStats {
+                    actionable_total: 1,
+                    transient: 1,
+                    oldest_actionable_epoch: Some(140),
+                    ..FailureSurfaceStats::default()
+                },
+                extraction_task: FailureSurfaceStats {
+                    actionable_total: 1,
+                    transient: 1,
+                    oldest_actionable_epoch: Some(96),
+                    ..FailureSurfaceStats::default()
+                },
+                extraction_replay_range: FailureSurfaceStats {
+                    actionable_total: 3,
+                    transient: 3,
+                    oldest_actionable_epoch: Some(0),
+                    ..FailureSurfaceStats::default()
+                },
+                job: FailureSurfaceStats {
+                    actionable_total: 1,
+                    transient: 1,
+                    oldest_actionable_epoch: Some(0),
+                    ..FailureSurfaceStats::default()
+                },
+            },
             worker_daemon_healthy: true,
             worker_heartbeat_owner: Some("worker-a".to_string()),
             worker_heartbeat_age_secs: system.worker_heartbeat_age_secs,

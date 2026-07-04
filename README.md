@@ -616,6 +616,7 @@ remem user review reject <id>
 remem user review suppress <id>
 remem context --cwd .
 remem cleanup --dry-run --json
+remem cleanup --dry-run --json --archived-failures
 remem cleanup
 remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm
 remem workstreams merge --project <path> --into <canonical_id> <duplicate_id>... --confirm --json
@@ -677,6 +678,33 @@ appending a contradictory active claim. `edit` applies corrected text, key, or
 metadata, while `reject` and `suppress` close candidates without activating
 them.
 
+### Raw Session Backfill
+
+`remem ingest-sessions` batch-ingests Claude Code and Codex JSONL transcripts
+into the raw archive without promoting them to curated memories:
+
+```bash
+remem ingest-sessions --json
+remem ingest-sessions --since 2026-06-01 --root starlight=~/remote-sessions/starlight --json
+```
+
+Default scan roots are `~/.claude/projects` and `~/.codex/sessions`.
+Additional `--root label=path` entries are required roots: a missing explicit
+root is reported as a failed file so backfills do not silently do nothing. Each
+raw row keeps the source-root label and the transcript event timestamp, and
+re-running the command is incremental and idempotent.
+
+Use raw time-window queries for recap or audit workflows that need original
+chat turns rather than curated memories:
+
+```bash
+remem raw search "deployment decision" --since 2026-06-01 --until 2026-06-30 --json
+remem raw sessions --since 2026-06-01 --until 2026-06-30 --sample 3 --json
+```
+
+`remem raw sessions` groups rows by source root, project, and session ID, and
+can include the first N user-message samples per session.
+
 ### Scriptable JSON output
 
 These commands emit one JSON object and no human text on stdout when `--json`
@@ -684,9 +712,12 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `embedding`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `today`, `top_projects` |
-| `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied` |
+| `remem status --json` | `version`, `database`, `totals`, `embedding`, `capture_pipeline`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `failure_lifecycle`, `today`, `top_projects` |
+| `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied`; archived failure purge counts stay zero unless `--archived-failures[=DAYS]` is supplied |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
+| `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |
+| `remem raw search ... --json` | `query`, `project`, `branch`, `role`, `limit`, `offset`, `since_epoch`, `until_epoch`, `count`, `has_more`, `next_offset`, `source_type`, `note`, `results` |
+| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem memory suppress <target> --json` | `status`, `suppression` |
 | `remem memory unsuppress <id-or-target> --json` | `status`, `count`, `suppressions` |
