@@ -156,6 +156,11 @@ pub struct EmbeddingBackfillTarget {
     pub dimensions: usize,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct EmbeddingFallbackCache {
+    call_failure_fallback: Option<EmbeddingProvider>,
+}
+
 pub fn embed_query(query: &str) -> Result<TextEmbedding> {
     embed_text(query)
 }
@@ -176,6 +181,17 @@ pub fn embed_memory(
 ) -> Result<TextEmbedding> {
     let text = memory_embedding_text(title, content, memory_type, topic_key);
     embed_text(&text)
+}
+
+pub(crate) fn embed_memory_with_fallback_cache(
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    topic_key: Option<&str>,
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<TextEmbedding> {
+    let text = memory_embedding_text(title, content, memory_type, topic_key);
+    embed_text_with_fallback_cache(&text, cache)
 }
 
 pub fn embed_query_text_local(query: &str) -> Vec<f32> {
@@ -217,10 +233,17 @@ pub fn embedding_content_hash(
 }
 
 pub(crate) fn configured_backfill_target() -> Result<EmbeddingBackfillTarget> {
+    let mut cache = EmbeddingFallbackCache::default();
+    configured_backfill_target_with_fallback_cache(&mut cache)
+}
+
+pub(crate) fn configured_backfill_target_with_fallback_cache(
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<EmbeddingBackfillTarget> {
     if embedding_provider_status_without_probe()?.disabled {
         return Err(status::embedding_provider_off_error());
     }
-    let probe = embed_text("remem embedding profile probe")?;
+    let probe = embed_text_with_fallback_cache("remem embedding profile probe", cache)?;
     Ok(EmbeddingBackfillTarget {
         model: probe.model().to_string(),
         dimensions: probe.dimensions(),
@@ -240,14 +263,48 @@ pub(crate) fn embedding_provider_status_without_probe() -> Result<EmbeddingProvi
 }
 
 fn embed_text(text: &str) -> Result<TextEmbedding> {
+    let mut cache = EmbeddingFallbackCache::default();
+    embed_text_with_fallback_cache(text, &mut cache)
+}
+
+fn embed_text_with_fallback_cache(
+    text: &str,
+    cache: &mut EmbeddingFallbackCache,
+) -> Result<TextEmbedding> {
     let config = resolve_embedding_config()?;
+    if let Some(fallback) = cache.call_failure_fallback {
+        return embed_with_cached_call_failure_fallback(text, &config, fallback);
+    }
     match active_provider(&config)? {
         ActiveEmbeddingProvider::Local | ActiveEmbeddingProvider::FeatureHash => {
             TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
         }
         ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key)
-            .or_else(|error| embed_with_call_failure_fallback(text, &config, error)),
+            .or_else(|error| embed_with_call_failure_fallback(text, &config, error, cache)),
         ActiveEmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
+    }
+}
+
+fn embed_with_cached_call_failure_fallback(
+    text: &str,
+    config: &EmbeddingConfig,
+    fallback: EmbeddingProvider,
+) -> Result<TextEmbedding> {
+    let fallback_runtime = status::provider_runtime(config, fallback);
+    if let Some(reason) = fallback_runtime.unavailable_reason {
+        bail!(
+            "cached embedding fallback {} unavailable: {reason}",
+            fallback.label()
+        );
+    }
+    match fallback_runtime.provider {
+        EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+            TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
+        }
+        EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
+        EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => {
+            bail!("cached embedding fallback must be local, feature-hash, or off")
+        }
     }
 }
 
@@ -255,6 +312,7 @@ fn embed_with_call_failure_fallback(
     text: &str,
     config: &EmbeddingConfig,
     error: anyhow::Error,
+    cache: &mut EmbeddingFallbackCache,
 ) -> Result<TextEmbedding> {
     let Some(fallback) = config.fallback else {
         return Err(error);
@@ -274,6 +332,7 @@ fn embed_with_call_failure_fallback(
     crate::log::error("embedding", &message);
     match fallback_runtime.provider {
         EmbeddingProvider::Local | EmbeddingProvider::FeatureHash => {
+            cache.call_failure_fallback = Some(fallback_runtime.provider);
             TextEmbedding::new(LOCAL_EMBEDDING_MODEL, embed_text_local(text))
         }
         EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),

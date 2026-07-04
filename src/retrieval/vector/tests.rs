@@ -1,5 +1,10 @@
 use anyhow::Result;
 use rusqlite::Connection;
+use std::io::{Read, Write};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 
 use super::*;
 
@@ -28,6 +33,14 @@ impl ScopedEmbeddingProvider {
     }
 
     fn api_fallback_off(base_url: &str) -> Self {
+        Self::api_with_fallback(base_url, "off")
+    }
+
+    fn api_fallback_feature_hash(base_url: &str) -> Self {
+        Self::api_with_fallback(base_url, "feature-hash")
+    }
+
+    fn api_with_fallback(base_url: &str, fallback: &str) -> Self {
         let guard = crate::runtime_config::TEST_ENV_LOCK
             .lock()
             .expect("env lock should acquire");
@@ -40,13 +53,77 @@ impl ScopedEmbeddingProvider {
         }
         unsafe {
             std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
-            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", fallback);
             std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
             std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", base_url);
         }
         Self {
             _guard: guard,
             saved,
+        }
+    }
+}
+
+struct FailingEmbeddingServer {
+    base_url: String,
+    calls: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<Result<()>>>,
+}
+
+impl FailingEmbeddingServer {
+    fn start() -> Result<Self> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let addr = listener.local_addr()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls_for_thread = Arc::clone(&calls);
+        let stop_for_thread = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || -> Result<()> {
+            while !stop_for_thread.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        calls_for_thread.fetch_add(1, Ordering::SeqCst);
+                        let mut buffer = [0u8; 8192];
+                        let _ = stream.read(&mut buffer)?;
+                        let body = "provider unavailable";
+                        let response = format!(
+                            "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        stream.write_all(response.as_bytes())?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(())
+        });
+        Ok(Self {
+            base_url: format!("http://{addr}/v1"),
+            calls,
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for FailingEmbeddingServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .expect("embedding server thread should not panic")
+                .expect("embedding server should stop cleanly");
         }
     }
 }
@@ -392,6 +469,31 @@ fn reindex_report_includes_profile_timings_and_remaining_work() -> Result<()> {
             "missing timing phase {expected}; got {phases:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn reindex_api_failure_fallback_is_cached_for_batch() -> Result<()> {
+    let server = FailingEmbeddingServer::start()?;
+    let _provider = ScopedEmbeddingProvider::api_fallback_feature_hash(&server.base_url);
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    for id in 1_i64..=2 {
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+             VALUES (?1, '/repo', 'Fallback memory', 'Fallback vector content.', 'decision', 1, ?1, 'active')",
+            params![id],
+        )?;
+    }
+    ensure_vec_table(&conn)?;
+
+    let report = reindex_memory_embeddings_with_report(&conn, 2)?;
+
+    assert_eq!(report.selected, 2);
+    assert_eq!(report.processed, 2);
+    assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
+    assert_eq!(server.call_count(), 1);
     Ok(())
 }
 

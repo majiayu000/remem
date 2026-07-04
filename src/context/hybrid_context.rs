@@ -454,11 +454,9 @@ fn query_local_vector_channel(
     if !sqlite_table_available(conn, "memory_embeddings")? {
         return Ok(vec![]);
     }
-    if crate::retrieval::embedding::embedding_provider_status()?.disabled {
+    let Some(query_embedding) = crate::retrieval::embedding::embed_query_if_enabled(query)? else {
         return Ok(vec![]);
-    }
-
-    let query_embedding = crate::retrieval::embedding::embed_query(query)?;
+    };
     let profile = query_embedding.profile();
     let mut conditions = vec!["e.model = ?1".to_string(), "e.dimensions = ?2".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![

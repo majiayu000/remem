@@ -1,11 +1,128 @@
 use anyhow::Context;
 use rusqlite::{params, Connection};
+use std::io::{Read, Write};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 
 use super::super::hybrid_context::query_hybrid_context_memories;
 use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::load_context_data_with_policy;
 use super::super::sections::render_core_memory_with_limits;
 use super::{insert_global_memory, insert_memory, setup_context_schema};
+
+const EMBEDDING_ENV_KEYS: &[&str] = &[
+    "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDINGS_BASE_URL",
+];
+
+struct ScopedApiFallbackEnv {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl ScopedApiFallbackEnv {
+    fn new(base_url: &str) -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = EMBEDDING_ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in EMBEDDING_ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+            std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "feature-hash");
+            std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
+            std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", base_url);
+        }
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+}
+
+impl Drop for ScopedApiFallbackEnv {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+struct FailingEmbeddingServer {
+    base_url: String,
+    calls: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+}
+
+impl FailingEmbeddingServer {
+    fn start() -> anyhow::Result<Self> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let addr = listener.local_addr()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let calls_for_thread = Arc::clone(&calls);
+        let stop_for_thread = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || -> anyhow::Result<()> {
+            while !stop_for_thread.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        calls_for_thread.fetch_add(1, Ordering::SeqCst);
+                        let mut buffer = [0u8; 8192];
+                        let _ = stream.read(&mut buffer)?;
+                        let body = "provider unavailable";
+                        let response = format!(
+                            "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        stream.write_all(response.as_bytes())?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Ok(())
+        });
+        Ok(Self {
+            base_url: format!("http://{addr}/v1"),
+            calls,
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for FailingEmbeddingServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .expect("embedding server thread should not panic")
+                .expect("embedding server should stop cleanly");
+        }
+    }
+}
 
 #[test]
 fn load_context_data_uses_hybrid_retrieval_from_workstream_signal() {
@@ -417,5 +534,42 @@ fn hybrid_context_vector_recall_is_not_crowded_out_by_global_hits() -> anyhow::R
         .memories
         .iter()
         .any(|memory| memory.title.starts_with("Global private data note")));
+    Ok(())
+}
+
+#[test]
+fn hybrid_context_vector_channel_uses_fallback_without_status_probe() -> anyhow::Result<()> {
+    let server = FailingEmbeddingServer::start()?;
+    let _env = ScopedApiFallbackEnv::new(&server.base_url);
+    let conn = Connection::open_in_memory()?;
+    setup_context_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("credential-store"),
+        "architecture",
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        now,
+    );
+    crate::retrieval::vector::ensure_vec_table(&conn)?;
+    let embedding = crate::retrieval::vector::embed_memory_text(
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        Some("credential-store"),
+    );
+    crate::retrieval::vector::upsert_embedding(&conn, 1, &embedding)?;
+
+    let memories =
+        query_hybrid_context_memories(&conn, project, "SQLCipher encrypts secrets", None, &[], 5)?;
+
+    assert!(memories
+        .iter()
+        .any(|memory| memory.title == "Credential store"));
+    assert_eq!(server.call_count(), 1);
     Ok(())
 }

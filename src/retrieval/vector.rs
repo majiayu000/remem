@@ -239,20 +239,23 @@ pub fn reindex_memory_embeddings_with_report(
     }
 
     let profile_start = Instant::now();
-    let target = match super::embedding::configured_backfill_target() {
-        Ok(target) => target,
-        Err(error) if super::embedding::is_embedding_provider_off_error(&error) => {
-            crate::perf::push_elapsed(&mut timings, "total", total_start);
-            return Ok(EmbeddingReindexReport {
-                selected: 0,
-                processed: 0,
-                model: "off".to_string(),
-                dimensions: 0,
-                timings,
-            });
-        }
-        Err(error) => return Err(error),
-    };
+    let mut fallback_cache = super::embedding::EmbeddingFallbackCache::default();
+    let target =
+        match super::embedding::configured_backfill_target_with_fallback_cache(&mut fallback_cache)
+        {
+            Ok(target) => target,
+            Err(error) if super::embedding::is_embedding_provider_off_error(&error) => {
+                crate::perf::push_elapsed(&mut timings, "total", total_start);
+                return Ok(EmbeddingReindexReport {
+                    selected: 0,
+                    processed: 0,
+                    model: "off".to_string(),
+                    dimensions: 0,
+                    timings,
+                });
+            }
+            Err(error) => return Err(error),
+        };
     crate::perf::push_elapsed(&mut timings, "profile_probe", profile_start);
 
     let select_start = Instant::now();
@@ -294,7 +297,8 @@ pub fn reindex_memory_embeddings_with_report(
         });
     }
 
-    let processed = reindex_memory_embedding_batch(conn, &pending, &mut timings)?;
+    let processed =
+        reindex_memory_embedding_batch(conn, &pending, &mut timings, &mut fallback_cache)?;
     crate::perf::push_elapsed(&mut timings, "total", total_start);
     Ok(EmbeddingReindexReport {
         selected,
@@ -347,6 +351,7 @@ fn reindex_memory_embedding_batch(
     conn: &Connection,
     batch: &[MemoryEmbeddingReindexCandidate],
     timings: &mut Vec<crate::perf::PhaseTiming>,
+    fallback_cache: &mut super::embedding::EmbeddingFallbackCache,
 ) -> Result<usize> {
     if batch.is_empty() {
         return Ok(0);
@@ -355,12 +360,14 @@ fn reindex_memory_embedding_batch(
     let embed_start = Instant::now();
     let mut prepared = Vec::with_capacity(batch.len());
     for candidate in batch {
-        prepared.push(prepare_memory_embedding(candidate).with_context(|| {
-            format!(
-                "memory embedding preparation failed for memory id={}",
-                candidate.id
-            )
-        })?);
+        prepared.push(
+            prepare_memory_embedding(candidate, fallback_cache).with_context(|| {
+                format!(
+                    "memory embedding preparation failed for memory id={}",
+                    candidate.id
+                )
+            })?,
+        );
     }
     let prepared_count = prepared.len();
     crate::perf::push_elapsed(timings, "embed_memory", embed_start);
@@ -417,12 +424,14 @@ fn reindex_memory_embedding_batch(
 
 fn prepare_memory_embedding(
     candidate: &MemoryEmbeddingReindexCandidate,
+    fallback_cache: &mut super::embedding::EmbeddingFallbackCache,
 ) -> Result<PreparedMemoryEmbedding> {
-    let embedding = super::embedding::embed_memory(
+    let embedding = super::embedding::embed_memory_with_fallback_cache(
         &candidate.title,
         &candidate.content,
         &candidate.memory_type,
         candidate.topic_key.as_deref(),
+        fallback_cache,
     )?;
     let content_hash = super::embedding::embedding_content_hash(
         &candidate.title,
