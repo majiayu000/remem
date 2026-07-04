@@ -380,6 +380,9 @@ fn nearby_numeric_label(tokens: &[String], index: usize) -> String {
 }
 
 fn nearby_numeric_role(tokens: &[String], index: usize) -> String {
+    if !has_numeric_transition_role_pair(tokens) {
+        return String::new();
+    }
     tokens[..index]
         .iter()
         .rev()
@@ -387,6 +390,18 @@ fn nearby_numeric_role(tokens: &[String], index: usize) -> String {
         .find(|token| is_numeric_role_token(token))
         .cloned()
         .unwrap_or_default()
+}
+
+fn has_numeric_transition_role_pair(tokens: &[String]) -> bool {
+    (tokens.iter().any(|token| token == "from")
+        && tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "into" | "onto" | "to" | "toward" | "towards"
+            )
+        }))
+        || (tokens.iter().any(|token| token == "before")
+            && tokens.iter().any(|token| token == "after"))
 }
 
 fn is_numeric_role_token(token: &str) -> bool {

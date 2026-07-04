@@ -440,7 +440,17 @@ enum ActiveEmbeddingProvider {
 
 fn active_provider(config: &EmbeddingConfig) -> Result<ActiveEmbeddingProvider> {
     let status = status::resolve_provider_status(config);
+    if status.active_provider == EmbeddingProvider::Off.label() && status.degraded {
+        return Err(status::embedding_provider_off_error_with_cause(
+            status
+                .degradation_reason
+                .unwrap_or_else(|| "embedding provider fallback is off".to_string()),
+        ));
+    }
     if let Some(reason) = status.unavailable_reason {
+        if status.active_provider == EmbeddingProvider::Off.label() {
+            return Err(status::embedding_provider_off_error_with_cause(reason));
+        }
         if status.active_provider == EmbeddingProvider::Local.label() {
             return Err(local_semantic::model_unavailable_error(reason));
         }

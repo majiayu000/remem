@@ -50,7 +50,15 @@ pub(super) fn resolve_provider_status(config: &EmbeddingConfig) -> EmbeddingProv
         degraded = true;
         if let Some(fallback) = config.fallback {
             let fallback_runtime = provider_runtime(config, fallback);
-            if fallback_runtime.unavailable_reason.is_none() {
+            if fallback == EmbeddingProvider::Off {
+                let message = format!(
+                    "configured embedding provider {} unavailable: {}; using fallback off; fallback off disabled provider fallback",
+                    configured.label(),
+                    reason
+                );
+                degradation_reason = Some(message.clone());
+                runtime = disabled_runtime();
+            } else if fallback_runtime.unavailable_reason.is_none() {
                 let message = format!(
                     "configured embedding provider {} unavailable: {}; using fallback {}",
                     configured.label(),
@@ -144,7 +152,18 @@ fn apply_api_probe_failure_status(
     if let Some(fallback) = config.fallback {
         let fallback_runtime = provider_runtime(config, fallback);
         status.degraded = true;
-        if fallback_runtime.unavailable_reason.is_none() {
+        if fallback == EmbeddingProvider::Off {
+            let message = format!(
+                "configured embedding provider api unavailable: {}; using fallback off; fallback off disabled provider fallback",
+                error
+            );
+            status.degradation_reason = Some(message.clone());
+            status.active_provider = EmbeddingProvider::Off.label().to_string();
+            status.active_model_id = None;
+            status.active_dimensions = None;
+            status.disabled = true;
+            status.unavailable_reason = None;
+        } else if fallback_runtime.unavailable_reason.is_none() {
             let message = format!(
                 "configured embedding provider api unavailable: {}; using fallback {}",
                 error,
@@ -238,5 +257,15 @@ fn unavailable_runtime(provider: EmbeddingProvider, reason: String) -> ProviderR
         dimensions: None,
         disabled: false,
         unavailable_reason: Some(reason),
+    }
+}
+
+fn disabled_runtime() -> ProviderRuntime {
+    ProviderRuntime {
+        provider: EmbeddingProvider::Off,
+        model_id: None,
+        dimensions: None,
+        disabled: true,
+        unavailable_reason: None,
     }
 }

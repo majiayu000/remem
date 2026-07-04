@@ -15,6 +15,8 @@ fn with_embedding_env<T>(vars: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
         "REMEM_EMBEDDINGS_FALLBACK",
         "REMEM_EMBEDDINGS_BASE_URL",
         "REMEM_EMBEDDINGS_API_KEY",
+        "REMEM_EMBEDDINGS_MODEL",
+        "REMEM_EMBEDDINGS_MODEL_DIR",
         "REMEM_EMBEDDINGS_TIMEOUT_SECS",
         "OPENAI_API_KEY",
     ];
@@ -251,6 +253,37 @@ fn active_preference_embedding_propagates_api_failure_when_fallback_is_off() {
                 .contains("active preference embedding provider failed"));
             let cause_chain = format!("{error:#}");
             assert!(cause_chain.contains("embedding provider api failed"));
+            assert!(cause_chain.contains("fallback off disabled provider fallback"));
+        },
+    );
+}
+
+#[test]
+fn active_preference_embedding_preserves_local_failure_when_fallback_is_off() {
+    let model_dir = std::env::temp_dir().join(format!(
+        "remem-empty-local-models-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let model_dir = model_dir.display().to_string();
+    with_embedding_env(
+        &[
+            ("REMEM_EMBEDDINGS_PROVIDER", "local"),
+            ("REMEM_EMBEDDINGS_FALLBACK", "off"),
+            ("REMEM_EMBEDDINGS_MODEL_DIR", &model_dir),
+        ],
+        || {
+            let mut fallback_cache = crate::retrieval::embedding::EmbeddingFallbackCache::default();
+            let error = active_preference_embedding_with_fallback_cache(
+                "Prefer concise Chinese progress updates.",
+                &mut fallback_cache,
+            )
+            .expect_err("fallback=off after a local failure must not become None");
+            assert!(error
+                .to_string()
+                .contains("active preference embedding provider failed"));
+            let cause_chain = format!("{error:#}");
+            assert!(cause_chain.contains("local embedding model"));
             assert!(cause_chain.contains("fallback off disabled provider fallback"));
         },
     );
