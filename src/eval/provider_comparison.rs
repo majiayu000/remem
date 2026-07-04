@@ -299,8 +299,21 @@ fn evaluate_provider(
         ));
     }
 
-    let active_profile = embedding::configured_backfill_target()
-        .with_context(|| format!("probe {} embedding profile", provider.label()))?;
+    let active_profile = match embedding::configured_backfill_target()
+        .with_context(|| format!("probe {} embedding profile", provider.label()))
+    {
+        Ok(active_profile) => active_profile,
+        Err(error) => {
+            let reason = format!("provider profile probe failed: {error}");
+            return optional_provider_error_row(
+                provider,
+                &forced_config,
+                status,
+                reason,
+                allow_api,
+            );
+        }
+    };
 
     match evaluate_available_provider(dataset, k) {
         Ok(evaluation) => Ok(row_from_evaluation(
@@ -314,14 +327,7 @@ fn evaluate_provider(
         )),
         Err(error) => {
             let reason = format!("provider comparison failed for {dataset_path}: {error}");
-            ensure_optional_provider(provider, &reason)?;
-            Ok(row_from_status_unavailable(
-                provider,
-                &forced_config,
-                status,
-                reason,
-                allow_api,
-            ))
+            optional_provider_error_row(provider, &forced_config, status, reason, allow_api)
         }
     }
 }
@@ -331,6 +337,19 @@ fn ensure_optional_provider(provider: EmbeddingProvider, reason: &str) -> Result
         bail!("feature-hash provider comparison baseline must be runnable: {reason}");
     }
     Ok(())
+}
+
+fn optional_provider_error_row(
+    provider: EmbeddingProvider,
+    config: &EmbeddingConfig,
+    status: EmbeddingProviderStatus,
+    reason: String,
+    allow_api: bool,
+) -> Result<ProviderComparisonRow> {
+    ensure_optional_provider(provider, &reason)?;
+    Ok(row_from_status_unavailable(
+        provider, config, status, reason, allow_api,
+    ))
 }
 
 fn forced_provider_config(

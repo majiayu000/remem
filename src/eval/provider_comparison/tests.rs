@@ -84,6 +84,37 @@ fn feature_hash_provider_failures_are_not_reported_as_unavailable() {
 }
 
 #[test]
+fn optional_provider_probe_failures_become_unavailable_rows() -> Result<()> {
+    let status = EmbeddingProviderStatus {
+        configured_provider: "api".to_string(),
+        fallback_provider: None,
+        active_provider: "api".to_string(),
+        active_model_id: Some("configured-model".to_string()),
+        active_dimensions: Some(1536),
+        degraded: false,
+        disabled: false,
+        unavailable_reason: None,
+        degradation_reason: None,
+        model_dir: None,
+    };
+    let row = optional_provider_error_row(
+        EmbeddingProvider::OpenAi,
+        &EmbeddingConfig::default(),
+        status,
+        "provider profile probe failed: synthetic probe rejection".to_string(),
+        true,
+    )?;
+
+    assert!(!row.available);
+    assert!(row
+        .unavailable_reason
+        .as_deref()
+        .unwrap_or_default()
+        .contains("synthetic probe rejection"));
+    Ok(())
+}
+
+#[test]
 fn forced_provider_config_resets_provider_specific_model_fields() {
     let defaults = EmbeddingConfig::default();
     let mut local_base = defaults.clone();
