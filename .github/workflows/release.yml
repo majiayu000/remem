@@ -177,20 +177,24 @@ jobs:
 
             def install
               bin.install "remem"
+              if OS.mac? && Hardware::CPU.arm?
+                system "codesign", "--force", "--sign", "-", bin/"remem"
+              end
             end
 
             def caveats
               <<~EOS
-                Finish agent integration after installing the binary:
+                Finish agent integration after installing the binary by choosing
+                the agent configuration to create:
 
-                  remem install
+                  REMEM_INSTALL_BINARY=#{opt_bin}/remem remem install --target codex
+                  REMEM_INSTALL_BINARY=#{opt_bin}/remem remem install --target claude
+                  REMEM_INSTALL_BINARY=#{opt_bin}/remem remem install --target all
 
-                That auto-detects Claude Code and Codex CLI config directories.
-                To force a host:
+                If Claude Code or Codex CLI config directories already exist,
+                auto-detection is also available:
 
-                  remem install --target codex
-                  remem install --target claude
-                  remem install --target all
+                  REMEM_INSTALL_BINARY=#{opt_bin}/remem remem install
 
                 Run remem doctor to verify or troubleshoot the integration.
               EOS

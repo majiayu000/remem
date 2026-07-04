@@ -10,12 +10,14 @@ from the GitHub Release during installation.
 
 ```bash
 npm install -g @remem-ai/remem
-remem install
+remem install --target codex
+# or: remem install --target claude
+# or: remem install --target all
 ```
 
-`remem install` auto-detects existing Claude Code and Codex CLI config
-directories. Use `--target codex`, `--target claude`, or `--target all` when
-you need to force a specific integration.
+`remem install` can auto-detect existing Claude Code and Codex CLI config
+directories. On first-time setups, use `--target codex`, `--target claude`, or
+`--target all` so remem can create the selected config files.
 
 Supported platforms:
 

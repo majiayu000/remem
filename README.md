@@ -41,19 +41,23 @@ brew install majiayu000/tap/remem
 Then configure hooks and MCP for your installed coding agents:
 
 ```bash
-remem install
+REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target codex
+# or: REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target claude
+# or: REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target all
 ```
 
 If you do not use Homebrew:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
-~/.local/bin/remem install
+~/.local/bin/remem install --target codex
+# or: ~/.local/bin/remem install --target claude
+# or: ~/.local/bin/remem install --target all
 ```
 
-`remem install` auto-detects existing Claude Code and Codex CLI config
-directories. To force a specific integration, use `--target codex`,
-`--target claude`, or `--target all`.
+`remem install` can auto-detect existing Claude Code and Codex CLI config
+directories. On first-time setups, use `--target codex`, `--target claude`, or
+`--target all` so remem can create the selected config files.
 
 Run `remem doctor` when you want to verify or troubleshoot the integration.
 
@@ -118,28 +122,28 @@ project-scoped, and recoverable:
 ```bash
 # Quick install options
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_VERSION=vX.Y.Z sh
-~/.local/bin/remem install
+~/.local/bin/remem install --target codex
 
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
-~/.local/bin/remem install
+~/.local/bin/remem install --target codex
 
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 REMEM_INSTALL_DIR=/usr/local/bin sh
-remem install
+remem install --target codex
 
 # npm wrapper
 npm install -g @remem-ai/remem
-remem install
+remem install --target codex
 
 # Cargo
 cargo install remem-ai --bin remem
-remem install
+remem install --target codex
 
 # Manual GitHub Release download
 curl -LO https://github.com/majiayu000/remem/releases/latest/download/remem-darwin-arm64.tar.gz
 tar xzf remem-darwin-arm64.tar.gz
 mv remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
-remem install
+~/.local/bin/remem install --target codex
 
 # Build from source
 git clone https://github.com/majiayu000/remem.git
@@ -147,7 +151,7 @@ cd remem
 cargo build --release
 cp target/release/remem ~/.local/bin/
 codesign -s - -f ~/.local/bin/remem  # required on macOS ARM
-remem install
+~/.local/bin/remem install --target codex
 ```
 
 Use one canonical `remem` command on PATH. Standalone and source installs
