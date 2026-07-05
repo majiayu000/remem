@@ -173,8 +173,7 @@ fn item_completion_separator(
         return true;
     };
     let next_section = known_section(next_line);
-    if next_section
-        .is_some_and(|next| section.map_or(true, |current| next.order() > current.order()))
+    if next_section.is_some_and(|next| section.is_none_or(|current| next.order() > current.order()))
     {
         return true;
     }
