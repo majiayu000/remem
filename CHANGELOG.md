@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.168` for GH-678 project memory pack export:
+  deterministic `pack.json`/`memories.jsonl`/`INDEX.md` generation for active
+  repo-owned startup memories, fail-loud redaction gating, and focused export
+  fixtures.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.

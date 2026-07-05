@@ -14,9 +14,9 @@ GH-678
 
 ## Implementation Tasks
 
-- [ ] `SP678-T1` Owner: agent; Dependencies: spec approval; Done when: the pack manifest and canonical JSONL format are implemented behind export-only code paths; Verify: serializer unit tests.
-- [ ] `SP678-T2` Owner: agent; Dependencies: `SP678-T1`; Done when: `remem export --project --pack` writes deterministic `pack.json`, `memories.jsonl`, and derived `INDEX.md`; Verify: unchanged export byte equality test.
-- [ ] `SP678-T3` Owner: agent; Dependencies: `SP678-T2`; Done when: export filters only active repo-owned startup memories and reruns redaction with fail-loud errors; Verify: filtering and seeded-secret tests.
+- [x] `SP678-T1` Owner: agent; Dependencies: spec approval; Done when: the pack manifest and canonical JSONL format are implemented behind export-only code paths; Verify: serializer unit tests.
+- [x] `SP678-T2` Owner: agent; Dependencies: `SP678-T1`; Done when: `remem export --project --pack` writes deterministic `pack.json`, `memories.jsonl`, and derived `INDEX.md`; Verify: unchanged export byte equality test.
+- [x] `SP678-T3` Owner: agent; Dependencies: `SP678-T2`; Done when: export filters only active repo-owned startup memories and reruns redaction with fail-loud errors; Verify: filtering and seeded-secret tests.
 - [ ] `SP678-T4` Owner: agent; Dependencies: `SP678-T1`; Done when: import dry-run validates manifest/digest and reports add/dedup/skip/conflict/quarantine categories without mutation; Verify: planner tests.
 - [ ] `SP678-T5` Owner: agent; Dependencies: `SP678-T4`; Done when: import never resurrects suppressed or inactive local decisions; Verify: suppression and invalidation tests.
 - [ ] `SP678-T6` Owner: agent; Dependencies: `SP678-T4`; Done when: export -> fresh-store import -> export is byte-identical; Verify: round-trip fixture.
