@@ -35,6 +35,61 @@ fn enforce_total_char_limit_drops_partial_single_line_item() {
 }
 
 #[test]
+fn enforce_total_char_limit_drops_partial_multiline_memory_item() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "second paragraph should not survive as a partial memory item. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Core\n");
+    output.push_str("**#1 First complete** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first memory remains intact\n");
+    output.push_str("**#2 Multiline tail** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first paragraph of the second memory\n\n");
+    output.push_str(&tail);
+    output.push('\n');
+    let tail_start = output
+        .find("second paragraph")
+        .expect("tail memory paragraph should be present");
+    let keep_chars = output[..tail_start].chars().count() + "second paragraph".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("First complete"));
+    assert!(output.contains("first memory remains intact"));
+    assert!(!output.contains("Multiline tail"));
+    assert!(!output.contains("first paragraph of the second memory"));
+    assert!(!output.contains("second paragraph"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_preserves_complete_index_entries_before_cut() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let third = "Third index entry should not survive as a partial item. ".repeat(6);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Index\n");
+    output.push_str("**decision** (3): #1 First stable item (2026-07-05; local, trusted)");
+    output.push_str(" | #2 Second stable item (2026-07-05; local, trusted)");
+    output.push_str(&format!(" | #3 {third}\n"));
+    let third_start = output
+        .find("#3 Third index entry")
+        .expect("third index item should be present");
+    let keep_chars = output[..third_start].chars().count() + "#3 Third index".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("#1 First stable item"));
+    assert!(output.contains("#2 Second stable item"));
+    assert!(!output.contains("#3 Third index entry"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
 fn enforce_total_char_limit_preserves_footer_when_it_fits() {
     let footer = "22 context memories loaded. 2 core memories. 20 indexed memories. 5 preferences. 5 sessions.\n";
     let mut output = format!("{}{}{}", "# [/tmp/demo] context\n", "x".repeat(500), footer);

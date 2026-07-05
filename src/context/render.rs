@@ -33,7 +33,7 @@ use truncation::truncate_context_body_at_stable_boundary;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
-pub(crate) const RENDER_CONTRACT_VERSION: u32 = 1;
+pub(crate) const RENDER_CONTRACT_VERSION: u32 = 2;
 
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
