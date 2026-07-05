@@ -6,6 +6,7 @@ mod dispatch;
 mod embedding_types;
 mod eval_types;
 mod memory_types;
+mod procedure_types;
 mod query_types;
 mod review_types;
 #[cfg(test)]
@@ -16,6 +17,8 @@ mod tests_config;
 mod tests_eval;
 #[cfg(test)]
 mod tests_maintenance;
+#[cfg(test)]
+mod tests_procedures;
 #[cfg(test)]
 mod tests_raw;
 #[cfg(test)]

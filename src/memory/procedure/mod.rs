@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
+mod list;
 mod trace_store;
+
+pub use list::{list_promoted_procedures, ProcedureListItem};
 
 #[cfg(test)]
 mod incremental_tests;

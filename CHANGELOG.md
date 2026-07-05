@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.167` for GH-680 procedure export Phase 1:
+  `remem procedures list` exposes promoted procedure memories with maturity
+  metadata before any review-gated export writer is introduced.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.
