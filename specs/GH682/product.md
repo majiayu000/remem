@@ -70,18 +70,24 @@ dedup/preference consolidation inherit the same non-semantic ceiling.
 
 ## Acceptance Criteria
 
-- [ ] GH-714 lands the provider config, `status`, and `doctor` visibility
-      slice.
-- [ ] GH-715 lands local semantic model download/runtime support, multi-model
-      vector storage, same-model cosine filtering, and backfill.
+- [x] GH-714 lands the provider config, `status`, and `doctor` visibility
+      slice. Evidence: PR #719 closed GH-714 on 2026-07-04.
+- [x] GH-715 lands local semantic model download/runtime support, multi-model
+      vector storage, same-model cosine filtering, and backfill. Evidence:
+      PR #728 closed GH-729, the GH-715 multi-model storage slice, on
+      2026-07-04; PR #731 closed GH-715 on 2026-07-04.
 - [x] GH-716 commits provider comparison eval evidence and records the default
       provider decision before any default flip. Evidence:
+      PRs #732 and #733 closed GH-716 on 2026-07-04;
       `eval/provider-comparison/report.json`; decision: keep the default
       unchanged until local/API comparison rows are available.
 - [x] GH-717 updates downstream semantic dedup and preference consolidation
-      after the eval gate.
-- [ ] GH-682 is closed only after all phase issues and the eval evidence are
-      verified.
+      after the eval gate. Evidence: PRs #734 and #735 closed GH-717 on
+      2026-07-04.
+- [x] GH-682 is closed only after all phase issues and the eval evidence are
+      verified. Evidence: GH-714, GH-715, GH-716, and GH-717 are closed; the
+      docs/spec index records the no-default-flip decision and downstream
+      adoption state.
 
 ## Edge Cases
 
@@ -101,3 +107,16 @@ Ship the phases in order. Use `Refs #682` on phase PRs and close only the
 focused implementation issue for that phase. GH-682 remains the epic until the
 phase issues, eval artifacts, docs/spec index decision, and downstream adoption
 are complete.
+
+## Closure Audit
+
+GH-682 has satisfied its implementation closure criteria because all four
+implementation issues are closed by merged PRs:
+
+- GH-714: PR #719, provider contract and degraded-state visibility.
+- GH-715: PR #728 / GH-729 for multi-model storage, plus PR #731 for local
+  semantic runtime, same-model vectors, and backfill.
+- GH-716: PRs #732 and #733, provider comparison eval evidence and no-flip
+  default decision.
+- GH-717: PRs #734 and #735, downstream active-model dedup and preference
+  adoption.

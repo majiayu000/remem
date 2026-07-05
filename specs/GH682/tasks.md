@@ -21,12 +21,12 @@ GH-682
 
 ## Implementation Tasks
 
-- [ ] `SP682-T1` Owner: agent; Dependencies: none; Done when: `specs/GH682` validates and GH-714, GH-715, GH-716, and GH-717 are linked as implementation issues; Verify: `python3 checks/check_workflow.py --repo . --spec-dir specs/GH682`.
-- [ ] `SP682-T2` Owner: agent; Dependencies: spec approval; Done when: GH-714 lands provider config parsing, fallback resolution, `off` behavior, status/doctor visibility, active-model coverage, and error-level degraded fallback logging; Verify: config, status, doctor, and embedding focused tests.
-- [ ] `SP682-T3` Owner: agent; Dependencies: `SP682-T2`; Done when: GH-715 lands local semantic model download/status, model-dir/checksum handling, hook-safe readiness behavior, multi-model vector storage, same-model cosine filtering, idempotent backfill, and explicit prune gating; Verify: embedding, vector, migration, and backfill focused tests.
-- [x] `SP682-T4` Owner: agent; Dependencies: `SP682-T3`; Done when: GH-716 commits provider comparison eval reports for feature-hash, local semantic, and API embeddings, records default-flip criteria, and updates the #682 evidence trail before any default change; Verify: `REMEM_DATA_DIR=eval/provider-comparison/reference-data cargo run -- eval-provider-comparison --json-out eval/provider-comparison/report.json`, `cargo run -- eval-extraction --json --check-baseline`, and `cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json`.
-- [x] `SP682-T5` Owner: agent; Dependencies: `SP682-T4`; Done when: GH-717 moves memory dedup, curated-memory semantic dedup, and preference consolidation onto active-model semantics with calibrated thresholds and polarity/conflict guards; Verify: dedup, semantic_dedup, and preference focused tests.
-- [ ] `SP682-T6` Owner: agent; Dependencies: `SP682-T2` `SP682-T3` `SP682-T4` `SP682-T5`; Done when: GH-682 has links to all phase PRs, eval evidence under `eval/`, updated docs/spec index decision, and all acceptance criteria verified; Verify: `cargo fmt --check`, `cargo check`, `cargo test`, eval commands, and final issue audit.
+- [x] `SP682-T1` Owner: agent; Dependencies: none; Done when: `specs/GH682` validates and GH-714, GH-715, GH-716, and GH-717 are linked as implementation issues; Verify: `python3 checks/check_workflow.py --repo . --spec-dir specs/GH682`.
+- [x] `SP682-T2` Owner: agent; Dependencies: spec approval; Done when: GH-714 lands provider config parsing, fallback resolution, `off` behavior, status/doctor visibility, active-model coverage, and error-level degraded fallback logging; Verify: config, status, doctor, and embedding focused tests; Evidence: PR #719 closed GH-714 on 2026-07-04.
+- [x] `SP682-T3` Owner: agent; Dependencies: `SP682-T2`; Done when: GH-715 lands local semantic model download/status, model-dir/checksum handling, hook-safe readiness behavior, multi-model vector storage, same-model cosine filtering, idempotent backfill, and explicit prune gating; Verify: embedding, vector, migration, and backfill focused tests; Evidence: PR #728 closed GH-729, the GH-715 multi-model storage slice, on 2026-07-04; PR #731 closed GH-715 on 2026-07-04.
+- [x] `SP682-T4` Owner: agent; Dependencies: `SP682-T3`; Done when: GH-716 commits provider comparison eval reports for feature-hash, local semantic, and API embeddings, records default-flip criteria, and updates the #682 evidence trail before any default change; Verify: `REMEM_DATA_DIR=eval/provider-comparison/reference-data cargo run -- eval-provider-comparison --json-out eval/provider-comparison/report.json`, `cargo run -- eval-extraction --json --check-baseline`, and `cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json`; Evidence: PRs #732 and #733 closed GH-716 on 2026-07-04.
+- [x] `SP682-T5` Owner: agent; Dependencies: `SP682-T4`; Done when: GH-717 moves memory dedup, curated-memory semantic dedup, and preference consolidation onto active-model semantics with calibrated thresholds and polarity/conflict guards; Verify: dedup, semantic_dedup, and preference focused tests; Evidence: PRs #734 and #735 closed GH-717 on 2026-07-04.
+- [x] `SP682-T6` Owner: agent; Dependencies: `SP682-T2` `SP682-T3` `SP682-T4` `SP682-T5`; Done when: GH-682 has links to all phase PRs, eval evidence under `eval/`, updated docs/spec index decision, and all acceptance criteria verified; Verify: `cargo fmt --check`, `cargo check`, `cargo test`, eval commands, and final issue audit; Evidence: GH-714, GH-715, GH-716, and GH-717 are closed by merged PRs #719, #731, #732, #733, #734, and #735, with GH-715 child slice GH-729 closed by PR #728.
 
 ## Parallelization
 
@@ -58,5 +58,6 @@ scope in parallel.
 
 Use `Refs #682` in every phase PR. Close only the focused implementation issue
 for that phase, such as `Closes #714`, when its acceptance criteria and tests
-land. Do not close GH-682 until all four implementation issues, eval evidence,
-and downstream adoption are complete and verified.
+land. GH-682 may be closed only through the epic/capability closure path after
+all four implementation issues, eval evidence, docs/spec index decision, and
+downstream adoption are complete and verified.

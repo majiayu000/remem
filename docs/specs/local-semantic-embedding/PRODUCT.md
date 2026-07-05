@@ -161,5 +161,10 @@ cargo test
 - Should first-use auto-download ever become default-on, or should users keep
   activating local semantics explicitly through `remem embedding download` to
   keep hooks latency-safe?
-- Does GH-716 flip `Auto` from API-when-key-present / feature-hash-without-key
-  to local semantics after eval evidence, or does local remain explicit opt-in?
+
+## Resolved Decisions
+
+- GH-716 does not flip `Auto` from API-when-key-present /
+  feature-hash-without-key to local semantics. Local semantic embeddings remain
+  an explicit opt-in until the reference provider comparison includes verified
+  local and API rows that justify changing the default.
