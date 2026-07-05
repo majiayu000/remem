@@ -95,6 +95,26 @@ fn status_report_fixture() -> StatusReport {
             oldest_ready_epoch: Some(17),
             oldest_ready_age_secs: Some(18),
         },
+        review_queue: ReviewQueueStatus {
+            pending: 41,
+            median_age_secs: Some(86_400),
+            max_age_secs: Some(172_800),
+            inflow_7d: 6,
+            resolved_7d: 2,
+            projects: vec![ReviewQueueProjectStatus {
+                project: Some("/tmp/remem".to_string()),
+                pending: 41,
+                median_age_secs: Some(86_400),
+                max_age_secs: Some(172_800),
+                inflow_7d: 6,
+                resolved_7d: 2,
+            }],
+            block_reasons: vec![ReviewQueueBlockReasonStatus {
+                reason: Some("risk_class_not_low".to_string()),
+                pending: 40,
+                example_ids: vec![1, 2, 3],
+            }],
+        },
         candidate_promotion: vec![CandidatePromotionStatus {
             source_kind: "summary".to_string(),
             review_status: "pending_review".to_string(),
@@ -194,6 +214,20 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["usage_feedback"]["unmatched_events"], 1);
     assert_eq!(parsed["usage_feedback"]["usage_events"], 6);
     assert_eq!(parsed["pending_observations"]["failed"], 16);
+    assert_eq!(parsed["review_queue"]["pending"], 41);
+    assert_eq!(parsed["review_queue"]["median_age_secs"], 86_400);
+    assert_eq!(parsed["review_queue"]["max_age_secs"], 172_800);
+    assert_eq!(parsed["review_queue"]["inflow_7d"], 6);
+    assert_eq!(parsed["review_queue"]["resolved_7d"], 2);
+    assert_eq!(parsed["review_queue"]["projects"][0]["pending"], 41);
+    assert_eq!(
+        parsed["review_queue"]["block_reasons"][0]["reason"],
+        "risk_class_not_low"
+    );
+    assert_eq!(
+        parsed["review_queue"]["block_reasons"][0]["example_ids"][0],
+        1
+    );
     assert_eq!(parsed["candidate_promotion"][0]["source_kind"], "summary");
     assert_eq!(
         parsed["candidate_promotion"][0]["review_status"],

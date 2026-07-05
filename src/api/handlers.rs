@@ -15,7 +15,7 @@ mod user_recall;
 pub(super) use candidate_review::{
     handle_approve_candidate, handle_edit_candidate, handle_reject_candidate,
 };
-pub(super) use candidates::handle_list_candidates;
+pub(super) use candidates::{handle_blocked_candidates, handle_list_candidates};
 pub(super) use capabilities::handle_capabilities;
 pub(super) use detail::handle_memory_detail;
 pub(super) use graph::handle_graph;

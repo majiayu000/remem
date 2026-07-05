@@ -18,6 +18,7 @@ use super::environment::{check_binary, check_hooks, check_install_paths, check_m
 use super::logging::check_log_health;
 use super::mcp_processes::check_mcp_processes;
 use super::native_memory::check_native_memory_sync;
+use super::review_queue::check_review_queue;
 use super::runtime_config_check::check_runtime_config;
 use super::schema::{check_key_format, check_schema_migration};
 use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION};
@@ -112,6 +113,9 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_promotion_funnel(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_review_queue(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_temporal_facts(shared_db.conn())

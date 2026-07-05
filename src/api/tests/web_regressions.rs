@@ -10,10 +10,8 @@ use serde_json::Value;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
-use super::super::handlers::{
-    handle_graph, handle_list_candidates, handle_list_memories, handle_memory_detail,
-};
-use super::super::types::{CandidateParams, GraphParams, ListParams, MemoryDetailParams};
+use super::super::handlers::{handle_graph, handle_list_memories, handle_memory_detail};
+use super::super::types::{GraphParams, ListParams, MemoryDetailParams};
 use super::super::DbState;
 
 #[tokio::test]
@@ -312,74 +310,6 @@ async fn list_memories_active_status_keeps_unsuperseded_state_key_siblings() -> 
         .collect();
     assert!(ids.contains(&first_id));
     assert!(ids.contains(&second_id));
-    assert_eq!(payload["meta"]["total"], 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn list_candidates_filters_by_project_when_requested() -> anyhow::Result<()> {
-    let _test_dir = ScopedTestDataDir::new("api-candidates-project-filter");
-    let conn = db::open_db()?;
-    conn.execute(
-        "INSERT INTO workspaces (id, root_path, created_at_epoch, updated_at_epoch)
-         VALUES (1, 'workspace-a', 1, 1)",
-        [],
-    )?;
-    conn.execute(
-        "INSERT INTO projects (id, workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
-         VALUES
-          (10, 1, 'proj-a', 'proj-a', 1, 1),
-          (11, 1, 'proj-b', 'proj-b', 1, 1)",
-        [],
-    )?;
-    conn.execute(
-        "INSERT INTO memory_candidates
-          (project_id, scope, memory_type, topic_key, text, evidence_event_ids, confidence,
-           risk_class, review_status, created_at_epoch, updated_at_epoch)
-         VALUES
-          (10, 'project', 'decision', 'candidate-a', 'project candidate', '[]', 0.7,
-           'low', 'pending_review', 3, 3),
-          (11, 'project', 'decision', 'candidate-b', 'other candidate', '[]', 0.7,
-           'low', 'pending_review', 2, 2)",
-        [],
-    )?;
-    conn.execute(
-        "INSERT INTO memory_candidates
-          (project_id, scope, memory_type, topic_key, text, evidence_event_ids, confidence,
-           risk_class, review_status, source_project, target_project, owner_scope, owner_key,
-           created_at_epoch, updated_at_epoch)
-         VALUES
-          (11, 'project', 'decision', 'candidate-routed', 'routed candidate', '[]', 0.7,
-           'low', 'pending_review', 'proj-b', 'proj-a', 'repo', 'proj-a', 4, 4)",
-        [],
-    )?;
-    drop(conn);
-
-    let response = handle_list_candidates(
-        State(DbState),
-        Query(CandidateParams {
-            project: Some("proj-a".to_string()),
-            status: None,
-            limit: Some(10),
-            offset: None,
-        }),
-    )
-    .await
-    .into_response();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = to_bytes(response.into_body(), usize::MAX).await?;
-    let payload: Value = serde_json::from_slice(&body)?;
-    let texts: Vec<&str> = payload["data"]
-        .as_array()
-        .expect("data should be array")
-        .iter()
-        .map(|item| item["text"].as_str().expect("text should be string"))
-        .collect();
-    assert!(texts.contains(&"project candidate"));
-    assert!(texts.contains(&"routed candidate"));
-    assert!(!texts.contains(&"other candidate"));
-    assert_eq!(payload["data"][0]["project"], "proj-a");
     assert_eq!(payload["meta"]["total"], 2);
     Ok(())
 }

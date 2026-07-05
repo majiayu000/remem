@@ -295,6 +295,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_embeddings_multimodel_key",
         sql: include_str!("../migrations/v058_memory_embeddings_multimodel_key.sql"),
     },
+    Migration {
+        version: 59,
+        name: "candidate_review_metadata",
+        sql: include_str!("../migrations/v059_candidate_review_metadata.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

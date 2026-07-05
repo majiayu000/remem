@@ -17,25 +17,44 @@ const ENV_KEYS: &[&str] = &[
     "OPENAI_API_KEY",
 ];
 
-fn with_clean_search_embedding_env<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = crate::runtime_config::TEST_ENV_LOCK
-        .lock()
-        .expect("env lock should acquire");
-    let saved = ENV_KEYS
-        .iter()
-        .map(|key| (*key, std::env::var(key).ok()))
-        .collect::<Vec<_>>();
-    for key in ENV_KEYS {
-        unsafe { std::env::remove_var(key) };
-    }
-    let result = f();
-    for (key, value) in saved {
-        match value {
-            Some(value) => unsafe { std::env::set_var(key, value) },
-            None => unsafe { std::env::remove_var(key) },
+struct ScopedSearchEmbeddingEnv {
+    _guard: crate::runtime_config::TestEnvGuard,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl ScopedSearchEmbeddingEnv {
+    fn clean() -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        Self {
+            _guard: guard,
+            saved,
         }
     }
-    result
+}
+
+impl Drop for ScopedSearchEmbeddingEnv {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+fn with_clean_search_embedding_env<T>(f: impl FnOnce() -> T) -> T {
+    let _env = ScopedSearchEmbeddingEnv::clean();
+    f()
 }
 
 fn setup_search_conn() -> Result<Connection> {

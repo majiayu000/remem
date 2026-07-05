@@ -30,6 +30,108 @@ pub(crate) struct CandidateEdit {
     pub text: Option<String>,
 }
 
+/// Durable per-candidate review provenance (#683): who initiated the outcome
+/// and whether it came from a single action or a batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReviewMeta {
+    pub actor: String,
+    pub action_source: ReviewActionSource,
+    pub batch_id: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReviewActionSource {
+    Single,
+    Batch,
+}
+
+impl ReviewActionSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Batch => "batch",
+        }
+    }
+}
+
+impl ReviewMeta {
+    pub(crate) fn single(actor: impl Into<String>) -> Self {
+        Self {
+            actor: actor.into(),
+            action_source: ReviewActionSource::Single,
+            batch_id: None,
+            reason: None,
+        }
+    }
+
+    pub(crate) fn batch(
+        actor: impl Into<String>,
+        batch_id: impl Into<String>,
+        reason: Option<String>,
+    ) -> Self {
+        Self {
+            actor: actor.into(),
+            action_source: ReviewActionSource::Batch,
+            batch_id: Some(batch_id.into()),
+            reason,
+        }
+    }
+}
+
+pub(crate) fn default_review_actor() -> String {
+    std::env::var("REMEM_REVIEW_ACTOR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| std::env::var("USER").ok().filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| "cli".to_string())
+}
+
+/// Filter set shared by batch preview and batch mutation so the preview can
+/// never diverge from what executes.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct BatchFilter {
+    pub project: Option<String>,
+    pub memory_type: Option<String>,
+    pub block_reason: Option<String>,
+    pub topic_key: Option<String>,
+    pub contains: Option<String>,
+    pub min_confidence: Option<f64>,
+    pub older_than_days: Option<i64>,
+    pub limit: i64,
+}
+
+const SECS_PER_DAY: i64 = 86_400;
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BatchPreview {
+    pub ids: Vec<i64>,
+    pub by_type: Vec<(String, i64)>,
+    pub by_project: Vec<(String, i64)>,
+    pub samples: Vec<BatchSample>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BatchSample {
+    pub id: i64,
+    pub memory_type: String,
+    pub topic_key: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BatchOutcome {
+    pub batch_id: String,
+    pub processed: Vec<i64>,
+    pub promoted_memory_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReviewPromotion {
+    memory_id: i64,
+    promoted: bool,
+}
+
 #[derive(Debug, Clone)]
 struct CandidateRow {
     id: i64,
@@ -117,23 +219,48 @@ pub(crate) fn list_pending(
 }
 
 pub(crate) fn approve_candidate(conn: &mut Connection, id: i64) -> Result<Option<i64>> {
+    approve_candidate_with_meta(conn, id, &ReviewMeta::single(default_review_actor()))
+}
+
+pub(crate) fn approve_candidate_with_meta(
+    conn: &mut Connection,
+    id: i64,
+    meta: &ReviewMeta,
+) -> Result<Option<i64>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let Some(row) = load_candidate(&tx, id)? else {
         return Ok(None);
     };
     ensure_pending(&row)?;
-    let memory_id = promote_row(&tx, &row, "approved", None)?;
+    let promotion = promote_row(&tx, &row, "approved", None, meta)?;
     tx.commit()?;
-    Ok(Some(memory_id))
+    Ok(Some(promotion.memory_id))
 }
 
 pub(crate) fn discard_candidate(conn: &Connection, id: i64) -> Result<bool> {
+    discard_candidate_with_meta(conn, id, &ReviewMeta::single(default_review_actor()))
+}
+
+pub(crate) fn discard_candidate_with_meta(
+    conn: &Connection,
+    id: i64,
+    meta: &ReviewMeta,
+) -> Result<bool> {
     let now = chrono::Utc::now().timestamp();
     let updated = conn.execute(
         "UPDATE memory_candidates
-         SET review_status = 'discarded', updated_at_epoch = ?1
-         WHERE id = ?2 AND review_status = 'pending_review'",
-        params![now, id],
+         SET review_status = 'discarded', updated_at_epoch = ?1,
+             review_actor = ?2, reviewed_at_epoch = ?1,
+             review_action_source = ?3, review_batch_id = ?4, review_reason = ?5
+         WHERE id = ?6 AND review_status = 'pending_review'",
+        params![
+            now,
+            meta.actor,
+            meta.action_source.as_str(),
+            meta.batch_id,
+            meta.reason,
+            id
+        ],
     )?;
     Ok(updated > 0)
 }
@@ -156,9 +283,231 @@ pub(crate) fn edit_candidate(
     };
     ensure_pending(&row)?;
     let edited = row.apply_edit(edit)?;
-    let memory_id = promote_row(&tx, &row, "edited", Some(&edited))?;
+    let meta = ReviewMeta::single(default_review_actor());
+    let promotion = promote_row(&tx, &row, "edited", Some(&edited), &meta)?;
     tx.commit()?;
-    Ok(Some(memory_id))
+    Ok(Some(promotion.memory_id))
+}
+
+pub(crate) fn resolve_batch(conn: &Connection, filter: &BatchFilter) -> Result<BatchPreview> {
+    let ids_with_detail = resolve_batch_rows(conn, filter)?;
+    let mut by_type: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    let mut by_project: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    let mut samples = Vec::new();
+    let mut ids = Vec::with_capacity(ids_with_detail.len());
+    for row in &ids_with_detail {
+        ids.push(row.id);
+        *by_type.entry(row.memory_type.clone()).or_default() += 1;
+        *by_project
+            .entry(
+                row.project
+                    .clone()
+                    .unwrap_or_else(|| "<unknown project>".to_string()),
+            )
+            .or_default() += 1;
+        if samples.len() < 5 {
+            samples.push(BatchSample {
+                id: row.id,
+                memory_type: row.memory_type.clone(),
+                topic_key: row.topic_key.clone(),
+                text: crate::db::truncate_str(&row.text, 120).to_string(),
+            });
+        }
+    }
+    Ok(BatchPreview {
+        ids,
+        by_type: by_type.into_iter().collect(),
+        by_project: by_project.into_iter().collect(),
+        samples,
+    })
+}
+
+struct BatchRow {
+    id: i64,
+    project: Option<String>,
+    memory_type: String,
+    topic_key: String,
+    text: String,
+}
+
+fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<BatchRow>> {
+    validate_batch_filter(filter)?;
+    let limit = filter.limit;
+    let mut sql = String::from(
+        "SELECT c.id,
+                COALESCE(c.target_project, p.project_path, c.source_project,
+                         CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END) AS project,
+                c.memory_type, c.topic_key, c.text
+         FROM memory_candidates c
+         LEFT JOIN projects p ON p.id = c.project_id
+         WHERE c.review_status = 'pending_review'",
+    );
+    let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(project) = &filter.project {
+        sql.push_str(
+            " AND (p.project_path = ? OR c.source_project = ? OR c.target_project = ?
+                   OR (c.owner_scope = 'repo' AND c.owner_key = ?))",
+        );
+        args.push(Box::new(project.clone()));
+        args.push(Box::new(project.clone()));
+        args.push(Box::new(project.clone()));
+        args.push(Box::new(project.clone()));
+    }
+    if let Some(memory_type) = &filter.memory_type {
+        sql.push_str(" AND c.memory_type = ?");
+        args.push(Box::new(memory_type.clone()));
+    }
+    if let Some(block_reason) = &filter.block_reason {
+        sql.push_str(" AND c.auto_promote_block_reason = ?");
+        args.push(Box::new(block_reason.clone()));
+    }
+    if let Some(topic_key) = &filter.topic_key {
+        sql.push_str(" AND c.topic_key = ?");
+        args.push(Box::new(topic_key.clone()));
+    }
+    if let Some(contains) = &filter.contains {
+        let pattern = like_pattern(contains);
+        sql.push_str(" AND (c.text LIKE ? ESCAPE '\\' OR c.topic_key LIKE ? ESCAPE '\\')");
+        args.push(Box::new(pattern.clone()));
+        args.push(Box::new(pattern));
+    }
+    if let Some(min_confidence) = filter.min_confidence {
+        sql.push_str(" AND c.confidence >= ?");
+        args.push(Box::new(min_confidence));
+    }
+    if let Some(older_than_days) = filter.older_than_days {
+        let cutoff = older_than_cutoff(chrono::Utc::now().timestamp(), older_than_days)?;
+        sql.push_str(" AND c.created_at_epoch <= ?");
+        args.push(Box::new(cutoff));
+    }
+    sql.push_str(" ORDER BY c.created_at_epoch ASC, c.id ASC LIMIT ?");
+    args.push(Box::new(limit));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())),
+            |row| {
+                Ok(BatchRow {
+                    id: row.get(0)?,
+                    project: row.get(1)?,
+                    memory_type: row.get(2)?,
+                    topic_key: row.get(3)?,
+                    text: row.get(4)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn validate_batch_filter(filter: &BatchFilter) -> Result<()> {
+    if filter.limit <= 0 {
+        bail!("limit must be positive");
+    }
+    if let Some(contains) = &filter.contains {
+        if contains.trim().is_empty() {
+            bail!("contains filter must not be empty");
+        }
+    }
+    if let Some(min_confidence) = filter.min_confidence {
+        if !(0.0..=1.0).contains(&min_confidence) {
+            bail!("min_confidence must be between 0 and 1");
+        }
+    }
+    if let Some(older_than_days) = filter.older_than_days {
+        if older_than_days < 0 {
+            bail!("older_than_days must be non-negative");
+        }
+        older_than_cutoff(chrono::Utc::now().timestamp(), older_than_days)?;
+    }
+    Ok(())
+}
+
+fn older_than_cutoff(now_epoch: i64, older_than_days: i64) -> Result<i64> {
+    let age_secs = older_than_days
+        .checked_mul(SECS_PER_DAY)
+        .context("older_than_days is too large")?;
+    now_epoch
+        .checked_sub(age_secs)
+        .context("older_than_days is too large")
+}
+
+fn like_pattern(query: &str) -> String {
+    let mut pattern = String::with_capacity(query.len() + 2);
+    pattern.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
+}
+
+pub(crate) fn new_batch_id() -> String {
+    format!(
+        "batch-{}-{}",
+        chrono::Utc::now().timestamp(),
+        std::process::id()
+    )
+}
+
+/// Approve every candidate in the already previewed id set inside one
+/// transaction. Rows are re-checked as pending before mutation, but the id set
+/// itself is not re-resolved after user confirmation.
+pub(crate) fn approve_batch(
+    conn: &mut Connection,
+    preview: &BatchPreview,
+    meta: &ReviewMeta,
+) -> Result<BatchOutcome> {
+    let batch_id = meta
+        .batch_id
+        .clone()
+        .unwrap_or_else(|| "batch-unset".to_string());
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut promoted_memory_ids = Vec::with_capacity(preview.ids.len());
+    for id in &preview.ids {
+        let row = load_candidate(&tx, *id)?
+            .with_context(|| format!("candidate {id} disappeared during batch"))?;
+        ensure_pending(&row)?;
+        let promotion = promote_row(&tx, &row, "approved", None, meta)?;
+        if promotion.promoted {
+            promoted_memory_ids.push(promotion.memory_id);
+        }
+    }
+    tx.commit()?;
+    Ok(BatchOutcome {
+        batch_id,
+        processed: preview.ids.clone(),
+        promoted_memory_ids,
+    })
+}
+
+/// Discard every candidate in the already previewed id set inside one
+/// transaction.
+pub(crate) fn discard_batch(
+    conn: &mut Connection,
+    preview: &BatchPreview,
+    meta: &ReviewMeta,
+) -> Result<BatchOutcome> {
+    let batch_id = meta
+        .batch_id
+        .clone()
+        .unwrap_or_else(|| "batch-unset".to_string());
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for id in &preview.ids {
+        if !discard_candidate_with_meta(&tx, *id, meta)? {
+            bail!("candidate {id} was not pending_review during batch discard");
+        }
+    }
+    tx.commit()?;
+    Ok(BatchOutcome {
+        batch_id,
+        processed: preview.ids.clone(),
+        promoted_memory_ids: Vec::new(),
+    })
 }
 
 impl CandidateRow {
@@ -301,7 +650,8 @@ fn promote_row(
     row: &CandidateRow,
     review_status: &str,
     edited: Option<&ParsedMemoryCandidate>,
-) -> Result<i64> {
+    meta: &ReviewMeta,
+) -> Result<ReviewPromotion> {
     let project = row
         .source_project
         .as_deref()
@@ -326,12 +676,26 @@ fn promote_row(
     let now = chrono::Utc::now().timestamp();
     update_candidate_after_lifecycle(conn, row.id, &candidate, &route, status)?;
     conn.execute(
-        "UPDATE memory_candidates SET updated_at_epoch = ?1 WHERE id = ?2",
-        params![now, row.id],
+        "UPDATE memory_candidates
+         SET updated_at_epoch = ?1, review_actor = ?2, reviewed_at_epoch = ?1,
+             review_action_source = ?3, review_batch_id = ?4, review_reason = ?5
+         WHERE id = ?6",
+        params![
+            now,
+            meta.actor,
+            meta.action_source.as_str(),
+            meta.batch_id,
+            meta.reason,
+            row.id
+        ],
     )?;
-    outcome
+    let memory_id = outcome
         .memory_id
-        .context("candidate promotion produced no memory id")
+        .context("candidate promotion produced no memory id")?;
+    Ok(ReviewPromotion {
+        memory_id,
+        promoted: outcome.promoted,
+    })
 }
 
 fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String>> {
@@ -366,393 +730,4 @@ fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String
 }
 
 #[cfg(test)]
-mod tests {
-    use rusqlite::params;
-
-    use crate::db::{record_captured_event, CaptureEventInput, ExtractionTaskKind};
-
-    use super::*;
-
-    fn setup_conn() -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory db should open");
-        crate::migrate::run_migrations(&conn).expect("migrations should run");
-        conn
-    }
-
-    fn insert_pending_candidate(conn: &mut Connection, topic_key: &str, text: &str) -> Result<i64> {
-        insert_pending_candidate_with_scope(conn, topic_key, text, "project")
-    }
-
-    fn insert_pending_candidate_with_scope(
-        conn: &mut Connection,
-        topic_key: &str,
-        text: &str,
-        scope: &str,
-    ) -> Result<i64> {
-        insert_pending_candidate_with_scope_and_type(conn, topic_key, text, scope, "decision")
-    }
-
-    fn insert_pending_candidate_with_scope_and_type(
-        conn: &mut Connection,
-        topic_key: &str,
-        text: &str,
-        scope: &str,
-        memory_type: &str,
-    ) -> Result<i64> {
-        record_captured_event(
-            conn,
-            &CaptureEventInput {
-                host: "codex-cli",
-                session_id: "sess-review",
-                project: "/tmp/remem",
-                cwd: None,
-                event_type: "tool_result",
-                role: None,
-                tool_name: Some("Bash"),
-                content: "cargo test passed",
-                task_kind: Some(ExtractionTaskKind::MemoryCandidate),
-            },
-        )?;
-        let task = crate::db::claim_next_extraction_task(conn, "worker-review", 60)?
-            .expect("task should claim");
-        let evidence_json = serde_json::to_string(&vec![task.high_watermark_event_id.unwrap()])?;
-        let now = chrono::Utc::now().timestamp();
-        conn.execute(
-            "INSERT INTO memory_candidates
-             (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
-              confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0.72, 'medium',
-                     'pending_review', ?7, ?7)",
-            params![
-                task.project_id,
-                scope,
-                memory_type,
-                topic_key,
-                text,
-                evidence_json,
-                now
-            ],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
-
-    #[test]
-    fn review_list_includes_evidence_preview() -> Result<()> {
-        let mut conn = setup_conn();
-        let id = insert_pending_candidate(&mut conn, "review-list", "Review this candidate")?;
-
-        let rows = list_pending(&conn, None, 10)?;
-
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, id);
-        assert_eq!(rows[0].project.as_deref(), Some("/tmp/remem"));
-        assert!(rows[0].evidence_preview[0].contains("tool_result"));
-        Ok(())
-    }
-
-    #[test]
-    fn review_approve_promotes_candidate() -> Result<()> {
-        let mut conn = setup_conn();
-        let id = insert_pending_candidate(&mut conn, "review-approve", "Approve this memory")?;
-
-        let memory_id = approve_candidate(&mut conn, id)?.expect("candidate should approve");
-
-        let status: String = conn.query_row(
-            "SELECT review_status FROM memory_candidates WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        let source_candidate_id: i64 = conn.query_row(
-            "SELECT source_candidate_id FROM memories WHERE id = ?1",
-            params![memory_id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(status, "approved");
-        assert_eq!(source_candidate_id, id);
-        let (fact_predicate, fact_source_memory_id, fact_evidence): (String, i64, String) = conn
-            .query_row(
-                "SELECT predicate, source_memory_id, source_event_ids
-                 FROM memory_facts
-                 WHERE source_memory_id = ?1",
-                params![memory_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-        let candidate_evidence: String = conn.query_row(
-            "SELECT evidence_event_ids FROM memory_candidates WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(fact_predicate, "affects_project");
-        assert_eq!(fact_source_memory_id, memory_id);
-        assert_eq!(
-            serde_json::from_str::<Vec<i64>>(&fact_evidence)?,
-            serde_json::from_str::<Vec<i64>>(&candidate_evidence)?
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn review_approve_lesson_candidate_creates_metadata() -> Result<()> {
-        let mut conn = setup_conn();
-        let id = insert_pending_candidate_with_scope_and_type(
-            &mut conn,
-            "review-lesson",
-            "Lesson: generic lesson promotions must keep metadata so context can load them.",
-            "project",
-            "lesson",
-        )?;
-
-        let memory_id = approve_candidate(&mut conn, id)?.expect("candidate should approve");
-
-        let (memory_type, metadata_count): (String, i64) = conn.query_row(
-            "SELECT m.memory_type, COUNT(l.memory_id)
-             FROM memories m
-             LEFT JOIN memory_lessons l ON l.memory_id = m.id
-             WHERE m.id = ?1",
-            params![memory_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(memory_type, "lesson");
-        assert_eq!(metadata_count, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn review_approve_lesson_candidate_supersedes_old_lesson() -> Result<()> {
-        let mut conn = setup_conn();
-        let old_id = crate::memory::lesson::save_lesson(
-            &conn,
-            &crate::memory::lesson::SaveLessonRequest {
-                session_id: None,
-                project: "/tmp/remem",
-                topic_key: Some("review-lesson-update"),
-                title: "Old lesson",
-                content: "Old lesson content",
-                confidence: 0.8,
-                source_evidence: None,
-                files: None,
-                branch: None,
-                scope: "project",
-                created_at_epoch: None,
-                stale_after_epoch: None,
-            },
-        )?;
-        let id = insert_pending_candidate_with_scope_and_type(
-            &mut conn,
-            "review-lesson-update",
-            "Updated lesson content",
-            "project",
-            "lesson",
-        )?;
-
-        let new_id = approve_candidate(&mut conn, id)?.expect("candidate should approve");
-
-        let old_status: String = conn.query_row(
-            "SELECT status FROM memories WHERE id = ?1",
-            params![old_id],
-            |row| row.get(0),
-        )?;
-        let (content, metadata_count): (String, i64) = conn.query_row(
-            "SELECT m.content, COUNT(l.memory_id)
-             FROM memories m
-             LEFT JOIN memory_lessons l ON l.memory_id = m.id
-             WHERE m.id = ?1",
-            params![new_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let memory_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
-        assert_eq!(old_status, "stale");
-        assert_eq!(content, "Updated lesson content");
-        assert_eq!(metadata_count, 1);
-        assert_eq!(memory_count, 2);
-        Ok(())
-    }
-
-    #[test]
-    fn review_discard_marks_candidate_without_deleting_evidence() -> Result<()> {
-        let mut conn = setup_conn();
-        let id = insert_pending_candidate(&mut conn, "review-discard", "Discard this memory")?;
-
-        assert!(discard_candidate(&conn, id)?);
-
-        let (status, evidence): (String, String) = conn.query_row(
-            "SELECT review_status, evidence_event_ids FROM memory_candidates WHERE id = ?1",
-            params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(status, "discarded");
-        assert!(evidence.contains('1'));
-        Ok(())
-    }
-
-    #[test]
-    fn review_edit_promotes_edited_candidate() -> Result<()> {
-        let mut conn = setup_conn();
-        let id = insert_pending_candidate(&mut conn, "review-edit", "Original memory")?;
-
-        let memory_id = edit_candidate(
-            &mut conn,
-            id,
-            CandidateEdit {
-                topic_key: Some("edited-topic".to_string()),
-                memory_type: Some("architecture".to_string()),
-                text: Some("Edited architecture memory".to_string()),
-                ..CandidateEdit::default()
-            },
-        )?
-        .expect("candidate should edit");
-
-        let (status, topic_key, memory_type, text): (String, String, String, String) = conn
-            .query_row(
-                "SELECT c.review_status, m.topic_key, m.memory_type, m.content
-                 FROM memory_candidates c
-                 JOIN memories m ON m.id = ?2
-                 WHERE c.id = ?1",
-                params![id, memory_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )?;
-        assert_eq!(status, "edited");
-        assert_eq!(topic_key, "edited-topic");
-        assert_eq!(memory_type, "architecture");
-        assert_eq!(text, "Edited architecture memory");
-        Ok(())
-    }
-
-    #[test]
-    fn review_invalid_ids_are_reported() -> Result<()> {
-        let mut conn = setup_conn();
-
-        assert!(approve_candidate(&mut conn, 999)?.is_none());
-        assert!(!discard_candidate(&conn, 999)?);
-        assert!(edit_candidate(
-            &mut conn,
-            999,
-            CandidateEdit {
-                text: Some("missing".to_string()),
-                ..CandidateEdit::default()
-            },
-        )?
-        .is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn review_approve_rejects_already_promoted_candidate_without_duplicate_memory() -> Result<()> {
-        let mut conn = setup_conn();
-        let id = insert_pending_candidate(&mut conn, "review-no-duplicate", "Approve once")?;
-
-        let memory_id = approve_candidate(&mut conn, id)?
-            .ok_or_else(|| anyhow::anyhow!("candidate should approve"))?;
-        let err = match approve_candidate(&mut conn, id) {
-            Ok(_) => anyhow::bail!("second approve should fail"),
-            Err(err) => err,
-        };
-
-        assert!(err.to_string().contains(&format!(
-            "candidate {id} is approved, expected pending_review"
-        )));
-        let memory_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE source_candidate_id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-        let source_candidate_id: i64 = conn.query_row(
-            "SELECT source_candidate_id FROM memories WHERE id = ?1",
-            params![memory_id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(memory_count, 1);
-        assert_eq!(source_candidate_id, id);
-        Ok(())
-    }
-
-    #[test]
-    fn review_approve_supersedes_duplicate_topic_memory() -> Result<()> {
-        let mut conn = setup_conn();
-        let old_id = crate::memory::insert_memory_full(
-            &conn,
-            None,
-            "/tmp/remem",
-            Some("review-dup"),
-            "Existing",
-            "Existing memory",
-            "decision",
-            None,
-            None,
-            "project",
-            None,
-        )?;
-        let id = insert_pending_candidate(&mut conn, "review-dup", "Updated memory")?;
-
-        approve_candidate(&mut conn, id)?.expect("candidate should approve");
-
-        let memory_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
-        let (content, owner_scope, owner_key): (String, String, String) = conn.query_row(
-            "SELECT content, owner_scope, owner_key FROM memories
-             WHERE topic_key = 'review-dup' AND status = 'active'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        let old_status: String = conn.query_row(
-            "SELECT status FROM memories WHERE id = ?1",
-            params![old_id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(memory_count, 2);
-        assert_eq!(content, "Updated memory");
-        assert_eq!(old_status, "stale");
-        assert_eq!(owner_scope, "repo");
-        assert_eq!(owner_key, "/tmp/remem");
-        Ok(())
-    }
-
-    #[test]
-    fn review_approve_preserves_existing_project_memory_for_global_candidate() -> Result<()> {
-        let mut conn = setup_conn();
-        crate::memory::insert_memory_full(
-            &conn,
-            None,
-            "/tmp/remem",
-            Some("review-scope"),
-            "Project",
-            "Project memory",
-            "decision",
-            None,
-            None,
-            "project",
-            None,
-        )?;
-        let id = insert_pending_candidate_with_scope(
-            &mut conn,
-            "review-scope",
-            "Global memory",
-            "global",
-        )?;
-
-        approve_candidate(&mut conn, id)?.expect("candidate should approve");
-
-        let memory_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE topic_key = 'review-scope'",
-            [],
-            |row| row.get(0),
-        )?;
-        let project_content: String = conn.query_row(
-            "SELECT content FROM memories
-             WHERE topic_key = 'review-scope' AND scope = 'project'",
-            [],
-            |row| row.get(0),
-        )?;
-        let global_content: String = conn.query_row(
-            "SELECT content FROM memories
-             WHERE topic_key = 'review-scope' AND scope = 'global'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(memory_count, 2);
-        assert_eq!(project_content, "Project memory");
-        assert_eq!(global_content, "Global memory");
-        Ok(())
-    }
-}
+mod tests;

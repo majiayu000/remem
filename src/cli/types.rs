@@ -11,6 +11,9 @@ pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
     WorkstreamStatusArg,
 };
+pub(in crate::cli) use super::review_types::{
+    GraphReviewAction, ReviewAction, ReviewBatchFilterArgs,
+};
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -725,59 +728,6 @@ pub(in crate::cli) enum PendingAction {
         limit: i64,
         #[arg(long)]
         dry_run: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum ReviewAction {
-    List {
-        #[arg(long, short)]
-        project: Option<String>,
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
-    },
-    Approve {
-        id: i64,
-    },
-    Discard {
-        id: i64,
-    },
-    Edit {
-        id: i64,
-        #[arg(long)]
-        text: Option<String>,
-        #[arg(long = "topic-key")]
-        topic_key: Option<String>,
-        #[arg(long = "type")]
-        memory_type: Option<String>,
-        #[arg(long)]
-        scope: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub(in crate::cli) enum GraphReviewAction {
-    List {
-        #[arg(long, short)]
-        project: Option<String>,
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
-    },
-    Inspect {
-        id: i64,
-    },
-    Approve {
-        id: i64,
-    },
-    Reject {
-        id: i64,
-        #[arg(long)]
-        reason: String,
-    },
-    Defer {
-        id: i64,
-        #[arg(long)]
-        reason: String,
     },
 }
 

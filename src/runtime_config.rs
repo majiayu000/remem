@@ -20,7 +20,11 @@ pub const MEMORY_AI_PROFILE_FIELD: &str = "remem_ai_profile";
 
 const DEFAULT_CLAUDE_MODEL: &str = "haiku";
 const ANTHROPIC_DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
-pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) mod env_lock;
+
+#[cfg(test)]
+pub(crate) use env_lock::EnvGuard as TestEnvGuard;
+pub(crate) static ENV_LOCK: env_lock::EnvLock = env_lock::EnvLock::new();
 #[cfg(test)]
 pub(crate) use ENV_LOCK as TEST_ENV_LOCK;
 

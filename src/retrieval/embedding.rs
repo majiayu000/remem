@@ -271,6 +271,8 @@ pub(crate) fn configured_backfill_target() -> Result<EmbeddingBackfillTarget> {
 pub(crate) fn configured_backfill_target_with_fallback_cache(
     cache: &mut EmbeddingFallbackCache,
 ) -> Result<EmbeddingBackfillTarget> {
+    #[cfg(test)]
+    let _test_env_guard = config::lock_test_env();
     let status = embedding_provider_status_without_probe()?;
     if let Some(error) = disabled_provider_status_error(&status) {
         return Err(error);
@@ -287,6 +289,8 @@ pub(crate) fn configured_backfill_target_with_fallback_cache(
 }
 
 pub fn embedding_provider_status() -> Result<EmbeddingProviderStatus> {
+    #[cfg(test)]
+    let _test_env_guard = config::lock_test_env();
     let config = resolve_embedding_config()?;
     let mut status = status::resolve_provider_status(&config);
     status::probe_active_api_profile(&config, &mut status);
@@ -294,6 +298,8 @@ pub fn embedding_provider_status() -> Result<EmbeddingProviderStatus> {
 }
 
 pub(crate) fn embedding_provider_status_without_probe() -> Result<EmbeddingProviderStatus> {
+    #[cfg(test)]
+    let _test_env_guard = config::lock_test_env();
     let config = resolve_embedding_config()?;
     Ok(status::resolve_provider_status(&config))
 }
@@ -347,6 +353,8 @@ fn embed_text_with_fallback_cache(
     kind: LocalEmbeddingInputKind,
     cache: &mut EmbeddingFallbackCache,
 ) -> Result<TextEmbedding> {
+    #[cfg(test)]
+    let _test_env_guard = config::lock_test_env();
     let config = resolve_embedding_config()?;
     if let Some(fallback) = cache.call_failure_fallback {
         return embed_with_cached_call_failure_fallback(text, kind, &config, fallback);

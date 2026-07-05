@@ -32,7 +32,7 @@ const EMBEDDING_ENV_KEYS: &[&str] = &[
 ];
 
 struct ScopedApiFallbackEnv {
-    _guard: std::sync::MutexGuard<'static, ()>,
+    _guard: crate::runtime_config::TestEnvGuard,
     saved: Vec<(&'static str, Option<String>)>,
 }
 

@@ -238,7 +238,6 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use rusqlite::params;
-    use std::sync::MutexGuard;
 
     use crate::db::{self, test_support::ScopedTestDataDir};
 
@@ -246,34 +245,6 @@ mod tests {
     use test_support::install_stub_codex;
 
     mod test_support;
-
-    struct ScopedEmbeddingProvider {
-        _guard: MutexGuard<'static, ()>,
-        saved_provider: Option<String>,
-    }
-
-    impl ScopedEmbeddingProvider {
-        fn new(provider: &str) -> Self {
-            let guard = crate::runtime_config::TEST_ENV_LOCK
-                .lock()
-                .expect("env lock should acquire");
-            let saved_provider = std::env::var("REMEM_EMBEDDINGS_PROVIDER").ok();
-            unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", provider) };
-            Self {
-                _guard: guard,
-                saved_provider,
-            }
-        }
-    }
-
-    impl Drop for ScopedEmbeddingProvider {
-        fn drop(&mut self) {
-            match &self.saved_provider {
-                Some(value) => unsafe { std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", value) },
-                None => unsafe { std::env::remove_var("REMEM_EMBEDDINGS_PROVIDER") },
-            }
-        }
-    }
 
     #[tokio::test]
     async fn worker_skips_legacy_observation_job_without_retry() -> anyhow::Result<()> {
@@ -423,8 +394,9 @@ mod tests {
 
     #[tokio::test]
     async fn worker_once_backfills_pending_memory_embeddings() -> anyhow::Result<()> {
-        let _provider = ScopedEmbeddingProvider::new("feature-hash");
         let _data_dir = ScopedTestDataDir::new("worker-once-embedding-backfill");
+        crate::runtime_config::init_config()?;
+        crate::runtime_config::set_config_value("embeddings.provider", "feature-hash")?;
         let conn = db::open_db()?;
         conn.execute(
             "INSERT INTO memories

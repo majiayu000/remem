@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
-use serde::Serialize;
 
 use crate::db;
 use crate::doctor::health_action::{
     queue_actions_with_replay, render_action_block, worker_once_fallback_human,
 };
+
+mod types;
+use types::*;
 
 pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
     let report = load_status_report()?;
@@ -36,6 +38,7 @@ fn load_status_report() -> Result<StatusReport> {
     let top_projects = db::query_top_projects(&conn, 5)?;
     let now = chrono::Utc::now().timestamp();
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
+    let review_queue = crate::memory_candidate::review_stats::query_review_queue_stats(&conn, now)?;
     let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
     let usage_feedback = crate::memory::usage::query_memory_usage_feedback_stats(&conn)?;
     let embedding_provider = crate::retrieval::embedding::embedding_provider_status()?;
@@ -186,6 +189,34 @@ fn load_status_report() -> Result<StatusReport> {
                 ai_unattributed_legacy_calls: spend.ai_unattributed_legacy_calls,
             }
         }),
+        review_queue: ReviewQueueStatus {
+            pending: review_queue.pending_total,
+            median_age_secs: review_queue.pending_median_age_secs,
+            max_age_secs: review_queue.pending_max_age_secs,
+            inflow_7d: review_queue.inflow_7d,
+            resolved_7d: review_queue.resolved_7d,
+            projects: review_queue
+                .projects
+                .into_iter()
+                .map(|project| ReviewQueueProjectStatus {
+                    project: project.project,
+                    pending: project.pending,
+                    median_age_secs: project.median_age_secs,
+                    max_age_secs: project.max_age_secs,
+                    inflow_7d: project.inflow_7d,
+                    resolved_7d: project.resolved_7d,
+                })
+                .collect(),
+            block_reasons: review_queue
+                .block_reasons
+                .into_iter()
+                .map(|reason| ReviewQueueBlockReasonStatus {
+                    reason: reason.reason,
+                    pending: reason.pending,
+                    example_ids: reason.example_ids,
+                })
+                .collect(),
+        },
         candidate_promotion: candidate_promotion
             .into_iter()
             .map(|stat| CandidatePromotionStatus {
@@ -448,6 +479,26 @@ fn print_status_report(report: &StatusReport) {
     if let Some(age_secs) = report.pending_observations.oldest_ready_age_secs {
         println!("  Oldest ready: {:>6}s", age_secs);
     }
+    println!();
+    println!("Review queue:");
+    println!("  Pending:      {:>6}", report.review_queue.pending);
+    if let Some(age) = report.review_queue.median_age_secs {
+        println!("  Median age:   {:>6}s", age);
+    }
+    if let Some(age) = report.review_queue.max_age_secs {
+        println!("  Max age:      {:>6}s", age);
+    }
+    println!(
+        "  7d inflow:    {:>6} vs resolved {}",
+        report.review_queue.inflow_7d, report.review_queue.resolved_7d
+    );
+    for reason in report.review_queue.block_reasons.iter().take(5) {
+        println!(
+            "  Blocked:      {:>6}  {}",
+            reason.pending,
+            reason.reason.as_deref().unwrap_or("<none>")
+        );
+    }
     if !report.candidate_promotion.is_empty() {
         println!();
         println!("Candidate promotion:");
@@ -588,187 +639,6 @@ fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_act
         report.capture_pipeline.extract_failed,
         report.capture_pipeline.retryable_replay_ranges,
     )
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct StatusReport {
-    pub version: String,
-    pub database: StatusDatabase,
-    pub totals: StatusTotals,
-    pub embedding: EmbeddingStatus,
-    pub raw_archive: RawArchiveStatus,
-    pub capture_pipeline: CapturePipelineStatus,
-    pub promotion_funnel: PromotionFunnelStatus,
-    pub usage_feedback: UsageFeedbackStatus,
-    pub pending_observations: PendingObservationStatus,
-    pub candidate_promotion: Vec<CandidatePromotionStatus>,
-    pub jobs: JobStatus,
-    pub failure_lifecycle: db::FailureLifecycleStats,
-    pub worker_daemon: WorkerDaemonStatus,
-    pub latest_session_memory_spend: Option<LatestSessionMemorySpendStatus>,
-    pub today: DailyStatus,
-    pub top_projects: Vec<TopProjectStatus>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct StatusDatabase {
-    pub path: String,
-    pub size_bytes: u64,
-    pub size_mb: f64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct StatusTotals {
-    pub memories: i64,
-    pub observations: i64,
-    pub sessions: i64,
-    pub raw_messages: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct EmbeddingStatus {
-    pub configured_provider: String,
-    pub fallback_provider: Option<String>,
-    pub active_provider: String,
-    pub active_model_id: Option<String>,
-    pub degraded: bool,
-    pub disabled: bool,
-    pub unavailable_reason: Option<String>,
-    pub degradation_reason: Option<String>,
-    pub coverage: EmbeddingCoverageStatus,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct EmbeddingCoverageStatus {
-    pub embedded: i64,
-    pub total: i64,
-    pub percent: f64,
-    pub mixed_profile_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct RawArchiveStatus {
-    pub messages: i64,
-    pub ingest_failures: i64,
-    pub parse_errors: i64,
-    pub insert_errors: i64,
-    pub latest_failure_epoch: Option<i64>,
-    pub latest_failure_age_secs: Option<i64>,
-    pub latest_failure_kind: Option<String>,
-    pub latest_failure_path: Option<String>,
-    pub latest_failure_message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct CapturePipelineStatus {
-    pub captured: i64,
-    pub dropped: i64,
-    pub unrecovered_spills: i64,
-    pub latest_drop_epoch: Option<i64>,
-    pub latest_drop_age_secs: Option<i64>,
-    pub latest_drop_reason: Option<String>,
-    pub latest_drop_detail: Option<String>,
-    pub extract_todo: i64,
-    pub extract_running: i64,
-    pub extract_expired: i64,
-    pub extract_failed: i64,
-    pub retryable_replay_ranges: i64,
-    pub active_replay_ranges: i64,
-    pub quarantined_replay_ranges: i64,
-    pub pending_candidates: i64,
-    pub pending_graph_candidates: i64,
-    pub oldest_task_epoch: Option<i64>,
-    pub oldest_task_age_secs: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct PromotionFunnelStatus {
-    pub captured_events: i64,
-    pub observations: i64,
-    pub observation_rate_percent: f64,
-    pub candidates: i64,
-    pub candidate_rate_percent: f64,
-    pub promoted: i64,
-    pub promoted_rate_percent: f64,
-    pub pending_review: i64,
-    pub pending_review_rate_percent: f64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct UsageFeedbackStatus {
-    pub citation_events: i64,
-    pub citation_line_present_events: i64,
-    pub citation_line_present_rate_percent: f64,
-    pub matched_events: i64,
-    pub match_rate_percent: f64,
-    pub inserted_events: i64,
-    pub no_citation_events: i64,
-    pub unmatched_events: i64,
-    pub usage_events: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct PendingObservationStatus {
-    pub ready: i64,
-    pub delayed: i64,
-    pub processing: i64,
-    pub expired: i64,
-    pub failed: i64,
-    pub oldest_ready_epoch: Option<i64>,
-    pub oldest_ready_age_secs: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct CandidatePromotionStatus {
-    pub source_kind: String,
-    pub review_status: String,
-    pub block_reason: Option<String>,
-    pub total: i64,
-    pub last_7_days: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct JobStatus {
-    pub pending: i64,
-    pub processing: i64,
-    pub failed: i64,
-    pub stuck: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct WorkerDaemonStatus {
-    pub health: String,
-    pub heartbeat_age_secs: Option<i64>,
-    pub owner: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct LatestSessionMemorySpendStatus {
-    pub session_id: String,
-    pub project: String,
-    pub latest_context_epoch: i64,
-    pub context_rows: i64,
-    pub context_output_chars: i64,
-    pub context_estimated_tokens: i64,
-    pub context_emit_count: i64,
-    pub context_suppress_count: i64,
-    pub ai_usage_attribution: String,
-    pub ai_calls: i64,
-    pub ai_total_tokens: i64,
-    pub ai_estimated_cost_usd: f64,
-    pub ai_unattributed_legacy_calls: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct DailyStatus {
-    pub new_memories: i64,
-    pub new_observations: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct TopProjectStatus {
-    pub project: String,
-    pub count: i64,
 }
 
 #[cfg(test)]
