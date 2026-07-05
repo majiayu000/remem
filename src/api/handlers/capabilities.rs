@@ -19,6 +19,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             memory_detail: true,
             save_memory: true,
             candidate_rows: true,
+            candidate_filters: true,
             candidate_review: true,
             graph: true,
             user_recall: true,

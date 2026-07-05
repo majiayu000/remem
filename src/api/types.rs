@@ -129,6 +129,7 @@ pub(super) struct CapabilitiesFeatures {
     pub memory_detail: bool,
     pub save_memory: bool,
     pub candidate_rows: bool,
+    pub candidate_filters: bool,
     pub candidate_review: bool,
     pub graph: bool,
     pub user_recall: bool,

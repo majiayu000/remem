@@ -81,7 +81,7 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
             }
             let meta =
                 ReviewMeta::batch(review::default_review_actor(), review::new_batch_id(), None);
-            let outcome = review::approve_batch(&mut conn, &filter, &meta)?;
+            let outcome = review::approve_batch(&mut conn, &preview, &meta)?;
             println!(
                 "Approved {} candidate(s); promoted {} memory(ies). batch_id={}",
                 outcome.processed.len(),
@@ -110,7 +110,7 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
                 review::new_batch_id(),
                 reason,
             );
-            let outcome = review::discard_batch(&mut conn, &filter, &meta)?;
+            let outcome = review::discard_batch(&mut conn, &preview, &meta)?;
             println!(
                 "Discarded {} candidate(s). batch_id={}",
                 outcome.processed.len(),

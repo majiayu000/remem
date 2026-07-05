@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
 const RESOLVED_STATUSES_SQL: &str = "('approved', 'edited', 'discarded', 'noop')";
+const EFFECTIVE_PROJECT_SQL: &str = "COALESCE(c.target_project, p.project_path, c.source_project, CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END)";
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReviewQueueStats {
@@ -82,7 +83,7 @@ fn query_project_stats(
     week_ago: i64,
 ) -> Result<Vec<ReviewQueueProjectStats>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT p.project_path,
+        "SELECT {EFFECTIVE_PROJECT_SQL} AS project,
                 SUM(CASE WHEN c.review_status = 'pending_review' THEN 1 ELSE 0 END) AS pending,
                 MAX(CASE WHEN c.review_status = 'pending_review'
                          THEN ?1 - c.created_at_epoch END) AS max_age,
@@ -92,9 +93,9 @@ fn query_project_stats(
                          THEN 1 ELSE 0 END) AS resolved
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
-         GROUP BY p.project_path
+         GROUP BY {EFFECTIVE_PROJECT_SQL}
          HAVING pending > 0 OR inflow > 0 OR resolved > 0
-         ORDER BY pending DESC, p.project_path ASC"
+         ORDER BY pending DESC, project ASC"
     ))?;
     let rows = stmt
         .query_map(params![now_epoch, week_ago], |row| {
@@ -134,17 +135,17 @@ fn median_pending_age(
     }
     let offset = (pending_count - 1) / 2;
     let created: Option<i64> = if let Some(project) = project {
-        conn.query_row(
+        let sql = format!(
             "SELECT c.created_at_epoch
              FROM memory_candidates c
-             JOIN projects p ON p.id = c.project_id
-             WHERE c.review_status = 'pending_review' AND p.project_path = ?1
+             LEFT JOIN projects p ON p.id = c.project_id
+             WHERE c.review_status = 'pending_review'
+               AND {EFFECTIVE_PROJECT_SQL} = ?1
              ORDER BY c.created_at_epoch DESC
-             LIMIT 1 OFFSET ?2",
-            params![project, offset],
-            |row| row.get(0),
-        )
-        .optional()?
+             LIMIT 1 OFFSET ?2"
+        );
+        conn.query_row(&sql, params![project, offset], |row| row.get(0))
+            .optional()?
     } else {
         conn.query_row(
             "SELECT created_at_epoch FROM memory_candidates
@@ -163,15 +164,15 @@ pub(crate) fn query_block_reasons(
     conn: &Connection,
     project: Option<&str>,
 ) -> Result<Vec<ReviewQueueBlockReason>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT c.auto_promote_block_reason, COUNT(*) AS pending
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.review_status = 'pending_review'
-           AND (?1 IS NULL OR p.project_path = ?1)
+           AND (?1 IS NULL OR {EFFECTIVE_PROJECT_SQL} = ?1)
          GROUP BY c.auto_promote_block_reason
-         ORDER BY pending DESC, c.auto_promote_block_reason ASC",
-    )?;
+         ORDER BY pending DESC, c.auto_promote_block_reason ASC"
+    ))?;
     let reasons = stmt
         .query_map(params![project], |row| {
             Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?))
@@ -196,16 +197,16 @@ fn block_reason_examples(
     reason: Option<&str>,
     project: Option<&str>,
 ) -> Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT c.id FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.review_status = 'pending_review'
            AND ((?1 IS NULL AND c.auto_promote_block_reason IS NULL)
                 OR c.auto_promote_block_reason = ?1)
-           AND (?2 IS NULL OR p.project_path = ?2)
+           AND (?2 IS NULL OR {EFFECTIVE_PROJECT_SQL} = ?2)
          ORDER BY c.created_at_epoch ASC, c.id ASC
-         LIMIT 3",
-    )?;
+         LIMIT 3"
+    ))?;
     let ids = stmt
         .query_map(params![reason, project], |row| row.get::<_, i64>(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -326,6 +327,37 @@ mod tests {
         assert_eq!(stats.projects.len(), 1);
         assert_eq!(stats.projects[0].inflow_7d, 1);
         assert_eq!(stats.projects[0].resolved_7d, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn review_queue_stats_group_by_effective_routed_project() -> Result<()> {
+        let conn = setup_conn();
+        let now = 1_000_000;
+        let source_pid = project_id(&conn, "/p/source");
+        conn.execute(
+            "INSERT INTO memory_candidates
+             (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+              confidence, risk_class, review_status, target_project, source_project,
+              owner_scope, owner_key, created_at_epoch, updated_at_epoch)
+             VALUES (?1, 'project', 'decision', 'routed', 'text', '[]',
+                     0.7, 'medium', 'pending_review', '/p/target', '/p/source',
+                     'repo', '/p/target', ?2, ?2)",
+            params![source_pid, now - 100],
+        )?;
+
+        let stats = query_review_queue_stats(&conn, now)?;
+        let target = stats
+            .projects
+            .iter()
+            .find(|project| project.project.as_deref() == Some("/p/target"))
+            .expect("target project should own routed queue stats");
+
+        assert_eq!(target.pending, 1);
+        assert!(!stats
+            .projects
+            .iter()
+            .any(|project| project.project.as_deref() == Some("/p/source")));
         Ok(())
     }
 

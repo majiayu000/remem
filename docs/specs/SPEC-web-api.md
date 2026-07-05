@@ -72,6 +72,7 @@ implemented in source version `0.5.162`.
     "memory_detail": true,
     "save_memory": true,
     "candidate_rows": true,
+    "candidate_filters": true,
     "candidate_review": true,
     "graph": true,
     "user_recall": true,
@@ -402,8 +403,10 @@ results and should not count it against the recalled context budget.
 
 For candidate review queue throughput, the release target is `remem 0.5.162`.
 Clients that render review dashboard filters must require
-`capabilities.features.candidate_rows`. Clients that render blocked-reason
-aggregates must also require `capabilities.endpoints.candidate_blocked`.
+`capabilities.features.candidate_filters`, not only `candidate_rows`, because
+older binaries expose candidate rows while ignoring unknown filter parameters.
+Clients that render blocked-reason aggregates must also require
+`capabilities.endpoints.candidate_blocked`.
 
 ## Smoke Test
 

@@ -69,6 +69,14 @@ pub(in crate::api) async fn handle_list_candidates(
         .unwrap_or("pending_review");
     let limit = params.limit.unwrap_or(50).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
+    if params.older_than_days.is_some_and(|days| days < 0) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "candidate_filter_invalid",
+            "older_than_days must be non-negative",
+        )
+        .into_response();
+    }
 
     let mut conditions = vec!["c.review_status = ?1".to_string()];
     let mut binds: Vec<Box<dyn ToSql>> = vec![Box::new(status.to_string())];
@@ -92,12 +100,13 @@ pub(in crate::api) async fn handle_list_candidates(
         idx += 1;
     }
     if let Some(contains) = params.contains.as_deref().filter(|s| !s.is_empty()) {
+        let pattern = like_pattern(contains);
         conditions.push(format!(
-            "(c.text LIKE '%' || ?{idx} || '%' OR c.topic_key LIKE '%' || ?{} || '%')",
+            "(c.text LIKE ?{idx} ESCAPE '\\' OR c.topic_key LIKE ?{} ESCAPE '\\')",
             idx + 1
         ));
-        binds.push(Box::new(contains.to_string()));
-        binds.push(Box::new(contains.to_string()));
+        binds.push(Box::new(pattern.clone()));
+        binds.push(Box::new(pattern));
         idx += 2;
     }
     if let Some(min_confidence) = params.min_confidence {
@@ -135,7 +144,8 @@ pub(in crate::api) async fn handle_list_candidates(
         let sql = format!(
             "SELECT c.id, c.memory_type, c.text, c.scope, c.confidence, c.risk_class, \
                     c.review_status, c.evidence_event_ids, c.created_at_epoch, \
-                    COALESCE(c.target_project, p.project_path, c.source_project) AS project \
+                    COALESCE(c.target_project, p.project_path, c.source_project, \
+                             CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END) AS project \
              FROM memory_candidates c \
              LEFT JOIN projects p ON p.id = c.project_id \
              WHERE {where_sql} ORDER BY c.created_at_epoch DESC LIMIT ?{idx} OFFSET ?{}",
@@ -192,6 +202,19 @@ pub(in crate::api) async fn handle_list_candidates(
         },
     })
     .into_response()
+}
+
+fn like_pattern(query: &str) -> String {
+    let mut pattern = String::with_capacity(query.len() + 2);
+    pattern.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
 }
 
 fn push_candidate_project_filter(

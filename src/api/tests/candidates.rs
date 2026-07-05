@@ -127,3 +127,75 @@ async fn list_candidates_filters_by_project_when_requested() -> anyhow::Result<(
     assert_eq!(payload["meta"]["total"], 2);
     Ok(())
 }
+
+#[tokio::test]
+async fn list_candidates_contains_filter_treats_like_wildcards_literally() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidates-like-escape");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+          (scope, memory_type, topic_key, text, evidence_event_ids, confidence,
+           risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES
+          ('project', 'decision', 'percent', 'contains 100% literal', '[]', 0.7,
+           'low', 'pending_review', 1, 1),
+          ('project', 'decision', 'ordinary', 'contains ordinary text', '[]', 0.7,
+           'low', 'pending_review', 2, 2)",
+        [],
+    )?;
+    drop(conn);
+
+    let response = handle_list_candidates(
+        State(DbState),
+        Query(CandidateParams {
+            project: None,
+            status: None,
+            memory_type: None,
+            block_reason: None,
+            topic_key: None,
+            contains: Some("%".to_string()),
+            min_confidence: None,
+            older_than_days: None,
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["meta"]["total"], 1);
+    assert_eq!(payload["data"][0]["topic_key"], Value::Null);
+    assert_eq!(payload["data"][0]["text"], "contains 100% literal");
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_candidates_rejects_negative_older_than() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidates-negative-age");
+    let response = handle_list_candidates(
+        State(DbState),
+        Query(CandidateParams {
+            project: None,
+            status: None,
+            memory_type: None,
+            block_reason: None,
+            topic_key: None,
+            contains: None,
+            min_confidence: None,
+            older_than_days: Some(-1),
+            limit: Some(10),
+            offset: None,
+        }),
+    )
+    .await
+    .into_response();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    let payload: Value = serde_json::from_slice(&body)?;
+    assert_eq!(payload["error"]["code"], "candidate_filter_invalid");
+    Ok(())
+}

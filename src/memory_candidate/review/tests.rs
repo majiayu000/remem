@@ -357,7 +357,7 @@ fn batch_preview_and_mutation_resolve_the_same_id_set() -> Result<()> {
     };
     let preview = resolve_batch(&conn, &filter)?;
     let meta = ReviewMeta::batch("tester", "batch-parity", None);
-    let outcome = approve_batch(&mut conn, &filter, &meta)?;
+    let outcome = approve_batch(&mut conn, &preview, &meta)?;
 
     assert_eq!(preview.ids, vec![a, b]);
     assert_eq!(outcome.processed, preview.ids);
@@ -385,8 +385,9 @@ fn batch_approve_failure_rolls_back_all_rows() -> Result<()> {
         limit: BATCH_LIMIT_DEFAULT,
         ..BatchFilter::default()
     };
+    let preview = resolve_batch(&conn, &filter)?;
     let meta = ReviewMeta::batch("tester", "batch-tx", None);
-    assert!(approve_batch(&mut conn, &filter, &meta).is_err());
+    assert!(approve_batch(&mut conn, &preview, &meta).is_err());
 
     let (status, actor): (String, Option<String>) = conn.query_row(
         "SELECT review_status, review_actor FROM memory_candidates WHERE id = ?1",
@@ -445,7 +446,8 @@ fn review_actions_persist_actor_metadata() -> Result<()> {
         limit: BATCH_LIMIT_DEFAULT,
         ..BatchFilter::default()
     };
-    discard_batch(&mut conn, &filter, &meta)?;
+    let preview = resolve_batch(&conn, &filter)?;
+    discard_batch(&mut conn, &preview, &meta)?;
 
     let (actor, source, batch_id, reviewed_at): (String, String, Option<String>, i64) = conn
         .query_row(
@@ -502,6 +504,110 @@ fn batch_filters_select_matching_rows_only() -> Result<()> {
 
     assert_eq!(by_reason.ids, vec![matching]);
     assert_eq!(by_contains.ids, vec![matching]);
+    Ok(())
+}
+
+#[test]
+fn batch_mutation_uses_previewed_ids_not_new_matches() -> Result<()> {
+    let mut conn = setup_conn();
+    let previewed = insert_pending_candidate(&mut conn, "batch-stable-a", "Original match")?;
+    let filter = BatchFilter {
+        contains: Some("match".to_string()),
+        limit: BATCH_LIMIT_DEFAULT,
+        ..BatchFilter::default()
+    };
+    let preview = resolve_batch(&conn, &filter)?;
+    let late = insert_pending_candidate(&mut conn, "batch-stable-b", "Late match")?;
+
+    let outcome = approve_batch(
+        &mut conn,
+        &preview,
+        &ReviewMeta::batch("tester", "batch-stable", None),
+    )?;
+
+    assert_eq!(preview.ids, vec![previewed]);
+    assert_eq!(outcome.processed, vec![previewed]);
+    let late_status: String = conn.query_row(
+        "SELECT review_status FROM memory_candidates WHERE id = ?1",
+        params![late],
+        |row| row.get(0),
+    )?;
+    assert_eq!(late_status, "pending_review");
+    Ok(())
+}
+
+#[test]
+fn batch_filter_project_matches_routed_candidates() -> Result<()> {
+    let mut conn = setup_conn();
+    let routed = insert_pending_candidate(&mut conn, "batch-routed", "Routed candidate")?;
+    conn.execute(
+        "UPDATE memory_candidates
+         SET source_project = '/repo/source', target_project = '/repo/target',
+             owner_scope = 'repo', owner_key = '/repo/target'
+         WHERE id = ?1",
+        params![routed],
+    )?;
+
+    let preview = resolve_batch(
+        &conn,
+        &BatchFilter {
+            project: Some("/repo/target".to_string()),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )?;
+
+    assert_eq!(preview.ids, vec![routed]);
+    assert_eq!(preview.by_project, vec![("/repo/target".to_string(), 1)]);
+    Ok(())
+}
+
+#[test]
+fn batch_contains_filter_treats_like_wildcards_literally() -> Result<()> {
+    let mut conn = setup_conn();
+    let percent = insert_pending_candidate(&mut conn, "batch-percent", "Contains 100% literal")?;
+    let underscore = insert_pending_candidate(
+        &mut conn,
+        "batch-underscore",
+        "Contains under_score literal",
+    )?;
+    insert_pending_candidate(&mut conn, "batch-normal", "Contains ordinary text")?;
+
+    let by_percent = resolve_batch(
+        &conn,
+        &BatchFilter {
+            contains: Some("%".to_string()),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )?;
+    let by_underscore = resolve_batch(
+        &conn,
+        &BatchFilter {
+            contains: Some("_".to_string()),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )?;
+
+    assert_eq!(by_percent.ids, vec![percent]);
+    assert_eq!(by_underscore.ids, vec![underscore]);
+    Ok(())
+}
+
+#[test]
+fn batch_filter_rejects_negative_older_than() -> Result<()> {
+    let conn = setup_conn();
+    let err = resolve_batch(
+        &conn,
+        &BatchFilter {
+            older_than_days: Some(-1),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )
+    .expect_err("negative older_than_days should fail");
+    assert!(err.to_string().contains("non-negative"));
     Ok(())
 }
 

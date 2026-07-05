@@ -435,6 +435,7 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     assert_eq!(payload["features"]["memory_detail"], true);
     assert_eq!(payload["features"]["save_memory"], true);
     assert_eq!(payload["features"]["candidate_rows"], true);
+    assert_eq!(payload["features"]["candidate_filters"], true);
     assert_eq!(payload["features"]["candidate_review"], true);
     assert_eq!(payload["features"]["graph"], true);
     assert_eq!(payload["features"]["user_recall"], true);

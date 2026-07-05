@@ -325,20 +325,30 @@ struct BatchRow {
 }
 
 fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<BatchRow>> {
+    validate_batch_filter(filter)?;
     let limit = if filter.limit > 0 {
         filter.limit
     } else {
         BATCH_LIMIT_DEFAULT
     };
     let mut sql = String::from(
-        "SELECT c.id, p.project_path, c.memory_type, c.topic_key, c.text
+        "SELECT c.id,
+                COALESCE(c.target_project, p.project_path, c.source_project,
+                         CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END) AS project,
+                c.memory_type, c.topic_key, c.text
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.review_status = 'pending_review'",
     );
     let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(project) = &filter.project {
-        sql.push_str(" AND p.project_path = ?");
+        sql.push_str(
+            " AND (p.project_path = ? OR c.source_project = ? OR c.target_project = ?
+                   OR (c.owner_scope = 'repo' AND c.owner_key = ?))",
+        );
+        args.push(Box::new(project.clone()));
+        args.push(Box::new(project.clone()));
+        args.push(Box::new(project.clone()));
         args.push(Box::new(project.clone()));
     }
     if let Some(memory_type) = &filter.memory_type {
@@ -354,9 +364,10 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
         args.push(Box::new(topic_key.clone()));
     }
     if let Some(contains) = &filter.contains {
-        sql.push_str(" AND (c.text LIKE '%' || ? || '%' OR c.topic_key LIKE '%' || ? || '%')");
-        args.push(Box::new(contains.clone()));
-        args.push(Box::new(contains.clone()));
+        let pattern = like_pattern(contains);
+        sql.push_str(" AND (c.text LIKE ? ESCAPE '\\' OR c.topic_key LIKE ? ESCAPE '\\')");
+        args.push(Box::new(pattern.clone()));
+        args.push(Box::new(pattern));
     }
     if let Some(min_confidence) = filter.min_confidence {
         sql.push_str(" AND c.confidence >= ?");
@@ -388,6 +399,28 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
     Ok(rows)
 }
 
+fn validate_batch_filter(filter: &BatchFilter) -> Result<()> {
+    if let Some(older_than_days) = filter.older_than_days {
+        if older_than_days < 0 {
+            bail!("older_than_days must be non-negative");
+        }
+    }
+    Ok(())
+}
+
+fn like_pattern(query: &str) -> String {
+    let mut pattern = String::with_capacity(query.len() + 2);
+    pattern.push('%');
+    for ch in query.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
+}
+
 pub(crate) fn new_batch_id() -> String {
     format!(
         "batch-{}-{}",
@@ -396,12 +429,12 @@ pub(crate) fn new_batch_id() -> String {
     )
 }
 
-/// Approve every candidate matched by `filter` inside one transaction. The id
-/// set is re-resolved through the same code path as the preview; any failure
-/// rolls the whole batch back.
+/// Approve every candidate in the already previewed id set inside one
+/// transaction. Rows are re-checked as pending before mutation, but the id set
+/// itself is not re-resolved after user confirmation.
 pub(crate) fn approve_batch(
     conn: &mut Connection,
-    filter: &BatchFilter,
+    preview: &BatchPreview,
     meta: &ReviewMeta,
 ) -> Result<BatchOutcome> {
     let batch_id = meta
@@ -409,7 +442,6 @@ pub(crate) fn approve_batch(
         .clone()
         .unwrap_or_else(|| "batch-unset".to_string());
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let preview = resolve_batch(&tx, filter)?;
     let mut promoted_memory_ids = Vec::with_capacity(preview.ids.len());
     for id in &preview.ids {
         let row = load_candidate(&tx, *id)?
@@ -421,15 +453,16 @@ pub(crate) fn approve_batch(
     tx.commit()?;
     Ok(BatchOutcome {
         batch_id,
-        processed: preview.ids,
+        processed: preview.ids.clone(),
         promoted_memory_ids,
     })
 }
 
-/// Discard every candidate matched by `filter` inside one transaction.
+/// Discard every candidate in the already previewed id set inside one
+/// transaction.
 pub(crate) fn discard_batch(
     conn: &mut Connection,
-    filter: &BatchFilter,
+    preview: &BatchPreview,
     meta: &ReviewMeta,
 ) -> Result<BatchOutcome> {
     let batch_id = meta
@@ -437,7 +470,6 @@ pub(crate) fn discard_batch(
         .clone()
         .unwrap_or_else(|| "batch-unset".to_string());
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let preview = resolve_batch(&tx, filter)?;
     for id in &preview.ids {
         if !discard_candidate_with_meta(&tx, *id, meta)? {
             bail!("candidate {id} was not pending_review during batch discard");
@@ -446,7 +478,7 @@ pub(crate) fn discard_batch(
     tx.commit()?;
     Ok(BatchOutcome {
         batch_id,
-        processed: preview.ids,
+        processed: preview.ids.clone(),
         promoted_memory_ids: Vec::new(),
     })
 }
