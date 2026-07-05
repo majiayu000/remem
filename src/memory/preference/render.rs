@@ -178,7 +178,11 @@ pub(crate) fn render_preferences_with_context_details(
 }
 
 fn normalize_rendered_preference_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.trim()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn dedup_with_preference_similarity(prefs: &[Memory], indices: &[usize]) -> Vec<usize> {

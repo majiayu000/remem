@@ -59,7 +59,7 @@ fn render_preferences_collapses_internal_newlines() -> Result<()> {
         "test/proj",
         Some("pref-multiline"),
         "Preference: multiline",
-        "Prefer compact output\n- even when the saved text has bullet-looking continuation",
+        "Prefer  compact output\n-\teven when the saved text has bullet-looking continuation",
         "preference",
         None,
     )?;
@@ -68,9 +68,9 @@ fn render_preferences_collapses_internal_newlines() -> Result<()> {
     render_preferences(&mut output, &conn, "test/proj", "/nonexistent")?;
 
     assert!(output.contains(
-        "- Prefer compact output - even when the saved text has bullet-looking continuation\n"
+        "- Prefer  compact output -\teven when the saved text has bullet-looking continuation\n"
     ));
-    assert!(!output.contains("\n- even when"));
+    assert!(!output.contains("\n-\teven when"));
     Ok(())
 }
 

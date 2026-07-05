@@ -98,6 +98,38 @@ fn enforce_total_char_limit_ignores_heading_inside_memory_item() {
 }
 
 #[test]
+fn enforce_total_char_limit_ignores_known_section_heading_inside_memory_item() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "known heading continuation should not survive as partial context. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Core\n");
+    output.push_str("**#1 First complete** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first memory remains intact\n");
+    output.push_str("**#2 Known heading tail** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first paragraph of the second memory\n");
+    output.push_str("## Index\n");
+    output.push_str(&tail);
+    output.push('\n');
+    let tail_start = output
+        .find("known heading continuation")
+        .expect("tail memory continuation should be present");
+    let keep_chars =
+        output[..tail_start].chars().count() + "known heading continuation".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("First complete"));
+    assert!(output.contains("first memory remains intact"));
+    assert!(!output.contains("Known heading tail"));
+    assert!(!output.contains("## Index"));
+    assert!(!output.contains("known heading continuation"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
 fn enforce_total_char_limit_preserves_complete_item_before_next_section() {
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
     let index_tail = "index tail should not survive when the section is incomplete. ".repeat(8);
@@ -258,6 +290,29 @@ fn enforce_total_char_limit_preserves_entry_complete_before_next_separator() {
     assert!(output.contains("#1 First stable item"));
     assert!(output.contains("#2 Second stable item"));
     assert!(!output.contains("#3 Third index entry"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_preserves_complete_index_lines_before_cut() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let bugfix_tail = "Bugfix entry should not survive as partial context. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Index\n");
+    output.push_str("**decision** (1): #1 Complete decision (2026-07-05; local, trusted)\n");
+    output.push_str(&format!("**bugfix** (1): #2 {bugfix_tail}\n"));
+    let bugfix_start = output
+        .find("#2 Bugfix entry")
+        .expect("bugfix index item should be present");
+    let keep_chars = output[..bugfix_start].chars().count() + "#2 Bugfix".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("#1 Complete decision"));
+    assert!(!output.contains("#2 Bugfix entry"));
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
 }
 

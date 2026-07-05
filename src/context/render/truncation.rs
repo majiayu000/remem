@@ -31,16 +31,31 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
     let mut open_item = None;
 
     for (index, line) in lines.iter().enumerate() {
+        let previous_line = index
+            .checked_sub(1)
+            .and_then(|previous| lines.get(previous))
+            .map(|previous| previous.text);
         let next_line = lines.get(index + 1).map(|next| next.text);
         let next_next_line = lines.get(index + 2).map(|next| next.text);
+        let next_next_next_line = lines.get(index + 3).map(|next| next.text);
         let section = known_section(line.text);
-        let starts_section = section.is_some_and(|next_section| {
-            open_item.is_none()
-                || current_section.is_some_and(|current| next_section.order() > current.order())
-        });
+        let starts_section = starts_rendered_section(
+            line.text,
+            current_section,
+            open_item,
+            previous_line,
+            next_line,
+        );
         let starts_item_boundary = starts_item_boundary(line.text, current_section);
-        let completes_item =
-            item_completion_separator(next_line, next_next_line, current_section, open_item);
+        let completes_item = item_completion_separator(
+            next_line,
+            next_next_line,
+            next_next_next_line,
+            current_section,
+            open_item,
+        );
+        let completes_index_line = current_section == Some(Section::Index)
+            && complete_index_line_boundary(line.text).is_some();
         let starts_partial_memory_item =
             starts_partial_memory_item(line.text, current_section, open_item);
 
@@ -72,10 +87,13 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
             open_item = current_section.and_then(Section::item_kind);
         } else if starts_partial_memory_item {
             open_item = Some(OpenItem::Memory);
-        } else if completes_item {
-            open_item = None;
-            last_boundary = line.end_byte;
-        } else if open_item.is_none() && current_section.is_none() {
+        } else if completes_item
+            || completes_index_line
+            || (open_item.is_none() && current_section.is_none())
+        {
+            if completes_item {
+                open_item = None;
+            }
             last_boundary = line.end_byte;
         }
     }
@@ -176,6 +194,7 @@ fn starts_partial_memory_item(
 fn item_completion_separator(
     next_line: Option<&str>,
     next_next_line: Option<&str>,
+    next_next_next_line: Option<&str>,
     section: Option<Section>,
     open_item: Option<OpenItem>,
 ) -> bool {
@@ -186,18 +205,65 @@ fn item_completion_separator(
         return true;
     };
     if next_line.trim().is_empty() {
-        return next_next_line.is_some_and(|line| structural_boundary(line, section));
+        return next_next_line.is_some_and(|line| {
+            structural_boundary_after_blank(line, section, next_next_next_line)
+        });
     }
-    structural_boundary(next_line, section)
+    structural_item_boundary(next_line, section)
 }
 
-fn structural_boundary(line: &str, section: Option<Section>) -> bool {
-    let next_section = known_section(line);
-    if next_section.is_some_and(|next| section.is_none_or(|current| next.order() > current.order()))
-    {
+fn starts_rendered_section(
+    line: &str,
+    current_section: Option<Section>,
+    open_item: Option<OpenItem>,
+    previous_line: Option<&str>,
+    following_line: Option<&str>,
+) -> bool {
+    let Some(next_section) = known_section(line) else {
+        return false;
+    };
+    if current_section.is_some_and(|current| next_section.order() <= current.order()) {
+        return false;
+    }
+    open_item.is_none()
+        || (previous_line.is_some_and(|line| line.trim().is_empty())
+            && section_body_can_start(next_section, following_line))
+}
+
+fn structural_boundary_after_blank(
+    line: &str,
+    section: Option<Section>,
+    following_line: Option<&str>,
+) -> bool {
+    if known_section(line).is_some_and(|next| {
+        section.is_none_or(|current| next.order() > current.order())
+            && section_body_can_start(next, following_line)
+    }) {
         return true;
     }
+    structural_item_boundary(line, section)
+}
+
+fn structural_item_boundary(line: &str, section: Option<Section>) -> bool {
     starts_item_boundary(line, section) || starts_partial_memory_item(line, section, None)
+}
+
+fn section_body_can_start(section: Section, line: Option<&str>) -> bool {
+    let Some(line) = line else {
+        return false;
+    };
+    match section {
+        Section::ContextLoadErrors | Section::Preferences | Section::DebugTrace => {
+            line.starts_with("- ")
+        }
+        Section::Lessons | Section::Core => {
+            looks_like_memory_item_header(line)
+                || starts_partial_memory_item(line, Some(section), None)
+        }
+        Section::Index => looks_like_index_line_start(line),
+        Section::Workstreams => line.starts_with("- #"),
+        Section::Sessions => line.starts_with("- **"),
+    }
 }
 
 fn looks_like_memory_item_header(line: &str) -> bool {
@@ -214,7 +280,7 @@ fn index_line_item_boundary_before_cut(
     line_start_chars: usize,
     keep_chars: usize,
 ) -> Option<usize> {
-    if !line.starts_with("**") || line.starts_with("**#") || !line.contains(": #") {
+    if !looks_like_index_line_start(line) {
         return None;
     }
     let chars_before_cut = keep_chars.checked_sub(line_start_chars)?;
@@ -250,6 +316,32 @@ fn complete_index_entry_end(entry_and_tail: &str) -> Option<usize> {
         }
     }
     None
+}
+
+fn complete_index_line_boundary(line: &str) -> Option<usize> {
+    if !looks_like_index_line_start(line) {
+        return None;
+    }
+    let mut entry_start = line.find(": #")? + 2;
+    let mut boundary = None;
+    while entry_start < line.len() {
+        let entry_end = complete_index_entry_end(&line[entry_start..])?;
+        let entry_end = entry_start + entry_end;
+        boundary = Some(entry_end);
+        if line[entry_end..].starts_with(" | #") {
+            entry_start = entry_end + " | ".len();
+            continue;
+        }
+        if line[entry_end..].trim().is_empty() {
+            return boundary;
+        }
+        return None;
+    }
+    boundary
+}
+
+fn looks_like_index_line_start(line: &str) -> bool {
+    line.starts_with("**") && !line.starts_with("**#") && line.contains(": #")
 }
 
 fn looks_like_complete_index_entry(entry: &str) -> bool {
