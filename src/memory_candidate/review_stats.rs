@@ -3,6 +3,8 @@ use rusqlite::{params, Connection};
 use std::collections::HashMap;
 
 const RESOLVED_STATUSES_SQL: &str = "('approved', 'edited', 'discarded', 'noop')";
+const REVIEW_QUEUE_STATUSES_SQL: &str =
+    "('pending_review', 'approved', 'edited', 'discarded', 'noop')";
 const EFFECTIVE_PROJECT_SQL: &str = "COALESCE(c.target_project, p.project_path, c.source_project, CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END)";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +50,11 @@ pub(crate) fn query_review_queue_stats(
     let pending_median_age_secs = median_pending_age(conn, now_epoch)?;
 
     let inflow_7d: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memory_candidates WHERE created_at_epoch >= ?1",
+        &format!(
+            "SELECT COUNT(*) FROM memory_candidates
+             WHERE review_status IN {REVIEW_QUEUE_STATUSES_SQL}
+               AND created_at_epoch >= ?1"
+        ),
         params![week_ago],
         |row| row.get(0),
     )?;
@@ -89,7 +95,8 @@ fn query_project_stats(
                 SUM(CASE WHEN c.review_status = 'pending_review' THEN 1 ELSE 0 END) AS pending,
                 MAX(CASE WHEN c.review_status = 'pending_review'
                          THEN ?1 - c.created_at_epoch END) AS max_age,
-                SUM(CASE WHEN c.created_at_epoch >= ?2 THEN 1 ELSE 0 END) AS inflow,
+                SUM(CASE WHEN c.review_status IN {REVIEW_QUEUE_STATUSES_SQL}
+                          AND c.created_at_epoch >= ?2 THEN 1 ELSE 0 END) AS inflow,
                 SUM(CASE WHEN c.review_status IN {RESOLVED_STATUSES_SQL}
                           AND COALESCE(c.reviewed_at_epoch, c.updated_at_epoch) >= ?2
                          THEN 1 ELSE 0 END) AS resolved
@@ -355,6 +362,17 @@ mod tests {
         insert_candidate(&conn, "/p/a", "noop", None, old, Some(old), old);
         // Created inside the window: counts as inflow.
         insert_candidate(&conn, "/p/a", "pending_review", None, recent, None, recent);
+        // Auto-promoted rows never entered the review queue, so they do not
+        // inflate review backlog inflow or per-project queue splits.
+        insert_candidate(
+            &conn,
+            "/p/auto",
+            "auto_promoted",
+            None,
+            recent,
+            Some(recent),
+            recent,
+        );
 
         let stats = query_review_queue_stats(&conn, now)?;
 
@@ -363,6 +381,10 @@ mod tests {
         assert_eq!(stats.projects.len(), 1);
         assert_eq!(stats.projects[0].inflow_7d, 1);
         assert_eq!(stats.projects[0].resolved_7d, 2);
+        assert!(!stats
+            .projects
+            .iter()
+            .any(|project| project.project.as_deref() == Some("/p/auto")));
         Ok(())
     }
 

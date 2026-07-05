@@ -127,6 +127,12 @@ pub(crate) struct BatchOutcome {
     pub promoted_memory_ids: Vec<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReviewPromotion {
+    memory_id: i64,
+    promoted: bool,
+}
+
 #[derive(Debug, Clone)]
 struct CandidateRow {
     id: i64,
@@ -227,9 +233,9 @@ pub(crate) fn approve_candidate_with_meta(
         return Ok(None);
     };
     ensure_pending(&row)?;
-    let memory_id = promote_row(&tx, &row, "approved", None, meta)?;
+    let promotion = promote_row(&tx, &row, "approved", None, meta)?;
     tx.commit()?;
-    Ok(Some(memory_id))
+    Ok(Some(promotion.memory_id))
 }
 
 pub(crate) fn discard_candidate(conn: &Connection, id: i64) -> Result<bool> {
@@ -279,9 +285,9 @@ pub(crate) fn edit_candidate(
     ensure_pending(&row)?;
     let edited = row.apply_edit(edit)?;
     let meta = ReviewMeta::single(default_review_actor());
-    let memory_id = promote_row(&tx, &row, "edited", Some(&edited), &meta)?;
+    let promotion = promote_row(&tx, &row, "edited", Some(&edited), &meta)?;
     tx.commit()?;
-    Ok(Some(memory_id))
+    Ok(Some(promotion.memory_id))
 }
 
 pub(crate) fn resolve_batch(conn: &Connection, filter: &BatchFilter) -> Result<BatchPreview> {
@@ -468,8 +474,10 @@ pub(crate) fn approve_batch(
         let row = load_candidate(&tx, *id)?
             .with_context(|| format!("candidate {id} disappeared during batch"))?;
         ensure_pending(&row)?;
-        let memory_id = promote_row(&tx, &row, "approved", None, meta)?;
-        promoted_memory_ids.push(memory_id);
+        let promotion = promote_row(&tx, &row, "approved", None, meta)?;
+        if promotion.promoted {
+            promoted_memory_ids.push(promotion.memory_id);
+        }
     }
     tx.commit()?;
     Ok(BatchOutcome {
@@ -645,7 +653,7 @@ fn promote_row(
     review_status: &str,
     edited: Option<&ParsedMemoryCandidate>,
     meta: &ReviewMeta,
-) -> Result<i64> {
+) -> Result<ReviewPromotion> {
     let project = row
         .source_project
         .as_deref()
@@ -683,9 +691,13 @@ fn promote_row(
             row.id
         ],
     )?;
-    outcome
+    let memory_id = outcome
         .memory_id
-        .context("candidate promotion produced no memory id")
+        .context("candidate promotion produced no memory id")?;
+    Ok(ReviewPromotion {
+        memory_id,
+        promoted: outcome.promoted,
+    })
 }
 
 fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String>> {

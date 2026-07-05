@@ -366,6 +366,50 @@ fn batch_preview_and_mutation_resolve_the_same_id_set() -> Result<()> {
 }
 
 #[test]
+fn batch_approve_does_not_count_noop_as_promoted_memory() -> Result<()> {
+    let mut conn = setup_conn();
+    crate::memory::insert_memory_full(
+        &conn,
+        None,
+        "/tmp/remem",
+        Some("batch-noop"),
+        "Existing duplicate",
+        "Existing duplicate",
+        "decision",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+    let noop = insert_pending_candidate(&mut conn, "batch-noop", "Existing duplicate")?;
+
+    let preview = resolve_batch(
+        &conn,
+        &BatchFilter {
+            topic_key: Some("batch-noop".to_string()),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )?;
+    let outcome = approve_batch(
+        &mut conn,
+        &preview,
+        &ReviewMeta::batch("tester", "batch-noop", None),
+    )?;
+
+    let status: String = conn.query_row(
+        "SELECT review_status FROM memory_candidates WHERE id = ?1",
+        params![noop],
+        |row| row.get(0),
+    )?;
+    assert_eq!(preview.ids, vec![noop]);
+    assert_eq!(outcome.processed, vec![noop]);
+    assert!(outcome.promoted_memory_ids.is_empty());
+    assert_eq!(status, "noop");
+    Ok(())
+}
+
+#[test]
 fn batch_approve_failure_rolls_back_all_rows() -> Result<()> {
     let mut conn = setup_conn();
     let ok_id = insert_pending_candidate(&mut conn, "batch-tx-ok", "Valid candidate")?;

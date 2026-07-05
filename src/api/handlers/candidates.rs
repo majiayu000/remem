@@ -12,6 +12,8 @@ use super::super::types::{
     ListResponse,
 };
 
+const SECS_PER_DAY: i64 = 86_400;
+
 pub(in crate::api) async fn handle_blocked_candidates(
     State(_state): State<DbState>,
     Query(params): Query<BlockedParams>,
@@ -69,15 +71,6 @@ pub(in crate::api) async fn handle_list_candidates(
         .unwrap_or("pending_review");
     let limit = params.limit.unwrap_or(50).clamp(1, 100);
     let offset = params.offset.unwrap_or(0).max(0);
-    if params.older_than_days.is_some_and(|days| days < 0) {
-        return error_response(
-            StatusCode::BAD_REQUEST,
-            "candidate_filter_invalid",
-            "older_than_days must be non-negative",
-        )
-        .into_response();
-    }
-
     let mut conditions = vec!["c.review_status = ?1".to_string()];
     let mut binds: Vec<Box<dyn ToSql>> = vec![Box::new(status.to_string())];
     let mut idx = 2usize;
@@ -115,7 +108,13 @@ pub(in crate::api) async fn handle_list_candidates(
         idx += 1;
     }
     if let Some(older_than_days) = params.older_than_days {
-        let cutoff = chrono::Utc::now().timestamp() - older_than_days * 86_400;
+        let cutoff = match older_than_cutoff(chrono::Utc::now().timestamp(), older_than_days) {
+            Ok(cutoff) => cutoff,
+            Err(message) => {
+                return error_response(StatusCode::BAD_REQUEST, "candidate_filter_invalid", message)
+                    .into_response()
+            }
+        };
         conditions.push(format!("c.created_at_epoch <= ?{idx}"));
         binds.push(Box::new(cutoff));
         idx += 1;
@@ -215,6 +214,18 @@ fn like_pattern(query: &str) -> String {
     }
     pattern.push('%');
     pattern
+}
+
+fn older_than_cutoff(now_epoch: i64, older_than_days: i64) -> Result<i64, &'static str> {
+    if older_than_days < 0 {
+        return Err("older_than_days must be non-negative");
+    }
+    let age_secs = older_than_days
+        .checked_mul(SECS_PER_DAY)
+        .ok_or("older_than_days is too large")?;
+    now_epoch
+        .checked_sub(age_secs)
+        .ok_or("older_than_days is too large")
 }
 
 fn push_candidate_project_filter(
