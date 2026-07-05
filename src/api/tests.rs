@@ -13,15 +13,16 @@ use crate::db::test_support::ScopedTestDataDir;
 use crate::{db, memory};
 
 use super::handlers::{
-    handle_get_memory, handle_graph, handle_list_candidates, handle_list_memories,
-    handle_memory_detail, handle_search, handle_stats, handle_status, search_request_from_params,
+    handle_get_memory, handle_graph, handle_list_memories, handle_memory_detail, handle_search,
+    handle_stats, handle_status, search_request_from_params,
 };
 use super::types::{
-    CandidateParams, GraphParams, ListParams, MemoryDetailParams, SearchParams, ShowParams,
-    StatusCache, StatusParams,
+    GraphParams, ListParams, MemoryDetailParams, SearchParams, ShowParams, StatusCache,
+    StatusParams,
 };
 use super::DbState;
 
+mod candidates;
 mod web_regressions;
 
 fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
@@ -1088,47 +1089,6 @@ async fn list_memories_active_status_excludes_expired_rows() -> anyhow::Result<(
     assert!(ids.contains(&current_id));
     assert!(!ids.contains(&expired_id));
     assert_eq!(payload["meta"]["total"], 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
-    let _test_dir = ScopedTestDataDir::new("api-candidates-pending-review");
-    let conn = db::open_db()?;
-    conn.execute(
-        "INSERT INTO memory_candidates
-          (scope, memory_type, topic_key, text, evidence_event_ids, confidence,
-           risk_class, review_status, created_at_epoch, updated_at_epoch)
-         VALUES
-          ('project', 'decision', 'candidate-topic', 'needs review', '[]', 0.7,
-           'low', 'pending_review', 1, 1)",
-        [],
-    )?;
-    drop(conn);
-
-    let response = handle_list_candidates(
-        State(DbState),
-        Query(CandidateParams {
-            project: None,
-            status: None,
-            memory_type: None,
-            block_reason: None,
-            topic_key: None,
-            contains: None,
-            min_confidence: None,
-            older_than_days: None,
-            limit: Some(10),
-            offset: None,
-        }),
-    )
-    .await
-    .into_response();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let body = to_bytes(response.into_body(), usize::MAX).await?;
-    let payload: Value = serde_json::from_slice(&body)?;
-    assert_eq!(payload["meta"]["total"], 1);
-    assert_eq!(payload["data"][0]["review_status"], "pending_review");
     Ok(())
 }
 

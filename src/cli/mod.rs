@@ -7,6 +7,7 @@ mod embedding_types;
 mod eval_types;
 mod memory_types;
 mod query_types;
+mod review_types;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
