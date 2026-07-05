@@ -753,6 +753,44 @@ pub(in crate::cli) enum ReviewAction {
         #[arg(long)]
         scope: Option<String>,
     },
+    ApproveBatch {
+        #[command(flatten)]
+        filter: ReviewBatchFilterArgs,
+        #[arg(long)]
+        yes: bool,
+    },
+    DiscardBatch {
+        #[command(flatten)]
+        filter: ReviewBatchFilterArgs,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+    Blocked {
+        #[arg(long, short)]
+        project: Option<String>,
+    },
+}
+
+#[derive(clap::Args)]
+pub(in crate::cli) struct ReviewBatchFilterArgs {
+    #[arg(long, short)]
+    pub project: Option<String>,
+    #[arg(long = "type")]
+    pub memory_type: Option<String>,
+    #[arg(long = "block-reason")]
+    pub block_reason: Option<String>,
+    #[arg(long = "topic-key")]
+    pub topic_key: Option<String>,
+    #[arg(long)]
+    pub contains: Option<String>,
+    #[arg(long = "min-confidence")]
+    pub min_confidence: Option<f64>,
+    #[arg(long = "older-than", value_name = "DAYS")]
+    pub older_than_days: Option<i64>,
+    #[arg(long, short = 'n', default_value = "200")]
+    pub limit: i64,
 }
 
 #[derive(Subcommand)]

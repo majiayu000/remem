@@ -311,8 +311,28 @@ pub(super) struct ListResponse<T: Serialize> {
 pub(super) struct CandidateParams {
     pub project: Option<String>,
     pub status: Option<String>,
+    #[serde(rename = "type")]
+    pub memory_type: Option<String>,
+    pub block_reason: Option<String>,
+    pub topic_key: Option<String>,
+    pub contains: Option<String>,
+    pub min_confidence: Option<f64>,
+    pub older_than_days: Option<i64>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct BlockedParams {
+    pub project: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(super) struct BlockedReasonItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub pending: i64,
+    pub example_ids: Vec<i64>,
 }
 
 #[derive(Serialize)]

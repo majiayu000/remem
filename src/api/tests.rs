@@ -1107,6 +1107,12 @@ async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
         Query(CandidateParams {
             project: None,
             status: None,
+            memory_type: None,
+            block_reason: None,
+            topic_key: None,
+            contains: None,
+            min_confidence: None,
+            older_than_days: None,
             limit: Some(10),
             offset: None,
         }),

@@ -11,7 +11,7 @@ pub(crate) struct Check {
     pub duration_ms: u64,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum Status {
     Ok,
     Warn,

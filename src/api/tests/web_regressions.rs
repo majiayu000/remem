@@ -360,6 +360,12 @@ async fn list_candidates_filters_by_project_when_requested() -> anyhow::Result<(
         Query(CandidateParams {
             project: Some("proj-a".to_string()),
             status: None,
+            memory_type: None,
+            block_reason: None,
+            topic_key: None,
+            contains: None,
+            min_confidence: None,
+            older_than_days: None,
             limit: Some(10),
             offset: None,
         }),

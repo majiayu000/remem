@@ -36,6 +36,7 @@ fn load_status_report() -> Result<StatusReport> {
     let top_projects = db::query_top_projects(&conn, 5)?;
     let now = chrono::Utc::now().timestamp();
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
+    let review_queue = crate::memory_candidate::review_stats::query_review_queue_stats(&conn, now)?;
     let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
     let usage_feedback = crate::memory::usage::query_memory_usage_feedback_stats(&conn)?;
     let embedding_provider = crate::retrieval::embedding::embedding_provider_status()?;
@@ -186,6 +187,34 @@ fn load_status_report() -> Result<StatusReport> {
                 ai_unattributed_legacy_calls: spend.ai_unattributed_legacy_calls,
             }
         }),
+        review_queue: ReviewQueueStatus {
+            pending: review_queue.pending_total,
+            median_age_secs: review_queue.pending_median_age_secs,
+            max_age_secs: review_queue.pending_max_age_secs,
+            inflow_7d: review_queue.inflow_7d,
+            resolved_7d: review_queue.resolved_7d,
+            projects: review_queue
+                .projects
+                .into_iter()
+                .map(|project| ReviewQueueProjectStatus {
+                    project: project.project,
+                    pending: project.pending,
+                    median_age_secs: project.median_age_secs,
+                    max_age_secs: project.max_age_secs,
+                    inflow_7d: project.inflow_7d,
+                    resolved_7d: project.resolved_7d,
+                })
+                .collect(),
+            block_reasons: review_queue
+                .block_reasons
+                .into_iter()
+                .map(|reason| ReviewQueueBlockReasonStatus {
+                    reason: reason.reason,
+                    pending: reason.pending,
+                    example_ids: reason.example_ids,
+                })
+                .collect(),
+        },
         candidate_promotion: candidate_promotion
             .into_iter()
             .map(|stat| CandidatePromotionStatus {
@@ -448,6 +477,26 @@ fn print_status_report(report: &StatusReport) {
     if let Some(age_secs) = report.pending_observations.oldest_ready_age_secs {
         println!("  Oldest ready: {:>6}s", age_secs);
     }
+    println!();
+    println!("Review queue:");
+    println!("  Pending:      {:>6}", report.review_queue.pending);
+    if let Some(age) = report.review_queue.median_age_secs {
+        println!("  Median age:   {:>6}s", age);
+    }
+    if let Some(age) = report.review_queue.max_age_secs {
+        println!("  Max age:      {:>6}s", age);
+    }
+    println!(
+        "  7d inflow:    {:>6} vs resolved {}",
+        report.review_queue.inflow_7d, report.review_queue.resolved_7d
+    );
+    for reason in report.review_queue.block_reasons.iter().take(5) {
+        println!(
+            "  Blocked:      {:>6}  {}",
+            reason.pending,
+            reason.reason.as_deref().unwrap_or("<none>")
+        );
+    }
     if !report.candidate_promotion.is_empty() {
         println!();
         println!("Candidate promotion:");
@@ -601,6 +650,7 @@ pub(super) struct StatusReport {
     pub promotion_funnel: PromotionFunnelStatus,
     pub usage_feedback: UsageFeedbackStatus,
     pub pending_observations: PendingObservationStatus,
+    pub review_queue: ReviewQueueStatus,
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
     pub jobs: JobStatus,
     pub failure_lifecycle: db::FailureLifecycleStats,
@@ -716,6 +766,34 @@ pub(super) struct PendingObservationStatus {
     pub failed: i64,
     pub oldest_ready_epoch: Option<i64>,
     pub oldest_ready_age_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct ReviewQueueStatus {
+    pub pending: i64,
+    pub median_age_secs: Option<i64>,
+    pub max_age_secs: Option<i64>,
+    pub inflow_7d: i64,
+    pub resolved_7d: i64,
+    pub projects: Vec<ReviewQueueProjectStatus>,
+    pub block_reasons: Vec<ReviewQueueBlockReasonStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct ReviewQueueProjectStatus {
+    pub project: Option<String>,
+    pub pending: i64,
+    pub median_age_secs: Option<i64>,
+    pub max_age_secs: Option<i64>,
+    pub inflow_7d: i64,
+    pub resolved_7d: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct ReviewQueueBlockReasonStatus {
+    pub reason: Option<String>,
+    pub pending: i64,
+    pub example_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
