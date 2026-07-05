@@ -43,6 +43,7 @@ fn enforce_total_char_limit_drops_partial_multiline_memory_item() {
     output.push_str("first memory remains intact\n");
     output.push_str("**#2 Multiline tail** (decision, 2026-07-05; local, trusted)\n");
     output.push_str("first paragraph of the second memory\n\n");
+    output.push_str("- marker-looking continuation still belongs to the second memory\n");
     output.push_str(&tail);
     output.push('\n');
     let tail_start = output
@@ -60,18 +61,19 @@ fn enforce_total_char_limit_drops_partial_multiline_memory_item() {
     assert!(output.contains("first memory remains intact"));
     assert!(!output.contains("Multiline tail"));
     assert!(!output.contains("first paragraph of the second memory"));
+    assert!(!output.contains("marker-looking continuation"));
     assert!(!output.contains("second paragraph"));
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
 }
 
 #[test]
-fn enforce_total_char_limit_drops_partial_multiline_list_item() {
+fn enforce_total_char_limit_drops_partial_multiline_structured_list_item() {
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
     let tail = "list continuation should not survive as partial context. ".repeat(8);
-    let mut output = String::from("# [/tmp/demo] context\n\n## Preferences\n");
-    output.push_str("- First complete preference remains\n");
-    output.push_str("- Second multiline preference starts here\n");
-    output.push_str("continued preference detail\n\n");
+    let mut output = String::from("# [/tmp/demo] context\n\n## WorkStreams\n");
+    output.push_str("- #1 [active] First complete workstream remains\n");
+    output.push_str("- #2 [active] Second multiline workstream starts here\n");
+    output.push_str("continued workstream detail\n\n");
     output.push_str(&tail);
     output.push('\n');
     let tail_start = output
@@ -85,10 +87,38 @@ fn enforce_total_char_limit_drops_partial_multiline_list_item() {
     enforce_total_char_limit(&mut output, char_limit);
 
     assert!(output.chars().count() <= char_limit);
-    assert!(output.contains("First complete preference remains"));
-    assert!(!output.contains("Second multiline preference"));
-    assert!(!output.contains("continued preference detail"));
+    assert!(output.contains("First complete workstream remains"));
+    assert!(!output.contains("Second multiline workstream"));
+    assert!(!output.contains("continued workstream detail"));
     assert!(!output.contains("list continuation"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_drops_partial_preference_with_marker_continuation() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "preference continuation should not survive as partial context. ".repeat(8);
+    let mut output =
+        String::from("# [/tmp/demo] context\n\n## Your Preferences (always apply these)\n");
+    output.push_str("- Multiline preference starts here\n");
+    output.push_str("- marker-looking continuation belongs to the same preference\n");
+    output.push_str(&tail);
+    output.push('\n');
+    let tail_start = output
+        .find("preference continuation")
+        .expect("tail preference continuation should be present");
+    let keep_chars =
+        output[..tail_start].chars().count() + "preference continuation".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(!output.contains("Multiline preference starts"));
+    assert!(!output.contains("marker-looking continuation"));
+    assert!(!output.contains("preference continuation"));
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
 }
 
@@ -104,6 +134,32 @@ fn enforce_total_char_limit_preserves_complete_index_entries_before_cut() {
         .find("#3 Third index entry")
         .expect("third index item should be present");
     let keep_chars = output[..third_start].chars().count() + "#3 Third index".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("#1 First stable item"));
+    assert!(output.contains("#2 Second stable item"));
+    assert!(!output.contains("#3 Third index entry"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_preserves_entry_complete_before_next_separator() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "Third index entry should not survive as a partial item. ".repeat(6);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Index\n");
+    output.push_str("**decision** (3): #1 First stable item (2026-07-05; local, trusted)");
+    output.push_str(" | #2 Second stable item (2026-07-05; local, trusted)");
+    output.push_str(&format!(" | #3 {tail}\n"));
+    let second_end = output
+        .find("trusted) | #3")
+        .map(|pos| pos + "trusted)".len())
+        .expect("second index item should be complete");
+    let keep_chars = output[..second_end].chars().count();
     let char_limit = keep_chars + marker.chars().count();
 
     assert!(char_limit < output.chars().count());
