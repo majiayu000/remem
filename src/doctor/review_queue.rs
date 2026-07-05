@@ -15,6 +15,7 @@ const STRUCTURAL_BLOCK_REASONS: &[&str] = &[
     "summary_risk_above_medium",
     "scope_not_project",
     "contains_unsafe_marker",
+    "missing_evidence_ids",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -142,10 +143,11 @@ pub(super) fn dominant_structural_block(
         if !STRUCTURAL_BLOCK_REASONS.contains(&name) {
             continue;
         }
-        let share = reason.pending * 100 / stats.pending_total;
-        if share > share_percent {
+        if (reason.pending as i128) * 100 > (share_percent as i128) * (stats.pending_total as i128)
+        {
+            let share = (reason.pending as f64 * 100.0) / stats.pending_total as f64;
             return Some(format!(
-                "gate deadlock: block reason '{}' holds {}% of pending ({} rows) and is \
+                "gate deadlock: block reason '{}' holds {:.1}% of pending ({} rows) and is \
                  gate-ineligible by construction; inspect `remem review blocked`, then \
                  approve-batch or discard-batch",
                 name, share, reason.pending
@@ -241,6 +243,36 @@ mod tests {
         );
         assert_eq!(check.status, Status::Warn);
         assert!(check.detail.contains("summary_type_not_allowlisted"));
+    }
+
+    #[test]
+    fn missing_evidence_block_reason_above_share_is_a_deadlock() {
+        let reasons = vec![ReviewQueueBlockReason {
+            reason: Some("missing_evidence_ids".to_string()),
+            pending: 61,
+            example_ids: vec![1, 2, 3],
+        }];
+        let check = evaluate_review_queue(
+            &stats(100, Some(0), 0, 0, reasons),
+            ReviewQueueThresholds::default(),
+        );
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.contains("missing_evidence_ids"));
+    }
+
+    #[test]
+    fn structural_block_reason_fraction_above_share_is_a_deadlock() {
+        let reasons = vec![ReviewQueueBlockReason {
+            reason: Some("risk_class_not_low".to_string()),
+            pending: 61,
+            example_ids: vec![1, 2, 3],
+        }];
+        let check = evaluate_review_queue(
+            &stats(101, Some(0), 0, 0, reasons),
+            ReviewQueueThresholds::default(),
+        );
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.contains("60.4%"));
     }
 
     #[test]
