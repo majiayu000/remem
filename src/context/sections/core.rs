@@ -2,7 +2,9 @@ use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
 use std::collections::HashMap;
 
 use super::super::audit::memory_render_metadata_with_labels;
-use super::super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
+use super::super::format::{
+    char_len, format_epoch_short, inline_context_text, truncate_chars_with_ellipsis,
+};
 use super::super::memory_traits::is_memory_self_diagnostic;
 use super::super::policy::ContextLimits;
 
@@ -67,7 +69,7 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         .collect();
     scored.sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.0.cmp(&right.0)));
 
-    let mut selected: Vec<(&Memory, String)> = Vec::new();
+    let mut selected: Vec<(&Memory, String, String)> = Vec::new();
     let mut total_chars = header_chars + trailer_chars;
     let mut selected_ids = std::collections::HashSet::new();
     let mut type_counts: HashMap<&str, usize> = HashMap::new();
@@ -127,14 +129,14 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
     let selected_count = selected.len();
     let selected_ids = selected
         .iter()
-        .map(|(memory, _)| memory.id)
+        .map(|(memory, _, _)| memory.id)
         .collect::<Vec<_>>();
-    for (memory, preview) in selected {
+    for (memory, title, preview) in selected {
         let date = format_epoch_short(memory.updated_at_epoch);
         output.push_str(&format!(
             "**#{} {}** ({}, {}; {})\n",
             memory.id,
-            memory.title,
+            title,
             memory.memory_type,
             date,
             memory_render_metadata_with_labels(memory, render_reference_epoch, staleness_labels)
@@ -150,17 +152,18 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
 }
 
 fn push_selected_memory<'a>(
-    selected: &mut Vec<(&'a Memory, String)>,
+    selected: &mut Vec<(&'a Memory, String, String)>,
     total_chars: &mut usize,
     memory: &'a Memory,
     max_chars: usize,
     now_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> bool {
+    let title = inline_context_text(&memory.title);
     let header = format!(
         "**#{} {}** ({}, {}; {})\n",
         memory.id,
-        memory.title,
+        title,
         memory.memory_type,
         format_epoch_short(memory.updated_at_epoch),
         memory_render_metadata_with_labels(memory, now_epoch, staleness_labels)
@@ -172,12 +175,13 @@ fn push_selected_memory<'a>(
 
     let remaining_chars = max_chars - *total_chars - fixed_chars;
     let preview_limit = remaining_chars.min(PREVIEW_LEN);
-    let preview = truncate_chars_with_ellipsis(&memory.text, preview_limit);
+    let preview_text = inline_context_text(&memory.text);
+    let preview = truncate_chars_with_ellipsis(&preview_text, preview_limit);
     if preview.is_empty() {
         return false;
     }
     let item_len = char_len(&preview) + fixed_chars;
-    selected.push((memory, preview));
+    selected.push((memory, title, preview));
     *total_chars += item_len;
     true
 }

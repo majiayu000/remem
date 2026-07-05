@@ -3,7 +3,9 @@ use crate::memory::MemoryStalenessLabel;
 use std::collections::HashMap;
 
 use super::super::audit::memory_render_metadata_with_labels;
-use super::super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
+use super::super::format::{
+    char_len, format_epoch_short, inline_context_text, truncate_chars_with_ellipsis,
+};
 
 const PREVIEW_LEN: usize = 180;
 
@@ -83,10 +85,11 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
     for lesson in lessons.iter().take(item_limit) {
         let memory = &lesson.memory;
         let metadata = &lesson.metadata;
+        let memory_title = inline_context_text(&memory.title);
         let title = format!(
             "**#{} {}** (confidence {:.2}, reinforced {}, {}; {})\n",
             memory.id,
-            memory.title,
+            memory_title,
             metadata.confidence,
             metadata.reinforcement_count,
             format_epoch_short(metadata.last_reinforced_at_epoch),
@@ -97,7 +100,8 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
             break;
         }
         let preview_limit = (char_limit - total_chars - fixed_chars).min(PREVIEW_LEN);
-        let preview = truncate_chars_with_ellipsis(&memory.text, preview_limit);
+        let preview_text = inline_context_text(&memory.text);
+        let preview = truncate_chars_with_ellipsis(&preview_text, preview_limit);
         if preview.is_empty() {
             continue;
         }
