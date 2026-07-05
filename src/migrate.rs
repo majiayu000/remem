@@ -16,6 +16,8 @@ mod tests_memory_embeddings;
 #[cfg(test)]
 mod tests_memory_usage;
 #[cfg(test)]
+mod tests_preference_rules;
+#[cfg(test)]
 mod tests_schema;
 #[cfg(test)]
 mod tests_schema_drift;

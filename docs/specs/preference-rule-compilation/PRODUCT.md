@@ -22,6 +22,11 @@ has learned.
 
 ## Goals
 
+Phase 1 implementation status: the disabled-by-default configuration and
+canonical SQLite state needed for rule compilation are implemented. The
+user-visible behavior in this product contract remains pending until compiler,
+artifact, hook, CLI, doctor, fixture, and latency work lands.
+
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.
 - Warn (default) or block (opt-in, per rule) when a tool invocation or prompt

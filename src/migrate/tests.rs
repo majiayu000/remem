@@ -122,6 +122,9 @@ fn full_migration_on_empty_db() -> Result<()> {
         "user_context_candidates",
         "memory_suppressions",
         "memory_feedback",
+        "memory_preference_reinforcements",
+        "preference_rule_overrides",
+        "preference_rule_diagnostics",
         "workstream_aliases",
         "workstream_alias_sources",
         "failure_lifecycle_daily",
@@ -180,6 +183,11 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_extraction_tasks_failure_lifecycle",
         "idx_extraction_replay_ranges_failure_lifecycle",
         "idx_jobs_failure_lifecycle",
+        "idx_memory_preference_reinforcements_rank",
+        "idx_preference_rule_overrides_project",
+        "idx_preference_rule_overrides_source",
+        "idx_preference_rule_diagnostics_project_event",
+        "idx_preference_rule_diagnostics_rule",
     ] {
         let exists: bool = conn
             .query_row(

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.169` for the GH-671 preference rule
+  compilation foundation: disabled-by-default config defaults, canonical
+  preference reinforcement state, rule override state, diagnostic state, and
+  schema/convergence guardrails without enabling runtime rule behavior.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.

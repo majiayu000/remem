@@ -7,11 +7,13 @@ use toml_edit::{value, DocumentMut, Item, Table};
 mod migration_tests;
 mod model;
 mod promotion;
+mod rules;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
+pub use rules::{rule_compilation_config, RuleCompilationConfig};
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
@@ -247,6 +249,7 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
     }
 
     promotion::ensure_defaults(doc)?;
+    rules::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);
@@ -465,6 +468,12 @@ fn set_str_if_missing(table: &mut Table, key: &str, value_str: &str) {
 fn set_bool_if_missing(table: &mut Table, key: &str, value_bool: bool) {
     if table.get(key).is_none() {
         table[key] = value(value_bool);
+    }
+}
+
+fn set_i64_if_missing(table: &mut Table, key: &str, value_i64: i64) {
+    if table.get(key).is_none() {
+        table[key] = value(value_i64);
     }
 }
 
