@@ -32,18 +32,19 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
 
     for (index, line) in lines.iter().enumerate() {
         let next_line = lines.get(index + 1).map(|next| next.text);
+        let next_next_line = lines.get(index + 2).map(|next| next.text);
         let section = known_section(line.text);
         let starts_section = section.is_some_and(|next_section| {
             open_item.is_none()
                 || current_section.is_some_and(|current| next_section.order() > current.order())
         });
-        let starts_item_boundary = starts_item_boundary(line.text, current_section, open_item);
+        let starts_item_boundary = starts_item_boundary(line.text, current_section);
         let completes_item =
-            item_completion_separator(line.text, next_line, current_section, open_item);
+            item_completion_separator(next_line, next_next_line, current_section, open_item);
+        let starts_partial_memory_item =
+            starts_partial_memory_item(line.text, current_section, open_item);
 
-        if line.start_chars <= keep_chars
-            && (starts_section || starts_item_boundary || completes_item)
-        {
+        if line.start_chars <= keep_chars && (starts_section || starts_item_boundary) {
             last_boundary = line.start_byte;
         }
         if line.start_chars >= keep_chars {
@@ -69,10 +70,12 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
             last_boundary = line.end_byte;
         } else if starts_item_boundary {
             open_item = current_section.and_then(Section::item_kind);
+        } else if starts_partial_memory_item {
+            open_item = Some(OpenItem::Memory);
         } else if completes_item {
             open_item = None;
             last_boundary = line.end_byte;
-        } else if open_item.is_none() {
+        } else if open_item.is_none() && current_section.is_none() {
             last_boundary = line.end_byte;
         }
     }
@@ -146,38 +149,55 @@ fn known_section(line: &str) -> Option<Section> {
     }
 }
 
-fn starts_item_boundary(line: &str, section: Option<Section>, open_item: Option<OpenItem>) -> bool {
+fn starts_item_boundary(line: &str, section: Option<Section>) -> bool {
     match section.and_then(Section::item_kind) {
         Some(OpenItem::Memory) => looks_like_memory_item_header(line),
         Some(OpenItem::List) => match section {
             Some(Section::Workstreams) => line.starts_with("- #"),
             Some(Section::Sessions) => line.starts_with("- **"),
             Some(Section::ContextLoadErrors) => line.starts_with("- "),
-            Some(Section::Preferences) => open_item.is_none() && line.starts_with("- "),
+            Some(Section::Preferences) => line.starts_with("- "),
             _ => false,
         },
         None => false,
     }
 }
 
-fn item_completion_separator(
+fn starts_partial_memory_item(
     line: &str,
-    next_line: Option<&str>,
     section: Option<Section>,
     open_item: Option<OpenItem>,
 ) -> bool {
-    if open_item.is_none() || !line.trim().is_empty() {
+    open_item.is_none()
+        && section.and_then(Section::item_kind) == Some(OpenItem::Memory)
+        && line.starts_with("**#")
+}
+
+fn item_completion_separator(
+    next_line: Option<&str>,
+    next_next_line: Option<&str>,
+    section: Option<Section>,
+    open_item: Option<OpenItem>,
+) -> bool {
+    if open_item.is_none() {
         return false;
     }
     let Some(next_line) = next_line else {
         return true;
     };
-    let next_section = known_section(next_line);
+    if next_line.trim().is_empty() {
+        return next_next_line.is_some_and(|line| structural_boundary(line, section));
+    }
+    structural_boundary(next_line, section)
+}
+
+fn structural_boundary(line: &str, section: Option<Section>) -> bool {
+    let next_section = known_section(line);
     if next_section.is_some_and(|next| section.is_none_or(|current| next.order() > current.order()))
     {
         return true;
     }
-    starts_item_boundary(next_line, section, open_item)
+    starts_item_boundary(line, section) || starts_partial_memory_item(line, section, None)
 }
 
 fn looks_like_memory_item_header(line: &str) -> bool {

@@ -149,12 +149,12 @@ pub(crate) fn render_preferences_with_context_details(
     let mut rendered_ids = Vec::new();
     for &idx in &keep_indices {
         let (pref, source) = &all_prefs[idx];
-        let text = pref.text.trim();
+        let text = normalize_rendered_preference_text(&pref.text);
         let preview: String = text.chars().take(120).collect();
         let line = if preview.chars().count() < text.chars().count() {
             format!("- {}...\n", preview)
         } else {
-            format!("- {}\n", text)
+            format!("- {text}\n")
         };
         let line_chars = line.chars().count();
         if total_chars + line_chars > char_limit && total_chars > 0 {
@@ -175,6 +175,10 @@ pub(crate) fn render_preferences_with_context_details(
         summary,
         rendered_ids,
     })
+}
+
+fn normalize_rendered_preference_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn dedup_with_preference_similarity(prefs: &[Memory], indices: &[usize]) -> Vec<usize> {

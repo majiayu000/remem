@@ -51,6 +51,30 @@ fn test_render_preferences_with_data() -> Result<()> {
 }
 
 #[test]
+fn render_preferences_collapses_internal_newlines() -> Result<()> {
+    let conn = setup_test_db();
+    memory::insert_memory(
+        &conn,
+        None,
+        "test/proj",
+        Some("pref-multiline"),
+        "Preference: multiline",
+        "Prefer compact output\n- even when the saved text has bullet-looking continuation",
+        "preference",
+        None,
+    )?;
+
+    let mut output = String::new();
+    render_preferences(&mut output, &conn, "test/proj", "/nonexistent")?;
+
+    assert!(output.contains(
+        "- Prefer compact output - even when the saved text has bullet-looking continuation\n"
+    ));
+    assert!(!output.contains("\n- even when"));
+    Ok(())
+}
+
+#[test]
 fn test_project_preferences_exclude_global_overlay() -> Result<()> {
     let conn = setup_test_db();
     memory::insert_memory(

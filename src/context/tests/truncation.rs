@@ -154,20 +154,19 @@ fn enforce_total_char_limit_drops_partial_multiline_structured_list_item() {
 }
 
 #[test]
-fn enforce_total_char_limit_drops_partial_preference_with_marker_continuation() {
+fn enforce_total_char_limit_preserves_previous_preference_before_cut() {
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
-    let tail = "preference continuation should not survive as partial context. ".repeat(8);
+    let tail = "second preference should not survive as partial context. ".repeat(8);
     let mut output =
         String::from("# [/tmp/demo] context\n\n## Your Preferences (always apply these)\n");
-    output.push_str("- Multiline preference starts here\n");
-    output.push_str("- marker-looking continuation belongs to the same preference\n");
+    output.push_str("- First complete preference remains\n");
+    output.push_str("- Second preference starts here ");
     output.push_str(&tail);
     output.push('\n');
     let tail_start = output
-        .find("preference continuation")
-        .expect("tail preference continuation should be present");
-    let keep_chars =
-        output[..tail_start].chars().count() + "preference continuation".chars().count();
+        .find("second preference should")
+        .expect("tail preference should be present");
+    let keep_chars = output[..tail_start].chars().count() + "second preference".chars().count();
     let char_limit = keep_chars + marker.chars().count();
 
     assert!(char_limit < output.chars().count());
@@ -175,9 +174,39 @@ fn enforce_total_char_limit_drops_partial_preference_with_marker_continuation() 
     enforce_total_char_limit(&mut output, char_limit);
 
     assert!(output.chars().count() <= char_limit);
-    assert!(!output.contains("Multiline preference starts"));
-    assert!(!output.contains("marker-looking continuation"));
-    assert!(!output.contains("preference continuation"));
+    assert!(output.contains("First complete preference remains"));
+    assert!(!output.contains("Second preference"));
+    assert!(!output.contains("second preference should"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_drops_partial_multiline_memory_title() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "title continuation should not survive as partial context. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Core\n");
+    output.push_str("**#1 First complete** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first memory remains intact\n");
+    output.push_str("**#2 Multiline title\n");
+    output.push_str("continues here** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str(&tail);
+    output.push('\n');
+    let tail_start = output
+        .find("title continuation")
+        .expect("tail memory continuation should be present");
+    let keep_chars = output[..tail_start].chars().count() + "title continuation".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("First complete"));
+    assert!(output.contains("first memory remains intact"));
+    assert!(!output.contains("Multiline title"));
+    assert!(!output.contains("continues here"));
+    assert!(!output.contains("title continuation"));
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
 }
 
@@ -253,6 +282,33 @@ fn enforce_total_char_limit_ignores_pipe_inside_index_title() {
     assert!(output.chars().count() <= char_limit);
     assert!(!output.contains("#1 First title"));
     assert!(!output.contains("| pipe"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_drops_partial_multiline_index_title() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "index title continuation should not survive as partial context. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Index\n");
+    output.push_str("**decision** (1): #1 Title starts\n");
+    output.push_str(&format!(
+        "continues before metadata (2026-07-05; local, trusted) {tail}\n"
+    ));
+    let tail_start = output
+        .find("index title continuation")
+        .expect("tail index continuation should be present");
+    let keep_chars =
+        output[..tail_start].chars().count() + "index title continuation".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(!output.contains("#1 Title starts"));
+    assert!(!output.contains("continues before metadata"));
+    assert!(!output.contains("index title continuation"));
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
 }
 
