@@ -11,6 +11,7 @@ use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveM
 use crate::memory::claims::{claims_enabled, insert_memory_claim, ClaimWriteRequest};
 use crate::memory::lesson::{save_lesson_with_reference_time, SaveLessonRequest};
 use crate::memory::lifecycle::MemoryLifecycleOp;
+use crate::memory::poisoning::{scan_instruction_pattern, DIRECT_SAVE_TRUST_CLASS};
 use crate::memory::{MemoryType, MEMORY_TYPES};
 
 #[derive(Debug)]
@@ -92,6 +93,7 @@ fn save_memory_inner(
 
     let scope = validated.scope.as_str();
     let effective_topic_key = effective_topic_key(req, memory_type);
+    reject_poisoned_direct_save(title, &req.text)?;
 
     let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
     write_local_copy(&mut local_copy).map_err(LocalCopyError::from)?;
@@ -145,6 +147,7 @@ fn save_memory_inner(
                 &logged_plan,
                 Some(id),
             )?;
+            mark_direct_save_source_trust(conn, id)?;
             Ok((id, logged_plan.op))
         })
     } else {
@@ -174,9 +177,10 @@ fn save_memory_inner(
                     &operation_plan,
                     Some(id),
                 )?;
+                mark_direct_save_source_trust(conn, id)?;
                 return Ok((id, MemoryLifecycleOp::Noop));
             }
-            crate::memory::insert_memory_full_with_operation_log(
+            let result = crate::memory::insert_memory_full_with_operation_log(
                 conn,
                 req.session_id.as_deref(),
                 project,
@@ -191,7 +195,9 @@ fn save_memory_inner(
                 reference_time_epoch,
                 &operation_input,
                 &operation_plan,
-            )
+            )?;
+            mark_direct_save_source_trust(conn, result.0)?;
+            Ok(result)
         })
     };
 
@@ -241,6 +247,26 @@ fn save_memory_inner(
             ),
         },
     })
+}
+
+fn reject_poisoned_direct_save(title: &str, text: &str) -> Result<()> {
+    let scan_text = format!("{title}\n{text}");
+    if let Some(matched) = scan_instruction_pattern(&scan_text) {
+        return Err(SaveMemoryValidationError::new(format!(
+            "save_memory text matched instruction-pattern {}@v{}; review and acknowledge the pattern before saving",
+            matched.pattern_id, matched.pattern_set_version
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+fn mark_direct_save_source_trust(conn: &Connection, memory_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE memories SET source_trust_class = ?1 WHERE id = ?2",
+        rusqlite::params![DIRECT_SAVE_TRUST_CLASS.as_str(), memory_id],
+    )?;
+    Ok(())
 }
 
 struct ValidatedSaveMemoryRequest {

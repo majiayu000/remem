@@ -1,6 +1,8 @@
 mod local_copy;
 mod save;
 #[cfg(test)]
+mod save_poisoning_tests;
+#[cfg(test)]
 mod save_tests;
 mod search;
 #[cfg(test)]

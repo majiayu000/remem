@@ -13,6 +13,7 @@ pub(crate) mod graph_provenance;
 pub mod lesson;
 pub mod lifecycle;
 pub mod operation;
+pub(crate) mod poisoning;
 pub mod preference;
 pub mod procedure;
 pub mod promote;

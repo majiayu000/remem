@@ -300,6 +300,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "candidate_review_metadata",
         sql: include_str!("../migrations/v059_candidate_review_metadata.sql"),
     },
+    Migration {
+        version: 60,
+        name: "memory_poisoning_defense",
+        sql: include_str!("../migrations/v060_memory_poisoning_defense.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

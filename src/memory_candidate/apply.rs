@@ -7,6 +7,7 @@ use crate::memory::operation::{
     insert_operation_log, same_memory_text, with_operation_savepoint, MemoryOperationInput,
     MemoryOperationPlan,
 };
+use crate::memory::poisoning::SourceTrustClass;
 use crate::memory::preference::consolidation::{
     load_active_preference_content, PreferenceConsolidationKind,
 };
@@ -37,6 +38,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
     candidate: &ParsedMemoryCandidate,
     evidence_json: &str,
     route: &CandidateRoute,
+    source_trust: SourceTrustClass,
 ) -> Result<CandidateApplyOutcome> {
     let title = candidate_title(candidate);
     let memory_project = route.memory_project(source_project);
@@ -169,6 +171,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             memory_scope,
             state_key.as_ref(),
             reference_time_epoch,
+            source_trust,
         )?;
         plan.target_memory_id = Some(memory_id);
         let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
@@ -412,6 +415,7 @@ fn insert_routed_memory(
     scope: &str,
     state_key: Option<&crate::memory::state_key::StateKeyDecision>,
     reference_time_epoch: i64,
+    source_trust: SourceTrustClass,
 ) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
@@ -433,11 +437,11 @@ fn insert_routed_memory(
           evidence_event_ids, source_candidate_id, confidence,
           source_project, target_project, owner_scope, owner_key, topic_domain,
           routing_confidence, routing_reason, context_class, expires_at_epoch,
-          valid_from_epoch)
+          valid_from_epoch, source_trust_class)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7,
                  ?8, ?8, ?9, 'active', NULL, ?10,
                  ?11, ?12, ?13,
-                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         params![
             session_id,
             memory_project,
@@ -461,7 +465,8 @@ fn insert_routed_memory(
             route.routing_reason,
             route.context_class,
             expires_at_epoch,
-            valid_from_epoch
+            valid_from_epoch,
+            source_trust.as_str()
         ],
     )?;
     let memory_id = conn.last_insert_rowid();

@@ -6,6 +6,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
 use crate::memory::format::{xml_escape_attr, xml_escape_text};
+use crate::memory::poisoning::{
+    derive_source_trust_class, scan_instruction_pattern, SourceTrustClass,
+};
 use crate::memory::MemoryType;
 
 mod apply;
@@ -469,7 +472,14 @@ fn persist_candidate_rows(
             &candidate_title(candidate),
             &candidate.text,
         );
-        let review_status = "pending_review";
+        let source_trust =
+            derive_source_trust_class(&tx, source.evidence_event_ids, source.source_kind)?;
+        let quarantine_match = scan_instruction_pattern(&candidate.text);
+        let review_status = if quarantine_match.is_some() {
+            "quarantined"
+        } else {
+            "pending_review"
+        };
         tx.execute(
             "INSERT INTO memory_candidates
              (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
@@ -477,10 +487,11 @@ fn persist_candidate_rows(
               source_project, target_project, owner_scope, owner_key, topic_domain,
               routing_confidence, routing_reason, context_class, expires_at_epoch,
               valid_from_epoch, state_key, state_key_confidence, state_key_reason,
-              source_kind)
+              source_kind, source_trust_class, quarantine_pattern_id,
+              quarantine_pattern_version)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
                      ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                     ?21, ?22, ?23, ?24)",
+                     ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
             params![
                 source.project_id,
                 candidate.scope,
@@ -508,10 +519,35 @@ fn persist_candidate_rows(
                 state_key.as_ref().map(|decision| decision.confidence),
                 state_key.as_ref().map(|decision| decision.reason.as_str()),
                 source.source_kind,
+                source_trust.as_str(),
+                quarantine_match.map(|matched| matched.pattern_id),
+                quarantine_match.map(|matched| matched.pattern_set_version),
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();
         summary.candidates += 1;
+
+        if let Some(matched) = quarantine_match {
+            tx.execute(
+                "UPDATE memory_candidates
+                 SET auto_promote_block_reason = 'quarantined_instruction_pattern'
+                 WHERE id = ?1",
+                params![candidate_id],
+            )?;
+            crate::log::warn(
+                "memory-candidate",
+                &format!(
+                    "candidate quarantined: id={} type={} trust={} pattern={} pattern_version={}",
+                    candidate_id,
+                    candidate.memory_type,
+                    source_trust.as_str(),
+                    matched.pattern_id,
+                    matched.pattern_set_version
+                ),
+            );
+            summary.pending_review += 1;
+            continue;
+        }
 
         match candidate_promotion_decision(
             candidate,
@@ -519,6 +555,7 @@ fn persist_candidate_rows(
             &route,
             &evidence_json,
             source.source_kind,
+            source_trust,
             source.summary_gate_mode,
             &source.source_texts,
         ) {
@@ -531,6 +568,7 @@ fn persist_candidate_rows(
                     candidate,
                     &evidence_json,
                     &route,
+                    source_trust,
                 )?;
                 update_candidate_after_lifecycle(
                     &tx,
@@ -624,6 +662,7 @@ fn promote_source_candidate(
     candidate: &ParsedMemoryCandidate,
     evidence_json: &str,
     route: &CandidateRoute,
+    source_trust: SourceTrustClass,
 ) -> Result<CandidateApplyOutcome> {
     promote_candidate_to_memory_with_route(
         conn,
@@ -633,6 +672,7 @@ fn promote_source_candidate(
         candidate,
         evidence_json,
         route,
+        source_trust,
     )
 }
 

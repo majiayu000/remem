@@ -6,6 +6,7 @@ use super::{
     promote_candidate_to_memory_with_route, route_candidate, update_candidate_after_lifecycle,
     CandidateRoute, ParsedMemoryCandidate,
 };
+use crate::memory::poisoning::{validate_trust_class, SourceTrustClass};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReviewCandidate {
@@ -153,6 +154,7 @@ struct CandidateRow {
     risk_class: String,
     review_status: String,
     created_at_epoch: i64,
+    source_trust_class: String,
 }
 
 pub(crate) fn list_pending(
@@ -167,7 +169,8 @@ pub(crate) fn list_pending(
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                     c.review_status, c.created_at_epoch, c.source_project,
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
-                    c.routing_confidence, c.routing_reason, c.context_class
+                    c.routing_confidence, c.routing_reason, c.context_class,
+                    c.source_trust_class
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status = 'pending_review'
@@ -185,7 +188,8 @@ pub(crate) fn list_pending(
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                     c.review_status, c.created_at_epoch, c.source_project,
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
-                    c.routing_confidence, c.routing_reason, c.context_class
+                    c.routing_confidence, c.routing_reason, c.context_class,
+                    c.source_trust_class
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status = 'pending_review'
@@ -532,6 +536,7 @@ impl CandidateRow {
             routing_confidence: row.get(16)?,
             routing_reason: row.get(17)?,
             context_class: row.get(18)?,
+            source_trust_class: row.get(19)?,
         })
     }
 
@@ -623,7 +628,8 @@ fn load_candidate(conn: &Connection, id: i64) -> Result<Option<CandidateRow>> {
                 c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                 c.review_status, c.created_at_epoch, c.source_project,
                 c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
-                c.routing_confidence, c.routing_reason, c.context_class
+                c.routing_confidence, c.routing_reason, c.context_class,
+                c.source_trust_class
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.id = ?1",
@@ -671,6 +677,7 @@ fn promote_row(
         &candidate,
         &row.evidence_event_ids,
         &route,
+        parse_row_trust(row)?,
     )?;
     let status = outcome.review_status_for(review_status);
     let now = chrono::Utc::now().timestamp();
@@ -696,6 +703,12 @@ fn promote_row(
         memory_id,
         promoted: outcome.promoted,
     })
+}
+
+fn parse_row_trust(row: &CandidateRow) -> Result<SourceTrustClass> {
+    validate_trust_class(&row.source_trust_class)?;
+    Ok(SourceTrustClass::parse(&row.source_trust_class)
+        .unwrap_or(SourceTrustClass::LocalToolOutput))
 }
 
 fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String>> {

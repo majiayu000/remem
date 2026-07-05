@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.165` for GH-672 memory poisoning defense:
+  source trust metadata, deterministic instruction-pattern quarantine, and
+  direct-save trust tagging.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.
