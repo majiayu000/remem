@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.166` for GH-684 observation wording: MCP and
+  architecture docs now classify `source='observation'` as a current extracted
+  observation source instead of a legacy source.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.
