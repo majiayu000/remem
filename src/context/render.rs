@@ -25,9 +25,11 @@ use super::types::{ContextLoadError, ContextRequest};
 mod eval;
 mod stats;
 mod timer;
+mod truncation;
 pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
 pub(in crate::context) use stats::{ContextRenderStats, SectionRenderStats};
 use timer::log_context_timer;
+use truncation::truncate_context_body_at_stable_boundary;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
@@ -716,7 +718,7 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     if !footer.is_empty() && output.ends_with(footer) && marker_chars + footer_chars <= char_limit {
         let keep_chars = char_limit - marker_chars - footer_chars;
         let body = output.strip_suffix(footer).unwrap_or(output.as_str());
-        let mut truncated: String = body.chars().take(keep_chars).collect();
+        let mut truncated = truncate_context_body_at_stable_boundary(body, keep_chars);
         truncated.push_str(marker);
         truncated.push_str(footer);
         *output = truncated;
@@ -724,12 +726,12 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     }
 
     if marker_chars >= char_limit {
-        *output = output.chars().take(char_limit).collect();
+        *output = marker.chars().take(char_limit).collect();
         return;
     }
 
     let keep_chars = char_limit - marker_chars;
-    let mut truncated: String = output.chars().take(keep_chars).collect();
+    let mut truncated = truncate_context_body_at_stable_boundary(output, keep_chars);
     truncated.push_str(marker);
     *output = truncated;
 }
