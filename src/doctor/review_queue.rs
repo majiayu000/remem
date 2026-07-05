@@ -11,6 +11,8 @@ const CHECK_NAME: &str = "Review queue";
 const STRUCTURAL_BLOCK_REASONS: &[&str] = &[
     "risk_class_not_low",
     "memory_type_not_auto_promotable",
+    "summary_type_not_allowlisted",
+    "summary_risk_above_medium",
     "scope_not_project",
     "contains_unsafe_marker",
 ];
@@ -224,6 +226,21 @@ mod tests {
         );
         assert_eq!(check.status, Status::Warn);
         assert!(check.detail.contains("gate deadlock"));
+    }
+
+    #[test]
+    fn summary_structural_block_reason_above_share_is_a_deadlock() {
+        let reasons = vec![ReviewQueueBlockReason {
+            reason: Some("summary_type_not_allowlisted".to_string()),
+            pending: 61,
+            example_ids: vec![1, 2, 3],
+        }];
+        let check = evaluate_review_queue(
+            &stats(100, Some(0), 0, 0, reasons),
+            ReviewQueueThresholds::default(),
+        );
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.contains("summary_type_not_allowlisted"));
     }
 
     #[test]

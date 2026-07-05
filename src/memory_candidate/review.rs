@@ -102,6 +102,7 @@ pub(crate) struct BatchFilter {
 }
 
 pub(crate) const BATCH_LIMIT_DEFAULT: i64 = 200;
+const SECS_PER_DAY: i64 = 86_400;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BatchPreview {
@@ -374,7 +375,7 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
         args.push(Box::new(min_confidence));
     }
     if let Some(older_than_days) = filter.older_than_days {
-        let cutoff = chrono::Utc::now().timestamp() - older_than_days * 86_400;
+        let cutoff = older_than_cutoff(chrono::Utc::now().timestamp(), older_than_days)?;
         sql.push_str(" AND c.created_at_epoch <= ?");
         args.push(Box::new(cutoff));
     }
@@ -400,12 +401,32 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
 }
 
 fn validate_batch_filter(filter: &BatchFilter) -> Result<()> {
+    if let Some(contains) = &filter.contains {
+        if contains.trim().is_empty() {
+            bail!("contains filter must not be empty");
+        }
+    }
+    if let Some(min_confidence) = filter.min_confidence {
+        if !(0.0..=1.0).contains(&min_confidence) {
+            bail!("min_confidence must be between 0 and 1");
+        }
+    }
     if let Some(older_than_days) = filter.older_than_days {
         if older_than_days < 0 {
             bail!("older_than_days must be non-negative");
         }
+        older_than_cutoff(chrono::Utc::now().timestamp(), older_than_days)?;
     }
     Ok(())
+}
+
+fn older_than_cutoff(now_epoch: i64, older_than_days: i64) -> Result<i64> {
+    let age_secs = older_than_days
+        .checked_mul(SECS_PER_DAY)
+        .context("older_than_days is too large")?;
+    now_epoch
+        .checked_sub(age_secs)
+        .context("older_than_days is too large")
 }
 
 fn like_pattern(query: &str) -> String {

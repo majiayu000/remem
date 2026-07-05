@@ -93,6 +93,36 @@ fn dry_run_pending_reports_post_v022_schema_drift() -> Result<()> {
 }
 
 #[test]
+fn dry_run_pending_reports_v059_review_metadata_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[59])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .expect("review metadata schema drift must be reported");
+    assert!(
+        error.contains("v059_candidate_review_metadata"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_candidates.review_actor"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_candidates.reviewed_at_epoch"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_memory_candidates_review_status_created"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[45])?;

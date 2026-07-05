@@ -1,5 +1,6 @@
 use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
+use std::collections::HashMap;
 
 const RESOLVED_STATUSES_SQL: &str = "('approved', 'edited', 'discarded', 'noop')";
 const EFFECTIVE_PROJECT_SQL: &str = "COALESCE(c.target_project, p.project_path, c.source_project, CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END)";
@@ -44,7 +45,7 @@ pub(crate) fn query_review_queue_stats(
         params![now_epoch],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?)),
     )?;
-    let pending_median_age_secs = median_pending_age(conn, now_epoch, None, pending_total)?;
+    let pending_median_age_secs = median_pending_age(conn, now_epoch)?;
 
     let inflow_7d: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memory_candidates WHERE created_at_epoch >= ?1",
@@ -82,6 +83,7 @@ fn query_project_stats(
     now_epoch: i64,
     week_ago: i64,
 ) -> Result<Vec<ReviewQueueProjectStats>> {
+    let median_ages = project_median_pending_ages(conn, now_epoch)?;
     let mut stmt = conn.prepare(&format!(
         "SELECT {EFFECTIVE_PROJECT_SQL} AS project,
                 SUM(CASE WHEN c.review_status = 'pending_review' THEN 1 ELSE 0 END) AS pending,
@@ -111,7 +113,7 @@ fn query_project_stats(
 
     rows.into_iter()
         .map(|(project, pending, max_age_secs, inflow_7d, resolved_7d)| {
-            let median_age_secs = median_pending_age(conn, now_epoch, project.as_deref(), pending)?;
+            let median_age_secs = median_ages.get(&project).copied();
             Ok(ReviewQueueProjectStats {
                 project,
                 pending,
@@ -124,40 +126,58 @@ fn query_project_stats(
         .collect()
 }
 
-fn median_pending_age(
+fn median_pending_age(conn: &Connection, now_epoch: i64) -> Result<Option<i64>> {
+    let median: Option<f64> = conn.query_row(
+        "SELECT AVG(CASE WHEN created_at_epoch > ?1 THEN 0 ELSE ?1 - created_at_epoch END)
+         FROM (
+             SELECT created_at_epoch,
+                    ROW_NUMBER() OVER (ORDER BY created_at_epoch ASC) AS rn,
+                    COUNT(*) OVER () AS pending_count
+             FROM memory_candidates
+             WHERE review_status = 'pending_review'
+         )
+         WHERE rn IN ((pending_count + 1) / 2, (pending_count + 2) / 2)",
+        params![now_epoch],
+        |row| row.get(0),
+    )?;
+    Ok(median.map(round_age_secs))
+}
+
+fn project_median_pending_ages(
     conn: &Connection,
     now_epoch: i64,
-    project: Option<&str>,
-    pending_count: i64,
-) -> Result<Option<i64>> {
-    if pending_count == 0 {
-        return Ok(None);
-    }
-    let offset = (pending_count - 1) / 2;
-    let created: Option<i64> = if let Some(project) = project {
-        let sql = format!(
-            "SELECT c.created_at_epoch
+) -> Result<HashMap<Option<String>, i64>> {
+    let sql = format!(
+        "SELECT project,
+                AVG(CASE WHEN created_at_epoch > ?1 THEN 0 ELSE ?1 - created_at_epoch END)
+         FROM (
+             SELECT {EFFECTIVE_PROJECT_SQL} AS project,
+                    c.created_at_epoch,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY {EFFECTIVE_PROJECT_SQL}
+                        ORDER BY c.created_at_epoch ASC
+                    ) AS rn,
+                    COUNT(*) OVER (PARTITION BY {EFFECTIVE_PROJECT_SQL}) AS pending_count
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status = 'pending_review'
-               AND {EFFECTIVE_PROJECT_SQL} = ?1
-             ORDER BY c.created_at_epoch DESC
-             LIMIT 1 OFFSET ?2"
-        );
-        conn.query_row(&sql, params![project, offset], |row| row.get(0))
-            .optional()?
-    } else {
-        conn.query_row(
-            "SELECT created_at_epoch FROM memory_candidates
-             WHERE review_status = 'pending_review'
-             ORDER BY created_at_epoch DESC
-             LIMIT 1 OFFSET ?1",
-            params![offset],
-            |row| row.get(0),
-        )
-        .optional()?
-    };
-    Ok(created.map(|epoch| now_epoch.saturating_sub(epoch)))
+         )
+         WHERE rn IN ((pending_count + 1) / 2, (pending_count + 2) / 2)
+         GROUP BY project"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let medians = stmt
+        .query_map(params![now_epoch], |row| {
+            let project = row.get::<_, Option<String>>(0)?;
+            let median = row.get::<_, f64>(1)?;
+            Ok((project, round_age_secs(median)))
+        })?
+        .collect::<Result<HashMap<_, _>, _>>()?;
+    Ok(medians)
+}
+
+fn round_age_secs(age_secs: f64) -> i64 {
+    age_secs.clamp(0.0, i64::MAX as f64).round() as i64
 }
 
 pub(crate) fn query_block_reasons(
@@ -306,6 +326,22 @@ mod tests {
     }
 
     #[test]
+    fn review_queue_stats_averages_even_sized_median_ages() -> Result<()> {
+        let conn = setup_conn();
+        let now = 1_000_000;
+        insert_candidate(&conn, "/p/a", "pending_review", None, now - 100, None, now);
+        insert_candidate(&conn, "/p/a", "pending_review", None, now - 200, None, now);
+        insert_candidate(&conn, "/p/a", "pending_review", None, now - 400, None, now);
+        insert_candidate(&conn, "/p/a", "pending_review", None, now - 800, None, now);
+
+        let stats = query_review_queue_stats(&conn, now)?;
+
+        assert_eq!(stats.pending_median_age_secs, Some(300));
+        assert_eq!(stats.projects[0].median_age_secs, Some(300));
+        Ok(())
+    }
+
+    #[test]
     fn review_queue_stats_counts_inflow_and_resolved_by_review_time() -> Result<()> {
         let conn = setup_conn();
         let now = 100 * 24 * 3600;
@@ -339,10 +375,11 @@ mod tests {
             "INSERT INTO memory_candidates
              (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
               confidence, risk_class, review_status, target_project, source_project,
-              owner_scope, owner_key, created_at_epoch, updated_at_epoch)
+              owner_scope, owner_key, auto_promote_block_reason, created_at_epoch,
+              updated_at_epoch)
              VALUES (?1, 'project', 'decision', 'routed', 'text', '[]',
                      0.7, 'medium', 'pending_review', '/p/target', '/p/source',
-                     'repo', '/p/target', ?2, ?2)",
+                     'repo', '/p/target', 'risk_class_not_low', ?2, ?2)",
             params![source_pid, now - 100],
         )?;
 
@@ -358,6 +395,43 @@ mod tests {
             .projects
             .iter()
             .any(|project| project.project.as_deref() == Some("/p/source")));
+        let target_reasons = query_block_reasons(&conn, Some("/p/target"))?;
+        let source_reasons = query_block_reasons(&conn, Some("/p/source"))?;
+        assert_eq!(
+            target_reasons[0].reason.as_deref(),
+            Some("risk_class_not_low")
+        );
+        assert_eq!(target_reasons[0].pending, 1);
+        assert!(source_reasons.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn review_queue_stats_scopes_unknown_project_median_to_unknown_rows() -> Result<()> {
+        let conn = setup_conn();
+        let now = 1_000_000;
+        insert_candidate(&conn, "/p/a", "pending_review", None, now - 10, None, now);
+        conn.execute(
+            "INSERT INTO memory_candidates
+             (scope, memory_type, topic_key, text, evidence_event_ids, confidence, risk_class,
+              review_status, created_at_epoch, updated_at_epoch)
+             VALUES ('project', 'decision', 'unknown-a', 'text', '[]', 0.7, 'medium',
+                     'pending_review', ?1, ?3),
+                    ('project', 'decision', 'unknown-b', 'text', '[]', 0.7, 'medium',
+                     'pending_review', ?2, ?3)",
+            params![now - 300, now - 500, now],
+        )?;
+
+        let stats = query_review_queue_stats(&conn, now)?;
+        let unknown = stats
+            .projects
+            .iter()
+            .find(|project| project.project.is_none())
+            .expect("unknown project group should be present");
+
+        assert_eq!(stats.pending_median_age_secs, Some(300));
+        assert_eq!(unknown.pending, 2);
+        assert_eq!(unknown.median_age_secs, Some(400));
         Ok(())
     }
 

@@ -612,6 +612,56 @@ fn batch_filter_rejects_negative_older_than() -> Result<()> {
 }
 
 #[test]
+fn batch_filter_rejects_empty_contains() -> Result<()> {
+    let conn = setup_conn();
+    let err = resolve_batch(
+        &conn,
+        &BatchFilter {
+            contains: Some(" \t ".to_string()),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )
+    .expect_err("empty contains should fail");
+    assert!(err.to_string().contains("contains filter"));
+    Ok(())
+}
+
+#[test]
+fn batch_filter_rejects_out_of_range_min_confidence() -> Result<()> {
+    let conn = setup_conn();
+    for min_confidence in [-0.1, 1.1, f64::NAN] {
+        let err = resolve_batch(
+            &conn,
+            &BatchFilter {
+                min_confidence: Some(min_confidence),
+                limit: BATCH_LIMIT_DEFAULT,
+                ..BatchFilter::default()
+            },
+        )
+        .expect_err("out-of-range min_confidence should fail");
+        assert!(err.to_string().contains("min_confidence"));
+    }
+    Ok(())
+}
+
+#[test]
+fn batch_filter_rejects_oversized_older_than() -> Result<()> {
+    let conn = setup_conn();
+    let err = resolve_batch(
+        &conn,
+        &BatchFilter {
+            older_than_days: Some(i64::MAX),
+            limit: BATCH_LIMIT_DEFAULT,
+            ..BatchFilter::default()
+        },
+    )
+    .expect_err("oversized older_than_days should fail");
+    assert!(err.to_string().contains("too large"));
+    Ok(())
+}
+
+#[test]
 fn review_approve_preserves_existing_project_memory_for_global_candidate() -> Result<()> {
     let mut conn = setup_conn();
     crate::memory::insert_memory_full(
