@@ -67,6 +67,65 @@ fn enforce_total_char_limit_drops_partial_multiline_memory_item() {
 }
 
 #[test]
+fn enforce_total_char_limit_ignores_heading_inside_memory_item() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "heading continuation should not survive as partial context. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Core\n");
+    output.push_str("**#1 First complete** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first memory remains intact\n");
+    output.push_str("**#2 Heading tail** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("first paragraph of the second memory\n");
+    output.push_str("## Steps\n");
+    output.push_str(&tail);
+    output.push('\n');
+    let tail_start = output
+        .find("heading continuation")
+        .expect("tail memory continuation should be present");
+    let keep_chars = output[..tail_start].chars().count() + "heading continuation".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("First complete"));
+    assert!(output.contains("first memory remains intact"));
+    assert!(!output.contains("Heading tail"));
+    assert!(!output.contains("## Steps"));
+    assert!(!output.contains("heading continuation"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_preserves_complete_item_before_next_section() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let index_tail = "index tail should not survive when the section is incomplete. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Core\n");
+    output.push_str("**#1 Complete memory** (decision, 2026-07-05; local, trusted)\n");
+    output.push_str("complete memory text\n\n");
+    output.push_str("## Index\n");
+    output.push_str(&format!("**decision** (1): #2 {index_tail}\n"));
+    let item_end = output
+        .find("\n\n## Index")
+        .map(|pos| pos + "\n".len())
+        .expect("complete item should precede index section");
+    let keep_chars = output[..item_end].chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("Complete memory"));
+    assert!(output.contains("complete memory text"));
+    assert!(!output.contains("## Index"));
+    assert!(!output.contains("index tail"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
 fn enforce_total_char_limit_drops_partial_multiline_structured_list_item() {
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
     let tail = "list continuation should not survive as partial context. ".repeat(8);

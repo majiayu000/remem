@@ -10,37 +10,51 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
 
     let mut byte_pos = 0usize;
     let mut chars_seen = 0usize;
-    let mut last_boundary = 0usize;
-    let mut open_item = None;
-
+    let mut lines = Vec::new();
     for line in body.split_inclusive('\n') {
+        let line_chars = char_len(line);
         let line_start_byte = byte_pos;
         let line_start_chars = chars_seen;
-        let line_chars = char_len(line);
-        let line_end_byte = line_start_byte + line.len();
-        let line_end_chars = line_start_chars + line_chars;
-        let starts_memory_item = looks_like_memory_item_header(line);
-        let starts_structured_list_item = looks_like_structured_list_item(line);
-        let starts_list_item = line.starts_with("- ");
-        let starts_section = line.starts_with("## ");
-        let starts_item_boundary = match open_item {
-            Some(OpenItem::Memory) => starts_memory_item,
-            Some(OpenItem::List) => starts_structured_list_item,
-            None => starts_memory_item || starts_list_item,
-        };
+        byte_pos += line.len();
+        chars_seen += line_chars;
+        lines.push(LineInfo {
+            text: line,
+            start_byte: line_start_byte,
+            start_chars: line_start_chars,
+            end_byte: byte_pos,
+            end_chars: chars_seen,
+        });
+    }
 
-        if line_start_chars <= keep_chars && (starts_section || starts_item_boundary) {
-            last_boundary = line_start_byte;
+    let mut last_boundary = 0usize;
+    let mut current_section: Option<Section> = None;
+    let mut open_item = None;
+
+    for (index, line) in lines.iter().enumerate() {
+        let next_line = lines.get(index + 1).map(|next| next.text);
+        let section = known_section(line.text);
+        let starts_section = section.is_some_and(|next_section| {
+            open_item.is_none()
+                || current_section.is_some_and(|current| next_section.order() > current.order())
+        });
+        let starts_item_boundary = starts_item_boundary(line.text, current_section, open_item);
+        let completes_item =
+            item_completion_separator(line.text, next_line, current_section, open_item);
+
+        if line.start_chars <= keep_chars
+            && (starts_section || starts_item_boundary || completes_item)
+        {
+            last_boundary = line.start_byte;
         }
-        if line_start_chars >= keep_chars {
+        if line.start_chars >= keep_chars {
             break;
         }
-        if line_end_chars > keep_chars {
-            if open_item.is_none() {
+        if line.end_chars > keep_chars {
+            if open_item.is_none() && current_section == Some(Section::Index) {
                 if let Some(boundary) = index_line_item_boundary_before_cut(
-                    line,
-                    line_start_byte,
-                    line_start_chars,
+                    line.text,
+                    line.start_byte,
+                    line.start_chars,
                     keep_chars,
                 ) {
                     last_boundary = boundary;
@@ -50,21 +64,28 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
         }
 
         if starts_section {
+            current_section = section;
             open_item = None;
-            last_boundary = line_end_byte;
-        } else if starts_memory_item {
-            open_item = Some(OpenItem::Memory);
-        } else if starts_structured_list_item || (open_item.is_none() && starts_list_item) {
-            open_item = Some(OpenItem::List);
+            last_boundary = line.end_byte;
+        } else if starts_item_boundary {
+            open_item = current_section.and_then(Section::item_kind);
+        } else if completes_item {
+            open_item = None;
+            last_boundary = line.end_byte;
         } else if open_item.is_none() {
-            last_boundary = line_end_byte;
+            last_boundary = line.end_byte;
         }
-
-        byte_pos = line_end_byte;
-        chars_seen = line_end_chars;
     }
 
     body[..last_boundary].to_string()
+}
+
+struct LineInfo<'a> {
+    text: &'a str,
+    start_byte: usize,
+    start_chars: usize,
+    end_byte: usize,
+    end_chars: usize,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -73,16 +94,99 @@ enum OpenItem {
     List,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Section {
+    ContextLoadErrors,
+    Preferences,
+    Lessons,
+    Core,
+    Index,
+    Workstreams,
+    Sessions,
+    DebugTrace,
+}
+
+impl Section {
+    fn order(self) -> u8 {
+        match self {
+            Section::ContextLoadErrors => 0,
+            Section::Preferences => 1,
+            Section::Lessons => 2,
+            Section::Core => 3,
+            Section::Index => 4,
+            Section::Workstreams => 5,
+            Section::Sessions => 6,
+            Section::DebugTrace => 7,
+        }
+    }
+
+    fn item_kind(self) -> Option<OpenItem> {
+        match self {
+            Section::Lessons | Section::Core => Some(OpenItem::Memory),
+            Section::ContextLoadErrors
+            | Section::Preferences
+            | Section::Workstreams
+            | Section::Sessions => Some(OpenItem::List),
+            Section::Index | Section::DebugTrace => None,
+        }
+    }
+}
+
+fn known_section(line: &str) -> Option<Section> {
+    match line.trim_end_matches('\n') {
+        "## Context Load Errors" => Some(Section::ContextLoadErrors),
+        "## Your Preferences (always apply these)" => Some(Section::Preferences),
+        "## Lessons" => Some(Section::Lessons),
+        "## Core" => Some(Section::Core),
+        "## Index" => Some(Section::Index),
+        "## WorkStreams" => Some(Section::Workstreams),
+        "## Sessions" => Some(Section::Sessions),
+        "## Debug Trace" => Some(Section::DebugTrace),
+        _ => None,
+    }
+}
+
+fn starts_item_boundary(line: &str, section: Option<Section>, open_item: Option<OpenItem>) -> bool {
+    match section.and_then(Section::item_kind) {
+        Some(OpenItem::Memory) => looks_like_memory_item_header(line),
+        Some(OpenItem::List) => match section {
+            Some(Section::Workstreams) => line.starts_with("- #"),
+            Some(Section::Sessions) => line.starts_with("- **"),
+            Some(Section::ContextLoadErrors) => line.starts_with("- "),
+            Some(Section::Preferences) => open_item.is_none() && line.starts_with("- "),
+            _ => false,
+        },
+        None => false,
+    }
+}
+
+fn item_completion_separator(
+    line: &str,
+    next_line: Option<&str>,
+    section: Option<Section>,
+    open_item: Option<OpenItem>,
+) -> bool {
+    if open_item.is_none() || !line.trim().is_empty() {
+        return false;
+    }
+    let Some(next_line) = next_line else {
+        return true;
+    };
+    let next_section = known_section(next_line);
+    if next_section
+        .is_some_and(|next| section.map_or(true, |current| next.order() > current.order()))
+    {
+        return true;
+    }
+    starts_item_boundary(next_line, section, open_item)
+}
+
 fn looks_like_memory_item_header(line: &str) -> bool {
     let Some(rest) = line.strip_prefix("**#") else {
         return false;
     };
     let id_digits = rest.bytes().take_while(u8::is_ascii_digit).count();
     id_digits > 0 && rest[id_digits..].starts_with(' ') && line.contains("** (")
-}
-
-fn looks_like_structured_list_item(line: &str) -> bool {
-    line.starts_with("- **") || line.starts_with("- #")
 }
 
 fn index_line_item_boundary_before_cut(
