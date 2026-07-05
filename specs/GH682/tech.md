@@ -95,8 +95,9 @@ other-model vectors only with explicit user intent after full coverage.
 - [x] GH-714: config resolution, degraded fallback, status JSON, doctor human
       and JSON tests. Evidence: PR #719 closed GH-714 on 2026-07-04.
 - [x] GH-715: migration, same-model guard, download/status, hook-safe missing
-      model, backfill idempotency, and prune-gating tests. Evidence: PR #731
-      closed GH-715 on 2026-07-04.
+      model, backfill idempotency, and prune-gating tests. Evidence: PR #728
+      closed GH-729, the GH-715 multi-model storage slice, on 2026-07-04; PR
+      #731 closed GH-715 on 2026-07-04.
 - [x] GH-716: provider comparison eval fixtures and reports under `eval/`,
       plus eval command tests. Evidence: PRs #732 and #733 closed GH-716 on
       2026-07-04.
@@ -112,8 +113,9 @@ The GH-682 epic has no remaining runtime implementation task in this packet.
 The final state is:
 
 - Provider/status/doctor visibility is implemented by GH-714 / PR #719.
-- Local semantic runtime, model-aware vector storage, and backfill are
-  implemented by GH-715 / PR #731.
+- Model-aware vector storage is implemented by GH-715 child slice GH-729 /
+  PR #728; local semantic runtime and backfill are implemented by GH-715 /
+  PR #731.
 - Provider comparison evidence is committed by GH-716 / PRs #732 and #733;
   the default provider remains unchanged until local/API comparison rows are
   available in the reference run.

@@ -211,5 +211,9 @@ remem eval-local   # retrieval gates with committed thresholds
 
 - Whether query-time embedding should cache recent query vectors for
   latency.
-- Whether GH-716 flips `Auto` from "api if key else feature-hash" to local, or
-  keeps local as explicit opt-in until more release-platform evidence exists.
+
+## Resolved Decisions
+
+- GH-716 keeps `Auto` as "api if key else feature-hash"; local semantic
+  embeddings remain explicit opt-in until committed comparison evidence
+  includes verified local/API rows and release-platform readiness.

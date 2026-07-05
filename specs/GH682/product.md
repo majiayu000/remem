@@ -74,7 +74,8 @@ dedup/preference consolidation inherit the same non-semantic ceiling.
       slice. Evidence: PR #719 closed GH-714 on 2026-07-04.
 - [x] GH-715 lands local semantic model download/runtime support, multi-model
       vector storage, same-model cosine filtering, and backfill. Evidence:
-      PR #731 closed GH-715 on 2026-07-04.
+      PR #728 closed GH-729, the GH-715 multi-model storage slice, on
+      2026-07-04; PR #731 closed GH-715 on 2026-07-04.
 - [x] GH-716 commits provider comparison eval evidence and records the default
       provider decision before any default flip. Evidence:
       PRs #732 and #733 closed GH-716 on 2026-07-04;
@@ -113,7 +114,8 @@ GH-682 has satisfied its implementation closure criteria because all four
 implementation issues are closed by merged PRs:
 
 - GH-714: PR #719, provider contract and degraded-state visibility.
-- GH-715: PR #731, local semantic runtime, same-model vectors, and backfill.
+- GH-715: PR #728 / GH-729 for multi-model storage, plus PR #731 for local
+  semantic runtime, same-model vectors, and backfill.
 - GH-716: PRs #732 and #733, provider comparison eval evidence and no-flip
   default decision.
 - GH-717: PRs #734 and #735, downstream active-model dedup and preference
