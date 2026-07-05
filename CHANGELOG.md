@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.162` for GH-683 review queue throughput:
+  review queue health metrics, doctor deadlock findings, batch review
+  operations, durable review metadata, and REST blocked-candidate reporting.
 - Staged source version `0.5.160` for GH-717 downstream active semantic
   adoption: observation vector dedup, active-model preference embedding
   fallback thresholds, and focused dedup/preference regressions.
