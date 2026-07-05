@@ -363,6 +363,12 @@ pub(super) struct CandidateEditRequest {
     pub text: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+pub(super) struct CandidateApproveRequest {
+    #[serde(default)]
+    pub acknowledge_pattern: Option<String>,
+}
+
 #[derive(Serialize)]
 pub(super) struct CandidateReviewResponse {
     pub candidate_id: i64,

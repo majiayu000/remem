@@ -592,6 +592,7 @@ remem pending purge-failed --dry-run --older-than-days 7
 remem govern --action stale --dry-run --json <id>
 remem review list
 remem review approve <id>
+remem review approve <id> --acknowledge-pattern <pattern_id>
 remem review discard <id>
 remem review edit <id> --text "updated memory"
 remem preferences list
@@ -809,7 +810,7 @@ frequently than the returned `cache.ttl_secs`; use
 |---|---|---|
 | `/api/v1/stats` | GET | Product stats for local dashboards |
 | `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
-| `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate |
+| `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate; quarantined candidates require `acknowledge_pattern` |
 | `/api/v1/candidates/{id}/reject` | POST | Reject a pending memory candidate |
 | `/api/v1/candidates/{id}/edit` | POST | Edit and approve a pending memory candidate |
 | `/api/v1/graph?project=&limit=&include_suppressed=` | GET | DB-backed entity graph read model |

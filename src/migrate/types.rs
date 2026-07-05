@@ -305,6 +305,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_poisoning_defense",
         sql: include_str!("../migrations/v060_memory_poisoning_defense.sql"),
     },
+    Migration {
+        version: 61,
+        name: "memory_poisoning_injection_drops",
+        sql: include_str!("../migrations/v061_memory_poisoning_injection_drops.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

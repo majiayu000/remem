@@ -22,6 +22,7 @@ use super::types::{
 };
 use super::DbState;
 
+mod candidate_review_poisoning;
 mod candidates;
 mod web_regressions;
 

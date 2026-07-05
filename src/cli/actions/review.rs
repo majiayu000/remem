@@ -36,8 +36,15 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
                 }
             }
         }
-        ReviewAction::Approve { id } => {
-            let Some(memory_id) = review::approve_candidate(&mut conn, id)? else {
+        ReviewAction::Approve {
+            id,
+            acknowledge_pattern,
+        } => {
+            let approved = match acknowledge_pattern.as_deref() {
+                Some(pattern) => review::approve_candidate_with_ack(&mut conn, id, pattern)?,
+                None => review::approve_candidate(&mut conn, id)?,
+            };
+            let Some(memory_id) = approved else {
                 bail!("candidate {} not found", id);
             };
             println!("Approved candidate {}; promoted memory {}.", id, memory_id);

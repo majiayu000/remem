@@ -9,6 +9,7 @@ mod load;
 mod ownership;
 mod render;
 mod render_inline;
+mod render_poisoning;
 mod render_stability;
 mod retrieval;
 mod sessions;

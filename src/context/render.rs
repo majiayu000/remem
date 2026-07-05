@@ -340,6 +340,7 @@ fn render_context_output_from_inputs(
     let load_timing = inputs.load_timing;
     let preference_timing = inputs.preference_timing;
     let preference_summary = preference_details.summary;
+    super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
 
     if preference_summary.rendered == 0
         && loaded.memories.is_empty()

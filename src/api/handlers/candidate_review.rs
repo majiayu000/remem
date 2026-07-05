@@ -7,22 +7,31 @@ use axum::{
 use rusqlite::{params, OptionalExtension};
 
 use crate::memory_candidate::review::{
-    approve_candidate, discard_candidate, edit_candidate, CandidateEdit,
+    approve_candidate, approve_candidate_with_ack, discard_candidate, edit_candidate, CandidateEdit,
 };
 
 use super::super::helpers::{error_response, open_request_db};
-use super::super::types::{CandidateEditRequest, CandidateReviewResponse, DbState};
+use super::super::types::{
+    CandidateApproveRequest, CandidateEditRequest, CandidateReviewResponse, DbState,
+};
 
 pub(in crate::api) async fn handle_approve_candidate(
     State(_state): State<DbState>,
     Path(id): Path<i64>,
+    request: Option<Json<CandidateApproveRequest>>,
 ) -> impl IntoResponse {
     let mut conn = match open_request_db() {
         Ok(conn) => conn,
         Err(response) => return response,
     };
 
-    match approve_candidate(&mut conn, id) {
+    let acknowledged_pattern = request.and_then(|Json(request)| request.acknowledge_pattern);
+    let result = match acknowledged_pattern.as_deref() {
+        Some(pattern) => approve_candidate_with_ack(&mut conn, id, pattern),
+        None => approve_candidate(&mut conn, id),
+    };
+
+    match result {
         Ok(Some(memory_id)) => Json(CandidateReviewResponse {
             candidate_id: id,
             status: "approved".to_string(),
@@ -125,6 +134,21 @@ fn candidate_review_error(id: i64, err: &anyhow::Error) -> axum::response::Respo
     let message = err.to_string();
     if let Some(status) = non_pending_status(&message) {
         return candidate_not_pending(id, status);
+    }
+    if message.contains(" is quarantined by pattern ") {
+        return error_response(StatusCode::CONFLICT, "candidate_quarantined", &message)
+            .into_response();
+    }
+    if message.contains("acknowledge-pattern is only valid")
+        || message.contains("acknowledged pattern")
+        || message.contains("missing quarantine_pattern")
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "candidate_acknowledgement_invalid",
+            &message,
+        )
+        .into_response();
     }
     if is_invalid_edit(&message) {
         return error_response(StatusCode::BAD_REQUEST, "candidate_edit_invalid", &message)

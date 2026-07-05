@@ -213,6 +213,15 @@ Candidate review responses are explicit:
 }
 ```
 
+`POST /api/v1/candidates/{id}/approve` normally accepts an empty body. For a
+quarantined memory candidate, clients must send the matched pattern id:
+
+```json
+{
+  "acknowledge_pattern": "override_previous_instructions"
+}
+```
+
 `POST /api/v1/candidates/{id}/edit` accepts any changed subset of:
 
 ```json
@@ -236,6 +245,7 @@ All normal control-flow errors use:
 ```
 
 Candidate review errors include `not_found`, `candidate_not_pending`,
+`candidate_quarantined`, `candidate_acknowledgement_invalid`,
 `candidate_edit_invalid`, and `candidate_review_failed`.
 
 `POST /api/v1/user/recall` accepts:

@@ -660,4 +660,19 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "idx_memory_candidates_quarantine",
     ),
     SchemaInvariant::index(60, "memory_poisoning_defense", "idx_memories_source_trust"),
+    SchemaInvariant::table(
+        61,
+        "memory_poisoning_injection_drops",
+        "memory_poisoning_injection_drops",
+    ),
+    SchemaInvariant::index(
+        61,
+        "memory_poisoning_injection_drops",
+        "idx_memory_poisoning_drops_created",
+    ),
+    SchemaInvariant::index(
+        61,
+        "memory_poisoning_injection_drops",
+        "idx_memory_poisoning_drops_pattern",
+    ),
 ];

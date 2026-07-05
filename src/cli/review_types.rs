@@ -9,6 +9,8 @@ pub(in crate::cli) enum ReviewAction {
         limit: i64,
     },
     Approve {
+        #[arg(long = "acknowledge-pattern")]
+        acknowledge_pattern: Option<String>,
         id: i64,
     },
     Discard {
