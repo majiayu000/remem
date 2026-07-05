@@ -34,6 +34,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             ("memory_detail", "/api/v1/memories/{id}"),
             ("save_memory", "/api/v1/memories"),
             ("candidate_rows", "/api/v1/candidates"),
+            ("candidate_blocked", "/api/v1/candidates/blocked"),
             ("candidate_review", "/api/v1/candidates/{id}/approve"),
             ("graph", "/api/v1/graph"),
             ("user_recall", "/api/v1/user/recall"),

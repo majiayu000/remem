@@ -14,12 +14,12 @@ GH-683
 
 ## Implementation Tasks
 
-- [ ] `SP683-T1` Owner: implementation agent; Dependencies: none; Done when: `memory_candidates` has nullable review metadata columns and an index for queue-age reads; Verify: migration-backed candidate review tests.
-- [ ] `SP683-T2` Owner: implementation agent; Dependencies: `SP683-T1`; Done when: shared review queue stats expose pending totals, age metrics, inflow/resolved counts, project splits, and block-reason examples; Verify: `cargo test memory_candidate::review_stats -- --nocapture`.
-- [ ] `SP683-T3` Owner: implementation agent; Dependencies: `SP683-T2`; Done when: `remem status --json` and doctor include review queue health and deadlock warnings; Verify: status and `doctor::review_queue` tests.
-- [ ] `SP683-T4` Owner: implementation agent; Dependencies: `SP683-T1`; Done when: `approve-batch`, `discard-batch`, and `blocked` commands support accepted filters, preview/confirm, default cap, transactional mutation, and durable review provenance; Verify: `cargo test memory_candidate::review -- --nocapture`.
-- [ ] `SP683-T5` Owner: implementation agent; Dependencies: `SP683-T2` `SP683-T4`; Done when: REST candidate list accepts matching filters and exposes block-reason aggregates; Verify: focused API regression tests.
-- [ ] `SP683-T6` Owner: implementation agent; Dependencies: `SP683-T1` `SP683-T2` `SP683-T3` `SP683-T4` `SP683-T5`; Done when: local deterministic checks and full Rust tests pass and the implementation PR closes GH-683; Verify: commands below and PR gate evidence.
+- [x] `SP683-T1` Owner: implementation agent; Dependencies: none; Done when: `memory_candidates` has nullable review metadata columns and an index for queue-age reads; Verify: migration-backed candidate review tests.
+- [x] `SP683-T2` Owner: implementation agent; Dependencies: `SP683-T1`; Done when: shared review queue stats expose pending totals, age metrics, inflow/resolved counts, project splits, and block-reason examples; Verify: `cargo test memory_candidate::review_stats -- --nocapture`.
+- [x] `SP683-T3` Owner: implementation agent; Dependencies: `SP683-T2`; Done when: `remem status --json` and doctor include review queue health and deadlock warnings; Verify: status and `doctor::review_queue` tests.
+- [x] `SP683-T4` Owner: implementation agent; Dependencies: `SP683-T1`; Done when: `approve-batch`, `discard-batch`, and `blocked` commands support accepted filters, preview/confirm, default cap, transactional mutation, and durable review provenance; Verify: `cargo test memory_candidate::review -- --nocapture`.
+- [x] `SP683-T5` Owner: implementation agent; Dependencies: `SP683-T2` `SP683-T4`; Done when: REST candidate list accepts matching filters and exposes block-reason aggregates; Verify: focused API regression tests.
+- [x] `SP683-T6` Owner: implementation agent; Dependencies: `SP683-T1` `SP683-T2` `SP683-T3` `SP683-T4` `SP683-T5`; Done when: local deterministic checks and full Rust tests pass and the implementation PR closes GH-683; Verify: commands below and PR gate evidence.
 
 ## Parallelization
 

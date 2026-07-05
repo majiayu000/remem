@@ -15,6 +15,8 @@ version `0.5.113`. Task-aware user recall is implemented in source version
 capability it needs before directing installed-binary users to that surface.
 Clients should call `GET /api/v1/capabilities` before enabling optional UI
 features.
+Candidate review queue filters and the blocked-reason aggregate endpoint are
+implemented in source version `0.5.162`.
 
 ## Endpoint Groups
 
@@ -37,7 +39,8 @@ features.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/v1/stats` | Product stats for local dashboards. |
-| GET | `/api/v1/candidates?project=&status=&limit=&offset=` | Compact memory-candidate list. |
+| GET | `/api/v1/candidates?project=&status=&type=&block_reason=&topic_key=&contains=&min_confidence=&older_than_days=&limit=&offset=` | Compact memory-candidate list with review filters. |
+| GET | `/api/v1/candidates/blocked?project=` | Pending candidate block-reason aggregates with examples. |
 | POST | `/api/v1/candidates/{id}/approve` | Approve a pending candidate. |
 | POST | `/api/v1/candidates/{id}/reject` | Reject a pending candidate; persisted status is `discarded`. |
 | POST | `/api/v1/candidates/{id}/edit` | Edit and approve a pending candidate. |
@@ -56,8 +59,8 @@ features.
 
 ```json
 {
-  "version": "0.5.123",
-  "schema_version": 52,
+  "version": "0.5.162",
+  "schema_version": 59,
   "api_version": 1,
   "features": {
     "health": true,
@@ -84,6 +87,7 @@ features.
     "memory_detail": "/api/v1/memories/{id}",
     "save_memory": "/api/v1/memories",
     "candidate_rows": "/api/v1/candidates",
+    "candidate_blocked": "/api/v1/candidates/blocked",
     "candidate_review": "/api/v1/candidates/{id}/approve",
     "graph": "/api/v1/graph",
     "user_recall": "/api/v1/user/recall"
@@ -168,6 +172,35 @@ that need to inspect suppressed evidence.
 ```
 
 Empty graph or candidate tables return empty arrays, not synthesized rows.
+
+`GET /api/v1/candidates` defaults to `status=pending_review` and accepts the
+same review filters used by batch review commands: `project`, `type`,
+`block_reason`, `topic_key`, `contains`, `min_confidence`, and
+`older_than_days`. `contains` matches candidate text or topic key.
+`older_than_days` selects rows created on or before the computed cutoff.
+`limit` is clamped to `1..=100`.
+
+`GET /api/v1/candidates/blocked?project=` returns block-reason aggregates:
+
+```json
+{
+  "data": [
+    {
+      "reason": "unsupported_type",
+      "pending": 12,
+      "example_ids": [101, 102, 103]
+    }
+  ],
+  "meta": {
+    "count": 1,
+    "total": 1,
+    "limit": 1,
+    "offset": 0,
+    "has_more": false,
+    "next_offset": null
+  }
+}
+```
 
 Candidate review responses are explicit:
 
@@ -322,8 +355,8 @@ string; common values include `status:<status>`, `sensitivity:<classification>`,
   `.api-token` file.
 - Queries use parameterized SQL placeholders.
 - `GET /api/v1/health`, `/status`, `/capabilities`, `/stats`, `/search`,
-  `/memories`, `/candidates`, and `/graph` do not modify durable memory
-  content.
+  `/memories`, `/candidates`, `/candidates/blocked`, and `/graph` do not
+  modify durable memory content.
 - `/health` is for cheap liveness. `/capabilities` is for feature detection.
   `/status` is for dashboard counters and should not be polled more frequently
   than its returned `cache.ttl_secs` unless the user explicitly requests
@@ -342,6 +375,8 @@ Release notes for web API changes must identify:
 - whether `/api/v1/status` responses include cache metadata;
 - compatibility guidance for `/api/v1/memory?id=` and `/api/v1/memories/list`;
 - whether candidates are list-only or include review actions.
+- whether candidate review filters and `/api/v1/candidates/blocked` are
+  available.
 
 For the first complete native web API surface, the release target is
 `remem 0.5.109`. Do not document it as available to installed-binary users
@@ -364,6 +399,11 @@ Clients must gate usage-policy guidance on
 `capabilities.features.user_recall_usage_policy`. When that flag is present,
 clients should treat `usage_policy` as response metadata for non-empty recall
 results and should not count it against the recalled context budget.
+
+For candidate review queue throughput, the release target is `remem 0.5.162`.
+Clients that render review dashboard filters must require
+`capabilities.features.candidate_rows`. Clients that render blocked-reason
+aggregates must also require `capabilities.endpoints.candidate_blocked`.
 
 ## Smoke Test
 

@@ -454,6 +454,10 @@ async fn router_serves_capabilities_with_auth() -> anyhow::Result<()> {
     assert_eq!(payload["endpoints"]["save_memory"], "/api/v1/memories");
     assert_eq!(payload["endpoints"]["candidate_rows"], "/api/v1/candidates");
     assert_eq!(
+        payload["endpoints"]["candidate_blocked"],
+        "/api/v1/candidates/blocked"
+    );
+    assert_eq!(
         payload["endpoints"]["candidate_review"],
         "/api/v1/candidates/{id}/approve"
     );
