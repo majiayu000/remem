@@ -8,10 +8,19 @@ use super::{
 };
 
 pub(crate) fn resolve_embedding_config() -> Result<EmbeddingConfig> {
+    #[cfg(test)]
+    let _test_env_guard = lock_test_env();
     let mut config = config_from_file()?.unwrap_or_default();
     apply_env_overrides(&mut config)?;
     validate_config(&config)?;
     Ok(config)
+}
+
+#[cfg(test)]
+pub(super) fn lock_test_env() -> crate::runtime_config::TestEnvGuard {
+    crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("env lock should acquire")
 }
 
 fn config_from_file() -> Result<Option<EmbeddingConfig>> {

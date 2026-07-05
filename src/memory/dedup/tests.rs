@@ -25,7 +25,7 @@ const ENV_KEYS: &[&str] = &[
 ];
 
 struct ScopedEmbeddingProvider {
-    _guard: std::sync::MutexGuard<'static, ()>,
+    _guard: crate::runtime_config::TestEnvGuard,
     saved: Vec<(&'static str, Option<String>)>,
 }
 
