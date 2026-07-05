@@ -92,16 +92,33 @@ other-model vectors only with explicit user intent after full coverage.
 
 ## Test Plan
 
-- [ ] GH-714: config resolution, degraded fallback, status JSON, doctor human
-      and JSON tests.
-- [ ] GH-715: migration, same-model guard, download/status, hook-safe missing
-      model, backfill idempotency, and prune-gating tests.
-- [ ] GH-716: provider comparison eval fixtures and reports under `eval/`,
-      plus eval command tests.
+- [x] GH-714: config resolution, degraded fallback, status JSON, doctor human
+      and JSON tests. Evidence: PR #719 closed GH-714 on 2026-07-04.
+- [x] GH-715: migration, same-model guard, download/status, hook-safe missing
+      model, backfill idempotency, and prune-gating tests. Evidence: PR #731
+      closed GH-715 on 2026-07-04.
+- [x] GH-716: provider comparison eval fixtures and reports under `eval/`,
+      plus eval command tests. Evidence: PRs #732 and #733 closed GH-716 on
+      2026-07-04.
 - [x] GH-717: dedup, semantic dedup, and preference consolidation regression
-      tests.
-- [ ] Each phase: `cargo fmt --check`, `cargo check --message-format=short`,
-      focused tests, and `cargo test` before merge readiness.
+      tests. Evidence: PRs #734 and #735 closed GH-717 on 2026-07-04.
+- [x] Each phase: `cargo fmt --check`, `cargo check --message-format=short`,
+      focused tests, and `cargo test` before merge readiness. Evidence: phase
+      PRs #719, #731, #732, #733, #734, and #735 were merged after CI.
+
+## Closure Audit
+
+The GH-682 epic has no remaining runtime implementation task in this packet.
+The final state is:
+
+- Provider/status/doctor visibility is implemented by GH-714 / PR #719.
+- Local semantic runtime, model-aware vector storage, and backfill are
+  implemented by GH-715 / PR #731.
+- Provider comparison evidence is committed by GH-716 / PRs #732 and #733;
+  the default provider remains unchanged until local/API comparison rows are
+  available in the reference run.
+- Downstream dedup and preference consolidation are implemented by GH-717 /
+  PRs #734 and #735.
 
 ## Rollback Plan
 
