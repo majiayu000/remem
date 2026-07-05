@@ -11,7 +11,7 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
     let mut byte_pos = 0usize;
     let mut chars_seen = 0usize;
     let mut last_boundary = 0usize;
-    let mut inside_memory_item = false;
+    let mut inside_item = false;
 
     for line in body.split_inclusive('\n') {
         let line_start_byte = byte_pos;
@@ -19,19 +19,17 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
         let line_chars = char_len(line);
         let line_end_byte = line_start_byte + line.len();
         let line_end_chars = line_start_chars + line_chars;
-        let starts_memory_item = line.starts_with("**#");
+        let starts_item = line.starts_with("**#") || line.starts_with("- ");
         let starts_section = line.starts_with("## ");
 
-        if line_start_chars <= keep_chars
-            && (!inside_memory_item || starts_memory_item || starts_section)
-        {
+        if line_start_chars <= keep_chars && (!inside_item || starts_item || starts_section) {
             last_boundary = line_start_byte;
         }
         if line_start_chars >= keep_chars {
             break;
         }
         if line_end_chars > keep_chars {
-            if !inside_memory_item {
+            if !inside_item {
                 if let Some(boundary) = index_line_item_boundary_before_cut(
                     line,
                     line_start_byte,
@@ -44,12 +42,12 @@ pub(super) fn truncate_context_body_at_stable_boundary(body: &str, keep_chars: u
             break;
         }
 
-        if starts_memory_item {
-            inside_memory_item = true;
+        if starts_item {
+            inside_item = true;
         } else if starts_section {
-            inside_memory_item = false;
+            inside_item = false;
             last_boundary = line_end_byte;
-        } else if !inside_memory_item {
+        } else if !inside_item {
             last_boundary = line_end_byte;
         }
 
@@ -70,13 +68,32 @@ fn index_line_item_boundary_before_cut(
         return None;
     }
     let chars_before_cut = keep_chars.checked_sub(line_start_chars)?;
+    let mut entry_start = line.find(": #")? + 2;
     let mut boundary = None;
-    for (separator_byte, _) in line.match_indices(" | ") {
+    for (separator_byte, _) in line.match_indices(" | #") {
         if char_len(&line[..separator_byte]) <= chars_before_cut {
-            boundary = Some(line_start_byte + separator_byte);
+            if looks_like_complete_index_entry(&line[entry_start..separator_byte]) {
+                boundary = Some(line_start_byte + separator_byte);
+                entry_start = separator_byte + " | ".len();
+            }
         } else {
             break;
         }
     }
     boundary
+}
+
+fn looks_like_complete_index_entry(entry: &str) -> bool {
+    let entry = entry.trim();
+    let Some(id_and_tail) = entry.strip_prefix('#') else {
+        return false;
+    };
+    let id_digits = id_and_tail.bytes().take_while(u8::is_ascii_digit).count();
+    if id_digits == 0 || !id_and_tail[id_digits..].starts_with(' ') {
+        return false;
+    }
+    let Some(metadata_start) = entry.rfind(" (") else {
+        return false;
+    };
+    entry.ends_with(')') && entry[metadata_start..].contains("; ")
 }

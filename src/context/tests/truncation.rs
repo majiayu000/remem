@@ -65,6 +65,34 @@ fn enforce_total_char_limit_drops_partial_multiline_memory_item() {
 }
 
 #[test]
+fn enforce_total_char_limit_drops_partial_multiline_list_item() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "list continuation should not survive as partial context. ".repeat(8);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Preferences\n");
+    output.push_str("- First complete preference remains\n");
+    output.push_str("- Second multiline preference starts here\n");
+    output.push_str("continued preference detail\n\n");
+    output.push_str(&tail);
+    output.push('\n');
+    let tail_start = output
+        .find("list continuation")
+        .expect("tail list continuation should be present");
+    let keep_chars = output[..tail_start].chars().count() + "list continuation".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("First complete preference remains"));
+    assert!(!output.contains("Second multiline preference"));
+    assert!(!output.contains("continued preference detail"));
+    assert!(!output.contains("list continuation"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
 fn enforce_total_char_limit_preserves_complete_index_entries_before_cut() {
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
     let third = "Third index entry should not survive as a partial item. ".repeat(6);
@@ -84,6 +112,56 @@ fn enforce_total_char_limit_preserves_complete_index_entries_before_cut() {
 
     assert!(output.chars().count() <= char_limit);
     assert!(output.contains("#1 First stable item"));
+    assert!(output.contains("#2 Second stable item"));
+    assert!(!output.contains("#3 Third index entry"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_ignores_pipe_inside_index_title() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let mut output = String::from("# [/tmp/demo] context\n\n## Index\n");
+    let title_tail = "pipe text continues inside the same title. ".repeat(6);
+    output.push_str(&format!(
+        "**decision** (1): #1 First title with | {title_tail}(2026-07-05; local, trusted)\n"
+    ));
+    let pipe_start = output
+        .find("| pipe text")
+        .expect("title pipe should be present");
+    let keep_chars = output[..pipe_start].chars().count() + "| pipe text".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(!output.contains("#1 First title"));
+    assert!(!output.contains("| pipe"));
+    assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+}
+
+#[test]
+fn enforce_total_char_limit_preserves_index_entry_with_pipe_in_title() {
+    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
+    let tail = "Third index entry should not survive as a partial item. ".repeat(6);
+    let mut output = String::from("# [/tmp/demo] context\n\n## Index\n");
+    output
+        .push_str("**decision** (3): #1 First title with | pipe text (2026-07-05; local, trusted)");
+    output.push_str(" | #2 Second stable item (2026-07-05; local, trusted)");
+    output.push_str(&format!(" | #3 {tail}\n"));
+    let third_start = output
+        .find("#3 Third index entry")
+        .expect("third index item should be present");
+    let keep_chars = output[..third_start].chars().count() + "#3 Third index".chars().count();
+    let char_limit = keep_chars + marker.chars().count();
+
+    assert!(char_limit < output.chars().count());
+
+    enforce_total_char_limit(&mut output, char_limit);
+
+    assert!(output.chars().count() <= char_limit);
+    assert!(output.contains("#1 First title with | pipe text"));
     assert!(output.contains("#2 Second stable item"));
     assert!(!output.contains("#3 Third index entry"));
     assert!(output.contains("REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
