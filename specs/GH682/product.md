@@ -109,7 +109,7 @@ are complete.
 
 ## Closure Audit
 
-GH-682 is ready to close after the final SpecRail audit PR because all four
+GH-682 has satisfied its implementation closure criteria because all four
 implementation issues are closed by merged PRs:
 
 - GH-714: PR #719, provider contract and degraded-state visibility.

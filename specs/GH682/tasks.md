@@ -58,6 +58,6 @@ scope in parallel.
 
 Use `Refs #682` in every phase PR. Close only the focused implementation issue
 for that phase, such as `Closes #714`, when its acceptance criteria and tests
-land. GH-682 may be closed by the final SpecRail audit PR after all four
-implementation issues, eval evidence, docs/spec index decision, and downstream
-adoption are complete and verified.
+land. GH-682 may be closed only through the epic/capability closure path after
+all four implementation issues, eval evidence, docs/spec index decision, and
+downstream adoption are complete and verified.
