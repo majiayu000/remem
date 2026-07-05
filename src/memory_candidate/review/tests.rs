@@ -4,6 +4,8 @@ use crate::db::{record_captured_event, CaptureEventInput, ExtractionTaskKind};
 
 use super::*;
 
+const BATCH_LIMIT_DEFAULT: i64 = 200;
+
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");
@@ -463,16 +465,41 @@ fn batch_filter_limit_is_enforced() -> Result<()> {
             ..BatchFilter::default()
         },
     )?;
-    let defaulted = resolve_batch(
+
+    assert_eq!(capped.ids.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn batch_filter_rejects_non_positive_limit() -> Result<()> {
+    let conn = setup_conn();
+    for limit in [0, -1] {
+        let err = resolve_batch(
+            &conn,
+            &BatchFilter {
+                limit,
+                ..BatchFilter::default()
+            },
+        )
+        .expect_err("non-positive batch limit should fail");
+        assert!(err.to_string().contains("limit"));
+    }
+    Ok(())
+}
+
+#[test]
+fn batch_filter_default_limit_constant_is_valid() -> Result<()> {
+    let mut conn = setup_conn();
+    let first = insert_pending_candidate(&mut conn, "batch-default-a", "One")?;
+    let preview = resolve_batch(
         &conn,
         &BatchFilter {
-            limit: 0,
+            limit: BATCH_LIMIT_DEFAULT,
             ..BatchFilter::default()
         },
     )?;
 
-    assert_eq!(capped.ids.len(), 2);
-    assert_eq!(defaulted.ids.len(), 3);
+    assert_eq!(preview.ids, vec![first]);
     Ok(())
 }
 

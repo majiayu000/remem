@@ -103,6 +103,14 @@ pub(in crate::api) async fn handle_list_candidates(
         idx += 2;
     }
     if let Some(min_confidence) = params.min_confidence {
+        if !(0.0..=1.0).contains(&min_confidence) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "candidate_filter_invalid",
+                "min_confidence must be between 0 and 1",
+            )
+            .into_response();
+        }
         conditions.push(format!("c.confidence >= ?{idx}"));
         binds.push(Box::new(min_confidence));
         idx += 1;

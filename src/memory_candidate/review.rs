@@ -101,7 +101,6 @@ pub(crate) struct BatchFilter {
     pub limit: i64,
 }
 
-pub(crate) const BATCH_LIMIT_DEFAULT: i64 = 200;
 const SECS_PER_DAY: i64 = 86_400;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -333,11 +332,7 @@ struct BatchRow {
 
 fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<BatchRow>> {
     validate_batch_filter(filter)?;
-    let limit = if filter.limit > 0 {
-        filter.limit
-    } else {
-        BATCH_LIMIT_DEFAULT
-    };
+    let limit = filter.limit;
     let mut sql = String::from(
         "SELECT c.id,
                 COALESCE(c.target_project, p.project_path, c.source_project,
@@ -407,6 +402,9 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
 }
 
 fn validate_batch_filter(filter: &BatchFilter) -> Result<()> {
+    if filter.limit <= 0 {
+        bail!("limit must be positive");
+    }
     if let Some(contains) = &filter.contains {
         if contains.trim().is_empty() {
             bail!("contains filter must not be empty");

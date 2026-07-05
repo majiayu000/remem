@@ -231,3 +231,33 @@ async fn list_candidates_rejects_oversized_older_than() -> anyhow::Result<()> {
         .contains("too large"));
     Ok(())
 }
+
+#[tokio::test]
+async fn list_candidates_rejects_out_of_range_min_confidence() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidates-invalid-confidence");
+    for min_confidence in [-0.1, 1.1, f64::NAN] {
+        let response = handle_list_candidates(
+            State(DbState),
+            Query(CandidateParams {
+                project: None,
+                status: None,
+                memory_type: None,
+                block_reason: None,
+                topic_key: None,
+                contains: None,
+                min_confidence: Some(min_confidence),
+                older_than_days: None,
+                limit: Some(10),
+                offset: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["error"]["code"], "candidate_filter_invalid");
+    }
+    Ok(())
+}
