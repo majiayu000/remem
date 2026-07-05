@@ -4,7 +4,7 @@ use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
 
 use super::super::audit::memory_render_metadata_with_labels;
 use super::super::format::{
-    char_len, format_epoch_short, truncate_chars_with_ellipsis, type_label,
+    char_len, format_epoch_short, inline_context_text, truncate_chars_with_ellipsis, type_label,
 };
 use super::super::policy::ContextLimits;
 
@@ -199,10 +199,11 @@ fn push_memory_index_line(
     let mut first = true;
     for memory in memories.iter().take(10) {
         let date = format_epoch_short(memory.updated_at_epoch);
+        let title = inline_context_text(&memory.title);
         let item = format!(
             "#{} {} ({}; {})",
             memory.id,
-            memory.title,
+            title,
             date,
             memory_render_metadata_with_labels(memory, now_epoch, staleness_labels)
         );

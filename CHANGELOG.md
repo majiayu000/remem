@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.164` for GH-673 context stability: total context
+  budget enforcement now truncates at stable item boundaries while preserving
+  the truncation marker and stats footer.
 - Staged source version `0.5.163` for GH-726 local PR preflight: aggregate
   CI gate checks in one command, document it as the PR preflight, and stabilize
   the log lock-open regression test surfaced by the full preflight run.

@@ -1,6 +1,6 @@
 use crate::workstream::WorkStream;
 
-use super::super::format::char_len;
+use super::super::format::{char_len, inline_context_text};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::context) struct WorkstreamRenderSummary {
@@ -69,23 +69,32 @@ pub(in crate::context) fn render_workstreams_with_summary(
 }
 
 fn format_workstream_line(workstream: &WorkStream) -> String {
-    let next = workstream.next_action.as_deref().unwrap_or("");
+    let next = workstream
+        .next_action
+        .as_deref()
+        .map(inline_context_text)
+        .unwrap_or_default();
     let next_part = if next.is_empty() {
         String::new()
     } else {
         format!(" -> {}", next)
     };
-    let blockers = workstream.blockers.as_deref().unwrap_or("");
+    let blockers = workstream
+        .blockers
+        .as_deref()
+        .map(inline_context_text)
+        .unwrap_or_default();
     let blockers_part = if blockers.is_empty() {
         String::new()
     } else {
-        format!(" | blockers: {}", blockers.replace('\n', " "))
+        format!(" | blockers: {}", blockers)
     };
+    let title = inline_context_text(&workstream.title);
     format!(
         "- #{} [{}] {}{}{}\n",
         workstream.id,
         workstream.status.as_str(),
-        workstream.title,
+        title,
         next_part,
         blockers_part
     )

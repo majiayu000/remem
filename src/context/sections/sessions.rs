@@ -1,5 +1,6 @@
 use super::super::format::{
-    char_len, format_epoch_short, format_epoch_time, truncate_chars_with_ellipsis,
+    char_len, format_epoch_short, format_epoch_time, inline_context_text,
+    truncate_chars_with_ellipsis,
 };
 use super::super::types::SessionSummaryBrief;
 
@@ -41,7 +42,8 @@ pub(in crate::context) fn render_recent_sessions_with_limit(
             .and_then(|completed| completed.lines().find(|line| !line.trim().is_empty()))
             .map(format_completed_line)
             .unwrap_or_default();
-        let request = truncate_chars_with_ellipsis(&summary.request, REQUEST_PREVIEW_CHARS);
+        let request_text = inline_context_text(&summary.request);
+        let request = truncate_chars_with_ellipsis(&request_text, REQUEST_PREVIEW_CHARS);
         let line = format!("- **{}** {} {}{}\n", date, time, request, completed_part);
         let line_chars = char_len(&line);
         if total_chars + line_chars > char_limit {
@@ -60,6 +62,7 @@ pub(in crate::context) fn render_recent_sessions_with_limit(
 }
 
 fn format_completed_line(line: &str) -> String {
-    let truncated = truncate_chars_with_ellipsis(line, COMPLETED_PREVIEW_CHARS);
+    let line = inline_context_text(line);
+    let truncated = truncate_chars_with_ellipsis(&line, COMPLETED_PREVIEW_CHARS);
     format!(" => {}", truncated)
 }

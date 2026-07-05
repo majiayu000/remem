@@ -28,6 +28,15 @@ pub(super) fn char_len(value: &str) -> usize {
     value.chars().count()
 }
 
+pub(super) fn inline_context_text(value: &str) -> String {
+    value
+        .trim()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub(super) fn truncate_chars_with_ellipsis(value: &str, max_chars: usize) -> String {
     if char_len(value) <= max_chars {
         return value.to_string();

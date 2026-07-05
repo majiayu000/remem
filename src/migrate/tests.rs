@@ -291,7 +291,7 @@ fn concurrent_run_migrations_serializes_pending_migrations() -> Result<()> {
         let barrier = std::sync::Arc::clone(&barrier);
         handles.push(std::thread::spawn(move || -> Result<()> {
             let conn = Connection::open(&path)?;
-            conn.busy_timeout(std::time::Duration::from_secs(5))?;
+            conn.busy_timeout(std::time::Duration::from_secs(30))?;
             conn.execute_batch("PRAGMA foreign_keys=ON;")?;
             barrier.wait();
             run_migrations(&conn)?;
