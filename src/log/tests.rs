@@ -300,21 +300,25 @@ fn write_log_lock_open_failure_preserves_line_and_records_issue() {
     with_log_test_data_dir(
         "log-lock-open-failure",
         &[("REMEM_STDERR_TO_LOG", Some("1"))],
-        |_| {
-            let path = log_path().expect("log path should resolve");
-            let lock_path = log_lock_path(&path);
-            std::fs::create_dir_all(&lock_path).expect("lock path directory should create");
+        |data_dir| {
+            let log_dir = data_dir.path.join("lock-open-failure-log-dir");
+            std::fs::create_dir_all(&log_dir).expect("log dir should create");
+            with_log_dir(&log_dir, || {
+                let path = log_path().expect("log path should resolve");
+                let lock_path = log_lock_path(&path);
+                std::fs::create_dir_all(&lock_path).expect("lock path directory should create");
 
-            info("log-lock-open-failure-test", "preserved-lock-open-line");
+                info("log-lock-open-failure-test", "preserved-lock-open-line");
 
-            assert!(
-                std::fs::read_to_string(&path)
-                    .expect("active log should read")
-                    .contains("preserved-lock-open-line"),
-                "fallback should preserve log line when lock file cannot open"
-            );
-            let issue = read_issue(&log_rotation_issue_path(&path));
-            assert_eq!(issue.kind, "lock_open_failed");
+                assert!(
+                    std::fs::read_to_string(&path)
+                        .expect("active log should read")
+                        .contains("preserved-lock-open-line"),
+                    "fallback should preserve log line when lock file cannot open"
+                );
+                let issue = read_issue(&log_rotation_issue_path(&path));
+                assert_eq!(issue.kind, "lock_open_failed");
+            });
         },
     );
 }

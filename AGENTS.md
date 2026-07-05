@@ -82,6 +82,18 @@ checks land. See `docs/specs/spec-lifecycle-governance/`.
 
 ## Commands
 
+Before opening or updating a PR, run the local preflight so CI gate failures are
+reported together instead of one push at a time:
+
+```bash
+python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file /tmp/pr-body.md
+```
+
+Use `--fast` for the mechanical subset while iterating, then run the full
+preflight before merge readiness. If the PR already exists, copy the intended
+PR body to the file passed with `--pr-body-file` so spec-lifecycle and version
+bump checks see the same metadata as CI.
+
 Before completion for code changes:
 
 ```bash

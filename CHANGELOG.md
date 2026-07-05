@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.163` for GH-726 local PR preflight: aggregate
+  CI gate checks in one command, document it as the PR preflight, and stabilize
+  the log lock-open regression test surfaced by the full preflight run.
 - Staged source version `0.5.162` for GH-683 review queue throughput:
   review queue health metrics, doctor deadlock findings, batch review
   operations, durable review metadata, and REST blocked-candidate reporting.
