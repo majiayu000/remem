@@ -56,6 +56,10 @@ def check_workflow_text() -> None:
         'if [ "$CI_HEAD_BRANCH" != "main" ]; then',
         'if [ "$CI_HEAD_SHA" != "$(git rev-parse HEAD)" ]; then',
         "run: bash scripts/ci/auto_release_check_tag_state.sh",
+        "TAG_EXISTS: ${{ steps.tag.outputs.exists }}",
+        "TAG_SHA: ${{ steps.tag.outputs.tag_sha }}",
+        'if [ "$TAG_EXISTS" = "true" ] && [ "$TAG_SHA" != "$(git rev-parse HEAD)" ]; then',
+        "refusing to dispatch release workflow for an unverified tag",
     ]
     for needle in required:
         if needle not in text:

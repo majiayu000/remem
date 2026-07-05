@@ -138,11 +138,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          TAG_EXISTS: ${{ steps.tag.outputs.exists }}
+          TAG_SHA: ${{ steps.tag.outputs.tag_sha }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "${TAG} already has a GitHub Release; skipping dispatch"
             exit 0
+          fi
+          if [ "$TAG_EXISTS" = "true" ] && [ "$TAG_SHA" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::${TAG} points at ${TAG_SHA}; refusing to dispatch release workflow for an unverified tag"
+            exit 1
           fi
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
           echo "Dispatched Release workflow for ${TAG}" >> "$GITHUB_STEP_SUMMARY"

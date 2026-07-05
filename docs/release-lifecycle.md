@@ -49,7 +49,9 @@ from tags created with the default `GITHUB_TOKEN`.
 If the matching tag already exists, Auto Release does not move it. If the
 GitHub Release for that tag already exists, the dispatch step is a no-op; if the
 tag exists but the Release is missing, Auto Release dispatches `release.yml`
-against the existing tag ref.
+against the existing tag ref only when the tag points at the same commit that
+passed the trusted `main` CI run. A stale or manually-created tag pointing at a
+different commit fails before dispatch.
 
 The release workflow builds assets, creates the GitHub Release, publishes
 crates.io, and publishes npm. It also accepts manual `workflow_dispatch`, but
